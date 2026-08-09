@@ -50,19 +50,46 @@ import {
   generateStage0DCoreFixture,
 } from "./coding-agent-benchmark-fixtures.mjs";
 import {
+  listCodingAgentBenchmarkV3FixtureProviders,
+  resolveCodingAgentBenchmarkV3FixtureProvider,
+  validateCodingAgentBenchmarkV3SnapshotReceipt,
+} from "./coding-agent-benchmark-v3-fixtures.mjs";
+import {
+  CODING_AGENT_BENCHMARK_BROWSER_SCREENSHOT_ARTIFACT,
+  createCodingAgentBenchmarkV3SystemHarness,
+} from "./coding-agent-benchmark-system-harness.mjs";
+import {
   buildRecoveredCodingCiArtifacts,
   runCodingRunCursorContinuation,
   startGatewayDisconnectProxy,
 } from "./coding-agent-recovery-harness.mjs";
 import { executeGatewayProcessRestartCodingCi } from "./coding-agent-process-restart-harness.mjs";
 import { collectWorkspaceArtifact, sanitizeDiagnostic } from "./run-coding-agent-ci.mjs";
+import {
+  CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_ID,
+} from "./run-coding-agent-benchmark-navigation-efficiency.mjs";
+import {
+  CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V2_ID,
+  buildNavigationCandidateV2Prompt,
+} from "./run-coding-agent-benchmark-navigation-candidate-v2.mjs";
+import {
+  CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V3_ID,
+  buildNavigationCandidateV3Prompt,
+} from "./run-coding-agent-benchmark-navigation-candidate-v3.mjs";
+import {
+  CODE_INTEL_AGENT_UPLIFT_CANDIDATE_ID,
+  CODE_INTEL_AGENT_UPLIFT_TASK_IDS,
+} from "./run-code-intel-agent-uplift-readiness.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const workspaceRoot = path.resolve(path.dirname(scriptPath), "..");
 const codingCiRunnerPath = path.join(workspaceRoot, "scripts", "run-coding-agent-ci.mjs");
+export const CODING_AGENT_BENCHMARK_REPOSITORY_INPUTS_VERSION =
+  "coding-agent-benchmark-repository-inputs/v1";
 
 // Keep a 20% reserve against the user-approved 30 CNY ceiling at an 8 CNY/USD guard rate.
 export const STAGE_0D_BENCHMARK_USAGE_BUDGET_USD = 3;
+const MAX_BROWSER_SCREENSHOT_ARTIFACT_BYTES = 5 * 1024 * 1024;
 
 export function resolveBenchmarkRuntimePlatform(input = {}, runtime = {}) {
   const requestedPlatform = input.platform ?? "windows-native";
@@ -121,8 +148,19 @@ export function resolvePriorObservedCostUsd(value = 0) {
   return priorObservedCostUsd;
 }
 
+export function resolveBenchmarkMaximumCostUsd(value = STAGE_0D_BENCHMARK_USAGE_BUDGET_USD) {
+  if (!Number.isFinite(value) || value <= 0 || value > STAGE_0D_BENCHMARK_USAGE_BUDGET_USD) {
+    throw new Error("Benchmark maximum cost must be within $0.00-$3.00 USD.");
+  }
+  return roundCostUsd(value);
+}
+
 export function createBenchmarkUsageBudget(model, options = {}) {
+  const maxCostUsd = resolveBenchmarkMaximumCostUsd(options.maxCostUsd);
   const priorObservedCostUsd = resolvePriorObservedCostUsd(options.priorObservedCostUsd);
+  if (priorObservedCostUsd >= maxCostUsd) {
+    throw new Error("Benchmark prior observed cost must remain below the selected maximum cost.");
+  }
   if (model?.credentialsConfigured !== true) {
     if (priorObservedCostUsd > 0) {
       throw new Error("Stage 0D prior observed cost requires credentialsConfigured=true.");
@@ -130,8 +168,8 @@ export function createBenchmarkUsageBudget(model, options = {}) {
     return undefined;
   }
   return {
-    maxCostUsd: STAGE_0D_BENCHMARK_USAGE_BUDGET_USD,
-    remainingCostUsd: roundCostUsd(STAGE_0D_BENCHMARK_USAGE_BUDGET_USD - priorObservedCostUsd),
+    maxCostUsd,
+    remainingCostUsd: roundCostUsd(maxCostUsd - priorObservedCostUsd),
     observedCostUsd: priorObservedCostUsd,
   };
 }
@@ -150,14 +188,49 @@ export function consumeBenchmarkUsageBudget(budget, observation) {
     : { continueRunning: false, reason: "cost_cap_reached" };
 }
 
+export function resolveGatewayWorkspacePath(input) {
+  const localJoin = path.posix.isAbsolute(input.fixtureRoot) ? path.posix.join : path.join;
+  const localWorkspace = localJoin(input.fixtureRoot, input.runId, "workspace");
+  if (input.gatewayFixtureRoot === undefined) return localWorkspace;
+
+  const gatewayFixtureRoot = String(input.gatewayFixtureRoot).trim();
+  if (!gatewayFixtureRoot || !path.win32.isAbsolute(gatewayFixtureRoot)) {
+    throw new Error("gatewayFixtureRoot must be an absolute Windows path.");
+  }
+  const resolvedRoot = path.win32.resolve(gatewayFixtureRoot);
+  const gatewayWorkspace = path.win32.resolve(resolvedRoot, input.runId, "workspace");
+  const relative = path.win32.relative(resolvedRoot, gatewayWorkspace);
+  if (relative.startsWith("..") || path.win32.isAbsolute(relative)) {
+    throw new Error("Gateway workspace must remain inside gatewayFixtureRoot.");
+  }
+  return gatewayWorkspace;
+}
+
 export async function runStage0BSuite(input, dependencies = {}) {
   const runtimePlatform = resolveBenchmarkRuntimePlatform(input, dependencies.runtime);
   assertModelFingerprint(input?.model);
   const manifestRevision = input.manifestRevision ?? "v1";
   const contract = resolveCodingAgentBenchmarkContract(manifestRevision);
   const selectedManifestPath = resolveCodingAgentBenchmarkManifestPath(manifestRevision);
+  const manifestText = await fs.readFile(selectedManifestPath, "utf-8");
+  const manifest = await loadCodingAgentBenchmarkManifest(selectedManifestPath);
+  const taskIds = resolveTaskIds(input.taskIds, manifestRevision, manifest);
+  const shadowCandidateId = resolveBenchmarkShadowCandidate({
+    candidateId: input.shadowCandidateId,
+    manifestRevision,
+    taskIds,
+  });
+  const v3ProviderContexts = manifestRevision === "v3"
+    ? await prepareCodingAgentBenchmarkV3ProviderContexts({
+        manifest,
+        taskIds,
+        runtimePlatform,
+        repositoryInputs: input.v3RepositoryInputs,
+      }, dependencies)
+    : new Map();
   const sourceRoot = path.resolve(input.sourceRoot ?? workspaceRoot);
   const fixtureRoot = path.resolve(input.fixtureRoot);
+  const gatewayFixtureRoot = resolveGatewayFixtureRoot(input.gatewayFixtureRoot, runtimePlatform);
   const artifactRoot = path.resolve(input.artifactRoot);
   const stateRoot = path.resolve(input.stateRoot);
   assertSeparateRoots(fixtureRoot, artifactRoot, "artifactRoot");
@@ -167,21 +240,19 @@ export async function runStage0BSuite(input, dependencies = {}) {
   await fs.mkdir(fixtureRoot, { recursive: true });
   await fs.mkdir(stateRoot, { recursive: true });
 
-  const manifestText = await fs.readFile(selectedManifestPath, "utf-8");
-  const manifest = await loadCodingAgentBenchmarkManifest(selectedManifestPath);
   await fs.writeFile(path.join(artifactRoot, "task-manifest.json"), manifestText, "utf-8");
   const resolveIdentity = dependencies.resolveRepositoryIdentity ?? resolveBenchmarkRepositoryIdentity;
-  const source = manifestRevision === "v2"
-    ? await resolveIdentity(sourceRoot)
-    : await resolveSourceIdentity(workspaceRoot);
-  const harness = manifestRevision === "v2" ? await resolveIdentity(workspaceRoot) : undefined;
+  const source = manifestRevision === "v1"
+    ? await resolveSourceIdentity(workspaceRoot)
+    : await resolveIdentity(sourceRoot);
+  const harness = manifestRevision === "v1" ? undefined : await resolveIdentity(workspaceRoot);
   const attempt = Number.isInteger(input.attempt) ? input.attempt : 1;
   if (attempt < 1 || attempt > manifest.suite.sampleRuns) {
     throw new Error(`Stage 0B attempt must be within 1-${manifest.suite.sampleRuns}.`);
   }
-  const taskIds = resolveTaskIds(input.taskIds);
   const usageBudget = createBenchmarkUsageBudget(input.model, {
     priorObservedCostUsd: input.priorObservedCostUsd,
+    maxCostUsd: input.maxTotalCostUsd,
   });
 
   const runs = [];
@@ -197,12 +268,15 @@ export async function runStage0BSuite(input, dependencies = {}) {
       manifestSha256: hashCodingAgentBenchmarkManifestText(manifestText),
       sourceRoot,
       fixtureRoot,
+      gatewayFixtureRoot,
       artifactRoot,
       stateRoot,
       model: input.model,
       runtimePlatform,
       childEnv: input.childEnv,
       maxCostUsd: usageBudget?.remainingCostUsd,
+      ...(shadowCandidateId ? { shadowCandidateId } : {}),
+      v3ProviderContext: v3ProviderContexts.get(taskId),
     }, dependencies));
     const budgetDecision = consumeBenchmarkUsageBudget(usageBudget, runs.at(-1)?.usage?.observation);
     if (!budgetDecision.continueRunning) break;
@@ -232,6 +306,7 @@ export async function runStage0BTask(input, dependencies = {}) {
   const task = input.manifest.tasks.find((candidate) => candidate.id === input.taskId);
   const contract = input.contract ?? resolveCodingAgentBenchmarkContract(input.manifestRevision ?? "v1");
   const executionBudgets = resolveCodingAgentBenchmarkTaskBudgets(input.manifest, task?.id);
+  const isV3Task = input.manifestRevision === "v3";
   const isInteractiveTask = task?.id === STAGE_0C_INTERACTIVE_TASK_ID;
   const isSafetyTask = task?.id === STAGE_0C_SAFETY_TASK_ID;
   const isRecoveryTask = task?.id === STAGE_0C_RECOVERY_TASK_ID;
@@ -239,7 +314,7 @@ export async function runStage0BTask(input, dependencies = {}) {
   const isProcessRestartTask = task?.id === STAGE_0C_PROCESS_RESTART_TASK_ID;
   const isGitLocalTask = STAGE_0C_GIT_TASK_IDS.includes(task?.id);
   const isStage0DCoreTask = STAGE_0D_CORE_TASK_IDS.includes(task?.id);
-  if (!task || (!STAGE_0B_TASK_IDS.includes(task.id) && !isInteractiveTask && !isSafetyTask && !isRecoveryTask && !isCancellationTask && !isProcessRestartTask && !isGitLocalTask && !isStage0DCoreTask)) {
+  if (!task || (!isV3Task && !STAGE_0B_TASK_IDS.includes(task.id) && !isInteractiveTask && !isSafetyTask && !isRecoveryTask && !isCancellationTask && !isProcessRestartTask && !isGitLocalTask && !isStage0DCoreTask)) {
     throw new Error(`Benchmark task ${String(input.taskId)} is not implemented by this runner.`);
   }
   const expectedProfile = isInteractiveTask
@@ -249,17 +324,41 @@ export async function runStage0BTask(input, dependencies = {}) {
         : isGitLocalTask ? "git-local"
           : isCancellationTask || isProcessRestartTask ? "plan"
             : isStage0DCoreTask ? task.executionProfile : null;
-  if (expectedProfile
+  if (!isV3Task && (expectedProfile
     ? task.executionProfile !== expectedProfile
-    : task.executionProfile !== "plan" && task.executionProfile !== "workspace-write") {
+    : task.executionProfile !== "plan" && task.executionProfile !== "workspace-write")) {
     throw new Error(`Benchmark task ${task.id} uses an unexpected execution profile.`);
+  }
+  if (isV3Task && input.v3ProviderContext?.provider?.taskId !== task.id) {
+    throw new Error(`Benchmark v3 task ${task.id} is missing its bound fixture provider context.`);
+  }
+  if (input.shadowCandidateId !== undefined) {
+    if (input.shadowCandidateId === CODE_INTEL_AGENT_UPLIFT_CANDIDATE_ID) {
+      if (input.manifestRevision !== "v3"
+        || !CODE_INTEL_AGENT_UPLIFT_TASK_IDS.includes(task.id)
+        || (task.executionProfile !== "workspace-write" && task.executionProfile !== "command-control")) {
+        throw new Error("CodeIntel shadow candidate only supports the frozen v3 uplift cohort.");
+      }
+    } else if (input.manifestRevision !== "v3"
+      || task.id !== "real-js.bug-fix"
+      || task.executionProfile !== "workspace-write"
+      || ![CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_ID,
+        CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V2_ID,
+        CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V3_ID].includes(input.shadowCandidateId)) {
+      throw new Error("Navigation shadow candidate only supports v3 real-js.bug-fix workspace-write runs.");
+    }
   }
 
   const workspace = path.join(input.fixtureRoot, input.runId, "workspace");
+  const gatewayWorkspace = input.gatewayFixtureRoot === undefined
+    ? undefined
+    : resolveGatewayWorkspacePath(input);
   const artifactDir = path.join(input.artifactRoot, input.runId);
   const stateDir = input.stateRoot;
   await ensureEmptyDirectory(artifactDir);
-  const generateFixture = isInteractiveTask
+  const generateFixture = isV3Task
+    ? input.v3ProviderContext.provider.generate
+    : isInteractiveTask
     ? generateStage0CInteractiveFixture
     : isSafetyTask ? generateStage0CSafetyFixture
         : isRecoveryTask ? generateStage0CRecoveryFixture
@@ -267,7 +366,9 @@ export async function runStage0BTask(input, dependencies = {}) {
           : isProcessRestartTask ? generateStage0CProcessRestartFixture
         : isGitLocalTask ? generateStage0CGitFixture
           : isStage0DCoreTask ? generateStage0DCoreFixture : generateStage0BFixture;
-  const evaluateFixture = isInteractiveTask
+  const evaluateFixture = isV3Task
+    ? input.v3ProviderContext.provider.evaluate
+    : isInteractiveTask
     ? evaluateStage0CInteractiveFixture
     : isSafetyTask ? evaluateStage0CSafetyFixture
         : isRecoveryTask ? evaluateStage0CRecoveryFixture
@@ -279,19 +380,29 @@ export async function runStage0BTask(input, dependencies = {}) {
     taskId: task.id,
     workspace,
     manifest: input.manifest,
+    platform: input.runtimePlatform.id,
+    ...(isV3Task ? input.v3ProviderContext.providerInput : {}),
   });
+  if (isV3Task) {
+    await writeCodingAgentBenchmarkV3FixtureArtifacts({
+      artifactDir,
+      provider: input.v3ProviderContext.provider,
+      fixture,
+    });
+  }
   const promptPath = path.join(artifactDir, "prompt.md");
   const outputSchemaPath = path.join(artifactDir, "output.schema.json");
-  await fs.writeFile(promptPath, `${fixture.prompt}\n`, "utf-8");
+  const prompt = buildNavigationShadowPrompt(fixture.prompt, input.shadowCandidateId);
+  await fs.writeFile(promptPath, `${prompt}\n`, "utf-8");
   await fs.writeFile(outputSchemaPath, `${JSON.stringify(fixture.outputSchema, null, 2)}\n`, "utf-8");
 
   let approval;
-  if (input.manifestRevision === "v2" && (isInteractiveTask || isSafetyTask)) {
+  if (contract.revision !== "v1" && (isInteractiveTask || isSafetyTask)) {
     const fixturePath = isInteractiveTask
       ? "fixture/interactive-command.mjs"
       : "fixture/boundary-cases.json";
     const contract = createBenchmarkApprovalContract({
-      manifestRevision: "v2",
+      manifestRevision: input.manifestRevision,
       taskId: task.id,
       runId: input.runId,
       conversationId: `coding-benchmark-${input.runId}`,
@@ -316,11 +427,13 @@ export async function runStage0BTask(input, dependencies = {}) {
 
   const bddEntry = path.join(input.sourceRoot ?? workspaceRoot, "packages", "belldandy-core", "dist", "bin", "bdd.js");
   let preflight;
-  if (input.manifestRevision === "v2") {
+  if (contract.revision !== "v1") {
     const readEnv = (name) => Object.hasOwn(input.childEnv ?? {}, name)
       ? input.childEnv[name]
       : process.env[name];
-    preflight = await createBenchmarkPreflightArtifact({
+    const createPreflight = dependencies.createBenchmarkPreflightArtifact
+      ?? createBenchmarkPreflightArtifact;
+    preflight = await createPreflight({
       manifestRevision: input.manifestRevision,
       manifest: input.manifest,
       manifestSha256: input.manifestSha256,
@@ -350,6 +463,7 @@ export async function runStage0BTask(input, dependencies = {}) {
       }
     : await executeCodingCi({
         workspace,
+        ...(gatewayWorkspace ? { gatewayWorkspace } : {}),
         artifactDir,
         stateDir,
         conversationId: `coding-benchmark-${input.runId}`,
@@ -357,14 +471,18 @@ export async function runStage0BTask(input, dependencies = {}) {
         promptPath,
         outputSchemaPath,
         mode: task.executionProfile,
+        ...(input.shadowCandidateId ? { shadowCandidateId: input.shadowCandidateId } : {}),
         taskId: task.id,
         manifestRevision: input.manifestRevision ?? "v1",
         sourceRoot: input.sourceRoot ?? workspaceRoot,
         bddEntry,
         cancelOnRunStart: isCancellationTask,
         ...(approval ? { approvalContractPath: approval.contractPath } : {}),
-        childEnv: input.childEnv,
-        maxCostUsd: input.manifestRevision === "v2" && isProcessRestartTask ? undefined : input.maxCostUsd,
+        childEnv: {
+          ...input.childEnv,
+          ...fixture.executionEnvironment,
+        },
+        maxCostUsd: contract.revision !== "v1" && isProcessRestartTask ? undefined : input.maxCostUsd,
       });
   const durationMs = Math.max(0, Date.now() - startedAt);
   await preserveCodingCiManifest(artifactDir, runner.exitCode);
@@ -384,16 +502,55 @@ export async function runStage0BTask(input, dependencies = {}) {
     await writeJson(path.join(artifactDir, "preflight.json"), preflight);
   }
 
+  let systemEvidence;
+  let hasSystemBrowserScreenshot = false;
+  if (isV3Task && input.v3ProviderContext.provider.kind === "system") {
+    systemEvidence = preflight?.status === "failed"
+      ? createNotRunSystemEvidence(task, input.runId, input.runtimePlatform.id)
+      : await executeCodingAgentBenchmarkV3SystemHarness({
+          harness: input.v3ProviderContext.systemHarness,
+          scenario: fixture.systemScenario,
+          task,
+          runId: input.runId,
+          platform: input.runtimePlatform.id,
+          workspace,
+          artifactDir,
+          stateDir,
+          sourceRoot: input.sourceRoot ?? workspaceRoot,
+          baselineCommit: fixture.baselineCommit,
+          executionBudgets,
+        });
+    const systemEvidenceText = serializeBoundedJsonArtifact(
+      systemEvidence,
+      "Benchmark v3 system evidence",
+    );
+    if (task.id === "system.browser-behavior"
+      && systemEvidence.schemaVersion === "coding-agent-benchmark-system-evidence/v1") {
+      await assertBrowserScreenshotArtifact({ artifactDir, evidence: systemEvidence });
+      hasSystemBrowserScreenshot = true;
+    }
+    await fs.writeFile(path.join(artifactDir, "system-evidence.json"), systemEvidenceText, "utf-8");
+  }
+
   let verdict;
   if (preflight?.status === "failed") {
     verdict = createInfrastructurePreflightVerdict(preflight);
   } else try {
+    const result = isV3Task
+      ? await readJson(path.join(artifactDir, "result.json")).catch(() => null)
+      : undefined;
     verdict = await evaluateFixture({
       task: fixture.task,
       workspace,
       artifactDir,
       runnerExitCode: runner.exitCode,
       manifestRevision: input.manifestRevision ?? "v1",
+      ...(isV3Task ? {
+        runId: input.runId,
+        platform: input.runtimePlatform.id,
+        result,
+        ...(systemEvidence === undefined ? {} : { systemEvidence }),
+      } : {}),
       ...(isGitLocalTask ? { boundary: fixture.boundary } : {}),
       ...(isStage0DCoreTask ? { readonlySnapshot: fixture.readonlySnapshot } : {}),
     });
@@ -435,7 +592,7 @@ export async function runStage0BTask(input, dependencies = {}) {
       profile: task.executionProfile,
       budgets: executionBudgets,
       infrastructureRetries: 0,
-      ...(input.maxCostUsd === undefined || (input.manifestRevision === "v2" && isProcessRestartTask)
+      ...(input.maxCostUsd === undefined || (contract.revision !== "v1" && isProcessRestartTask)
         ? {}
         : { maxCostUsd: input.maxCostUsd }),
     },
@@ -461,10 +618,21 @@ export async function runStage0BTask(input, dependencies = {}) {
       patch: `${input.runId}/changes.patch`,
       diagnostics: `${input.runId}/diagnostics.log`,
       status: `${input.runId}/status.txt`,
-      ...(input.manifestRevision === "v2" ? { preflight: `${input.runId}/preflight.json` } : {}),
+      ...(contract.revision !== "v1" ? { preflight: `${input.runId}/preflight.json` } : {}),
       ...(approval ? {
         approvalContract: `${input.runId}/approval-contract.json`,
         approvalEvidence: `${input.runId}/approval-evidence.json`,
+      } : {}),
+      ...(isV3Task && input.v3ProviderContext.provider.kind === "repository-snapshot" ? {
+        repositorySnapshotPreflight: `${input.runId}/repository-snapshot-preflight.json`,
+        repositorySnapshotReceipt: `${input.runId}/repository-snapshot-receipt.json`,
+      } : {}),
+      ...(isV3Task && input.v3ProviderContext.provider.kind === "system" ? {
+        systemScenario: `${input.runId}/system-scenario.json`,
+        systemEvidence: `${input.runId}/system-evidence.json`,
+        ...(hasSystemBrowserScreenshot ? {
+          systemBrowserScreenshot: `${input.runId}/${CODING_AGENT_BENCHMARK_BROWSER_SCREENSHOT_ARTIFACT}`,
+        } : {}),
       } : {}),
       ...(isRecoveryTask ? { faultInjection: `${input.runId}/fault-injection.json` } : {}),
       ...(isCancellationTask ? { cancelInjection: `${input.runId}/cancel-injection.json` } : {}),
@@ -487,21 +655,280 @@ export async function runStage0BTask(input, dependencies = {}) {
   return run;
 }
 
-function resolveTaskIds(value) {
-  const taskIds = value === undefined ? [...STAGE_0B_TASK_IDS] : value;
+async function prepareCodingAgentBenchmarkV3ProviderContexts(input, dependencies) {
+  const defaultProviders = new Map(
+    listCodingAgentBenchmarkV3FixtureProviders(input.manifest)
+      .map((provider) => [provider.taskId, provider]),
+  );
+  const contexts = new Map();
+  for (const taskId of input.taskIds) {
+    const override = dependencies.resolveV3FixtureProvider?.(input.manifest, taskId);
+    const provider = override ?? defaultProviders.get(taskId)
+      ?? resolveCodingAgentBenchmarkV3FixtureProvider(input.manifest, taskId);
+    if (provider.readiness !== "ready") {
+      throw new Error(`Coding benchmark v3 fixture provider ${taskId} is not ready: ${provider.readiness}.`);
+    }
+
+    let providerInput = {};
+    let systemHarness;
+    if (provider.kind === "repository-snapshot") {
+      const repositoryInput = readV3RepositoryInput(input.repositoryInputs, provider.repositoryId);
+      if (!repositoryInput) {
+        throw new Error(
+          `Coding benchmark v3 repository input for ${provider.repositoryId} is required by task ${taskId}.`,
+        );
+      }
+      providerInput = {
+        ...repositoryInput,
+        executionNetwork: "disabled",
+      };
+    } else if (provider.kind === "system") {
+      systemHarness = dependencies.v3SystemHarness;
+      providerInput = {
+        systemCapabilities: systemHarness?.capabilities ?? {},
+      };
+      if (typeof systemHarness?.execute !== "function") {
+        throw new Error(`Coding benchmark v3 system harness is unavailable for task ${taskId}.`);
+      }
+    }
+
+    const providerPreflight = await provider.preflight({
+      ...providerInput,
+      manifest: input.manifest,
+      taskId,
+      platform: input.runtimePlatform.id,
+    });
+    if (providerPreflight?.status !== "passed") {
+      throw new Error(
+        `Coding benchmark v3 fixture provider preflight failed for ${taskId}: ${providerPreflight?.reason ?? "unknown"}.`,
+      );
+    }
+    contexts.set(taskId, { provider, providerInput, providerPreflight, systemHarness });
+  }
+  return contexts;
+}
+
+function readV3RepositoryInput(inputs, repositoryId) {
+  const value = inputs instanceof Map ? inputs.get(repositoryId) : inputs?.[repositoryId];
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (typeof value.repositoryRoot !== "string" || !value.repositoryRoot.trim()
+    || typeof value.dependencyCacheRoot !== "string" || !value.dependencyCacheRoot.trim()
+    || !value.receipt || typeof value.receipt !== "object" || Array.isArray(value.receipt)) {
+    throw new Error(`Coding benchmark v3 repository input for ${repositoryId} is invalid.`);
+  }
+  return {
+    repositoryRoot: path.resolve(value.repositoryRoot),
+    dependencyCacheRoot: path.resolve(value.dependencyCacheRoot),
+    receipt: structuredClone(value.receipt),
+  };
+}
+
+export async function loadCodingAgentBenchmarkV3RepositoryInputs(configPath) {
+  const resolvedConfigPath = path.resolve(requireConfigString(configPath, "configPath"));
+  const configDirectory = path.dirname(resolvedConfigPath);
+  let config;
+  try {
+    config = JSON.parse(await fs.readFile(resolvedConfigPath, "utf-8"));
+  } catch (error) {
+    throw new Error(`Coding benchmark v3 repository config is unavailable or invalid JSON: ${safeMessage(error)}.`);
+  }
+  assertExactConfigKeys(
+    config,
+    ["schemaVersion", "repositories"],
+    "Coding benchmark v3 repository config",
+  );
+  if (config.schemaVersion !== CODING_AGENT_BENCHMARK_REPOSITORY_INPUTS_VERSION) {
+    throw new Error("Coding benchmark v3 repository config version is unsupported.");
+  }
+  if (!Array.isArray(config.repositories) || config.repositories.length === 0) {
+    throw new Error("Coding benchmark v3 repository config must contain at least one repository.");
+  }
+
+  const manifest = await loadCodingAgentBenchmarkManifest(resolveCodingAgentBenchmarkManifestPath("v3"));
+  const manifestRepositoryIds = new Set(manifest.repositories.map((repository) => repository.id));
+  const inputs = new Map();
+  for (const [index, entry] of config.repositories.entries()) {
+    const label = `Coding benchmark v3 repository config entry ${index}`;
+    assertExactConfigKeys(entry, [
+      "repositoryId",
+      "repositoryRoot",
+      "dependencyCacheRoot",
+      "receiptPath",
+    ], label);
+    const repositoryId = requireConfigString(entry.repositoryId, `${label}.repositoryId`);
+    if (!manifestRepositoryIds.has(repositoryId)) {
+      throw new Error(`Coding benchmark v3 repository config references unknown repository ${repositoryId}.`);
+    }
+    if (inputs.has(repositoryId)) {
+      throw new Error(`Coding benchmark v3 repository config contains duplicate repository ${repositoryId}.`);
+    }
+
+    const receiptPath = path.resolve(
+      configDirectory,
+      requireConfigString(entry.receiptPath, `${label}.receiptPath`),
+    );
+    let receipt;
+    try {
+      receipt = JSON.parse(await fs.readFile(receiptPath, "utf-8"));
+    } catch (error) {
+      throw new Error(
+        `Coding benchmark v3 snapshot receipt for ${repositoryId} is unavailable or invalid JSON: ${safeMessage(error)}.`,
+      );
+    }
+    if (receipt?.repositoryId !== repositoryId) {
+      throw new Error(`Coding benchmark v3 snapshot receipt for ${repositoryId} has a repository binding mismatch.`);
+    }
+    try {
+      validateCodingAgentBenchmarkV3SnapshotReceipt(manifest, receipt);
+    } catch (error) {
+      throw new Error(`Coding benchmark v3 snapshot receipt for ${repositoryId} is invalid: ${safeMessage(error)}.`);
+    }
+    inputs.set(repositoryId, {
+      repositoryRoot: path.resolve(
+        configDirectory,
+        requireConfigString(entry.repositoryRoot, `${label}.repositoryRoot`),
+      ),
+      dependencyCacheRoot: path.resolve(
+        configDirectory,
+        requireConfigString(entry.dependencyCacheRoot, `${label}.dependencyCacheRoot`),
+      ),
+      receipt,
+    });
+  }
+  return inputs;
+}
+
+function assertExactConfigKeys(value, expectedKeys, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object.`);
+  }
+  const expected = new Set(expectedKeys);
+  const unknown = Object.keys(value).filter((key) => !expected.has(key));
+  if (unknown.length > 0) {
+    throw new Error(`${label} contains unexpected field ${unknown[0]}.`);
+  }
+  const missing = expectedKeys.filter((key) => !Object.hasOwn(value, key));
+  if (missing.length > 0) {
+    throw new Error(`${label} is missing required field ${missing[0]}.`);
+  }
+}
+
+function requireConfigString(value, label) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${label} must be a non-empty string.`);
+  }
+  return value.trim();
+}
+
+async function writeCodingAgentBenchmarkV3FixtureArtifacts(input) {
+  if (input.provider.kind === "repository-snapshot") {
+    await Promise.all([
+      writeBoundedJsonArtifact(
+        path.join(input.artifactDir, "repository-snapshot-preflight.json"),
+        input.fixture.snapshotPreflight,
+        "Benchmark v3 repository snapshot preflight",
+      ),
+      writeBoundedJsonArtifact(
+        path.join(input.artifactDir, "repository-snapshot-receipt.json"),
+        input.fixture.snapshotReceipt,
+        "Benchmark v3 repository snapshot receipt",
+      ),
+    ]);
+  } else if (input.provider.kind === "system") {
+    await writeBoundedJsonArtifact(
+      path.join(input.artifactDir, "system-scenario.json"),
+      input.fixture.systemScenario,
+      "Benchmark v3 system scenario",
+    );
+  }
+}
+
+async function executeCodingAgentBenchmarkV3SystemHarness(input) {
+  const evidence = await input.harness.execute({
+    scenario: structuredClone(input.scenario),
+    task: structuredClone(input.task),
+    runId: input.runId,
+    platform: input.platform,
+    workspace: input.workspace,
+    artifactDir: input.artifactDir,
+    stateDir: input.stateDir,
+    sourceRoot: input.sourceRoot,
+    baselineCommit: input.baselineCommit,
+    budgets: structuredClone(input.executionBudgets),
+  });
+  if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) {
+    throw new Error(`Coding benchmark v3 system harness returned invalid evidence for ${input.task.id}.`);
+  }
+  return evidence;
+}
+
+function createNotRunSystemEvidence(task, runId, platform) {
+  return {
+    schemaVersion: "coding-agent-benchmark-system-evidence-not-run/v1",
+    taskId: task.id,
+    generatorId: task.fixture.generatorId,
+    fixtureVersion: task.fixture.version,
+    runId,
+    platform,
+    status: "not_run",
+    reason: "runtime_preflight_failed",
+  };
+}
+
+async function writeBoundedJsonArtifact(target, value, label) {
+  await fs.writeFile(target, serializeBoundedJsonArtifact(value, label), "utf-8");
+}
+
+function serializeBoundedJsonArtifact(value, label) {
+  assertNoCredentialFields(value, label);
+  const text = `${JSON.stringify(value, null, 2)}\n`;
+  if (Buffer.byteLength(text, "utf-8") > 1024 * 1024) {
+    throw new Error(`${label} exceeds the 1 MiB artifact limit.`);
+  }
+  return text;
+}
+
+async function assertBrowserScreenshotArtifact(input) {
+  const target = path.join(input.artifactDir, CODING_AGENT_BENCHMARK_BROWSER_SCREENSHOT_ARTIFACT);
+  const stats = await fs.lstat(target).catch(() => null);
+  if (!stats?.isFile() || stats.size <= 0 || stats.size > MAX_BROWSER_SCREENSHOT_ARTIFACT_BYTES) {
+    throw new Error("Coding benchmark browser screenshot artifact is missing or invalid.");
+  }
+  const contentSha256 = sha256(await fs.readFile(target));
+  if (input.evidence?.observations?.screenshotSha256 !== contentSha256) {
+    throw new Error("Coding benchmark browser screenshot artifact hash drifted from system evidence.");
+  }
+}
+
+function assertNoCredentialFields(value, location) {
+  if (!value || typeof value !== "object") return;
+  for (const [key, child] of Object.entries(value)) {
+    if (/^(?:apiKey|accessToken|refreshToken|token|secret|clientSecret|password|authorization|cookie|sessionToken|credential|credentials)$/i.test(key)) {
+      throw new Error(`${location} contains forbidden credential field ${key}.`);
+    }
+    assertNoCredentialFields(child, `${location}.${key}`);
+  }
+}
+
+function resolveTaskIds(value, manifestRevision = "v1", manifest) {
+  const taskIds = value === undefined
+    ? manifestRevision === "v3" ? manifest.tasks.map((task) => task.id) : [...STAGE_0B_TASK_IDS]
+    : value;
   if (!Array.isArray(taskIds) || taskIds.length === 0) {
     throw new Error("Benchmark taskIds must be a non-empty array.");
   }
-  const implemented = new Set([
-    ...STAGE_0B_TASK_IDS,
-    STAGE_0C_INTERACTIVE_TASK_ID,
-    STAGE_0C_SAFETY_TASK_ID,
-    STAGE_0C_RECOVERY_TASK_ID,
-    STAGE_0C_CANCELLATION_TASK_ID,
-    STAGE_0C_PROCESS_RESTART_TASK_ID,
-    ...STAGE_0C_GIT_TASK_IDS,
-    ...STAGE_0D_CORE_TASK_IDS,
-  ]);
+  const implemented = manifestRevision === "v3"
+    ? new Set(manifest.tasks.map((task) => task.id))
+    : new Set([
+        ...STAGE_0B_TASK_IDS,
+        STAGE_0C_INTERACTIVE_TASK_ID,
+        STAGE_0C_SAFETY_TASK_ID,
+        STAGE_0C_RECOVERY_TASK_ID,
+        STAGE_0C_CANCELLATION_TASK_ID,
+        STAGE_0C_PROCESS_RESTART_TASK_ID,
+        ...STAGE_0C_GIT_TASK_IDS,
+        ...STAGE_0D_CORE_TASK_IDS,
+      ]);
   const unique = new Set();
   for (const taskId of taskIds) {
     if (typeof taskId !== "string" || !implemented.has(taskId)) {
@@ -513,11 +940,44 @@ function resolveTaskIds(value) {
   return [...unique];
 }
 
+export function resolveBenchmarkShadowCandidate(input) {
+  if (input.candidateId === undefined) return undefined;
+  const candidateId = String(input.candidateId).trim();
+  if (candidateId === CODE_INTEL_AGENT_UPLIFT_CANDIDATE_ID) {
+    if (input.manifestRevision !== "v3"
+      || !Array.isArray(input.taskIds)
+      || input.taskIds.length === 0
+      || input.taskIds.some((taskId) => !CODE_INTEL_AGENT_UPLIFT_TASK_IDS.includes(taskId))) {
+      throw new Error("CodeIntel shadow candidate requires only the frozen v3 uplift cohort.");
+    }
+    return candidateId;
+  }
+  if (input.manifestRevision !== "v3"
+    || ![CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_ID,
+      CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V2_ID,
+      CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V3_ID].includes(candidateId)
+    || JSON.stringify(input.taskIds) !== JSON.stringify(["real-js.bug-fix"])) {
+    throw new Error("Navigation shadow candidate requires only v3 real-js.bug-fix.");
+  }
+  return candidateId;
+}
+
+export function buildNavigationShadowPrompt(basePrompt, candidateId) {
+  if (candidateId === CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V3_ID) {
+    return buildNavigationCandidateV3Prompt(basePrompt);
+  }
+  if (candidateId === CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V2_ID) {
+    return buildNavigationCandidateV2Prompt(basePrompt);
+  }
+  return basePrompt;
+}
+
 async function executeCodingCiProcess(input) {
   return await new Promise((resolve, reject) => {
     const args = [
       codingCiRunnerPath,
       "--workspace", input.workspace,
+      ...(input.gatewayWorkspace ? ["--gateway-workspace", input.gatewayWorkspace] : []),
       "--state-dir", input.stateDir,
       "--conversation-id", input.conversationId,
       "--model-id", input.modelId,
@@ -525,8 +985,11 @@ async function executeCodingCiProcess(input) {
       "--prompt-file", input.promptPath,
       "--output-schema", input.outputSchemaPath,
       "--mode", input.mode,
+      ...(input.shadowCandidateId
+        ? ["--shadow-candidate-id", input.shadowCandidateId]
+        : []),
       "--manifest-revision", input.manifestRevision,
-      ...(input.manifestRevision === "v2" ? ["--task-id", input.taskId] : []),
+      ...(input.manifestRevision === "v1" ? [] : ["--task-id", input.taskId]),
       "--source-root", input.sourceRoot,
       "--bdd-entry", input.bddEntry,
       ...(input.approvalContractPath ? ["--approval-contract", input.approvalContractPath] : []),
@@ -566,7 +1029,7 @@ async function executeRecoveryCodingCiProcess(input) {
     upstreamOrigin: `http://${target.host}:${target.port}`,
     targetPath: "src/recovery-target.txt",
     workspace: input.workspace,
-    requireCompletedMutation: input.manifestRevision === "v2",
+    requireCompletedMutation: input.manifestRevision !== "v1",
   });
   let runner;
   let fault;
@@ -732,6 +1195,7 @@ async function ensureCodingCiArtifacts(artifactDir, runner, options = {}) {
     "status.txt": `coding_ci_runner_exit_code=${runner.exitCode}\n`,
     ...(options.approval ? {
       "approval-evidence.json": `${JSON.stringify(createNotRunApprovalEvidence({
+        manifestRevision: options.manifestRevision,
         taskId: options.approval.contract.taskId,
         runId: options.approval.contract.runId,
         contractSha256: options.approval.contractSha256,
@@ -743,7 +1207,7 @@ async function ensureCodingCiArtifacts(artifactDir, runner, options = {}) {
     ...(options.cancellation ? {
       "cancel-injection.json": `${JSON.stringify({
         schemaVersion: "coding-agent-cancel-injection/v1",
-        trigger: options.manifestRevision === "v2" ? "message.send.accepted" : "run.started",
+        trigger: options.manifestRevision === "v1" ? "run.started" : "message.send.accepted",
         status: "not_observed",
         observedStartedSeq: null,
         cancellationRequestCount: 0,
@@ -993,6 +1457,18 @@ function requireValue(values, key) {
   return value.trim();
 }
 
+function resolveGatewayFixtureRoot(value, runtimePlatform) {
+  if (value === undefined) return undefined;
+  if (runtimePlatform.id !== "wsl2-linux") {
+    throw new Error("gatewayFixtureRoot is only valid for WSL2 benchmark runs.");
+  }
+  const gatewayFixtureRoot = String(value).trim();
+  if (!gatewayFixtureRoot || !path.win32.isAbsolute(gatewayFixtureRoot)) {
+    throw new Error("gatewayFixtureRoot must be an absolute Windows path.");
+  }
+  return path.win32.resolve(gatewayFixtureRoot);
+}
+
 export function resolveBenchmarkCliSourceRoot(values, manifestRevision) {
   return manifestRevision === "v2"
     ? path.resolve(requireValue(values, "source-root"))
@@ -1002,20 +1478,35 @@ export function resolveBenchmarkCliSourceRoot(values, manifestRevision) {
 async function main() {
   const values = parseNamedArgs(process.argv.slice(2));
   const manifestRevision = values.get("manifest-revision") ?? "v1";
+  if (values.has("v3-repository-config") && manifestRevision !== "v3") {
+    throw new Error("--v3-repository-config requires --manifest-revision v3.");
+  }
   const credentialsValue = requireValue(values, "credentials-configured");
   if (credentialsValue !== "true" && credentialsValue !== "false") {
     throw new Error("--credentials-configured must be true or false.");
   }
+  const sourceRoot = resolveBenchmarkCliSourceRoot(values, manifestRevision);
+  const v3SystemHarness = manifestRevision === "v3"
+    ? await createCodingAgentBenchmarkV3SystemHarness({ sourceRoot })
+    : undefined;
   const report = await runStage0BSuite({
     platform: requireValue(values, "platform"),
     manifestRevision,
-    sourceRoot: resolveBenchmarkCliSourceRoot(values, manifestRevision),
+    sourceRoot,
     fixtureRoot: requireValue(values, "fixture-root"),
+    ...(values.has("gateway-fixture-root") ? {
+      gatewayFixtureRoot: requireValue(values, "gateway-fixture-root"),
+    } : {}),
     artifactRoot: requireValue(values, "artifact-root"),
     stateRoot: requireValue(values, "state-root"),
     attempt: Number(values.get("attempt") ?? 1),
     ...(values.has("task-id") ? {
       taskIds: requireValue(values, "task-id").split(",").map((taskId) => taskId.trim()),
+    } : {}),
+    ...(values.has("v3-repository-config") ? {
+      v3RepositoryInputs: await loadCodingAgentBenchmarkV3RepositoryInputs(
+        requireValue(values, "v3-repository-config"),
+      ),
     } : {}),
     model: {
       provider: requireValue(values, "provider"),
@@ -1025,7 +1516,13 @@ async function main() {
     ...(values.has("prior-observed-cost-usd") ? {
       priorObservedCostUsd: Number(requireValue(values, "prior-observed-cost-usd")),
     } : {}),
-  });
+    ...(values.has("max-total-cost-usd") ? {
+      maxTotalCostUsd: Number(requireValue(values, "max-total-cost-usd")),
+    } : {}),
+    ...(values.has("shadow-candidate-id") ? {
+      shadowCandidateId: requireValue(values, "shadow-candidate-id"),
+    } : {}),
+  }, v3SystemHarness ? { v3SystemHarness } : {});
   const platform = report.runs[0]?.platform ?? "unknown";
   console.log(
     `[coding-agent-benchmark] wrote ${report.runs.length} ${platform} run(s); passed=${report.summary.passedRunCount}`,

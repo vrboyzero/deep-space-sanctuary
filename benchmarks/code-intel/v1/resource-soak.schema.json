@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.local/schemas/code-intel/resource-soak-v1.schema.json",
+  "title": "Star Sanctuary CodeIntel Resource Soak v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "frozenAt", "contractVersion", "workload", "limits", "expectations", "sourceIdentity", "exclusions"],
+  "properties": {
+    "schemaVersion": { "const": "code-intel-resource-soak/v1" },
+    "id": { "const": "p1-a1-typescript-provider-resource-soak-v1" },
+    "frozenAt": { "type": "string", "format": "date-time" },
+    "contractVersion": { "const": "code-intel/v1" },
+    "workload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspaceCount", "maxWorkspaceSessions", "rounds", "queryLimit"],
+      "properties": {
+        "workspaceCount": { "const": 5 },
+        "maxWorkspaceSessions": { "const": 3 },
+        "rounds": { "const": 3 },
+        "queryLimit": { "const": 1 }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxDurationMs", "maxQueryDurationMs", "maxPeakHeapIncreaseBytes", "maxRetainedHeapIncreaseBytes"],
+      "properties": {
+        "maxDurationMs": { "const": 60000 },
+        "maxQueryDurationMs": { "const": 10000 },
+        "maxPeakHeapIncreaseBytes": { "const": 268435456 },
+        "maxRetainedHeapIncreaseBytes": { "const": 134217728 }
+      }
+    },
+    "expectations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimumLruEvictions", "minimumSessionReuses", "revisionReloads"],
+      "properties": {
+        "minimumLruEvictions": { "const": 10 },
+        "minimumSessionReuses": { "const": 1 },
+        "revisionReloads": { "const": 1 }
+      }
+    },
+    "sourceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["files"],
+      "properties": {
+        "files": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": { "$ref": "#/$defs/sourceFile" }
+        }
+      }
+    },
+    "exclusions": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "sourceFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "runtimePath", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "runtimePath": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

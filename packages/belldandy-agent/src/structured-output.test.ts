@@ -558,6 +558,52 @@ describe("ToolEnabledAgent structured output", () => {
     }));
   });
 
+  it("keeps cost-containment metadata when repair preflight exhausts remaining tokens", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
+      choices: [{ message: { content: "policy-token-budget-original" } }],
+      usage: { prompt_tokens: 22_000, completion_tokens: 1 },
+    }));
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      systemPrompt: "Return the requested JSON.",
+      toolExecutor: createToolExecutor(),
+      streamingEnabled: false,
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "structured-repair-policy-token-budget",
+      text: "return status",
+      meta: {
+        _agentLaunchSpec: {
+          maxTotalTokens: 22_100,
+          modelLoopBudgetPolicy: "cost-containment-v1",
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", properties: { status: { const: "ok" } } },
+        validateOutput: validateStatusOutput,
+      },
+    } as any));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "budget_exhausted",
+      budget: "total_tokens",
+      limit: 22_100,
+      policyId: "cost-containment-v1",
+      stage: "before_model_call",
+      reasonCode: "insufficient_remaining_tokens",
+    }));
+    expect(items).toContainEqual({ type: "final", text: "policy-token-budget-original" });
+    expect(items.at(-1)).toEqual(expect.objectContaining({
+      type: "status",
+      status: "error",
+      code: "output_schema_invalid",
+    }));
+  });
+
   it("does not start repair after wall time expires and keeps the first response usage", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => (
       jsonResponse({

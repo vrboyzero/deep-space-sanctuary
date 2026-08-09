@@ -102,6 +102,74 @@ describe("bdd agent controls", () => {
     }
   });
 
+  it("adds live semantic evidence to cwd inspection for an explicit symbol query", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-inspect-code-intel-state-"));
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-inspect-code-intel-"));
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+
+    try {
+      await fs.promises.mkdir(path.join(root, ".git"));
+      await fs.promises.mkdir(path.join(root, "src"));
+      await fs.promises.writeFile(path.join(root, "AGENTS.md"), "Inspect this project.\n", "utf-8");
+      await fs.promises.writeFile(path.join(root, "tsconfig.json"), JSON.stringify({
+        compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext" },
+        include: ["src/**/*.ts"],
+      }), "utf-8");
+      await fs.promises.writeFile(
+        path.join(root, "src", "greeter.ts"),
+        "export function createGreeter(): string { return \"hello\"; }\n",
+        "utf-8",
+      );
+
+      const exitCode = await inspectAgentProjectRules({
+        stateDir,
+        cwd: root,
+        symbol: "createGreeter",
+        json: true,
+        writeStdout: (text) => stdout.push(text),
+        writeStderr: (text) => stderr.push(text),
+      });
+      expect(exitCode).toBe(0);
+
+      expect(JSON.parse(stdout.join(""))).toMatchObject({
+        kind: "project-rules",
+        codeIntel: {
+          status: "completed",
+          query: {
+            operation: "symbols",
+            query: "createGreeter",
+            requiredCapability: "semantic-live",
+          },
+          evidence: {
+            contractVersion: "code-intel/v1",
+            coordinateSystem: "zero-based-line-column",
+            items: [expect.objectContaining({
+              location: expect.objectContaining({ path: "src/greeter.ts" }),
+            })],
+            page: { returned: 1, truncated: false },
+            freshness: { status: "fresh" },
+            provenance: {
+              providerId: "typescript-language-service",
+              providerVersion: expect.any(String),
+              capability: "semantic-live",
+              workspaceRevision: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+            },
+            diagnostics: [],
+          },
+          fallback: {
+            used: false,
+            reason: null,
+          },
+        },
+      });
+      expect(stderr).toEqual([]);
+    } finally {
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+      await fs.promises.rm(root, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
   it("continues one Conversation and inspects its Gateway-owned metadata", async () => {
     const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-controls-"));
     const conversationId = "agent-cli-continue";

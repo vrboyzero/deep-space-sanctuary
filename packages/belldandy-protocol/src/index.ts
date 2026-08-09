@@ -160,6 +160,8 @@ export type CodingRunOptions = {
   toolAllow?: string[];
   toolDeny?: string[];
   permissionMode?: "plan" | "acceptEdits" | "confirm";
+  toolArgumentPolicy?: "bounded-navigation-v1";
+  modelLoopBudgetPolicy?: "cost-containment-v1";
   maxWallTimeMs?: number;
   maxTurns?: number;
   maxTokens?: number;

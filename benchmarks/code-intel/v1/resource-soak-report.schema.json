@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.local/schemas/code-intel/resource-soak-report-v1.schema.json",
+  "title": "Star Sanctuary CodeIntel Resource Soak Report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "generatedAt", "platform", "contractVersion", "soak", "sourceIdentity", "provider", "workload", "limits", "queries", "lifecycle", "revision", "timing", "memory", "cleanup", "execution", "gates"],
+  "properties": {
+    "schemaVersion": { "const": "code-intel-resource-soak-report/v1" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "platform": { "enum": ["windows-native", "wsl2-linux"] },
+    "contractVersion": { "const": "code-intel/v1" },
+    "soak": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "configPath", "configSha256"],
+      "properties": {
+        "id": { "const": "p1-a1-typescript-provider-resource-soak-v1" },
+        "configPath": { "type": "string", "minLength": 1 },
+        "configSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "sourceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["files"],
+      "properties": {
+        "files": { "type": "array", "minItems": 4, "maxItems": 4, "items": { "$ref": "#/$defs/runtimeFile" } }
+      }
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "capability"],
+      "properties": {
+        "id": { "const": "typescript-language-service" },
+        "version": { "type": "string", "minLength": 1 },
+        "capability": { "const": "semantic-live" }
+      }
+    },
+    "workload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspaceCount", "maxWorkspaceSessions", "rounds", "queryLimit"],
+      "properties": {
+        "workspaceCount": { "const": 5 },
+        "maxWorkspaceSessions": { "const": 3 },
+        "rounds": { "const": 3 },
+        "queryLimit": { "const": 1 }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxDurationMs", "maxQueryDurationMs", "maxPeakHeapIncreaseBytes", "maxRetainedHeapIncreaseBytes"],
+      "properties": {
+        "maxDurationMs": { "const": 60000 },
+        "maxQueryDurationMs": { "const": 10000 },
+        "maxPeakHeapIncreaseBytes": { "const": 268435456 },
+        "maxRetainedHeapIncreaseBytes": { "const": 134217728 }
+      }
+    },
+    "queries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempts", "successful", "expectedRejected", "providerFailures", "maxDurationMs", "expectedSuccessful"],
+      "properties": {
+        "attempts": { "type": "integer", "minimum": 1 },
+        "successful": { "type": "integer", "minimum": 1 },
+        "expectedRejected": { "type": "integer", "minimum": 0 },
+        "providerFailures": { "type": "integer", "minimum": 0 },
+        "maxDurationMs": { "type": "integer", "minimum": 0 },
+        "expectedSuccessful": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["createdSessions", "reusedSessions", "lruEvictions", "revisionReloads", "providerDisposeSessions", "maxActiveSessions", "activeSessionsAfterDispose", "eventCount", "eventSequenceSha256"],
+      "properties": {
+        "createdSessions": { "type": "integer", "minimum": 1 },
+        "reusedSessions": { "type": "integer", "minimum": 0 },
+        "lruEvictions": { "type": "integer", "minimum": 0 },
+        "revisionReloads": { "type": "integer", "minimum": 0 },
+        "providerDisposeSessions": { "type": "integer", "minimum": 0 },
+        "maxActiveSessions": { "type": "integer", "minimum": 0 },
+        "activeSessionsAfterDispose": { "type": "integer", "minimum": 0 },
+        "eventCount": { "type": "integer", "minimum": 0 },
+        "eventSequenceSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "revision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["staleCursorRejected", "staleCursorErrorCode", "beforeDocumentRevision", "afterDocumentRevision", "documentRevisionChanged"],
+      "properties": {
+        "staleCursorRejected": { "type": "boolean" },
+        "staleCursorErrorCode": { "type": ["string", "null"] },
+        "beforeDocumentRevision": { "type": ["string", "null"], "pattern": "^sha256:[a-f0-9]{64}$" },
+        "afterDocumentRevision": { "type": ["string", "null"], "pattern": "^sha256:[a-f0-9]{64}$" },
+        "documentRevisionChanged": { "type": "boolean" }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["durationMs", "maxQueryDurationMs"],
+      "properties": {
+        "durationMs": { "type": "integer", "minimum": 0 },
+        "maxQueryDurationMs": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baselineHeapUsedBytes", "peakHeapUsedBytes", "rawPeakHeapUsedBytes", "afterDisposeHeapUsedBytes", "peakHeapIncreaseBytes", "retainedHeapIncreaseBytes", "baselineRssBytes", "peakRssBytes", "rawPeakRssBytes", "afterDisposeRssBytes"],
+      "properties": {
+        "baselineHeapUsedBytes": { "$ref": "#/$defs/bytes" },
+        "peakHeapUsedBytes": { "$ref": "#/$defs/bytes" },
+        "rawPeakHeapUsedBytes": { "$ref": "#/$defs/bytes" },
+        "afterDisposeHeapUsedBytes": { "$ref": "#/$defs/bytes" },
+        "peakHeapIncreaseBytes": { "type": "integer", "minimum": 0 },
+        "retainedHeapIncreaseBytes": { "type": "integer", "minimum": 0 },
+        "baselineRssBytes": { "$ref": "#/$defs/bytes" },
+        "peakRssBytes": { "$ref": "#/$defs/bytes" },
+        "rawPeakRssBytes": { "$ref": "#/$defs/bytes" },
+        "afterDisposeRssBytes": { "$ref": "#/$defs/bytes" }
+      }
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["temporaryRootRemoved", "residualPaths"],
+      "properties": {
+        "temporaryRootRemoved": { "type": "boolean" },
+        "residualPaths": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gatewayCalls", "modelCalls", "paidProviderCalls", "providerNetworkCalls", "hostCommands", "credentialsRead", "productionWorkspaceMutations", "temporaryWorkspaceWrites"],
+      "properties": {
+        "gatewayCalls": { "const": 0 },
+        "modelCalls": { "const": 0 },
+        "paidProviderCalls": { "const": 0 },
+        "providerNetworkCalls": { "const": 0 },
+        "hostCommands": { "const": 0 },
+        "credentialsRead": { "const": false },
+        "productionWorkspaceMutations": { "const": 0 },
+        "temporaryWorkspaceWrites": { "const": 11 }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "failures"],
+      "properties": {
+        "passed": { "type": "boolean" },
+        "failures": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "bytes": { "type": "integer", "minimum": 0 },
+    "runtimeFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "runtimePath", "runtimeSha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "runtimePath": { "type": "string", "minLength": 1 },
+        "runtimeSha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

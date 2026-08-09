@@ -1,0 +1,216 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.local/schemas/code-intel/agent-uplift-platform-v1.schema.json",
+  "title": "Star Sanctuary CodeIntel Agent uplift platform report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "generatedAt", "status", "platform", "candidateId", "gate", "readiness", "authorization", "execution", "pairs", "blockingFailures"],
+  "properties": {
+    "schemaVersion": { "const": "code-intel-agent-uplift-platform/v1" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "status": { "enum": ["completed", "blocked"] },
+    "platform": { "enum": ["windows-native", "wsl2-linux"] },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "candidateId": { "const": "code-intel-semantic-live-v1" },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sha256"],
+      "properties": {
+        "id": { "const": "p1-a1-ts-js-agent-uplift-v1" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reportSha256", "sourceIdentity", "runtimeIdentity"],
+      "properties": {
+        "reportSha256": { "$ref": "#/$defs/sha256" },
+        "sourceIdentity": { "$ref": "#/$defs/fileIdentity" },
+        "runtimeIdentity": { "$ref": "#/$defs/fileIdentity" }
+      }
+    },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "modelId", "maxTotalCostCny", "priorObservedCostCny", "runCostCny", "remainingCostCny", "exchangeRateCnyPerUsd"],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "modelId": { "const": "deepseek-v4-flash" },
+        "maxTotalCostCny": { "type": "number", "exclusiveMinimum": 0, "maximum": 40 },
+        "priorObservedCostCny": { "type": "number", "minimum": 0 },
+        "runCostCny": { "type": "number", "minimum": 0 },
+        "remainingCostCny": { "type": "number", "minimum": 0 },
+        "exchangeRateCnyPerUsd": { "const": 8 }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selectedPairCount", "selectedCellCount", "executedCellCount", "retryCount"],
+      "properties": {
+        "selectedPairCount": { "type": "integer", "const": 4 },
+        "selectedCellCount": { "type": "integer", "const": 8 },
+        "executedCellCount": { "type": "integer", "minimum": 0, "maximum": 8 },
+        "retryCount": { "type": "integer", "const": 0 }
+      }
+    },
+    "pairs": { "type": "array", "minItems": 1, "maxItems": 4, "items": { "$ref": "#/$defs/pair" } },
+    "blockingFailures": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+  },
+  "$defs": {
+    "sha1": { "type": "string", "pattern": "^[0-9a-fA-F]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
+    "fileIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["files", "aggregateSha256"],
+      "properties": {
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "sha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        },
+        "aggregateSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "workspaceDirty", "lockfileSha256", "worktreeContentSha256"],
+      "properties": {
+        "commit": { "$ref": "#/$defs/sha1" },
+        "workspaceDirty": { "type": "boolean" },
+        "lockfileSha256": { "$ref": "#/$defs/sha256" },
+        "worktreeContentSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "artifactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["report", "events", "codingCiManifest", "patch", "result", "repositorySnapshotReceipt"],
+      "properties": {
+        "report": { "$ref": "#/$defs/artifactRef" },
+        "events": { "$ref": "#/$defs/artifactRef" },
+        "codingCiManifest": { "$ref": "#/$defs/artifactRef" },
+        "patch": { "$ref": "#/$defs/artifactRef" },
+        "result": { "$ref": "#/$defs/artifactRef" },
+        "repositorySnapshotReceipt": { "$ref": "#/$defs/artifactRef" }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["promptSha256", "fixtureBaselineCommit", "repositoryReceiptSha256", "source", "harness", "model", "executionProfile", "maxTokens"],
+      "properties": {
+        "promptSha256": { "$ref": "#/$defs/sha256" },
+        "fixtureBaselineCommit": { "$ref": "#/$defs/sha1" },
+        "repositoryReceiptSha256": { "$ref": "#/$defs/sha256" },
+        "source": { "$ref": "#/$defs/source" },
+        "harness": { "$ref": "#/$defs/source" },
+        "model": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["provider", "id"],
+          "properties": {
+            "provider": { "type": "string", "minLength": 1 },
+            "id": { "const": "deepseek-v4-flash" }
+          }
+        },
+        "executionProfile": { "enum": ["workspace-write", "command-control"] },
+        "maxTokens": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cellId", "variant", "taskId", "runId", "status", "failureCategory", "identity", "outcomes", "provider", "semantic", "contextWaste", "artifacts"],
+      "properties": {
+        "cellId": { "type": "string", "minLength": 1 },
+        "variant": { "enum": ["baseline", "candidate"] },
+        "taskId": { "enum": ["real-ts.api-migration", "real-ts.cross-package-refactor", "real-js.bug-fix", "real-js.failed-test-fix"] },
+        "runId": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["passed", "failed", "blocked", "infrastructure_error"] },
+        "failureCategory": { "type": ["string", "null"] },
+        "identity": { "$ref": "#/$defs/identity" },
+        "outcomes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["taskSuccess", "patchAcceptance", "testSuccess", "regressionCount"],
+          "properties": {
+            "taskSuccess": { "type": "boolean" },
+            "patchAcceptance": { "type": "boolean" },
+            "testSuccess": { "type": "boolean" },
+            "regressionCount": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "provider": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["usageStatus", "inputTokens", "outputTokens", "costUsd", "failure", "terminalErrorCode"],
+          "properties": {
+            "usageStatus": { "enum": ["provider_reported", "unavailable", "not_reached"] },
+            "inputTokens": { "type": ["integer", "null"], "minimum": 0 },
+            "outputTokens": { "type": ["integer", "null"], "minimum": 0 },
+            "costUsd": { "type": ["number", "null"], "minimum": 0 },
+            "failure": { "type": "boolean" },
+            "terminalErrorCode": { "type": ["string", "null"] }
+          }
+        },
+        "semantic": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["successfulRun", "successfulCallCount", "failedCallCount", "capabilities"],
+          "properties": {
+            "successfulRun": { "type": "boolean" },
+            "successfulCallCount": { "type": "integer", "minimum": 0 },
+            "failedCallCount": { "type": "integer", "minimum": 0 },
+            "capabilities": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+          }
+        },
+        "contextWaste": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["modelVisibleNavigationBytes", "nonTargetWholeFileReadCalls", "firstMutationTool"],
+          "properties": {
+            "modelVisibleNavigationBytes": { "type": "integer", "minimum": 0 },
+            "nonTargetWholeFileReadCalls": { "type": "integer", "minimum": 0 },
+            "firstMutationTool": { "type": ["string", "null"], "enum": ["file_edit", "apply_patch", "file_write", "file_delete", null] }
+          }
+        },
+        "artifacts": { "$ref": "#/$defs/artifacts" }
+      }
+    },
+    "pair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pairId", "taskId", "repositoryId", "executionProfile"],
+      "properties": {
+        "pairId": { "type": "string", "minLength": 1 },
+        "taskId": { "enum": ["real-ts.api-migration", "real-ts.cross-package-refactor", "real-js.bug-fix", "real-js.failed-test-fix"] },
+        "repositoryId": { "enum": ["express", "vscode-languageserver-node"] },
+        "executionProfile": { "enum": ["workspace-write", "command-control"] },
+        "baseline": { "$ref": "#/$defs/cell" },
+        "candidate": { "$ref": "#/$defs/cell" }
+      }
+    }
+  }
+}

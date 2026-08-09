@@ -1,0 +1,284 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-navigation-efficiency-v1.json",
+  "title": "Coding Agent Benchmark Navigation Efficiency Evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "platform",
+    "status",
+    "modelCalls",
+    "providerCostUsd",
+    "networkCalls",
+    "hostCommandToolCalls",
+    "source",
+    "profile",
+    "baseline",
+    "candidate",
+    "security",
+    "comparison",
+    "diagnostics"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "coding-agent-benchmark-navigation-efficiency/v1"
+    },
+    "generatedAt": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$"
+    },
+    "platform": {
+      "enum": ["windows-native", "wsl2-linux"]
+    },
+    "status": {
+      "enum": ["eligible_for_canary", "insufficient"]
+    },
+    "modelCalls": {
+      "const": 0
+    },
+    "providerCostUsd": {
+      "const": 0
+    },
+    "networkCalls": {
+      "const": 0
+    },
+    "hostCommandToolCalls": {
+      "const": 0
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baselineRunId",
+        "baselineTaskId",
+        "baselineCommit",
+        "baselineManifestSha256",
+        "baselineEventsSha256"
+      ],
+      "properties": {
+        "baselineRunId": { "type": "string", "minLength": 1 },
+        "baselineTaskId": { "type": "string", "minLength": 1 },
+        "baselineCommit": { "$ref": "#/$defs/sha1" },
+        "baselineManifestSha256": { "$ref": "#/$defs/sha256" },
+        "baselineEventsSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "baseProfile",
+        "permissionMode",
+        "toolAllow",
+        "toolDeny",
+        "manifestModified"
+      ],
+      "properties": {
+        "id": { "const": "workspace-write-navigation-candidate-v1" },
+        "baseProfile": { "const": "workspace-write" },
+        "permissionMode": { "const": "acceptEdits" },
+        "toolAllow": {
+          "type": "array",
+          "minItems": 8,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "toolDeny": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "manifestModified": { "const": false }
+      }
+    },
+    "baseline": { "$ref": "#/$defs/baseline" },
+    "candidate": { "$ref": "#/$defs/candidate" },
+    "security": { "$ref": "#/$defs/security" },
+    "comparison": { "$ref": "#/$defs/comparison" },
+    "diagnostics": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "$defs": {
+    "sha1": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "toolCall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "success",
+        "responseBytes",
+        "fileContentBytes",
+        "fullFileRead",
+        "relativePath",
+        "outputSha256"
+      ],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "arguments": { "type": "object" },
+        "success": { "type": "boolean" },
+        "responseBytes": { "type": "integer", "minimum": 0 },
+        "fileContentBytes": { "type": "integer", "minimum": 0 },
+        "fullFileRead": { "type": "boolean" },
+        "relativePath": {
+          "type": ["string", "null"]
+        },
+        "outputSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runId",
+        "taskId",
+        "baselineCommit",
+        "modelCalls",
+        "inputTokens",
+        "outputTokens",
+        "totalTokens",
+        "tokenLimit",
+        "budgetExhausted",
+        "changedFileCount",
+        "toolCallCount",
+        "modelVisibleResponseBytes",
+        "fileContentBytesExposed",
+        "irrelevantFullFileReadBytes",
+        "calls"
+      ],
+      "properties": {
+        "runId": { "type": "string", "minLength": 1 },
+        "taskId": { "type": "string", "minLength": 1 },
+        "baselineCommit": { "$ref": "#/$defs/sha1" },
+        "modelCalls": { "type": "integer", "minimum": 0 },
+        "inputTokens": { "type": "integer", "minimum": 0 },
+        "outputTokens": { "type": "integer", "minimum": 0 },
+        "totalTokens": { "type": "integer", "minimum": 0 },
+        "tokenLimit": { "type": "integer", "minimum": 0 },
+        "budgetExhausted": { "type": "boolean" },
+        "changedFileCount": { "type": "integer", "minimum": 0 },
+        "toolCallCount": { "type": "integer", "minimum": 0 },
+        "modelVisibleResponseBytes": { "type": "integer", "minimum": 0 },
+        "fileContentBytesExposed": { "type": "integer", "minimum": 0 },
+        "irrelevantFullFileReadBytes": { "type": "integer", "minimum": 0 },
+        "calls": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/toolCall" }
+        }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "toolCallCount",
+        "calls",
+        "modelVisibleResponseBytes",
+        "fileContentBytesExposed",
+        "irrelevantFullFileReadBytes",
+        "targetLocalized",
+        "bugSignatureObserved",
+        "observation"
+      ],
+      "properties": {
+        "toolCallCount": { "type": "integer", "minimum": 0 },
+        "calls": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/toolCall" }
+        },
+        "modelVisibleResponseBytes": { "type": "integer", "minimum": 0 },
+        "fileContentBytesExposed": { "type": "integer", "minimum": 0 },
+        "irrelevantFullFileReadBytes": { "type": "integer", "minimum": 0 },
+        "targetLocalized": { "type": "boolean" },
+        "bugSignatureObserved": { "type": "boolean" },
+        "observation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["regressionTestPath", "targetPath", "bugSignature"],
+          "properties": {
+            "regressionTestPath": { "const": "test/benchmark-v3/real-js-bug-fix.js" },
+            "targetPath": { "const": "lib/request.js" },
+            "bugSignature": { "const": "return subdomains.slice(offset + 1);" }
+          }
+        }
+      }
+    },
+    "gitState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["head", "dirty", "statusSha256"],
+      "properties": {
+        "head": { "$ref": "#/$defs/sha1" },
+        "dirty": { "type": "boolean" },
+        "statusSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "textSearchTraversalRejected",
+        "fileGlobTraversalRejected",
+        "workspaceUnchanged",
+        "before",
+        "after"
+      ],
+      "properties": {
+        "textSearchTraversalRejected": { "type": "boolean" },
+        "fileGlobTraversalRejected": { "type": "boolean" },
+        "workspaceUnchanged": { "type": "boolean" },
+        "before": { "$ref": "#/$defs/gitState" },
+        "after": { "$ref": "#/$defs/gitState" }
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "modelVisibleResponseReductionRatio",
+        "fileContentExposureReductionRatio",
+        "thresholds",
+        "tokenImpact"
+      ],
+      "properties": {
+        "modelVisibleResponseReductionRatio": { "type": "number" },
+        "fileContentExposureReductionRatio": { "type": "number" },
+        "thresholds": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "minimumModelVisibleResponseReductionRatio",
+            "maximumIrrelevantFullFileReadBytes"
+          ],
+          "properties": {
+            "minimumModelVisibleResponseReductionRatio": { "const": 0.5 },
+            "maximumIrrelevantFullFileReadBytes": { "const": 0 }
+          }
+        },
+        "tokenImpact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason"],
+          "properties": {
+            "status": { "const": "not_measured" },
+            "reason": { "const": "no_model_call" }
+          }
+        }
+      }
+    }
+  }
+}

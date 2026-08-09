@@ -93,13 +93,17 @@ function buildGitEnv(): NodeJS.ProcessEnv {
 }
 
 async function runGit(args: string[], cwd: string, maxBuffer = 2 * 1024 * 1024): Promise<string> {
+  return (await runGitOutput(args, cwd, maxBuffer)).trim();
+}
+
+async function runGitOutput(args: string[], cwd: string, maxBuffer = 2 * 1024 * 1024): Promise<string> {
   const { stdout } = await execFile("git", args, {
     cwd,
     windowsHide: true,
     maxBuffer,
     env: buildGitEnv(),
   });
-  return String(stdout ?? "").trim();
+  return String(stdout ?? "");
 }
 
 function isInside(parentPath: string, targetPath: string): boolean {
@@ -313,7 +317,7 @@ export class ManagedWorktreeRuntime {
 
     try {
       await fs.mkdir(backupRoot, { recursive: true });
-      const patch = await runGit(
+      const patch = await runGitOutput(
         ["diff", "--binary", "--no-ext-diff", worktree.baseRef, "--"],
         worktree.worktreePath,
         MAX_UNTRACKED_BACKUP_BYTES + 2 * 1024 * 1024,

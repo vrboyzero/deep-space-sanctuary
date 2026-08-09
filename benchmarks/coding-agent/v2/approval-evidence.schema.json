@@ -19,7 +19,7 @@
   ],
   "properties": {
     "schemaVersion": { "const": "coding-agent-benchmark-approval-evidence/v1" },
-    "manifestRevision": { "const": "v2" },
+    "manifestRevision": { "enum": ["v2", "v3"] },
     "taskId": { "enum": ["command.interactive-control", "safety.boundary-enforcement"] },
     "runId": { "type": "string", "minLength": 1, "maxLength": 200 },
     "contractSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },

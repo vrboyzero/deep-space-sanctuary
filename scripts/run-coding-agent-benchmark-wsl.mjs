@@ -2,10 +2,18 @@ import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { resolvePriorObservedCostUsd } from "./run-coding-agent-benchmark.mjs";
+import {
+  resolveBenchmarkMaximumCostUsd,
+  resolvePriorObservedCostUsd,
+} from "./run-coding-agent-benchmark.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultWorkspaceRoot = path.resolve(path.dirname(scriptPath), "..");
+const WSL_BENCHMARK_PRICING_ENV_KEYS = [
+  "BELLDANDY_MODEL_INPUT_USD_PER_1M",
+  "BELLDANDY_MODEL_OUTPUT_USD_PER_1M",
+  "BELLDANDY_MODEL_CACHE_READ_USD_PER_1M",
+];
 
 export function buildWslBenchmarkInvocation(input, dependencies = {}) {
   const distribution = requireInput(input, "distribution");
@@ -13,14 +21,22 @@ export function buildWslBenchmarkInvocation(input, dependencies = {}) {
   const workspaceRoot = resolvePath(requireInput(input, "workspaceRoot"));
   const toWslPath = dependencies.toWslPath ?? ((value) => resolveWslPath(value, distribution));
   const workspaceRootWsl = toWslPath(workspaceRoot);
-  const fixtureRootWsl = toWslPath(requireInput(input, "fixtureRoot"));
+  const fixtureRoot = resolvePath(requireInput(input, "fixtureRoot"));
+  const fixtureRootWsl = toWslPath(fixtureRoot);
   const artifactRootWsl = toWslPath(requireInput(input, "artifactRoot"));
   const stateRootWsl = toWslPath(requireInput(input, "stateRoot"));
   const manifestRevision = input.manifestRevision ?? "v1";
-  if (manifestRevision !== "v1" && manifestRevision !== "v2") {
-    throw new Error("manifestRevision must be v1 or v2.");
+  if (manifestRevision !== "v1" && manifestRevision !== "v2" && manifestRevision !== "v3") {
+    throw new Error("manifestRevision must be v1, v2, or v3.");
+  }
+  const v3RepositoryConfig = input.v3RepositoryConfig === undefined
+    ? undefined
+    : requireInput(input, "v3RepositoryConfig");
+  if (v3RepositoryConfig && manifestRevision !== "v3") {
+    throw new Error("v3 repository config requires manifestRevision v3.");
   }
   const sourceRootWsl = input.sourceRoot ? toWslPath(requireInput(input, "sourceRoot")) : undefined;
+  const v3RepositoryConfigWsl = v3RepositoryConfig ? toWslPath(v3RepositoryConfig) : undefined;
   if (manifestRevision === "v2" && !sourceRootWsl) {
     throw new Error("sourceRoot is required for manifestRevision v2.");
   }
@@ -32,13 +48,23 @@ export function buildWslBenchmarkInvocation(input, dependencies = {}) {
   const priorObservedCostUsd = input.priorObservedCostUsd === undefined
     ? undefined
     : resolvePriorObservedCostUsd(input.priorObservedCostUsd);
+  const maxTotalCostUsd = input.maxTotalCostUsd === undefined
+    ? undefined
+    : resolveBenchmarkMaximumCostUsd(input.maxTotalCostUsd);
+  const shadowCandidateId = input.shadowCandidateId === undefined
+    ? undefined
+    : requireInput(input, "shadowCandidateId");
   const authMode = input.authMode ?? "none";
   if (authMode !== "none" && authMode !== "token") {
     throw new Error("authMode must be none or token.");
   }
+  const baseEnv = dependencies.baseEnv ?? process.env;
+  const pricingEnvArgs = WSL_BENCHMARK_PRICING_ENV_KEYS.flatMap((key) => {
+    const value = baseEnv[key];
+    return typeof value === "string" && value.trim() ? [`${key}=${value.trim()}`] : [];
+  });
   let childEnv;
   if (authMode === "token") {
-    const baseEnv = dependencies.baseEnv ?? process.env;
     const authToken = input.authToken ?? baseEnv.BELLDANDY_AUTH_TOKEN;
     if (typeof authToken !== "string" || !authToken.trim()) {
       throw new Error("BELLDANDY_AUTH_TOKEN is required when authMode is token.");
@@ -59,12 +85,14 @@ export function buildWslBenchmarkInvocation(input, dependencies = {}) {
       `BELLDANDY_HOST=${input.host ?? "127.0.0.1"}`,
       `BELLDANDY_PORT=${input.port ?? "28889"}`,
       `BELLDANDY_AUTH_MODE=${authMode}`,
-      ...(manifestRevision === "v2"
+      ...pricingEnvArgs,
+      ...(manifestRevision === "v2" || manifestRevision === "v3"
         ? ["BELLDANDY_TOOL_RESULT_EVENT_OUTPUT_CHAR_LIMIT=2048"]
         : []),
       "node", `${workspaceRootWsl}/scripts/run-coding-agent-benchmark.mjs`,
       "--platform", "wsl2-linux",
       "--fixture-root", fixtureRootWsl,
+      "--gateway-fixture-root", fixtureRoot,
       "--artifact-root", artifactRootWsl,
       "--state-root", stateRootWsl,
       "--provider", requireInput(input, "provider"),
@@ -75,8 +103,15 @@ export function buildWslBenchmarkInvocation(input, dependencies = {}) {
       ...(priorObservedCostUsd === undefined
         ? []
         : ["--prior-observed-cost-usd", String(priorObservedCostUsd)]),
+      ...(maxTotalCostUsd === undefined
+        ? []
+        : ["--max-total-cost-usd", String(maxTotalCostUsd)]),
+      ...(shadowCandidateId === undefined
+        ? []
+        : ["--shadow-candidate-id", shadowCandidateId]),
       ...(manifestRevision === "v1" ? [] : ["--manifest-revision", manifestRevision]),
       ...(sourceRootWsl ? ["--source-root", sourceRootWsl] : []),
+      ...(v3RepositoryConfigWsl ? ["--v3-repository-config", v3RepositoryConfigWsl] : []),
     ],
   };
 }
@@ -157,8 +192,15 @@ async function main() {
     taskId: values.get("task-id"),
     manifestRevision: values.get("manifest-revision") ?? "v1",
     sourceRoot: values.get("source-root"),
+    v3RepositoryConfig: values.get("v3-repository-config"),
     ...(values.has("prior-observed-cost-usd") ? {
       priorObservedCostUsd: Number(requireValue(values, "prior-observed-cost-usd")),
+    } : {}),
+    ...(values.has("max-total-cost-usd") ? {
+      maxTotalCostUsd: Number(requireValue(values, "max-total-cost-usd")),
+    } : {}),
+    ...(values.has("shadow-candidate-id") ? {
+      shadowCandidateId: requireValue(values, "shadow-candidate-id"),
     } : {}),
   });
   const child = spawn(invocation.command, invocation.args, {

@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.local/schemas/code-intel-agent-uplift-cohort-preflight-v1.json",
+  "title": "CodeIntel Agent Uplift Cohort Runtime Preflight v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "status",
+    "platform",
+    "providerCalls",
+    "selectedTaskCount",
+    "profileConfig",
+    "pricing",
+    "tasks",
+    "blockingFailures"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "code-intel-agent-uplift-cohort-preflight/v1" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "status": { "enum": ["passed", "failed"] },
+    "platform": { "enum": ["windows-native", "wsl2-linux"] },
+    "providerCalls": { "const": 0 },
+    "selectedTaskCount": { "const": 4 },
+    "profileConfig": { "$ref": "#/$defs/profileConfig" },
+    "pricing": { "$ref": "#/$defs/pricing" },
+    "tasks": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "prefixItems": [
+        {
+          "allOf": [
+            { "$ref": "#/$defs/task" },
+            { "properties": { "taskId": { "const": "real-ts.api-migration" } } }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/task" },
+            { "properties": { "taskId": { "const": "real-ts.cross-package-refactor" } } }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/task" },
+            { "properties": { "taskId": { "const": "real-js.bug-fix" } } }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/task" },
+            { "properties": { "taskId": { "const": "real-js.failed-test-fix" } } }
+          ]
+        }
+      ],
+      "items": false
+    },
+    "blockingFailures": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "passed" } } },
+      "then": {
+        "properties": {
+          "profileConfig": { "properties": { "status": { "const": "passed" } } },
+          "pricing": { "properties": { "status": { "const": "passed" } } },
+          "tasks": {
+            "not": {
+              "contains": {
+                "type": "object",
+                "required": ["status"],
+                "properties": { "status": { "const": "failed" } }
+              }
+            }
+          },
+          "blockingFailures": { "maxItems": 0 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "failed" } } },
+      "then": { "properties": { "blockingFailures": { "minItems": 1 } } }
+    }
+  ],
+  "$defs": {
+    "profileConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason"],
+      "properties": {
+        "status": { "enum": ["passed", "failed"] },
+        "reason": { "type": ["string", "null"] },
+        "created": { "type": "boolean" },
+        "path": { "const": "agents.json" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "passed" } } },
+          "then": {
+            "required": ["created", "path", "sha256"],
+            "properties": { "reason": { "const": null } }
+          }
+        }
+      ]
+    },
+    "pricing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason"],
+      "properties": {
+        "status": { "enum": ["passed", "failed"] },
+        "reason": { "type": ["string", "null"] },
+        "rates": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "BELLDANDY_MODEL_INPUT_USD_PER_1M",
+            "BELLDANDY_MODEL_CACHE_READ_USD_PER_1M",
+            "BELLDANDY_MODEL_OUTPUT_USD_PER_1M"
+          ],
+          "properties": {
+            "BELLDANDY_MODEL_INPUT_USD_PER_1M": { "const": 0.125 },
+            "BELLDANDY_MODEL_CACHE_READ_USD_PER_1M": { "const": 0.0025 },
+            "BELLDANDY_MODEL_OUTPUT_USD_PER_1M": { "const": 0.25 }
+          }
+        },
+        "name": { "type": "string", "minLength": 1 },
+        "expected": { "type": "number", "minimum": 0 },
+        "actual": { "type": ["number", "null"], "minimum": 0 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "passed" } } },
+          "then": {
+            "required": ["rates"],
+            "properties": { "reason": { "const": null } }
+          }
+        }
+      ]
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taskId", "executionProfile", "status", "preflight"],
+      "properties": {
+        "taskId": {
+          "enum": [
+            "real-ts.api-migration",
+            "real-ts.cross-package-refactor",
+            "real-js.bug-fix",
+            "real-js.failed-test-fix"
+          ]
+        },
+        "executionProfile": { "enum": ["workspace-write", "command-control"] },
+        "status": { "enum": ["passed", "failed"] },
+        "preflight": {
+          "type": "object",
+          "required": ["schemaVersion", "taskId", "status", "checks"],
+          "properties": {
+            "schemaVersion": { "const": "coding-agent-benchmark-preflight/v1" },
+            "taskId": { "type": "string", "minLength": 1 },
+            "status": { "enum": ["passed", "failed"] },
+            "checks": { "type": "object" }
+          }
+        }
+      }
+    }
+  }
+}

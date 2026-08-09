@@ -8,6 +8,22 @@ import {
   createBenchmarkApprovalController,
   loadBenchmarkApprovalContract,
 } from "./coding-agent-benchmark-approval.mjs";
+import {
+  buildNavigationCandidateProfile,
+  CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_ID,
+} from "./run-coding-agent-benchmark-navigation-efficiency.mjs";
+import {
+  buildNavigationCandidateV2Profile,
+  CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V2_ID,
+} from "./run-coding-agent-benchmark-navigation-candidate-v2.mjs";
+import {
+  buildNavigationCandidateV3Profile,
+  CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V3_ID,
+} from "./run-coding-agent-benchmark-navigation-candidate-v3.mjs";
+import {
+  buildCodeIntelAgentUpliftCandidateProfile,
+  CODE_INTEL_AGENT_UPLIFT_CANDIDATE_ID,
+} from "./run-code-intel-agent-uplift-readiness.mjs";
 
 export const CODING_CI_CONTRACT_VERSION = "coding-agent-ci/v1";
 export const CODING_CI_AUTOMATION_PROFILE = "bare";
@@ -42,35 +58,70 @@ const CANCELLATION_REQUEST_TIMEOUT_MS = 15_000;
 const scriptPath = fileURLToPath(import.meta.url);
 const workspaceRoot = path.resolve(path.dirname(scriptPath), "..");
 
-export function resolveCodingCiProfile(value, manifestRevision = "v1") {
+export function resolveCodingCiProfile(value, manifestRevision = "v1", shadowCandidateId) {
   const mode = typeof value === "string" && value.trim() ? value.trim() : "plan";
-  const profile = resolveCodingAgentBenchmarkContract(manifestRevision).executionProfiles[mode];
+  const contract = resolveCodingAgentBenchmarkContract(manifestRevision);
+  const profile = contract.executionProfiles[mode];
   if (!profile) {
     throw new Error("--mode must be plan, navigation-read, workspace-write, command-control, safety-probe, recovery-control, or git-local.");
   }
-  const defaultToolDeny = profile.toolAllow.includes("run_command")
+  let selectedProfile = profile;
+  let candidateId;
+  if (shadowCandidateId !== undefined) {
+    candidateId = String(shadowCandidateId).trim();
+    if (candidateId === CODE_INTEL_AGENT_UPLIFT_CANDIDATE_ID) {
+      if (manifestRevision !== "v3" || (mode !== "workspace-write" && mode !== "command-control")) {
+        throw new Error("--shadow-candidate-id CodeIntel uplift only supports v3 workspace-write or command-control mode.");
+      }
+      selectedProfile = buildCodeIntelAgentUpliftCandidateProfile(profile, mode);
+    } else {
+      if (manifestRevision !== "v3"
+        || mode !== "workspace-write"
+        || ![CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_ID,
+          CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V2_ID,
+          CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V3_ID].includes(candidateId)) {
+        throw new Error("--shadow-candidate-id only supports the v3 workspace-write navigation candidate.");
+      }
+      const candidate = candidateId === CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V3_ID
+        ? buildNavigationCandidateV3Profile({ suite: { executionProfiles: contract.executionProfiles } })
+        : candidateId === CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V2_ID
+          ? buildNavigationCandidateV2Profile({ suite: { executionProfiles: contract.executionProfiles } })
+          : buildNavigationCandidateProfile({ suite: { executionProfiles: contract.executionProfiles } });
+      selectedProfile = {
+        permissionMode: candidate.permissionMode,
+        toolAllow: candidate.toolAllow,
+        toolDeny: candidate.toolDeny,
+        ...(candidate.toolArgumentPolicy ? { toolArgumentPolicy: candidate.toolArgumentPolicy } : {}),
+      };
+    }
+  }
+  const defaultToolDeny = selectedProfile.toolAllow.includes("run_command")
     ? ["spawn_subagent"]
     : ["run_command", "spawn_subagent"];
   return {
     mode,
-    ...(typeof profile.agentId === "string" && profile.agentId.trim()
-      ? { agentId: profile.agentId.trim() }
+    ...(candidateId ? { candidateId } : {}),
+    ...(typeof selectedProfile.agentId === "string" && selectedProfile.agentId.trim()
+      ? { agentId: selectedProfile.agentId.trim() }
       : {}),
-    ...(Number.isInteger(profile.maxHighRiskToolCalls) && profile.maxHighRiskToolCalls >= 0
-      ? { maxHighRiskToolCalls: profile.maxHighRiskToolCalls }
+    ...(Number.isInteger(selectedProfile.maxHighRiskToolCalls) && selectedProfile.maxHighRiskToolCalls >= 0
+      ? { maxHighRiskToolCalls: selectedProfile.maxHighRiskToolCalls }
       : {}),
-    permissionMode: profile.permissionMode,
-    toolAllow: [...profile.toolAllow],
-    ...(JSON.stringify(profile.toolDeny) === JSON.stringify(defaultToolDeny)
+    permissionMode: selectedProfile.permissionMode,
+    toolAllow: [...selectedProfile.toolAllow],
+    ...(selectedProfile.toolArgumentPolicy
+      ? { toolArgumentPolicy: selectedProfile.toolArgumentPolicy }
+      : {}),
+    ...(JSON.stringify(selectedProfile.toolDeny) === JSON.stringify(defaultToolDeny)
       ? {}
-      : { toolDeny: [...profile.toolDeny] }),
+      : { toolDeny: [...selectedProfile.toolDeny] }),
   };
 }
 
 export function resolveCodingCiLimits(manifestRevision = "v1", taskId) {
   const contract = resolveCodingAgentBenchmarkContract(manifestRevision);
-  if (contract.revision === "v2" && (typeof taskId !== "string" || !taskId.trim())) {
-    throw new Error("--task-id is required for corrected v2 CI runs.");
+  if (contract.revision !== "v1" && (typeof taskId !== "string" || !taskId.trim())) {
+    throw new Error("--task-id is required for corrected v2 and v3 CI runs.");
   }
   return {
     ...CODING_CI_LIMITS,
@@ -84,7 +135,7 @@ export function buildAgentRunArgs(input) {
     "agent", "run",
     "--jsonl",
     "--automation-profile", CODING_CI_AUTOMATION_PROFILE,
-    "--cwd", path.resolve(input.workspace),
+    "--cwd", input.gatewayWorkspace ?? path.resolve(input.workspace),
     "--state-dir", path.resolve(input.stateDir),
     ...(input.conversationId ? ["--conversation-id", input.conversationId] : []),
     ...(input.profile.agentId ? ["--agent-id", input.profile.agentId] : []),
@@ -94,6 +145,9 @@ export function buildAgentRunArgs(input) {
     "--tool-deny", (input.profile.toolDeny ?? (input.profile.toolAllow.includes("run_command")
       ? ["spawn_subagent"]
       : ["run_command", "spawn_subagent"])).join(","),
+    ...(input.profile.toolArgumentPolicy
+      ? ["--tool-argument-policy", input.profile.toolArgumentPolicy]
+      : []),
     "--timeout", String(limits.timeoutMs),
     "--max-turns", String(limits.maxTurns),
     "--max-tokens", String(limits.maxTokens),
@@ -419,6 +473,7 @@ async function main() {
     schemaVersion: CODING_CI_CONTRACT_VERSION,
     protocolVersion: CODING_RUN_PROTOCOL_VERSION,
     mode: options.profile.mode,
+    ...(options.profile.candidateId ? { profileCandidateId: options.profile.candidateId } : {}),
     automationProfile: eventContract?.automationProfile ?? null,
     limits: options.limits ?? CODING_CI_LIMITS,
     cliExitCode: child.exitCode,
@@ -453,6 +508,7 @@ async function main() {
     path.join(options.artifactDir, "status.txt"),
     [
       `mode=${manifest.mode}`,
+      ...(manifest.profileCandidateId ? [`profile_candidate_id=${manifest.profileCandidateId}`] : []),
       `cli_exit_code=${manifest.cliExitCode}`,
       `terminal_type=${manifest.terminalType ?? "none"}`,
       `changed_paths=${manifest.changedPaths.length}`,
@@ -486,6 +542,7 @@ function resolveMainOptions(argv) {
   assertOutsideWorkspace(workspace, artifactDir);
   return {
     workspace,
+    gatewayWorkspace: resolveOptionalGatewayWorkspace(values),
     artifactDir,
     promptFile: path.resolve(requireValue(values, "prompt-file")),
     stateDir: path.resolve(requireValue(values, "state-dir")),
@@ -505,7 +562,11 @@ function resolveMainOptions(argv) {
     manifestRevision,
     taskId,
     limits: resolveCodingCiLimits(manifestRevision, taskId),
-    profile: resolveCodingCiProfile(values.get("mode"), manifestRevision),
+    profile: resolveCodingCiProfile(
+      values.get("mode"),
+      manifestRevision,
+      values.get("shadow-candidate-id"),
+    ),
     cancelOnRunStart: resolveOptionalBoolean(values, "cancel-on-run-start"),
   };
 }
@@ -538,6 +599,15 @@ function resolveOptionalBoolean(values, key) {
     throw new Error(`--${key} must be true or false.`);
   }
   return value === "true";
+}
+
+function resolveOptionalGatewayWorkspace(values) {
+  if (!values.has("gateway-workspace")) return undefined;
+  const value = requireValue(values, "gateway-workspace");
+  if (!path.posix.isAbsolute(value) && !path.win32.isAbsolute(value)) {
+    throw new Error("--gateway-workspace must be an absolute POSIX or Windows path.");
+  }
+  return value;
 }
 
 function resolveOptionalPositiveNumber(values, key) {

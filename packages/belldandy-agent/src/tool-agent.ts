@@ -115,6 +115,7 @@ import {
 } from "./agent-run-automation.js";
 import {
   createReActRunAbortController,
+  MODEL_LOOP_COST_CONTAINMENT_LIMITS,
   normalizeMaxHighRiskToolCalls,
   normalizeMaxRunWallTimeMs,
   normalizeMaxTotalTokens,
@@ -2316,6 +2317,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
       maxTotalTokens: runBudgets.maxTotalTokens,
       maxHighRiskToolCalls: this.opts.maxHighRiskToolCalls,
       ...(runBudgets.maxCostUsd === undefined ? {} : { maxCostUsd: runBudgets.maxCostUsd }),
+      ...(runtimeContext?.launchSpec?.modelLoopBudgetPolicy
+        ? { modelLoopBudgetPolicy: runtimeContext.launchSpec.modelLoopBudgetPolicy }
+        : {}),
     });
 
     // ReAct 循环内压缩状态
@@ -2478,11 +2482,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
       limit: number,
       observed: number,
       error: string,
+      details?: Pick<AgentBudgetExhausted, "policyId" | "stage" | "reasonCode">,
     ) {
       runSuccess = false;
       runError = error;
       yield* yieldItem(buildUsageItem());
-      yield* yieldItem({ type: "budget_exhausted", budget, limit, observed });
+      yield* yieldItem({ type: "budget_exhausted", budget, limit, observed, ...details });
       yield* yieldItem({ type: "final", text: error });
       yield* yieldItem({ type: "status", status: "error" });
     };
@@ -2696,24 +2701,81 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
         }
 
+        const pendingSteerCommands = input.steering && !structuredOutputRepairCall
+          ? input.steering.peekPending()
+          : [];
+
+        const tools = structuredOutputRepairCall
+          ? []
+          : this.opts.toolExecutor.getDefinitions(resolvedAgentId, input.conversationId, runtimeContext);
+        const toolNames = tools.map((tool) => tool.function.name);
+        const preflightMessages = pendingSteerCommands.length > 0
+          ? [
+            ...messages,
+            ...pendingSteerCommands.map((command): Message => ({ role: "user", content: command.prompt })),
+          ]
+          : messages;
+        const preflightRequestMessages = applyStablePrefixSplitMessageLayout(preflightMessages, {
+          transientText: currentTransientTailText,
+          independentBlockText: currentIndependentBlockText,
+          messageLayout: this.opts.messageLayout,
+        }) as Message[];
+        const dispatchTokenEstimateContext = currentTokenEstimateModel ? { model: currentTokenEstimateModel } : undefined;
+        const preflightSystemPromptTokens = estimateSystemPromptTokens(
+          preflightRequestMessages,
+          dispatchTokenEstimateContext,
+        );
+        const preflightContextTokens = estimateContextTokensFromMessages(
+          preflightRequestMessages,
+          { includeSystem: false },
+          dispatchTokenEstimateContext,
+        );
+        const preflightPromptTokens = preflightSystemPromptTokens + preflightContextTokens;
+        const modelLoopMinimumCost = calculateUsageCostUsd({
+          inputTokens: preflightPromptTokens,
+          outputTokens: runtimeContext?.launchSpec?.modelLoopBudgetPolicy
+            ? MODEL_LOOP_COST_CONTAINMENT_LIMITS.minimumOutputTokenReserve
+            : 0,
+          pricing: this.opts.usagePricing,
+        });
+        const modelLoopBudgetExhausted = runBudget.reserveModelCall({
+          minimumInputTokens: preflightPromptTokens,
+          ...(modelLoopMinimumCost ? { minimumCostUsd: modelLoopMinimumCost.totalUsd } : {}),
+        });
+        if (modelLoopBudgetExhausted) {
+          const error = modelLoopBudgetExhausted.budget === "model_calls"
+            ? `模型循环成本止损已触发（最多 ${modelLoopBudgetExhausted.limit} 次模型调用）。任务结果尚未评估，请缩小任务或在新的受控运行中继续。`
+            : modelLoopBudgetExhausted.budget === "cost_usd"
+              ? `剩余费用预算不足以覆盖下一次模型调用的最小输入与输出保留（最大 $${modelLoopBudgetExhausted.limit.toFixed(8)}，预计累计 $${modelLoopBudgetExhausted.observed.toFixed(8)}）。`
+              : `剩余 token 预算不足以覆盖下一次模型调用的最小输入与 ${MODEL_LOOP_COST_CONTAINMENT_LIMITS.minimumOutputTokenReserve} token 输出保留（最大 ${modelLoopBudgetExhausted.limit}，预计累计 ${modelLoopBudgetExhausted.observed}）。`;
+          yield* emitBudgetExhausted(
+            modelLoopBudgetExhausted.budget,
+            modelLoopBudgetExhausted.limit,
+            modelLoopBudgetExhausted.observed,
+            error,
+            {
+              policyId: modelLoopBudgetExhausted.policyId,
+              stage: modelLoopBudgetExhausted.stage,
+              reasonCode: modelLoopBudgetExhausted.reasonCode,
+            },
+          );
+          return;
+        }
         const steerCommands = input.steering && !structuredOutputRepairCall
           ? await input.steering.consumePending({ modelCallIndex: nextModelCallIndex })
           : [];
         for (const command of steerCommands) {
           messages.push({ role: "user", content: command.prompt });
         }
-
-        const tools = structuredOutputRepairCall
-          ? []
-          : this.opts.toolExecutor.getDefinitions(resolvedAgentId, input.conversationId, runtimeContext);
-        const toolNames = tools.map((tool) => tool.function.name);
         const requestMessages = applyStablePrefixSplitMessageLayout(messages, {
           transientText: currentTransientTailText,
           independentBlockText: currentIndependentBlockText,
           messageLayout: this.opts.messageLayout,
         }) as Message[];
-        const dispatchTokenEstimateContext = currentTokenEstimateModel ? { model: currentTokenEstimateModel } : undefined;
-        const dispatchSystemPromptTokens = estimateSystemPromptTokens(requestMessages, dispatchTokenEstimateContext);
+        const dispatchSystemPromptTokens = estimateSystemPromptTokens(
+          requestMessages,
+          dispatchTokenEstimateContext,
+        );
         const dispatchContextTokens = estimateContextTokensFromMessages(
           requestMessages,
           { includeSystem: false },
@@ -3070,7 +3132,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
               );
               const minimumRepairCost = calculateUsageCostUsd({
                 inputTokens: minimumRepairInputTokens,
-                outputTokens: 0,
+                outputTokens: runtimeContext?.launchSpec?.modelLoopBudgetPolicy
+                  ? MODEL_LOOP_COST_CONTAINMENT_LIMITS.minimumOutputTokenReserve
+                  : 0,
                 pricing: this.opts.usagePricing,
               });
               const repairBudgetExhausted = runBudget.checkModelCallPreflight({
@@ -3087,6 +3151,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
                   budget: repairBudgetExhausted.budget,
                   limit: repairBudgetExhausted.limit,
                   observed: repairBudgetExhausted.observed,
+                  ...(repairBudgetExhausted.policyId ? {
+                    policyId: repairBudgetExhausted.policyId,
+                    stage: repairBudgetExhausted.stage,
+                    reasonCode: repairBudgetExhausted.reasonCode,
+                  } : {}),
                 });
                 return;
               }
@@ -3728,6 +3797,23 @@ export class ToolEnabledAgent implements BelldandyAgent {
 
           if (isRunStopRequested(input.abortSignal)) {
             yield* emitRunAbort();
+            return;
+          }
+
+          const navigationToolBudgetExhausted = runBudget.reserveToolCall(request.name);
+          if (navigationToolBudgetExhausted) {
+            const toolLabel = request.name === "file_read" ? "文件读取" : "文本搜索";
+            yield* emitBudgetExhausted(
+              navigationToolBudgetExhausted.budget,
+              navigationToolBudgetExhausted.limit,
+              navigationToolBudgetExhausted.observed,
+              `${toolLabel}成本止损已触发（最多 ${navigationToolBudgetExhausted.limit} 次）。已在执行 ${request.name} 前停止；任务结果尚未评估。`,
+              {
+                policyId: navigationToolBudgetExhausted.policyId,
+                stage: navigationToolBudgetExhausted.stage,
+                reasonCode: navigationToolBudgetExhausted.reasonCode,
+              },
+            );
             return;
           }
 

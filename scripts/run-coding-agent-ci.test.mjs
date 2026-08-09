@@ -20,6 +20,9 @@ import {
   sanitizeDiagnostic,
   validateAgentRunEvents,
 } from "./run-coding-agent-ci.mjs";
+import {
+  CODE_INTEL_AGENT_UPLIFT_CANDIDATE_ID,
+} from "./run-code-intel-agent-uplift-readiness.mjs";
 
 const tempRoots = [];
 
@@ -81,6 +84,128 @@ describe("coding agent CI runner", () => {
     expect(args.join(" ")).not.toMatch(/apply_patch|file_write|file_delete|accept-edits/);
   });
 
+  it("allows only the exact v3 workspace-write navigation shadow candidate", () => {
+    expect(resolveCodingCiProfile(
+      "workspace-write",
+      "v3",
+      "workspace-write-navigation-candidate-v1",
+    )).toEqual({
+      mode: "workspace-write",
+      candidateId: "workspace-write-navigation-candidate-v1",
+      permissionMode: "acceptEdits",
+      toolAllow: [
+        "file_read",
+        "list_files",
+        "text_search",
+        "file_glob",
+        "file_edit",
+        "apply_patch",
+        "file_write",
+        "file_delete",
+      ],
+    });
+    expect(() => resolveCodingCiProfile(
+      "workspace-write",
+      "v2",
+      "workspace-write-navigation-candidate-v1",
+    )).toThrow(/only supports the v3 workspace-write/i);
+    expect(() => resolveCodingCiProfile("plan", "v3", "unknown"))
+      .toThrow(/only supports the v3 workspace-write/i);
+  });
+
+  it("projects candidate v2 with the exact candidate v1 tool set and no runtime guard", () => {
+    expect(resolveCodingCiProfile(
+      "workspace-write",
+      "v3",
+      "workspace-write-navigation-candidate-v2",
+    )).toEqual({
+      mode: "workspace-write",
+      candidateId: "workspace-write-navigation-candidate-v2",
+      permissionMode: "acceptEdits",
+      toolAllow: [
+        "file_read",
+        "list_files",
+        "text_search",
+        "file_glob",
+        "file_edit",
+        "apply_patch",
+        "file_write",
+        "file_delete",
+      ],
+    });
+  });
+
+  it("projects candidate v3 with the isolated bounded navigation runtime policy", () => {
+    const profile = resolveCodingCiProfile(
+      "workspace-write",
+      "v3",
+      "workspace-write-navigation-candidate-v3",
+    );
+    expect(profile).toEqual({
+      mode: "workspace-write",
+      candidateId: "workspace-write-navigation-candidate-v3",
+      permissionMode: "acceptEdits",
+      toolAllow: [
+        "file_read",
+        "list_files",
+        "text_search",
+        "file_glob",
+        "file_edit",
+        "apply_patch",
+        "file_write",
+        "file_delete",
+      ],
+      toolArgumentPolicy: "bounded-navigation-v1",
+    });
+
+    expect(buildAgentRunArgs({
+      workspace: "C:/fixture/workspace",
+      stateDir: "C:/fixture/state",
+      outputSchemaPath: "C:/fixture/output.schema.json",
+      profile,
+    })).toEqual(expect.arrayContaining([
+      "--tool-argument-policy",
+      "bounded-navigation-v1",
+    ]));
+    expect(buildAgentRunArgs({
+      workspace: "C:/fixture/workspace",
+      stateDir: "C:/fixture/state",
+      outputSchemaPath: "C:/fixture/output.schema.json",
+      profile: resolveCodingCiProfile("workspace-write", "v3"),
+    })).not.toContain("--tool-argument-policy");
+  });
+
+  it("appends code_intel as the only v3 uplift candidate profile difference", () => {
+    for (const mode of ["workspace-write", "command-control"]) {
+      const baseline = resolveCodingCiProfile(mode, "v3");
+      const candidate = resolveCodingCiProfile(
+        mode,
+        "v3",
+        CODE_INTEL_AGENT_UPLIFT_CANDIDATE_ID,
+      );
+      const { candidateId, toolAllow, ...candidateRest } = candidate;
+      const { toolAllow: baselineToolAllow, ...baselineRest } = baseline;
+
+      expect(candidateId).toBe(CODE_INTEL_AGENT_UPLIFT_CANDIDATE_ID);
+      expect(candidateRest).toEqual(baselineRest);
+      expect(toolAllow).toEqual([...baselineToolAllow, "code_intel"]);
+      expect(toolAllow.filter((tool) => tool === "code_intel")).toHaveLength(1);
+    }
+
+    expect(() => resolveCodingCiProfile(
+      "workspace-write",
+      "v2",
+      CODE_INTEL_AGENT_UPLIFT_CANDIDATE_ID,
+    )).toThrow(/v3 workspace-write or command-control/i);
+    expect(() => resolveCodingCiProfile(
+      "plan",
+      "v3",
+      CODE_INTEL_AGENT_UPLIFT_CANDIDATE_ID,
+    )).toThrow(/v3 workspace-write or command-control/i);
+    expect(() => resolveCodingCiProfile("workspace-write", "v3", "unknown"))
+      .toThrow(/navigation candidate/i);
+  });
+
   it("builds one fixed-budget JSONL invocation without shell or push tools", () => {
     const args = buildAgentRunArgs({
       workspace: "C:/fixture/workspace",
@@ -110,6 +235,24 @@ describe("coding agent CI runner", () => {
       "--output-schema", path.resolve("C:/fixture/review-output.schema.json"),
     ]);
     expect(args.join(" ")).not.toMatch(/\b(?:push|merge|apply)\b/);
+  });
+
+  it("uses the Gateway-visible workspace only for the remote coding run cwd", () => {
+    const workspace = "/var/tmp/coding-agent-fixtures/run-1/workspace";
+    const gatewayWorkspace = "\\\\wsl.localhost\\Ubuntu-22.04\\var\\tmp\\coding-agent-fixtures\\run-1\\workspace";
+    const args = buildAgentRunArgs({
+      workspace,
+      gatewayWorkspace,
+      stateDir: "/mnt/e/project/star-sanctuary/tmp/gateway-state",
+      outputSchemaPath: "/var/tmp/coding-agent-artifacts/run-1/output.schema.json",
+      profile: resolveCodingCiProfile("workspace-write"),
+    });
+
+    expect(args.slice(args.indexOf("--cwd"), args.indexOf("--cwd") + 2)).toEqual([
+      "--cwd",
+      gatewayWorkspace,
+    ]);
+    expect(args).not.toContain(path.resolve(workspace));
   });
 
   it("projects the frozen command-control profile without auto-approving host commands", () => {

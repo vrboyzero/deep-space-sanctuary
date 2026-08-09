@@ -1,0 +1,269 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-navigation-candidate-v2-v1.json",
+  "title": "Coding Agent Benchmark Navigation Candidate v2 Evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "platform",
+    "status",
+    "taskId",
+    "candidate",
+    "prompt",
+    "execution",
+    "replay",
+    "comparison",
+    "security",
+    "source",
+    "decision",
+    "diagnostics"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "coding-agent-benchmark-navigation-candidate-v2/v1" },
+    "generatedAt": { "$ref": "#/$defs/timestamp" },
+    "platform": { "enum": ["windows-native", "wsl2-linux"] },
+    "status": { "const": "eligible_for_shadow_readiness" },
+    "taskId": { "const": "real-js.bug-fix" },
+    "candidate": { "$ref": "#/$defs/candidate" },
+    "prompt": { "$ref": "#/$defs/prompt" },
+    "execution": { "$ref": "#/$defs/execution" },
+    "replay": { "$ref": "#/$defs/replay" },
+    "comparison": { "$ref": "#/$defs/comparison" },
+    "security": { "$ref": "#/$defs/security" },
+    "source": { "$ref": "#/$defs/source" },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "requiresNewProviderAuthorization", "tokenUpliftClaimed"],
+      "properties": {
+        "status": { "const": "eligible_for_shadow_readiness" },
+        "requiresNewProviderAuthorization": { "const": true },
+        "tokenUpliftClaimed": { "const": false }
+      }
+    },
+    "diagnostics": { "const": [] }
+  },
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$"
+    },
+    "sha1": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "baseProfile",
+        "permissionMode",
+        "toolAllow",
+        "toolDeny",
+        "manifestModified",
+        "strategy"
+      ],
+      "properties": {
+        "id": { "const": "workspace-write-navigation-candidate-v2" },
+        "baseProfile": { "const": "workspace-write" },
+        "permissionMode": { "const": "acceptEdits" },
+        "toolAllow": {
+          "const": [
+            "file_read",
+            "list_files",
+            "text_search",
+            "file_glob",
+            "file_edit",
+            "apply_patch",
+            "file_write",
+            "file_delete"
+          ]
+        },
+        "toolDeny": { "const": ["run_command", "spawn_subagent"] },
+        "manifestModified": { "const": false },
+        "strategy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "enforcement", "runtimeToolGuard"],
+          "properties": {
+            "id": { "const": "bounded-localize-before-read/v1" },
+            "enforcement": { "const": "prompt_contract" },
+            "runtimeToolGuard": { "const": false }
+          }
+        }
+      }
+    },
+    "prompt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "strategyId",
+        "enforcement",
+        "runtimeToolGuard",
+        "basePromptSha256",
+        "contractSha256",
+        "renderedPromptSha256"
+      ],
+      "properties": {
+        "strategyId": { "const": "bounded-localize-before-read/v1" },
+        "enforcement": { "const": "prompt_contract" },
+        "runtimeToolGuard": { "const": false },
+        "basePromptSha256": { "$ref": "#/$defs/sha256" },
+        "contractSha256": { "$ref": "#/$defs/sha256" },
+        "renderedPromptSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "modelCalls",
+        "providerCostUsd",
+        "networkCalls",
+        "hostCommandToolCalls",
+        "manifestModified",
+        "v3AggregateModified"
+      ],
+      "properties": {
+        "mode": { "const": "offline-replay" },
+        "modelCalls": { "const": 0 },
+        "providerCostUsd": { "const": 0 },
+        "networkCalls": { "const": 0 },
+        "hostCommandToolCalls": { "const": 0 },
+        "manifestModified": { "const": false },
+        "v3AggregateModified": { "const": false }
+      }
+    },
+    "replay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "toolCallCount",
+        "sequence",
+        "calls",
+        "modelVisibleResponseBytes",
+        "fileContentBytesExposed",
+        "fullTargetReadCount",
+        "targetLocalized",
+        "bugSignatureObserved"
+      ],
+      "properties": {
+        "toolCallCount": { "const": 3 },
+        "sequence": { "const": ["file_glob", "file_read", "text_search"] },
+        "calls": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": { "$ref": "#/$defs/toolCall" }
+        },
+        "modelVisibleResponseBytes": { "type": "integer", "minimum": 1 },
+        "fileContentBytesExposed": { "type": "integer", "minimum": 1 },
+        "fullTargetReadCount": { "const": 0 },
+        "targetLocalized": { "const": true },
+        "bugSignatureObserved": { "const": true }
+      }
+    },
+    "toolCall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "arguments",
+        "fileContentBytes",
+        "fullFileRead",
+        "relativePath",
+        "success",
+        "responseBytes",
+        "outputSha256"
+      ],
+      "properties": {
+        "name": { "enum": ["file_glob", "file_read", "text_search"] },
+        "arguments": { "type": "object" },
+        "fileContentBytes": { "type": "integer", "minimum": 0 },
+        "fullFileRead": { "type": "boolean" },
+        "relativePath": { "type": ["string", "null"] },
+        "success": { "const": true },
+        "responseBytes": { "type": "integer", "minimum": 0 },
+        "outputSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baselineModelVisibleResponseBytes",
+        "candidateV1ActualModelVisibleResponseBytes",
+        "candidateV2ReplayModelVisibleResponseBytes",
+        "tokenImpact"
+      ],
+      "properties": {
+        "baselineModelVisibleResponseBytes": { "type": "integer", "minimum": 1 },
+        "candidateV1ActualModelVisibleResponseBytes": { "type": "integer", "minimum": 1 },
+        "candidateV2ReplayModelVisibleResponseBytes": { "type": "integer", "minimum": 1 },
+        "tokenImpact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason"],
+          "properties": {
+            "status": { "const": "not_measured" },
+            "reason": { "const": "no_model_call" }
+          }
+        }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspaceUnchanged",
+        "textSearchTraversalRejected",
+        "fileGlobTraversalRejected",
+        "before",
+        "after"
+      ],
+      "properties": {
+        "workspaceUnchanged": { "const": true },
+        "textSearchTraversalRejected": { "const": true },
+        "fileGlobTraversalRejected": { "const": true },
+        "before": { "$ref": "#/$defs/gitState" },
+        "after": { "$ref": "#/$defs/gitState" }
+      }
+    },
+    "gitState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["head", "dirty", "statusSha256"],
+      "properties": {
+        "head": { "$ref": "#/$defs/sha1" },
+        "dirty": { "const": false },
+        "statusSha256": { "const": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "analysisSha256",
+        "shadowArtifactSha256",
+        "navigationEvidenceSha256",
+        "manifestSha256",
+        "basePromptSha256",
+        "baselineCommit",
+        "candidateFixtureBaselineCommit",
+        "repositorySnapshotIdentitySha256"
+      ],
+      "properties": {
+        "analysisSha256": { "$ref": "#/$defs/sha256" },
+        "shadowArtifactSha256": { "$ref": "#/$defs/sha256" },
+        "navigationEvidenceSha256": { "$ref": "#/$defs/sha256" },
+        "manifestSha256": { "$ref": "#/$defs/sha256" },
+        "basePromptSha256": { "$ref": "#/$defs/sha256" },
+        "baselineCommit": { "$ref": "#/$defs/sha1" },
+        "candidateFixtureBaselineCommit": { "$ref": "#/$defs/sha1" },
+        "repositorySnapshotIdentitySha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

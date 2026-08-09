@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-system-scenario-v1.json",
+  "title": "Star Sanctuary coding agent benchmark v3 system scenario",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "taskId",
+    "generatorId",
+    "fixtureVersion",
+    "platform",
+    "requiredCapability",
+    "evidenceSchemaVersion",
+    "invariants"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "coding-agent-benchmark-system-scenario/v1" },
+    "taskId": { "$ref": "#/$defs/systemTaskId" },
+    "generatorId": { "$ref": "#/$defs/generatorId" },
+    "fixtureVersion": { "const": 1 },
+    "platform": { "enum": ["windows-native", "wsl2-linux"] },
+    "requiredCapability": {
+      "enum": [
+        "browserBehavior",
+        "parallelReadIsolation",
+        "parallelWriteFanIn",
+        "restartDeliveryReconciliation"
+      ]
+    },
+    "evidenceSchemaVersion": { "const": "coding-agent-benchmark-system-evidence/v1" },
+    "invariants": {
+      "type": "array",
+      "prefixItems": [
+        { "const": "run_and_platform_binding" },
+        { "const": "workspace_containment" },
+        { "const": "zero_sensitive_findings" },
+        { "const": "zero_orphan_resources" },
+        { "const": "zero_duplicate_side_effects" }
+      ],
+      "items": false,
+      "minItems": 5,
+      "maxItems": 5
+    }
+  },
+  "$defs": {
+    "systemTaskId": {
+      "enum": [
+        "system.browser-behavior",
+        "system.parallel-read-isolation",
+        "system.parallel-write-fan-in",
+        "system.restart-delivery-reconciliation"
+      ]
+    },
+    "generatorId": {
+      "enum": [
+        "browser-behavior-v1",
+        "parallel-read-isolation-v1",
+        "parallel-write-fan-in-v1",
+        "restart-delivery-reconciliation-v1"
+      ]
+    }
+  }
+}

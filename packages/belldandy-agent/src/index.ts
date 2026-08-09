@@ -264,6 +264,8 @@ export type AgentRunSteerCommand = {
 };
 
 export interface AgentRunSteeringMailbox {
+  /** 只读预览下一边界可消费的输入，供 dispatch 前预算估算；不得改变命令状态。 */
+  peekPending(): AgentRunSteerCommand[];
   consumePending(input: { modelCallIndex: number }): Promise<AgentRunSteerCommand[]>;
   /** 无待处理输入时原子关闭 mailbox；返回 false 表示调用方应继续下一次模型调用。 */
   sealIfIdle(): boolean;
@@ -304,9 +306,26 @@ export type AgentInterrupted = {
 /** ReAct 硬预算耗尽时的可诊断终态；final/status 会紧随其后。 */
 export type AgentBudgetExhausted = {
   type: "budget_exhausted";
-  budget: "tool_loop_iterations" | "tool_calls" | "wall_time_ms" | "total_tokens" | "high_risk_tool_calls" | "cost_usd";
+  budget:
+    | "tool_loop_iterations"
+    | "tool_calls"
+    | "wall_time_ms"
+    | "total_tokens"
+    | "high_risk_tool_calls"
+    | "cost_usd"
+    | "model_calls"
+    | "file_read_calls"
+    | "text_search_calls";
   limit: number;
   observed: number;
+  policyId?: "cost-containment-v1";
+  stage?: "before_model_call" | "before_tool_call";
+  reasonCode?:
+    | "model_call_limit"
+    | "file_read_call_limit"
+    | "text_search_call_limit"
+    | "insufficient_remaining_tokens"
+    | "insufficient_remaining_cost";
 };
 
 export type AgentToolCall = {

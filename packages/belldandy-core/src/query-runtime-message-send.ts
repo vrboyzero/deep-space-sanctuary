@@ -974,6 +974,8 @@ function buildCodingRunLaunchSpec(
       : isBareCodingRun(codingRun) ? { toolSet: [] } : {}),
     ...(codingRun.toolDeny?.length ? { toolDeny: [...codingRun.toolDeny] } : {}),
     ...(codingRun.permissionMode ? { permissionMode: codingRun.permissionMode } : {}),
+    ...(codingRun.toolArgumentPolicy ? { toolArgumentPolicy: codingRun.toolArgumentPolicy } : {}),
+    ...(codingRun.modelLoopBudgetPolicy ? { modelLoopBudgetPolicy: codingRun.modelLoopBudgetPolicy } : {}),
     ...(codingRun.maxWallTimeMs ? { maxRunWallTimeMs: codingRun.maxWallTimeMs } : {}),
     ...(codingRun.maxTurns ? { toolLoopIterationBudget: codingRun.maxTurns } : {}),
     ...(codingRun.maxTokens ? { maxTotalTokens: codingRun.maxTokens } : {}),
@@ -1804,6 +1806,9 @@ function createMessageSendStreamAdapter(input: {
             budget: item.budget,
             limit: item.limit,
             observed: item.observed,
+            ...(item.policyId ? { policyId: item.policyId } : {}),
+            ...(item.stage ? { stage: item.stage } : {}),
+            ...(item.reasonCode ? { reasonCode: item.reasonCode } : {}),
           },
         });
       },

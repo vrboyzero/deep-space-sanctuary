@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.local/schemas/code-intel/agent-uplift-gate-v1.schema.json",
+  "title": "Star Sanctuary CodeIntel Agent Uplift Gate v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "frozenAt",
+    "contractVersion",
+    "sourceIdentity",
+    "cohort",
+    "pairedRuns",
+    "gates",
+    "metricDefinitions",
+    "failurePolicy",
+    "exclusions"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "code-intel-agent-uplift-gate/v1" },
+    "id": { "const": "p1-a1-ts-js-agent-uplift-v1" },
+    "frozenAt": { "type": "string", "format": "date-time" },
+    "contractVersion": { "const": "code-intel/v1" },
+    "sourceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taskManifest", "truthSet"],
+      "properties": {
+        "taskManifest": { "$ref": "#/$defs/source" },
+        "truthSet": { "$ref": "#/$defs/source" }
+      }
+    },
+    "cohort": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": { "$ref": "#/$defs/cohortEntry" }
+    },
+    "pairedRuns": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platforms",
+        "attemptsPerCell",
+        "totalPairs",
+        "baselineProfileSource",
+        "candidateProfileId",
+        "onlyAllowedCandidateDifference",
+        "invariantInputs"
+      ],
+      "properties": {
+        "platforms": {
+          "const": ["windows-native", "wsl2-linux"]
+        },
+        "attemptsPerCell": { "const": 1 },
+        "totalPairs": { "const": 8 },
+        "baselineProfileSource": { "const": "frozen-task-manifest-v3" },
+        "candidateProfileId": { "const": "code-intel-semantic-live-v1" },
+        "onlyAllowedCandidateDifference": { "const": "append-code_intel-to-toolAllow" },
+        "invariantInputs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "gates": { "$ref": "#/$defs/gates" },
+    "metricDefinitions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "semanticSuccessfulRun",
+        "modelVisibleNavigationBytes",
+        "nonTargetWholeFileReadCalls",
+        "taskSuccess",
+        "patchAcceptance",
+        "testSuccess"
+      ],
+      "properties": {
+        "semanticSuccessfulRun": { "type": "string", "minLength": 1 },
+        "modelVisibleNavigationBytes": { "type": "string", "minLength": 1 },
+        "nonTargetWholeFileReadCalls": { "type": "string", "minLength": 1 },
+        "taskSuccess": { "type": "string", "minLength": 1 },
+        "patchAcceptance": { "type": "string", "minLength": 1 },
+        "testSuccess": { "type": "string", "minLength": 1 }
+      }
+    },
+    "failurePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "missingPair",
+        "infrastructureError",
+        "identityDrift",
+        "providerUsageIncomplete",
+        "selectedFailureMayBeRetried"
+      ],
+      "properties": {
+        "missingPair": { "const": "block" },
+        "infrastructureError": { "const": "block" },
+        "identityDrift": { "const": "block" },
+        "providerUsageIncomplete": { "const": "block" },
+        "selectedFailureMayBeRetried": { "const": false }
+      }
+    },
+    "exclusions": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "cohortEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taskId", "repositoryId", "executionProfile"],
+      "properties": {
+        "taskId": {
+          "enum": [
+            "real-ts.api-migration",
+            "real-ts.cross-package-refactor",
+            "real-js.bug-fix",
+            "real-js.failed-test-fix"
+          ]
+        },
+        "repositoryId": { "enum": ["vscode-languageserver-node", "express"] },
+        "executionProfile": { "enum": ["workspace-write", "command-control"] }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["regressionCount", "semanticAdoption", "binaryOutcomes", "contextWaste"],
+      "properties": {
+        "regressionCount": { "const": 0 },
+        "semanticAdoption": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "requiredCapability",
+            "minimumSuccessfulRuns",
+            "minimumSuccessfulRunsPerPlatform",
+            "providerFailureCount"
+          ],
+          "properties": {
+            "requiredCapability": { "const": "semantic-live" },
+            "minimumSuccessfulRuns": { "const": 6 },
+            "minimumSuccessfulRunsPerPlatform": { "const": 3 },
+            "providerFailureCount": { "const": 0 }
+          }
+        },
+        "binaryOutcomes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["metrics", "comparison"],
+          "properties": {
+            "metrics": { "const": ["taskSuccess", "patchAcceptance", "testSuccess"] },
+            "comparison": { "const": "candidate-gte-baseline-per-pair" }
+          }
+        },
+        "contextWaste": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["noRegression", "comparison", "minimumImprovementAlternatives"],
+          "properties": {
+            "noRegression": {
+              "const": ["modelVisibleNavigationBytes", "nonTargetWholeFileReadCalls"]
+            },
+            "comparison": { "const": "candidate-cohort-total-lte-baseline-cohort-total" },
+            "minimumImprovementAlternatives": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["metric", "relativeReduction"],
+                "properties": {
+                  "metric": {
+                    "enum": ["modelVisibleNavigationBytes", "nonTargetWholeFileReadCalls"]
+                  },
+                  "relativeReduction": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+                  "absoluteReduction": { "type": "integer", "minimum": 1 }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

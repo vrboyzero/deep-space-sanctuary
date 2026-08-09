@@ -284,6 +284,12 @@ function normalizeRuntimeLaunchSpec(value: ToolRuntimeLaunchSpec | undefined): T
     toolDeny: normalizeStringList(value.toolDeny),
     permissionMode: normalizeOptionalString(value.permissionMode),
     isolationMode: normalizeOptionalString(value.isolationMode),
+    toolArgumentPolicy: value.toolArgumentPolicy === "bounded-navigation-v1"
+      ? value.toolArgumentPolicy
+      : undefined,
+    modelLoopBudgetPolicy: value.modelLoopBudgetPolicy === "cost-containment-v1"
+      ? value.modelLoopBudgetPolicy
+      : undefined,
     commandSandbox: normalizeCommandSandboxRequirement(value.commandSandbox),
     maxRunWallTimeMs: normalizeLaunchPositiveInteger(value.maxRunWallTimeMs),
     toolLoopIterationBudget: normalizeLaunchPositiveInteger(value.toolLoopIterationBudget),
@@ -393,6 +399,7 @@ type ToolArgumentPreflightResult = {
   blocked: boolean;
   corrections: string[];
   issues: ToolArgumentValidationIssue[];
+  toolArgumentPolicy?: "bounded-navigation-v1";
 };
 
 const TOOL_SEARCH_ARGUMENT_ALIASES: Record<string, string> = {
@@ -760,7 +767,7 @@ function buildToolArgumentPreflightMetadata(
   tool: Tool,
   preflight: ToolArgumentPreflightResult,
 ): JsonObject | undefined {
-  if (!preflight.corrected && preflight.issues.length === 0) {
+  if (!preflight.corrected && preflight.issues.length === 0 && !preflight.toolArgumentPolicy) {
     return undefined;
   }
   const correctionHints = buildToolArgumentCorrectionHints(tool.definition.parameters, preflight.issues);
@@ -769,6 +776,9 @@ function buildToolArgumentPreflightMetadata(
     argumentValidation: {
       corrected: preflight.corrected,
       blocked: preflight.blocked,
+      ...(preflight.toolArgumentPolicy
+        ? { toolArgumentPolicy: preflight.toolArgumentPolicy }
+        : {}),
       corrections: preflight.corrections,
       issues: preflight.issues.map((issue) => ({
         path: issue.path,
@@ -797,7 +807,66 @@ function mergeToolResultMetadata(result: ToolCallResult, extraMetadata?: JsonObj
   };
 }
 
-function preflightToolArguments(tool: Tool, args: JsonObject): ToolArgumentPreflightResult {
+function applyBoundedNavigationArgumentPolicy(
+  tool: Tool,
+  originalArgs: JsonObject,
+  normalizedArgs: JsonObject,
+  corrections: string[],
+  issues: ToolArgumentValidationIssue[],
+  policy: ToolRuntimeLaunchSpec["toolArgumentPolicy"],
+): void {
+  if (policy !== "bounded-navigation-v1" || tool.definition.name !== "file_glob") return;
+
+  const originalInclude = originalArgs.include;
+  if (typeof originalInclude !== "string" || !originalInclude.trim()) {
+    issues.push({
+      path: "include",
+      code: originalInclude === undefined || originalInclude === null || originalInclude === ""
+        ? "missing_required"
+        : "invalid_type",
+      message: "bounded-navigation-v1 要求 `include` 为非空 string。",
+      expected: "non-empty string",
+      receivedType: describeValueType(originalInclude),
+    });
+  } else {
+    const include = originalInclude.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+    const searchRoot = typeof originalArgs.path === "string"
+      ? originalArgs.path.trim().replace(/\\/g, "/").replace(/^\.\//, "")
+      : "";
+    if ((!searchRoot || searchRoot === ".") && ["*", "**", "**/*"].includes(include)) {
+      issues.push({
+        path: "include",
+        code: "invalid_value",
+        message: "bounded-navigation-v1 禁止从工作区根目录执行宽 glob。",
+        expected: "a scoped file glob such as lib/**/*.js",
+        receivedType: "string",
+      });
+    }
+  }
+
+  const maxResults = normalizedArgs.maxResults;
+  if (maxResults === undefined || (typeof maxResults === "number" && maxResults > 20)) {
+    normalizedArgs.maxResults = 20;
+    corrections.push("Bounded `maxResults` to 20 for bounded-navigation-v1.");
+  } else if (
+    typeof maxResults === "number"
+    && (!Number.isInteger(maxResults) || maxResults <= 0)
+  ) {
+    issues.push({
+      path: "maxResults",
+      code: "invalid_value",
+      message: "bounded-navigation-v1 要求 `maxResults` 为 1 到 20 的整数。",
+      expected: "integer between 1 and 20",
+      receivedType: "number",
+    });
+  }
+}
+
+function preflightToolArguments(
+  tool: Tool,
+  args: JsonObject,
+  toolArgumentPolicy?: ToolRuntimeLaunchSpec["toolArgumentPolicy"],
+): ToolArgumentPreflightResult {
   const normalizedArgs = cloneJsonObject(args);
   const toolSpecificCorrections: string[] = [];
 
@@ -807,8 +876,18 @@ function preflightToolArguments(tool: Tool, args: JsonObject): ToolArgumentPrefl
 
   const schemaNormalization = normalizeArgumentsBySchema(normalizedArgs, tool.definition.parameters);
   const corrections = [...toolSpecificCorrections, ...schemaNormalization.corrections];
+  const policyIssues: ToolArgumentValidationIssue[] = [];
+  applyBoundedNavigationArgumentPolicy(
+    tool,
+    args,
+    normalizedArgs,
+    corrections,
+    policyIssues,
+    toolArgumentPolicy,
+  );
   const dedupedCorrections = Array.from(new Set(corrections));
-  const issues = schemaNormalization.issues.filter((issue, index, list) =>
+  const allIssues = [...schemaNormalization.issues, ...policyIssues];
+  const issues = allIssues.filter((issue, index, list) =>
     list.findIndex((candidate) => candidate.path === issue.path && candidate.code === issue.code) === index,
   );
 
@@ -818,6 +897,9 @@ function preflightToolArguments(tool: Tool, args: JsonObject): ToolArgumentPrefl
     blocked: issues.length > 0,
     corrections: dedupedCorrections,
     issues,
+    ...(toolArgumentPolicy === "bounded-navigation-v1" && tool.definition.name === "file_glob"
+      ? { toolArgumentPolicy }
+      : {}),
   };
 }
 
@@ -1489,7 +1571,11 @@ export class ToolExecutor {
       }
     }
 
-    const argumentPreflight = preflightToolArguments(tool, request.arguments);
+    const argumentPreflight = preflightToolArguments(
+      tool,
+      request.arguments,
+      launchSpec?.toolArgumentPolicy,
+    );
     const argumentValidationMetadata = buildToolArgumentPreflightMetadata(tool, argumentPreflight);
     const effectiveArguments = argumentPreflight.arguments;
 

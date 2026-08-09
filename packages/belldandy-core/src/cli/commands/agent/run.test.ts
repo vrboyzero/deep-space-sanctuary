@@ -9,7 +9,12 @@ import { ToolEnabledAgent, type AgentRunPromptOverride, type BelldandyAgent } fr
 import { CODING_RUN_CAPABILITIES, isAgentRunEventV1 } from "../../../coding-run/contracts.js";
 import { startGatewayServer } from "../../../server.js";
 import { cleanupGlobalMemoryManagersForTest, resolveWebRoot, withEnv } from "../../../server-testkit.js";
-import { resolveAgentRunCliOptions, resolveAgentRunPrompt, runAgentRunCommand } from "./run.js";
+import {
+  resolveAgentRunCliOptions,
+  resolveAgentRunCwd,
+  resolveAgentRunPrompt,
+  runAgentRunCommand,
+} from "./run.js";
 
 afterEach(async () => {
   await cleanupGlobalMemoryManagersForTest();
@@ -50,6 +55,8 @@ describe("bdd agent run", () => {
       toolDeny: "run_command",
       permissionMode: "accept-edits",
       automationProfile: "bare",
+      toolArgumentPolicy: "bounded-navigation-v1",
+      modelLoopBudgetPolicy: "cost-containment-v1",
       maxTurns: "3",
       maxTokens: "1200",
       maxCostUsd: "0.25",
@@ -62,6 +69,8 @@ describe("bdd agent run", () => {
         toolDeny: ["run_command"],
         permissionMode: "acceptEdits",
         automationProfile: "bare",
+        toolArgumentPolicy: "bounded-navigation-v1",
+        modelLoopBudgetPolicy: "cost-containment-v1",
         maxWallTimeMs: 5000,
         maxTurns: 3,
         maxTokens: 1200,
@@ -75,6 +84,28 @@ describe("bdd agent run", () => {
     expect(resolveAgentRunCliOptions({ automationProfile: "resident" })).toMatchObject({
       ok: false,
       message: expect.stringContaining("automation-profile"),
+    });
+    expect(resolveAgentRunCliOptions({ toolArgumentPolicy: "unknown" })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("tool-argument-policy"),
+    });
+    expect(resolveAgentRunCliOptions({ modelLoopBudgetPolicy: "unknown" })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("model-loop-budget-policy"),
+    });
+  });
+
+  it("preserves cross-platform absolute cwd values for a remote Gateway", () => {
+    const gatewayWorkspace = "\\\\wsl.localhost\\Ubuntu-22.04\\var\\tmp\\coding-agent-fixtures\\run-1\\workspace";
+
+    expect(resolveAgentRunCwd(gatewayWorkspace, path.posix)).toBe(gatewayWorkspace);
+    expect(resolveAgentRunCliOptions({ cwd: gatewayWorkspace })).toEqual({
+      ok: true,
+      codingRun: { cwd: gatewayWorkspace },
+    });
+    expect(resolveAgentRunCliOptions({ cwd: "fixtures/run-1/workspace" })).toEqual({
+      ok: true,
+      codingRun: { cwd: path.resolve("fixtures/run-1/workspace") },
     });
   });
 
@@ -173,6 +204,8 @@ describe("bdd agent run", () => {
             toolAllow: ["file_read", "run_command"],
             toolDeny: ["run_command"],
             permissionMode: "confirm",
+            toolArgumentPolicy: "bounded-navigation-v1",
+            modelLoopBudgetPolicy: "cost-containment-v1",
             maxWallTimeMs: 5_000,
             maxTurns: 3,
             maxTokens: 1200,
@@ -189,6 +222,8 @@ describe("bdd agent run", () => {
         toolSet: ["file_read", "run_command"],
         toolDeny: ["run_command"],
         permissionMode: "confirm",
+        toolArgumentPolicy: "bounded-navigation-v1",
+        modelLoopBudgetPolicy: "cost-containment-v1",
         maxRunWallTimeMs: 5_000,
         toolLoopIterationBudget: 3,
         maxTotalTokens: 1200,

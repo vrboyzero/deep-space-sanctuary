@@ -1,0 +1,114 @@
+{
+  "schemaVersion": "code-intel-agent-uplift-gate/v1",
+  "id": "p1-a1-ts-js-agent-uplift-v1",
+  "frozenAt": "2026-08-09T07:30:00.000Z",
+  "contractVersion": "code-intel/v1",
+  "sourceIdentity": {
+    "taskManifest": {
+      "path": "benchmarks/coding-agent/v3/task-manifest.json",
+      "sha256": "e3cac7c8b2786408af45dc3bfed718ee1a898388aa0fae4fbd5b1d38ab68bd22"
+    },
+    "truthSet": {
+      "path": "benchmarks/code-intel/v1/truth-set.json",
+      "sha256": "f6d787ec2a20f446c69f90a467d3812c8ca9644517ee5c7acf328430f934500e"
+    }
+  },
+  "cohort": [
+    {
+      "taskId": "real-ts.api-migration",
+      "repositoryId": "vscode-languageserver-node",
+      "executionProfile": "workspace-write"
+    },
+    {
+      "taskId": "real-ts.cross-package-refactor",
+      "repositoryId": "vscode-languageserver-node",
+      "executionProfile": "workspace-write"
+    },
+    {
+      "taskId": "real-js.bug-fix",
+      "repositoryId": "express",
+      "executionProfile": "workspace-write"
+    },
+    {
+      "taskId": "real-js.failed-test-fix",
+      "repositoryId": "express",
+      "executionProfile": "command-control"
+    }
+  ],
+  "pairedRuns": {
+    "platforms": ["windows-native", "wsl2-linux"],
+    "attemptsPerCell": 1,
+    "totalPairs": 8,
+    "baselineProfileSource": "frozen-task-manifest-v3",
+    "candidateProfileId": "code-intel-semantic-live-v1",
+    "onlyAllowedCandidateDifference": "append-code_intel-to-toolAllow",
+    "invariantInputs": [
+      "task",
+      "platform",
+      "attempt",
+      "repositorySnapshot",
+      "prompt",
+      "provider",
+      "model",
+      "tokenBudget",
+      "costBudget",
+      "permissionMode",
+      "toolArgumentPolicy",
+      "evaluator"
+    ]
+  },
+  "gates": {
+    "regressionCount": 0,
+    "semanticAdoption": {
+      "requiredCapability": "semantic-live",
+      "minimumSuccessfulRuns": 6,
+      "minimumSuccessfulRunsPerPlatform": 3,
+      "providerFailureCount": 0
+    },
+    "binaryOutcomes": {
+      "metrics": ["taskSuccess", "patchAcceptance", "testSuccess"],
+      "comparison": "candidate-gte-baseline-per-pair"
+    },
+    "contextWaste": {
+      "noRegression": [
+        "modelVisibleNavigationBytes",
+        "nonTargetWholeFileReadCalls"
+      ],
+      "comparison": "candidate-cohort-total-lte-baseline-cohort-total",
+      "minimumImprovementAlternatives": [
+        {
+          "metric": "modelVisibleNavigationBytes",
+          "relativeReduction": 0.15
+        },
+        {
+          "metric": "nonTargetWholeFileReadCalls",
+          "relativeReduction": 0.25,
+          "absoluteReduction": 2
+        }
+      ]
+    }
+  },
+  "metricDefinitions": {
+    "semanticSuccessfulRun": "candidate run has at least one successful code_intel result whose provenance capability is semantic-live",
+    "modelVisibleNavigationBytes": "UTF-8 bytes of successful code_intel, file_read, list_files, text_search, and file_glob outputs before the first workspace mutation; use the full run when no mutation occurs",
+    "nonTargetWholeFileReadCalls": "successful pre-mutation file_read calls without an explicit bounded line range whose normalized path is not in the task acceptance requiredChangedPaths",
+    "taskSuccess": "benchmark run status is passed",
+    "patchAcceptance": "the frozen machine evaluator accepts the workspace patch or the required no-mutation diagnosis outcome",
+    "testSuccess": "all frozen acceptance test commands reach their expected exit code"
+  },
+  "failurePolicy": {
+    "missingPair": "block",
+    "infrastructureError": "block",
+    "identityDrift": "block",
+    "providerUsageIncomplete": "block",
+    "selectedFailureMayBeRetried": false
+  },
+  "exclusions": [
+    "external-lsp",
+    "go",
+    "csharp",
+    "scip",
+    "p0-aggregate-mutation",
+    "default-cost-containment-rollout"
+  ]
+}

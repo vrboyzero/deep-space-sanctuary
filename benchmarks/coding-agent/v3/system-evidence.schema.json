@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-system-evidence-v1.json",
+  "title": "Star Sanctuary coding agent benchmark v3 system evidence",
+  "oneOf": [
+    { "$ref": "#/$defs/harnessEvidence" },
+    { "$ref": "#/$defs/notRunEvidence" }
+  ],
+  "$defs": {
+    "harnessEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "taskId",
+        "generatorId",
+        "fixtureVersion",
+        "runId",
+        "platform",
+        "status",
+        "sensitiveFindingCount",
+        "orphanResourceCount",
+        "duplicateSideEffectCount",
+        "observations"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "coding-agent-benchmark-system-evidence/v1" },
+        "taskId": { "$ref": "#/$defs/systemTaskId" },
+        "generatorId": { "$ref": "#/$defs/generatorId" },
+        "fixtureVersion": { "const": 1 },
+        "runId": { "$ref": "#/$defs/runId" },
+        "platform": { "$ref": "#/$defs/platform" },
+        "status": { "enum": ["passed", "failed"] },
+        "sensitiveFindingCount": { "type": "integer", "minimum": 0 },
+        "orphanResourceCount": { "type": "integer", "minimum": 0 },
+        "duplicateSideEffectCount": { "type": "integer", "minimum": 0 },
+        "observations": {
+          "oneOf": [
+            { "$ref": "#/$defs/browserObservations" },
+            { "$ref": "#/$defs/parallelReadObservations" },
+            { "$ref": "#/$defs/parallelWriteObservations" },
+            { "$ref": "#/$defs/restartObservations" }
+          ]
+        }
+      }
+    },
+    "notRunEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "taskId", "generatorId", "fixtureVersion", "runId", "platform", "status", "reason"],
+      "properties": {
+        "schemaVersion": { "const": "coding-agent-benchmark-system-evidence-not-run/v1" },
+        "taskId": { "$ref": "#/$defs/systemTaskId" },
+        "generatorId": { "$ref": "#/$defs/generatorId" },
+        "fixtureVersion": { "const": 1 },
+        "runId": { "$ref": "#/$defs/runId" },
+        "platform": { "$ref": "#/$defs/platform" },
+        "status": { "const": "not_run" },
+        "reason": { "const": "runtime_preflight_failed" }
+      }
+    },
+    "browserObservations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pageLoaded",
+        "consoleErrorCount",
+        "domChanged",
+        "domAfterSha256",
+        "requestStatus",
+        "networkScope",
+        "screenshotSha256",
+        "screenshotBindingSha256"
+      ],
+      "properties": {
+        "pageLoaded": { "type": "boolean" },
+        "consoleErrorCount": { "type": "integer", "minimum": 0 },
+        "domChanged": { "type": "boolean" },
+        "domAfterSha256": { "$ref": "#/$defs/sha256" },
+        "requestStatus": { "type": "integer", "minimum": 100, "maximum": 599 },
+        "networkScope": { "const": "loopback-only" },
+        "screenshotSha256": { "$ref": "#/$defs/sha256" },
+        "screenshotBindingSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "parallelReadObservations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["children"],
+      "properties": {
+        "children": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "childId",
+              "snapshotSha256",
+              "budgetId",
+              "bindingId",
+              "terminalStatus",
+              "mutationCount",
+              "terminalEvidenceSha256"
+            ],
+            "properties": {
+              "childId": { "$ref": "#/$defs/boundedString" },
+              "snapshotSha256": { "$ref": "#/$defs/sha256" },
+              "budgetId": { "$ref": "#/$defs/boundedString" },
+              "bindingId": { "$ref": "#/$defs/boundedString" },
+              "terminalStatus": { "const": "completed" },
+              "mutationCount": { "type": "integer", "minimum": 0 },
+              "terminalEvidenceSha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        }
+      }
+    },
+    "parallelWriteObservations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mainWorkspaceChangedBeforeFanIn", "lanes", "conflict", "fanIn"],
+      "properties": {
+        "mainWorkspaceChangedBeforeFanIn": { "type": "boolean" },
+        "lanes": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["laneId", "worktreeId", "baselineSha256", "terminalStatus", "mutationCount"],
+            "properties": {
+              "laneId": { "$ref": "#/$defs/boundedString" },
+              "worktreeId": { "$ref": "#/$defs/boundedString" },
+              "baselineSha256": { "$ref": "#/$defs/sha256" },
+              "terminalStatus": { "const": "completed" },
+              "mutationCount": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "conflict": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["detected", "path", "evidenceSha256"],
+          "properties": {
+            "detected": { "type": "boolean" },
+            "path": { "type": "string", "pattern": "^workspace/", "maxLength": 1000 },
+            "evidenceSha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "fanIn": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "previewSha256", "confirmed", "status", "resultSha256"],
+          "properties": {
+            "mode": { "const": "preview-confirm" },
+            "previewSha256": { "$ref": "#/$defs/sha256" },
+            "confirmed": { "type": "boolean" },
+            "status": { "const": "completed" },
+            "resultSha256": { "$ref": "#/$defs/sha256" }
+          }
+        }
+      }
+    },
+    "restartObservations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "restartInjected",
+        "oldBindingId",
+        "newBindingId",
+        "reattached",
+        "journalState",
+        "completedSideEffectCount",
+        "replayedSideEffectCount",
+        "localDeliveryStatus",
+        "remoteWriteCount",
+        "terminalStatus",
+        "reconciliationSha256"
+      ],
+      "properties": {
+        "restartInjected": { "type": "boolean" },
+        "oldBindingId": { "$ref": "#/$defs/boundedString" },
+        "newBindingId": { "$ref": "#/$defs/boundedString" },
+        "reattached": { "type": "boolean" },
+        "journalState": { "enum": ["pending", "applied"] },
+        "completedSideEffectCount": { "type": "integer", "minimum": 0 },
+        "replayedSideEffectCount": { "type": "integer", "minimum": 0 },
+        "localDeliveryStatus": { "enum": ["pending", "completed", "failed"] },
+        "remoteWriteCount": { "type": "integer", "minimum": 0 },
+        "terminalStatus": { "enum": ["completed", "failed"] },
+        "reconciliationSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "systemTaskId": {
+      "enum": [
+        "system.browser-behavior",
+        "system.parallel-read-isolation",
+        "system.parallel-write-fan-in",
+        "system.restart-delivery-reconciliation"
+      ]
+    },
+    "generatorId": {
+      "enum": [
+        "browser-behavior-v1",
+        "parallel-read-isolation-v1",
+        "parallel-write-fan-in-v1",
+        "restart-delivery-reconciliation-v1"
+      ]
+    },
+    "runId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$", "maxLength": 200 },
+    "platform": { "enum": ["windows-native", "wsl2-linux"] },
+    "boundedString": { "type": "string", "minLength": 1, "maxLength": 300 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" }
+  }
+}

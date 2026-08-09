@@ -965,6 +965,247 @@ describe("before_agent_start system prompt overrides", () => {
     expect(items[items.length - 1]).toEqual({ type: "status", status: "error" });
   });
 
+  it("stops a cost-containment run before dispatching its fifth model call", async () => {
+    let responseIndex = 0;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      responseIndex += 1;
+      return createJsonResponse({
+        choices: [{
+          message: {
+            content: "",
+            tool_calls: [{
+              id: `call-${responseIndex}`,
+              type: "function",
+              function: {
+                name: "echo",
+                arguments: JSON.stringify({ value: responseIndex }),
+              },
+            }],
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      });
+    });
+    const execute = vi.fn(async (request: { id: string; name: string }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: "ok",
+      durationMs: 0,
+    }));
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      toolLoopIterationBudget: 0,
+      maxTotalTokens: 24_000,
+      toolExecutor: createToolExecutor({
+        getDefinitions: () => [{
+          type: "function" as const,
+          function: {
+            name: "echo",
+            description: "echo",
+            parameters: { type: "object", properties: { value: { type: "number" } } },
+          },
+        }],
+        execute,
+      }),
+      logger: { error: vi.fn() },
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-model-loop-cost-containment",
+      text: "keep using tools",
+      meta: {
+        _agentLaunchSpec: {
+          modelLoopBudgetPolicy: "cost-containment-v1",
+        },
+      },
+    }));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
+    expect(execute).toHaveBeenCalledTimes(4);
+    expect(items).toContainEqual({
+      type: "budget_exhausted",
+      budget: "model_calls",
+      limit: 4,
+      observed: 5,
+      policyId: "cost-containment-v1",
+      stage: "before_model_call",
+      reasonCode: "model_call_limit",
+    });
+    expect(items[items.length - 1]).toEqual({ type: "status", status: "error" });
+  });
+
+  it("does not consume queued steer input when cost containment blocks the next model call", async () => {
+    let responseIndex = 0;
+    let steerPending = false;
+    let steerDelivered = false;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      responseIndex += 1;
+      return createJsonResponse({
+        choices: [{
+          message: {
+            content: "",
+            tool_calls: [{
+              id: `steer-budget-call-${responseIndex}`,
+              type: "function",
+              function: { name: "echo", arguments: "{}" },
+            }],
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      });
+    });
+    const execute = vi.fn(async (request: { id: string; name: string }) => {
+      if (execute.mock.calls.length === 4) steerPending = true;
+      return { id: request.id, name: request.name, success: true, output: "ok", durationMs: 0 };
+    });
+    const steering = {
+      peekPending: vi.fn(() => steerPending
+        ? [{ commandId: "steer-after-four", prompt: "apply final correction" }]
+        : []),
+      consumePending: vi.fn(async () => {
+        if (!steerPending) return [];
+        steerPending = false;
+        steerDelivered = true;
+        return [{ commandId: "steer-after-four", prompt: "apply final correction" }];
+      }),
+      sealIfIdle: vi.fn(() => true),
+    };
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      toolLoopIterationBudget: 0,
+      maxTotalTokens: 24_000,
+      toolExecutor: createToolExecutor({
+        getDefinitions: () => [{
+          type: "function" as const,
+          function: {
+            name: "echo",
+            description: "echo",
+            parameters: { type: "object", properties: {} },
+          },
+        }],
+        execute,
+      }),
+      logger: { error: vi.fn() },
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-steer-model-loop-cost-containment",
+      text: "keep using tools",
+      steering,
+      meta: { _agentLaunchSpec: { modelLoopBudgetPolicy: "cost-containment-v1" } },
+    }));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
+    expect(execute).toHaveBeenCalledTimes(4);
+    expect(steering.consumePending).toHaveBeenCalledTimes(4);
+    expect(steerDelivered).toBe(false);
+    expect(steerPending).toBe(true);
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "budget_exhausted",
+      budget: "model_calls",
+      observed: 5,
+    }));
+  });
+
+  it("blocks the third file_read before execution only when cost containment is enabled", async () => {
+    const buildToolBatch = () => createJsonResponse({
+      choices: [{
+        message: {
+          content: "",
+          tool_calls: [1, 2, 3].map((index) => ({
+            id: `read-${index}`,
+            type: "function",
+            function: {
+              name: "file_read",
+              arguments: JSON.stringify({ path: `src/file-${index}.ts` }),
+            },
+          })),
+        },
+      }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    });
+    const buildFinal = () => createJsonResponse({
+      choices: [{ message: { content: "done" } }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    });
+    const definition = {
+      type: "function" as const,
+      function: {
+        name: "file_read",
+        description: "read file",
+        parameters: { type: "object", properties: { path: { type: "string" } } },
+      },
+    };
+
+    const constrainedExecute = vi.fn(async (request: { id: string; name: string }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: "content",
+      durationMs: 0,
+    }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(buildToolBatch());
+    const constrained = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      toolLoopIterationBudget: 0,
+      maxTotalTokens: 24_000,
+      toolExecutor: createToolExecutor({ getDefinitions: () => [definition], execute: constrainedExecute }),
+      logger: { error: vi.fn() },
+    });
+    const constrainedItems = await collectItems(constrained.run({
+      conversationId: "conv-file-read-cost-containment",
+      text: "read files",
+      meta: { _agentLaunchSpec: { modelLoopBudgetPolicy: "cost-containment-v1" } },
+    }));
+
+    expect(constrainedExecute).toHaveBeenCalledTimes(2);
+    expect(constrainedItems).toContainEqual({
+      type: "budget_exhausted",
+      budget: "file_read_calls",
+      limit: 2,
+      observed: 3,
+      policyId: "cost-containment-v1",
+      stage: "before_tool_call",
+      reasonCode: "file_read_call_limit",
+    });
+
+    vi.restoreAllMocks();
+    const ordinaryExecute = vi.fn(async (request: { id: string; name: string }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: "content",
+      durationMs: 0,
+    }));
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(buildToolBatch())
+      .mockResolvedValueOnce(buildFinal());
+    const ordinary = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      toolLoopIterationBudget: 0,
+      maxTotalTokens: 24_000,
+      toolExecutor: createToolExecutor({ getDefinitions: () => [definition], execute: ordinaryExecute }),
+      logger: { error: vi.fn() },
+    });
+    const ordinaryItems = await collectItems(ordinary.run({
+      conversationId: "conv-file-read-ordinary",
+      text: "read files",
+    }));
+
+    expect(ordinaryExecute).toHaveBeenCalledTimes(3);
+    expect(ordinaryItems.some((item) => item.type === "budget_exhausted")).toBe(false);
+    expect(ordinaryItems.find((item) => item.type === "final")?.text).toBe("done");
+  });
+
   it("allows a high-risk tool when its run budget is configured as unlimited", async () => {
     const execute = vi.fn(async () => ({
       id: "unexpected",

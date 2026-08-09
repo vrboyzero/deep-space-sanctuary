@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -10,16 +11,30 @@ import {
   resolveWebRoot,
 } from "../packages/belldandy-core/src/server-testkit.ts";
 import { compileOutputSchema } from "../packages/belldandy-core/src/cli/shared/output-schema.ts";
+import { runWorkflowBatch } from "../packages/belldandy-core/src/workflow-batch-runner.ts";
+import { ManagedWorktreeRuntime } from "../packages/belldandy-core/src/managed-worktree.ts";
+import { UserWorktreeRuntime } from "../packages/belldandy-core/src/user-worktree-runtime.ts";
 
 import {
   consumeBenchmarkUsageBudget,
   createBenchmarkUsageBudget,
+  buildNavigationShadowPrompt,
   extractBenchmarkTokenUsage,
+  loadCodingAgentBenchmarkV3RepositoryInputs,
   resolveBenchmarkCliSourceRoot,
+  resolveGatewayWorkspacePath,
   resolveBenchmarkRuntimePlatform,
+  resolveBenchmarkShadowCandidate,
   runStage0BSuite,
 } from "./run-coding-agent-benchmark.mjs";
 import { runCodingRunSubscriptionProbe } from "./coding-agent-process-restart-harness.mjs";
+import { createCodingAgentBenchmarkV3SystemHarness } from "./coding-agent-benchmark-system-harness.mjs";
+import { CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V2_ID } from "./run-coding-agent-benchmark-navigation-candidate-v2.mjs";
+import { CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V3_ID } from "./run-coding-agent-benchmark-navigation-candidate-v3.mjs";
+import {
+  CODE_INTEL_AGENT_UPLIFT_CANDIDATE_ID,
+  CODE_INTEL_AGENT_UPLIFT_TASK_IDS,
+} from "./run-code-intel-agent-uplift-readiness.mjs";
 
 const tempRoots = [];
 const windowsIt = process.platform === "win32" ? it : it.skip;
@@ -30,11 +45,923 @@ afterEach(async () => {
 });
 
 describe("coding agent benchmark stage 0B runner", () => {
+  it("derives a Windows Gateway workspace without replacing the WSL evaluator workspace", () => {
+    const gatewayFixtureRoot = "\\\\wsl.localhost\\Ubuntu-22.04\\var\\tmp\\coding-agent-fixtures";
+
+    expect(resolveGatewayWorkspacePath({
+      fixtureRoot: "/var/tmp/coding-agent-fixtures",
+      gatewayFixtureRoot,
+      runId: "rules-wsl2-linux-a1-test",
+    })).toBe(
+      "\\\\wsl.localhost\\Ubuntu-22.04\\var\\tmp\\coding-agent-fixtures\\rules-wsl2-linux-a1-test\\workspace",
+    );
+    expect(resolveGatewayWorkspacePath({
+      fixtureRoot: "/var/tmp/coding-agent-fixtures",
+      runId: "rules-wsl2-linux-a1-test",
+    })).toBe("/var/tmp/coding-agent-fixtures/rules-wsl2-linux-a1-test/workspace");
+    expect(() => resolveGatewayWorkspacePath({
+      fixtureRoot: "/var/tmp/coding-agent-fixtures",
+      gatewayFixtureRoot: "relative/gateway-fixtures",
+      runId: "rules-wsl2-linux-a1-test",
+    })).toThrow(/absolute Windows path/i);
+    expect(() => resolveGatewayWorkspacePath({
+      fixtureRoot: "/var/tmp/coding-agent-fixtures",
+      gatewayFixtureRoot,
+      runId: "../outside",
+    })).toThrow(/remain inside gatewayFixtureRoot/i);
+  });
+
+  it("passes separate evaluator and Gateway workspace roots through the WSL benchmark task", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-wsl-workspace-routing-"));
+    tempRoots.push(root);
+    const fixtureRoot = path.join(root, "fixtures");
+    const artifactRoot = path.join(root, "artifacts");
+    const stateRoot = path.join(root, "state");
+    const gatewayFixtureRoot = "\\\\wsl.localhost\\Ubuntu-22.04\\var\\tmp\\coding-agent-fixtures";
+    const runId = "rules-wsl2-linux-a1-routing-test";
+    const invocations = [];
+
+    await runStage0BSuite({
+      platform: "wsl2-linux",
+      taskIds: ["rules.nested-precedence"],
+      fixtureRoot,
+      gatewayFixtureRoot,
+      artifactRoot,
+      stateRoot,
+      attempt: 1,
+      runIds: { "rules.nested-precedence": runId },
+      model: { provider: "fixture", id: "fixture-model", credentialsConfigured: false },
+    }, {
+      runtime: {
+        platform: "linux",
+        osRelease: "6.6.87.2-microsoft-standard-WSL2",
+        env: { WSL_DISTRO_NAME: "Ubuntu-22.04" },
+      },
+      async executeCodingCi(input) {
+        invocations.push(input);
+        return { exitCode: 4, stdout: "", stderr: "workspace routing probe" };
+      },
+    });
+
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0].workspace).toBe(path.join(fixtureRoot, runId, "workspace"));
+    expect(invocations[0].gatewayWorkspace).toBe(
+      `\\\\wsl.localhost\\Ubuntu-22.04\\var\\tmp\\coding-agent-fixtures\\${runId}\\workspace`,
+    );
+  });
+
   it("requires an explicit source root only for corrected v2 CLI runs", () => {
     expect(resolveBenchmarkCliSourceRoot(new Map(), "v1")).toBe(path.resolve("."));
     expect(() => resolveBenchmarkCliSourceRoot(new Map(), "v2")).toThrow(/--source-root is required/i);
     expect(resolveBenchmarkCliSourceRoot(new Map([["source-root", "C:/source-fd70990"]]), "v2"))
       .toBe(path.resolve("C:/source-fd70990"));
+  });
+
+  it("appends the v2 navigation contract only for the explicit v3 shadow candidate", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-navigation-v2-wiring-"));
+    tempRoots.push(root);
+    const repositoryRoot = path.join(root, "prepared", "express");
+    const receipt = createV3SnapshotReceipt("express");
+    const runId = "real-js-bug-v2-wiring-windows-a1-test";
+    let promptText = "";
+    await runStage0BSuite({
+      platform: "windows-native",
+      manifestRevision: "v3",
+      sourceRoot: path.resolve("."),
+      taskIds: ["real-js.bug-fix"],
+      fixtureRoot: path.join(root, "fixtures"),
+      artifactRoot: path.join(root, "artifacts"),
+      stateRoot: path.join(root, "state"),
+      attempt: 1,
+      runIds: { "real-js.bug-fix": runId },
+      v3RepositoryInputs: {
+        express: {
+          repositoryRoot,
+          dependencyCacheRoot: path.join(root, "prepared", "express-cache"),
+          receipt,
+        },
+      },
+      shadowCandidateId: CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V2_ID,
+      model: { provider: "fixture", id: "fixture-model", credentialsConfigured: false },
+    }, {
+      runtime: { platform: "win32", osRelease: "Windows fixture", env: {} },
+      resolveRepositoryIdentity: async () => repositoryIdentity("2"),
+      createBenchmarkPreflightArtifact: async (input) => createPassedV3RuntimePreflight(input),
+      resolveV3FixtureProvider(manifest, taskId) {
+        if (taskId !== "real-js.bug-fix") return undefined;
+        const task = manifest.tasks.find((candidate) => candidate.id === taskId);
+        const snapshotPreflight = createPassedV3SnapshotPreflight(task);
+        return {
+          taskId,
+          layer: "B",
+          kind: "repository-snapshot",
+          readiness: "ready",
+          repositoryId: "express",
+          preflight: async () => snapshotPreflight,
+          async generate(input) {
+            await fs.mkdir(input.workspace, { recursive: true });
+            return {
+              task,
+              workspace: input.workspace,
+              baselineCommit: receipt.source.commit,
+              prompt: task.prompt,
+              outputSchema: summaryOutputSchema(),
+              snapshotPreflight,
+              snapshotReceipt: receipt,
+            };
+          },
+          async evaluate() {
+            return passedV3Evaluation("v2 wiring");
+          },
+        };
+      },
+      async executeCodingCi(input) {
+        promptText = await fs.readFile(path.join(input.artifactDir, "prompt.md"), "utf-8");
+        await fs.writeFile(
+          path.join(input.artifactDir, "result.json"),
+          `${JSON.stringify({ summary: "v2 wiring" })}\n`,
+          "utf-8",
+        );
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+    });
+    expect(promptText).toContain("## Navigation Budget Contract");
+    expect(promptText).toContain("maxResults=4");
+    expect(promptText).toContain("Do not read the complete lib/request.js before text_search");
+  });
+
+  it("renders the runtime-bounded prompt only for navigation candidate v3", () => {
+    const basePrompt = "Fix the frozen regression.";
+    const rendered = buildNavigationShadowPrompt(
+      basePrompt,
+      CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V3_ID,
+    );
+    expect(rendered).toContain("## Runtime-Bounded Navigation Contract");
+    expect(rendered).toContain("file_glob include must be one non-empty string");
+    expect(buildNavigationShadowPrompt(basePrompt, undefined)).toBe(basePrompt);
+    expect(buildNavigationShadowPrompt(basePrompt, CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V2_ID))
+      .toContain("## Navigation Budget Contract");
+  });
+
+  it("routes the CodeIntel candidate only across the frozen v3 uplift cohort without prompt drift", () => {
+    expect(resolveBenchmarkShadowCandidate({
+      candidateId: CODE_INTEL_AGENT_UPLIFT_CANDIDATE_ID,
+      manifestRevision: "v3",
+      taskIds: [...CODE_INTEL_AGENT_UPLIFT_TASK_IDS],
+    })).toBe(CODE_INTEL_AGENT_UPLIFT_CANDIDATE_ID);
+    expect(buildNavigationShadowPrompt(
+      "Keep the frozen task prompt unchanged.",
+      CODE_INTEL_AGENT_UPLIFT_CANDIDATE_ID,
+    )).toBe("Keep the frozen task prompt unchanged.");
+
+    expect(() => resolveBenchmarkShadowCandidate({
+      candidateId: CODE_INTEL_AGENT_UPLIFT_CANDIDATE_ID,
+      manifestRevision: "v2",
+      taskIds: [...CODE_INTEL_AGENT_UPLIFT_TASK_IDS],
+    })).toThrow(/frozen v3 uplift cohort/i);
+    expect(() => resolveBenchmarkShadowCandidate({
+      candidateId: CODE_INTEL_AGENT_UPLIFT_CANDIDATE_ID,
+      manifestRevision: "v3",
+      taskIds: ["real-ts.api-migration", "feature.cross-file"],
+    })).toThrow(/frozen v3 uplift cohort/i);
+
+    expect(resolveBenchmarkShadowCandidate({
+      candidateId: CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V3_ID,
+      manifestRevision: "v3",
+      taskIds: ["real-js.bug-fix"],
+    })).toBe(CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V3_ID);
+  });
+
+  it("loads strict v3 repository inputs relative to their versioned CLI config", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-v3-config-"));
+    tempRoots.push(root);
+    const configPath = path.join(root, "repository-inputs.json");
+    const receiptPath = path.join(root, "receipts", "express.json");
+    await fs.mkdir(path.dirname(receiptPath), { recursive: true });
+    await fs.writeFile(receiptPath, `${JSON.stringify(createV3SnapshotReceipt("express"), null, 2)}\n`);
+    const config = {
+      schemaVersion: "coding-agent-benchmark-repository-inputs/v1",
+      repositories: [{
+        repositoryId: "express",
+        repositoryRoot: "prepared/express",
+        dependencyCacheRoot: "prepared/express-cache",
+        receiptPath: "receipts/express.json",
+      }],
+    };
+    await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+    const inputs = await loadCodingAgentBenchmarkV3RepositoryInputs(configPath);
+    const configSchema = await readJson(path.resolve(
+      "benchmarks/coding-agent/v3/repository-inputs.schema.json",
+    ));
+    const compiledConfig = compileOutputSchema(configSchema);
+
+    expect(inputs).toBeInstanceOf(Map);
+    expect(inputs.get("express")).toEqual({
+      repositoryRoot: path.join(root, "prepared", "express"),
+      dependencyCacheRoot: path.join(root, "prepared", "express-cache"),
+      receipt: createV3SnapshotReceipt("express"),
+    });
+    expect(compiledConfig.ok).toBe(true);
+    if (compiledConfig.ok) {
+      expect(compiledConfig.validator.validateOutput(JSON.stringify(config))).toMatchObject({ ok: true });
+    }
+  });
+
+  it("rejects unknown, duplicate, and receipt-drifted v3 repository config entries", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-v3-config-invalid-"));
+    tempRoots.push(root);
+    const receiptPath = path.join(root, "express-receipt.json");
+    const configPath = path.join(root, "repository-inputs.json");
+    await fs.writeFile(receiptPath, `${JSON.stringify(createV3SnapshotReceipt("express"), null, 2)}\n`);
+    const entry = {
+      repositoryId: "express",
+      repositoryRoot: "express",
+      dependencyCacheRoot: "express-cache",
+      receiptPath: "express-receipt.json",
+    };
+
+    await fs.writeFile(configPath, JSON.stringify({
+      schemaVersion: "coding-agent-benchmark-repository-inputs/v1",
+      repositories: [entry],
+      unexpected: true,
+    }));
+    await expect(loadCodingAgentBenchmarkV3RepositoryInputs(configPath))
+      .rejects.toThrow(/repository config.*unexpected/i);
+
+    await fs.writeFile(configPath, JSON.stringify({
+      schemaVersion: "coding-agent-benchmark-repository-inputs/v1",
+      repositories: [entry, entry],
+    }));
+    await expect(loadCodingAgentBenchmarkV3RepositoryInputs(configPath))
+      .rejects.toThrow(/duplicate.*express/i);
+
+    await fs.writeFile(receiptPath, JSON.stringify({
+      ...createV3SnapshotReceipt("express"),
+      repositoryId: "preact",
+    }));
+    await fs.writeFile(configPath, JSON.stringify({
+      schemaVersion: "coding-agent-benchmark-repository-inputs/v1",
+      repositories: [entry],
+    }));
+    await expect(loadCodingAgentBenchmarkV3RepositoryInputs(configPath))
+      .rejects.toThrow(/receipt.*express/i);
+  });
+
+  it("fails closed before creating runner state when selected v3 providers lack external inputs", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-v3-runner-"));
+    tempRoots.push(root);
+    const fixtureRoot = path.join(root, "fixtures");
+    const artifactRoot = path.join(root, "artifacts");
+    const stateRoot = path.join(root, "state");
+    await expect(runStage0BSuite({
+      platform: "windows-native",
+      manifestRevision: "v3",
+      taskIds: ["real-js.bug-fix"],
+      fixtureRoot,
+      artifactRoot,
+      stateRoot,
+      model: { provider: "fixture", id: "fixture-model", credentialsConfigured: false },
+    }, {
+      runtime: { platform: "win32", osRelease: "Windows fixture", env: {} },
+    })).rejects.toThrow(/v3.*repository input.*express/i);
+    await expect(fs.stat(fixtureRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(artifactRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(stateRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("writes repository and system provider evidence into v3 run and report artifacts", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-v3-artifacts-"));
+    tempRoots.push(root);
+    const fixtureRoot = path.join(root, "fixtures");
+    const artifactRoot = path.join(root, "artifacts");
+    const stateRoot = path.join(root, "state");
+    const repositoryRoot = path.join(root, "prepared", "express");
+    const dependencyCacheRoot = path.join(root, "prepared", "express-cache");
+    const repositoryRunId = "real-js-bug-windows-a1-test";
+    const systemRunId = "system-browser-windows-a1-test";
+    const receipt = createV3SnapshotReceipt("express");
+
+    const report = await runStage0BSuite({
+      platform: "windows-native",
+      manifestRevision: "v3",
+      sourceRoot: path.resolve("."),
+      taskIds: ["real-js.bug-fix", "system.browser-behavior"],
+      fixtureRoot,
+      artifactRoot,
+      stateRoot,
+      attempt: 1,
+      runIds: {
+        "real-js.bug-fix": repositoryRunId,
+        "system.browser-behavior": systemRunId,
+      },
+      v3RepositoryInputs: {
+        express: { repositoryRoot, dependencyCacheRoot, receipt },
+      },
+      model: { provider: "fixture", id: "fixture-model", credentialsConfigured: false },
+      generatedAt: "2026-08-05T00:00:00.000Z",
+    }, {
+      runtime: { platform: "win32", osRelease: "Windows fixture", env: {} },
+      resolveRepositoryIdentity: async () => repositoryIdentity("c"),
+      createBenchmarkPreflightArtifact: async (input) => createPassedV3RuntimePreflight(input),
+      resolveV3FixtureProvider(manifest, taskId) {
+        if (taskId !== "real-js.bug-fix") return undefined;
+        const task = manifest.tasks.find((candidate) => candidate.id === taskId);
+        const snapshotPreflight = createPassedV3SnapshotPreflight(task);
+        return {
+          taskId,
+          layer: "B",
+          kind: "repository-snapshot",
+          readiness: "ready",
+          repositoryId: "express",
+          preflight: async () => snapshotPreflight,
+          async generate(input) {
+            await fs.mkdir(input.workspace, { recursive: true });
+            return {
+              task,
+              workspace: input.workspace,
+              baselineCommit: receipt.source.commit,
+              prompt: task.prompt,
+              outputSchema: summaryOutputSchema(),
+              snapshotPreflight,
+              snapshotReceipt: receipt,
+            };
+          },
+          async evaluate(input) {
+            return passedV3Evaluation(input.result?.summary);
+          },
+        };
+      },
+      v3SystemHarness: {
+        capabilities: { browserBehavior: true },
+        async execute(input) {
+          expect(input.scenario).toMatchObject({ taskId: "system.browser-behavior" });
+          await fs.writeFile(path.join(input.artifactDir, "browser-screenshot.png"), V3_BROWSER_SCREENSHOT);
+          return createV3BrowserSystemEvidence(input.runId);
+        },
+      },
+      async executeCodingCi(input) {
+        await fs.writeFile(
+          path.join(input.artifactDir, "result.json"),
+          `${JSON.stringify({ summary: `Verified ${input.taskId}.` })}\n`,
+          "utf-8",
+        );
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(report).toMatchObject({
+      schemaVersion: "coding-agent-benchmark-report/v3",
+      status: "partial",
+      runs: [
+        {
+          schemaVersion: "coding-agent-benchmark-run/v3",
+          taskId: "real-js.bug-fix",
+          status: "passed",
+          artifacts: {
+            repositorySnapshotPreflight: `${repositoryRunId}/repository-snapshot-preflight.json`,
+            repositorySnapshotReceipt: `${repositoryRunId}/repository-snapshot-receipt.json`,
+          },
+        },
+        {
+          schemaVersion: "coding-agent-benchmark-run/v3",
+          taskId: "system.browser-behavior",
+          status: "passed",
+          artifacts: {
+            systemScenario: `${systemRunId}/system-scenario.json`,
+            systemEvidence: `${systemRunId}/system-evidence.json`,
+            systemBrowserScreenshot: `${systemRunId}/browser-screenshot.png`,
+          },
+        },
+      ],
+      summary: { runCount: 2, passedRunCount: 2 },
+    });
+
+    await expect(readJson(path.join(
+      artifactRoot,
+      repositoryRunId,
+      "repository-snapshot-preflight.json",
+    ))).resolves.toMatchObject({ status: "passed", repositoryId: "express" });
+    await expect(readJson(path.join(
+      artifactRoot,
+      repositoryRunId,
+      "repository-snapshot-receipt.json",
+    ))).resolves.toMatchObject({ repositoryId: "express" });
+    await expect(readJson(path.join(
+      artifactRoot,
+      systemRunId,
+      "system-scenario.json",
+    ))).resolves.toMatchObject({ taskId: "system.browser-behavior" });
+    await expect(readJson(path.join(
+      artifactRoot,
+      systemRunId,
+      "system-evidence.json",
+    ))).resolves.toMatchObject({ runId: systemRunId, status: "passed" });
+    await expect(fs.readFile(path.join(
+      artifactRoot,
+      systemRunId,
+      "browser-screenshot.png",
+    ))).resolves.toEqual(V3_BROWSER_SCREENSHOT);
+
+    const schemaValidations = [
+      ["benchmark run", "benchmark-run.schema.json", report.runs],
+      ["benchmark report", "benchmark-report.schema.json", [report]],
+      ["runtime preflight", "preflight.schema.json", [await readJson(path.join(
+        artifactRoot,
+        repositoryRunId,
+        "preflight.json",
+      ))]],
+      ["repository snapshot preflight", "repository-snapshot-preflight.schema.json", [await readJson(path.join(
+        artifactRoot,
+        repositoryRunId,
+        "repository-snapshot-preflight.json",
+      ))]],
+      ["repository snapshot receipt", "repository-snapshot-receipt.schema.json", [await readJson(path.join(
+        artifactRoot,
+        repositoryRunId,
+        "repository-snapshot-receipt.json",
+      ))]],
+      ["system scenario", "system-scenario.schema.json", [await readJson(path.join(
+        artifactRoot,
+        systemRunId,
+        "system-scenario.json",
+      ))]],
+      ["system evidence", "system-evidence.schema.json", [await readJson(path.join(
+        artifactRoot,
+        systemRunId,
+        "system-evidence.json",
+      ))]],
+    ];
+    for (const [label, schemaName, samples] of schemaValidations) {
+      const schema = await readJson(path.resolve("benchmarks/coding-agent/v3", schemaName));
+      const compiled = compileOutputSchema(schema);
+      expect(compiled.ok, label).toBe(true);
+      if (compiled.ok) {
+        for (const sample of samples) {
+          expect(compiled.validator.validateOutput(JSON.stringify(sample)), label)
+            .toMatchObject({ ok: true });
+        }
+      }
+    }
+  });
+
+  it("passes the fixture baseline and task budget into the native parallel read harness", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-v3-parallel-read-"));
+    tempRoots.push(root);
+    const runId = "system-parallel-read-windows-a1-test";
+    const artifactRoot = path.join(root, "artifacts");
+    const fixtureRoot = path.join(root, "fixtures");
+    const harness = await createCodingAgentBenchmarkV3SystemHarness({}, {
+      resolveBrowserExecutable: async () => null,
+      resolveWorkflowBatchRunner: async () => runWorkflowBatch,
+    });
+
+    const report = await runStage0BSuite({
+      platform: "windows-native",
+      manifestRevision: "v3",
+      sourceRoot: path.resolve("."),
+      taskIds: ["system.parallel-read-isolation"],
+      fixtureRoot,
+      artifactRoot,
+      stateRoot: path.join(root, "state"),
+      attempt: 1,
+      runIds: { "system.parallel-read-isolation": runId },
+      model: { provider: "fixture", id: "fixture-model", credentialsConfigured: false },
+      generatedAt: "2026-08-06T00:00:00.000Z",
+    }, {
+      runtime: { platform: "win32", osRelease: "Windows fixture", env: {} },
+      resolveRepositoryIdentity: async () => repositoryIdentity("8"),
+      createBenchmarkPreflightArtifact: async (input) => createPassedV3RuntimePreflight(input),
+      v3SystemHarness: harness,
+      async executeCodingCi(input) {
+        await fs.writeFile(
+          path.join(input.artifactDir, "result.json"),
+          `${JSON.stringify({ summary: "Verified native parallel read isolation." })}\n`,
+          "utf-8",
+        );
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(report.runs[0]).toMatchObject({
+      taskId: "system.parallel-read-isolation",
+      status: "passed",
+      execution: {
+        budgets: { timeoutMs: 300_000, maxTurns: 12, maxTokens: 24_000 },
+      },
+      artifacts: {
+        systemScenario: `${runId}/system-scenario.json`,
+        systemEvidence: `${runId}/system-evidence.json`,
+      },
+    });
+    const evidence = await readJson(path.join(artifactRoot, runId, "system-evidence.json"));
+    expect(evidence).toMatchObject({
+      taskId: "system.parallel-read-isolation",
+      runId,
+      status: "passed",
+      observations: {
+        children: [
+          { terminalStatus: "completed", mutationCount: 0 },
+          { terminalStatus: "completed", mutationCount: 0 },
+          { terminalStatus: "completed", mutationCount: 0 },
+        ],
+      },
+    });
+    const schema = await readJson(path.resolve("benchmarks/coding-agent/v3/system-evidence.schema.json"));
+    const compiled = compileOutputSchema(schema);
+    expect(compiled.ok).toBe(true);
+    if (compiled.ok) {
+      expect(compiled.validator.validateOutput(JSON.stringify(evidence))).toMatchObject({ ok: true });
+    }
+  });
+
+  it("persists Schema-valid parallel write fan-in evidence from isolated worktrees", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-v3-parallel-write-"));
+    tempRoots.push(root);
+    const runId = "system-parallel-write-windows-a1-test";
+    const artifactRoot = path.join(root, "artifacts");
+    const fixtureRoot = path.join(root, "fixtures");
+    const harness = await createCodingAgentBenchmarkV3SystemHarness({}, {
+      resolveBrowserExecutable: async () => null,
+      resolveWorkflowBatchRunner: async () => runWorkflowBatch,
+      resolveParallelWriteRuntimes: async () => ({ ManagedWorktreeRuntime, UserWorktreeRuntime }),
+    });
+
+    const report = await runStage0BSuite({
+      platform: "windows-native",
+      manifestRevision: "v3",
+      sourceRoot: path.resolve("."),
+      taskIds: ["system.parallel-write-fan-in"],
+      fixtureRoot,
+      artifactRoot,
+      stateRoot: path.join(root, "state"),
+      attempt: 1,
+      runIds: { "system.parallel-write-fan-in": runId },
+      model: { provider: "fixture", id: "fixture-model", credentialsConfigured: false },
+      generatedAt: "2026-08-06T00:00:00.000Z",
+    }, {
+      runtime: { platform: "win32", osRelease: "Windows fixture", env: {} },
+      resolveRepositoryIdentity: async () => repositoryIdentity("9"),
+      createBenchmarkPreflightArtifact: async (input) => createPassedV3RuntimePreflight(input),
+      v3SystemHarness: harness,
+      async executeCodingCi(input) {
+        await fs.writeFile(
+          path.join(input.artifactDir, "result.json"),
+          `${JSON.stringify({ summary: "Verified native parallel write fan-in." })}\n`,
+          "utf-8",
+        );
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(report.runs[0]).toMatchObject({
+      taskId: "system.parallel-write-fan-in",
+      status: "passed",
+      execution: {
+        budgets: { timeoutMs: 300_000, maxTurns: 12, maxTokens: 24_000 },
+      },
+      artifacts: {
+        systemScenario: `${runId}/system-scenario.json`,
+        systemEvidence: `${runId}/system-evidence.json`,
+      },
+    });
+    const evidence = await readJson(path.join(artifactRoot, runId, "system-evidence.json"));
+    expect(evidence).toMatchObject({
+      taskId: "system.parallel-write-fan-in",
+      runId,
+      status: "passed",
+      observations: {
+        mainWorkspaceChangedBeforeFanIn: false,
+        lanes: [
+          { terminalStatus: "completed", mutationCount: 1 },
+          { terminalStatus: "completed", mutationCount: 1 },
+        ],
+        conflict: { detected: true, path: "workspace/shared.txt" },
+        fanIn: { mode: "preview-confirm", confirmed: true, status: "completed" },
+      },
+    });
+    const schema = await readJson(path.resolve("benchmarks/coding-agent/v3/system-evidence.schema.json"));
+    const compiled = compileOutputSchema(schema);
+    expect(compiled.ok).toBe(true);
+    if (compiled.ok) {
+      expect(compiled.validator.validateOutput(JSON.stringify(evidence))).toMatchObject({ ok: true });
+    }
+    const workspace = path.join(fixtureRoot, runId, "workspace");
+    await expect(fs.readFile(path.join(workspace, "workspace", "shared.txt"), "utf-8"))
+      .resolves.toSatisfy((content) => content.replace(/\r\n/g, "\n") === "base\n");
+  }, 20_000);
+
+  it("persists Schema-valid restart reconciliation evidence from two real processes", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-v3-restart-delivery-"));
+    tempRoots.push(root);
+    const runId = "system-restart-delivery-windows-a1-test";
+    const artifactRoot = path.join(root, "artifacts");
+    const fixtureRoot = path.join(root, "fixtures");
+    const harness = await createCodingAgentBenchmarkV3SystemHarness({ sourceRoot: path.resolve(".") }, {
+      resolveBrowserExecutable: async () => null,
+      resolveWorkflowBatchRunner: async () => null,
+      resolveParallelWriteRuntimes: async () => null,
+    });
+
+    const report = await runStage0BSuite({
+      platform: "windows-native",
+      manifestRevision: "v3",
+      sourceRoot: path.resolve("."),
+      taskIds: ["system.restart-delivery-reconciliation"],
+      fixtureRoot,
+      artifactRoot,
+      stateRoot: path.join(root, "state"),
+      attempt: 1,
+      runIds: { "system.restart-delivery-reconciliation": runId },
+      model: { provider: "fixture", id: "fixture-model", credentialsConfigured: false },
+      generatedAt: "2026-08-06T00:00:00.000Z",
+    }, {
+      runtime: { platform: "win32", osRelease: "Windows fixture", env: {} },
+      resolveRepositoryIdentity: async () => repositoryIdentity("a"),
+      createBenchmarkPreflightArtifact: async (input) => createPassedV3RuntimePreflight(input),
+      v3SystemHarness: harness,
+      async executeCodingCi(input) {
+        await fs.writeFile(
+          path.join(input.artifactDir, "result.json"),
+          `${JSON.stringify({ summary: "Verified native restart delivery reconciliation." })}\n`,
+          "utf-8",
+        );
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(report.runs[0]).toMatchObject({
+      taskId: "system.restart-delivery-reconciliation",
+      status: "passed",
+      artifacts: {
+        systemScenario: `${runId}/system-scenario.json`,
+        systemEvidence: `${runId}/system-evidence.json`,
+      },
+    });
+    const evidence = await readJson(path.join(artifactRoot, runId, "system-evidence.json"));
+    expect(evidence).toMatchObject({
+      taskId: "system.restart-delivery-reconciliation",
+      runId,
+      status: "passed",
+      observations: {
+        restartInjected: true,
+        reattached: true,
+        journalState: "applied",
+        completedSideEffectCount: 1,
+        replayedSideEffectCount: 0,
+        localDeliveryStatus: "completed",
+        remoteWriteCount: 0,
+        terminalStatus: "completed",
+      },
+    });
+    expect(evidence.observations.oldBindingId).not.toBe(evidence.observations.newBindingId);
+    const schema = await readJson(path.resolve("benchmarks/coding-agent/v3/system-evidence.schema.json"));
+    const compiled = compileOutputSchema(schema);
+    expect(compiled.ok).toBe(true);
+    if (compiled.ok) {
+      expect(compiled.validator.validateOutput(JSON.stringify(evidence))).toMatchObject({ ok: true });
+    }
+    const workspace = path.join(fixtureRoot, runId, "workspace");
+    await expect(fs.readFile(path.join(workspace, "workspace", "durable.txt"), "utf-8"))
+      .resolves.toSatisfy((content) => content.replace(/\r\n/g, "\n") === "side-effect-count=0\n");
+  }, 20_000);
+
+  it("records run-bound not-run system evidence when v3 runtime preflight fails", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-v3-system-not-run-"));
+    tempRoots.push(root);
+    const runId = "system-browser-windows-preflight-failed";
+    let codingCiCallCount = 0;
+    let systemHarnessCallCount = 0;
+    const artifactRoot = path.join(root, "artifacts");
+
+    const report = await runStage0BSuite({
+      platform: "windows-native",
+      manifestRevision: "v3",
+      sourceRoot: path.resolve("."),
+      taskIds: ["system.browser-behavior"],
+      fixtureRoot: path.join(root, "fixtures"),
+      artifactRoot,
+      stateRoot: path.join(root, "state"),
+      attempt: 1,
+      runIds: { "system.browser-behavior": runId },
+      model: { provider: "fixture", id: "fixture-model", credentialsConfigured: false },
+      generatedAt: "2026-08-06T00:00:00.000Z",
+    }, {
+      runtime: { platform: "win32", osRelease: "Windows fixture", env: {} },
+      resolveRepositoryIdentity: async () => repositoryIdentity("e"),
+      createBenchmarkPreflightArtifact: async (input) => ({
+        ...createPassedV3RuntimePreflight(input),
+        status: "failed",
+        checks: {
+          ...createPassedV3RuntimePreflight(input).checks,
+          contractSource: { status: "failed", reason: "source_build_unavailable" },
+        },
+      }),
+      v3SystemHarness: {
+        capabilities: { browserBehavior: true },
+        async execute() {
+          systemHarnessCallCount += 1;
+          return createV3BrowserSystemEvidence(runId);
+        },
+      },
+      async executeCodingCi() {
+        codingCiCallCount += 1;
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(codingCiCallCount).toBe(0);
+    expect(systemHarnessCallCount).toBe(0);
+    expect(report.runs[0]).toMatchObject({
+      taskId: "system.browser-behavior",
+      status: "infrastructure_error",
+      failureCategory: "infrastructure",
+      artifacts: { systemEvidence: `${runId}/system-evidence.json` },
+    });
+    const evidence = await readJson(path.join(artifactRoot, runId, "system-evidence.json"));
+    expect(evidence).toEqual({
+      schemaVersion: "coding-agent-benchmark-system-evidence-not-run/v1",
+      taskId: "system.browser-behavior",
+      generatorId: "browser-behavior-v1",
+      fixtureVersion: 1,
+      runId,
+      platform: "windows-native",
+      status: "not_run",
+      reason: "runtime_preflight_failed",
+    });
+    const schema = await readJson(path.resolve("benchmarks/coding-agent/v3/system-evidence.schema.json"));
+    const compiled = compileOutputSchema(schema);
+    expect(compiled.ok).toBe(true);
+    if (compiled.ok) {
+      expect(compiled.validator.validateOutput(JSON.stringify(evidence))).toMatchObject({ ok: true });
+    }
+  });
+
+  it("rejects credential-bearing and oversized v3 system evidence before persistence", async () => {
+    const cases = [
+      {
+        label: "credential",
+        expected: /forbidden credential field refreshToken/i,
+        createEvidence: (runId) => ({
+          ...createV3BrowserSystemEvidence(runId),
+          metadata: { refreshToken: "must-not-persist" },
+        }),
+      },
+      {
+        label: "oversized",
+        expected: /exceeds the 1 MiB artifact limit/i,
+        createEvidence: (runId) => ({
+          ...createV3BrowserSystemEvidence(runId),
+          diagnostic: "x".repeat(1024 * 1024),
+        }),
+      },
+    ];
+
+    for (const item of cases) {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), `coding-benchmark-v3-${item.label}-`));
+      tempRoots.push(root);
+      const runId = `system-browser-${item.label}-evidence`;
+      const artifactRoot = path.join(root, "artifacts");
+      await expect(runStage0BSuite({
+        platform: "windows-native",
+        manifestRevision: "v3",
+        sourceRoot: path.resolve("."),
+        taskIds: ["system.browser-behavior"],
+        fixtureRoot: path.join(root, "fixtures"),
+        artifactRoot,
+        stateRoot: path.join(root, "state"),
+        attempt: 1,
+        runIds: { "system.browser-behavior": runId },
+        model: { provider: "fixture", id: "fixture-model", credentialsConfigured: false },
+      }, {
+        runtime: { platform: "win32", osRelease: "Windows fixture", env: {} },
+        resolveRepositoryIdentity: async () => repositoryIdentity("f"),
+        createBenchmarkPreflightArtifact: async (input) => createPassedV3RuntimePreflight(input),
+        v3SystemHarness: {
+          capabilities: { browserBehavior: true },
+          async execute() {
+            return item.createEvidence(runId);
+          },
+        },
+        async executeCodingCi(input) {
+          await fs.writeFile(
+            path.join(input.artifactDir, "result.json"),
+            `${JSON.stringify({ summary: "Evidence boundary probe." })}\n`,
+          );
+          return { exitCode: 0, stdout: "", stderr: "" };
+        },
+      })).rejects.toThrow(item.expected);
+      await expect(fs.stat(path.join(artifactRoot, runId, "system-evidence.json")))
+        .rejects.toMatchObject({ code: "ENOENT" });
+    }
+  });
+
+  it("rejects missing, oversized, or hash-drifted browser screenshots before evidence persistence", async () => {
+    const cases = [
+      {
+        label: "missing",
+        expected: /screenshot artifact is missing or invalid/i,
+      },
+      {
+        label: "oversized",
+        expected: /screenshot artifact is missing or invalid/i,
+        screenshot: Buffer.alloc(5 * 1024 * 1024 + 1),
+      },
+      {
+        label: "hash-drifted",
+        expected: /screenshot artifact hash drifted/i,
+        screenshot: Buffer.from("different screenshot bytes"),
+      },
+    ];
+
+    for (const item of cases) {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), `coding-benchmark-v3-browser-${item.label}-`));
+      tempRoots.push(root);
+      const runId = `system-browser-${item.label}-artifact`;
+      const artifactRoot = path.join(root, "artifacts");
+      await expect(runStage0BSuite({
+        platform: "windows-native",
+        manifestRevision: "v3",
+        sourceRoot: path.resolve("."),
+        taskIds: ["system.browser-behavior"],
+        fixtureRoot: path.join(root, "fixtures"),
+        artifactRoot,
+        stateRoot: path.join(root, "state"),
+        attempt: 1,
+        runIds: { "system.browser-behavior": runId },
+        model: { provider: "fixture", id: "fixture-model", credentialsConfigured: false },
+      }, {
+        runtime: { platform: "win32", osRelease: "Windows fixture", env: {} },
+        resolveRepositoryIdentity: async () => repositoryIdentity("9"),
+        createBenchmarkPreflightArtifact: async (input) => createPassedV3RuntimePreflight(input),
+        v3SystemHarness: {
+          capabilities: { browserBehavior: true },
+          async execute(input) {
+            if (item.screenshot) {
+              await fs.writeFile(path.join(input.artifactDir, "browser-screenshot.png"), item.screenshot);
+            }
+            return createV3BrowserSystemEvidence(runId);
+          },
+        },
+        async executeCodingCi(input) {
+          await fs.writeFile(
+            path.join(input.artifactDir, "result.json"),
+            `${JSON.stringify({ summary: "Screenshot boundary probe." })}\n`,
+          );
+          return { exitCode: 0, stdout: "", stderr: "" };
+        },
+      })).rejects.toThrow(item.expected);
+      await expect(fs.stat(path.join(artifactRoot, runId, "system-evidence.json")))
+        .rejects.toMatchObject({ code: "ENOENT" });
+    }
+  });
+
+  it("keeps corrected-v2 approval and budget behavior for v3 A-layer safety runs", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-v3-safety-"));
+    tempRoots.push(root);
+    const runId = "safety-v3-windows-a1-test";
+    const report = await runStage0BSuite({
+      platform: "windows-native",
+      manifestRevision: "v3",
+      sourceRoot: path.resolve("."),
+      taskIds: ["safety.boundary-enforcement"],
+      fixtureRoot: path.join(root, "fixtures"),
+      artifactRoot: path.join(root, "artifacts"),
+      stateRoot: path.join(root, "state"),
+      attempt: 1,
+      runIds: { "safety.boundary-enforcement": runId },
+      model: { provider: "fixture", id: "fixture-model", credentialsConfigured: false },
+      generatedAt: "2026-08-05T00:00:00.000Z",
+    }, {
+      runtime: { platform: "win32", osRelease: "Windows fixture", env: {} },
+      resolveRepositoryIdentity: async () => repositoryIdentity("d"),
+      createBenchmarkPreflightArtifact: async (input) => createPassedV3RuntimePreflight(input),
+      async executeCodingCi() {
+        return { exitCode: 4, stdout: "", stderr: "fixture runner unavailable" };
+      },
+    });
+
+    expect(report.runs[0]).toMatchObject({
+      schemaVersion: "coding-agent-benchmark-run/v3",
+      taskId: "safety.boundary-enforcement",
+      execution: { profile: "safety-probe", budgets: { maxTokens: 32000 } },
+      artifacts: {
+        approvalContract: `${runId}/approval-contract.json`,
+        approvalEvidence: `${runId}/approval-evidence.json`,
+      },
+    });
+    await expect(readJson(path.join(
+      root,
+      "artifacts",
+      runId,
+      "approval-contract.json",
+    ))).resolves.toMatchObject({ manifestRevision: "v3", taskId: "safety.boundary-enforcement" });
+    await expect(readJson(path.join(
+      root,
+      "artifacts",
+      runId,
+      "approval-evidence.json",
+    ))).resolves.toMatchObject({ manifestRevision: "v3", status: "not_run" });
   });
 
   it("reserves part of the 30 CNY ceiling and fails closed when real-run cost is unavailable", () => {
@@ -70,6 +997,21 @@ describe("coding agent benchmark stage 0B runner", () => {
       remainingCostUsd: 2.25,
       observedCostUsd: 0.75,
     });
+    expect(createBenchmarkUsageBudget({
+      provider: "fixture",
+      id: "priced-model",
+      credentialsConfigured: true,
+    }, { maxCostUsd: 0.25, priorObservedCostUsd: 0.01 })).toMatchObject({
+      maxCostUsd: 0.25,
+      remainingCostUsd: 0.24,
+      observedCostUsd: 0.01,
+    });
+    expect(() => createBenchmarkUsageBudget({
+      provider: "fixture",
+      id: "priced-model",
+      credentialsConfigured: true,
+    }, { maxCostUsd: 0.25, priorObservedCostUsd: 0.25 }))
+      .toThrow(/selected maximum cost/i);
     expect(() => createBenchmarkUsageBudget({
       provider: "fixture",
       id: "priced-model",
@@ -792,3 +1734,161 @@ describe("coding agent benchmark stage 0B runner", () => {
     }
   }, 30_000);
 });
+
+function repositoryIdentity(seed) {
+  return {
+    commit: seed.repeat(40),
+    workspaceDirty: false,
+    lockfileSha256: seed.repeat(64),
+    worktreeContentSha256: seed.repeat(64),
+  };
+}
+
+function createV3SnapshotReceipt(repositoryId) {
+  return {
+    schemaVersion: "coding-agent-benchmark-snapshot-receipt/v1",
+    repositoryId,
+    source: {
+      url: "https://github.com/expressjs/express.git",
+      commit: "a3714473feb3d2908add734d340e7755fd85e0a3",
+      workspaceDirty: false,
+      worktreeContentSha256: "1".repeat(64),
+      dependencyInputsSha256: "2".repeat(64),
+    },
+    license: { spdx: "MIT", path: "LICENSE", sha256: "3".repeat(64) },
+    dependencyCache: {
+      cacheKey: "express-a3714473feb3d2908add734d340e7755fd85e0a3",
+      contentSha256: "4".repeat(64),
+    },
+    policy: {
+      preparationNetwork: "allowlisted-source-only",
+      executionNetwork: "disabled",
+      dependencyPolicy: "pinned-cache-required",
+    },
+    preparedAt: "2026-08-05T00:00:00.000Z",
+  };
+}
+
+function createPassedV3SnapshotPreflight(task) {
+  const passed = { status: "passed", reason: null };
+  return {
+    schemaVersion: "coding-agent-benchmark-snapshot-preflight/v1",
+    status: "passed",
+    taskId: task.id,
+    repositoryId: task.repositoryId,
+    checks: {
+      manifestBinding: passed,
+      sourceIdentity: passed,
+      license: passed,
+      dependencyCache: passed,
+      executionNetwork: passed,
+    },
+  };
+}
+
+function createPassedV3RuntimePreflight(input) {
+  const check = { status: "not_applicable", reason: "fixture_provider" };
+  return {
+    schemaVersion: "coding-agent-benchmark-preflight/v1",
+    manifestRevision: "v3",
+    taskId: input.task.id,
+    runId: input.runId,
+    status: "passed",
+    checks: {
+      contractSource: {
+        status: "passed",
+        reason: null,
+        manifestVersion: "coding-agent-benchmark-manifest/v3",
+        profile: input.task.executionProfile,
+        toolAllow: ["file_read"],
+        entrypoints: {
+          bdd: { path: "packages/belldandy-core/dist/bin/bdd.js", sha256: "a".repeat(64) },
+          gateway: { path: "packages/belldandy-core/dist/server.js", sha256: "b".repeat(64) },
+          contracts: { path: "packages/belldandy-core/dist/coding-run/contracts.js", sha256: "c".repeat(64) },
+        },
+      },
+      workspaceWriteClosure: input.task.executionProfile === "workspace-write"
+        ? { status: "passed", reason: null, toolAllow: ["file_read", "file_edit", "apply_patch"], testCommandCount: 1 }
+        : { status: "not_applicable", reason: "task_does_not_require_workspace_write_closure" },
+      agentProfile: { status: "not_applicable", reason: "profile_uses_runtime_default" },
+      executionBudget: {
+        status: "passed",
+        reason: null,
+        taskId: input.task.id,
+        timeoutMs: 300000,
+        maxTurns: 12,
+        maxTokens: input.task.id === "safety.boundary-enforcement" ? 32000 : 24000,
+      },
+      pricing: check,
+      oci: { status: "not_applicable", reason: "profile_has_no_command_execution" },
+      eventProjection: { status: "not_applicable", reason: "task_does_not_require_extended_event_output" },
+      fault: { status: "not_applicable", reason: "task_has_no_fault_injection" },
+    },
+  };
+}
+
+function summaryOutputSchema() {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["summary"],
+    properties: { summary: { type: "string", minLength: 1, maxLength: 1000 } },
+  };
+}
+
+function passedV3Evaluation(summary) {
+  const taskCompleted = typeof summary === "string" && summary.trim().length > 0;
+  return {
+    status: taskCompleted ? "passed" : "failed",
+    failureCategory: taskCompleted ? null : "model",
+    evaluation: {
+      source: "machine",
+      taskCompleted,
+      testsPassed: true,
+      patchAccepted: true,
+      regressionCount: taskCompleted ? 0 : 1,
+      manualInterventionCount: 0,
+      dangerousOperationBlocked: null,
+      recoverySucceeded: null,
+    },
+    diagnostics: taskCompleted ? [] : ["summary missing"],
+  };
+}
+
+const V3_BROWSER_SCREENSHOT = Buffer.from("fixture browser screenshot bytes");
+
+function createV3BrowserSystemEvidence(runId, screenshot = V3_BROWSER_SCREENSHOT) {
+  const screenshotSha256 = crypto.createHash("sha256").update(screenshot).digest("hex");
+  const domAfterSha256 = "7".repeat(64);
+  return {
+    schemaVersion: "coding-agent-benchmark-system-evidence/v1",
+    taskId: "system.browser-behavior",
+    generatorId: "browser-behavior-v1",
+    fixtureVersion: 1,
+    runId,
+    platform: "windows-native",
+    status: "passed",
+    sensitiveFindingCount: 0,
+    orphanResourceCount: 0,
+    duplicateSideEffectCount: 0,
+    observations: {
+      pageLoaded: true,
+      consoleErrorCount: 0,
+      domChanged: true,
+      domAfterSha256,
+      requestStatus: 200,
+      networkScope: "loopback-only",
+      screenshotSha256,
+      screenshotBindingSha256: crypto.createHash("sha256").update([
+        "coding-agent-benchmark-browser-binding/v1",
+        runId,
+        screenshotSha256,
+        domAfterSha256,
+      ].join("\0")).digest("hex"),
+    },
+  };
+}
+
+async function readJson(target) {
+  return JSON.parse(await fs.readFile(target, "utf-8"));
+}

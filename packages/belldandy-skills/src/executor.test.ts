@@ -1445,6 +1445,116 @@ describe("ToolExecutor", () => {
     });
   });
 
+  it("enforces the bounded navigation argument policy without changing default file_glob behavior", async () => {
+    const executeSpy = vi.fn(async (args): Promise<ToolCallResult> => ({
+      id: "",
+      name: "file_glob",
+      success: true,
+      output: JSON.stringify(args),
+      durationMs: 0,
+    }));
+    const boundedGlob: Tool = {
+      definition: {
+        name: "file_glob",
+        description: "bounded glob test double",
+        parameters: {
+          type: "object",
+          properties: {
+            include: { type: "string" },
+            maxResults: { type: "number" },
+          },
+          required: [],
+        },
+      },
+      execute: executeSpy,
+    };
+    const executor = new ToolExecutor({ tools: [boundedGlob], workspaceRoot: "/tmp/test" });
+    const runtimeContext = {
+      launchSpec: { toolArgumentPolicy: "bounded-navigation-v1" },
+    } as any;
+
+    await expect(executor.execute(
+      { id: "glob-default", name: "file_glob", arguments: {} },
+      "conv-default",
+    )).resolves.toMatchObject({ success: true });
+
+    for (const [id, argumentsValue] of [
+      ["glob-missing", {}],
+      ["glob-array", { include: ["lib/**/*.js"] }],
+      ["glob-broad", { include: "**/*" }],
+    ] as const) {
+      const result = await executor.execute(
+        { id, name: "file_glob", arguments: argumentsValue as any },
+        "conv-bounded",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        runtimeContext,
+      );
+      expect(result).toMatchObject({
+        success: false,
+        failureKind: "input_error",
+        metadata: {
+          repairAction: "tool_arguments_invalid",
+          argumentValidation: {
+            blocked: true,
+            toolArgumentPolicy: "bounded-navigation-v1",
+          },
+        },
+      });
+    }
+
+    const bounded = await executor.execute(
+      { id: "glob-bounded", name: "file_glob", arguments: { include: "lib/**/*.js" } },
+      "conv-bounded",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      runtimeContext,
+    );
+    expect(bounded).toMatchObject({
+      success: true,
+      metadata: {
+        repairAction: "tool_arguments_corrected",
+        argumentValidation: {
+          corrected: true,
+          blocked: false,
+          toolArgumentPolicy: "bounded-navigation-v1",
+        },
+      },
+    });
+    expect(JSON.parse(bounded.output)).toEqual({ include: "lib/**/*.js", maxResults: 20 });
+
+    const boundedOversized = await executor.execute(
+      {
+        id: "glob-bounded-oversized",
+        name: "file_glob",
+        arguments: { include: "lib/**/*.js", maxResults: 200 },
+      },
+      "conv-bounded",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      runtimeContext,
+    );
+    expect(boundedOversized).toMatchObject({
+      success: true,
+      metadata: {
+        repairAction: "tool_arguments_corrected",
+        argumentValidation: {
+          corrected: true,
+          blocked: false,
+          toolArgumentPolicy: "bounded-navigation-v1",
+        },
+      },
+    });
+    expect(JSON.parse(boundedOversized.output)).toEqual({ include: "lib/**/*.js", maxResults: 20 });
+    expect(executeSpy).toHaveBeenCalledTimes(3);
+  });
+
   it("should reject tool execution outside agent whitelist", async () => {
     const executor = new ToolExecutor({
       tools: [echoTool, failTool],

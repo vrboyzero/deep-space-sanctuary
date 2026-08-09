@@ -12,6 +12,9 @@ import {
 const OCI_IMAGE_DIGEST_PATTERN = /^.+@sha256:[a-f0-9]{64}$/i;
 const BENCHMARK_TOOL_RESULT_EVENT_OUTPUT_CHAR_LIMIT = 2_048;
 const WORKSPACE_WRITE_CLOSURE_TOOLS = Object.freeze(["file_read", "file_edit", "apply_patch"]);
+const PARALLEL_READ_SYSTEM_TASK_ID = "system.parallel-read-isolation";
+const PARALLEL_WRITE_SYSTEM_TASK_ID = "system.parallel-write-fan-in";
+const RESTART_DELIVERY_SYSTEM_TASK_ID = "system.restart-delivery-reconciliation";
 
 export async function createBenchmarkPreflightArtifact(input, dependencies = {}) {
   const contractSource = await evaluateBenchmarkContractSourcePreflight(input, dependencies);
@@ -176,7 +179,7 @@ export async function evaluateBenchmarkContractSourcePreflight(input, dependenci
   if (!profile || !Array.isArray(profile.toolAllow)) {
     return { status: "failed", reason: "profile_capability_missing" };
   }
-  if (manifestRevision === "v2" && task.executionProfile === "command-control"
+  if (manifestRevision !== "v1" && task.executionProfile === "command-control"
     && (!profile.toolAllow.includes("run_command") || !profile.toolAllow.includes("command_job"))) {
     return { status: "failed", reason: "profile_capability_missing" };
   }
@@ -185,6 +188,20 @@ export async function evaluateBenchmarkContractSourcePreflight(input, dependenci
     bdd: "packages/belldandy-core/dist/bin/bdd.js",
     gateway: "packages/belldandy-core/dist/server.js",
     contracts: "packages/belldandy-core/dist/coding-run/contracts.js",
+    ...(manifestRevision === "v3"
+      && (task.id === PARALLEL_READ_SYSTEM_TASK_ID || task.id === PARALLEL_WRITE_SYSTEM_TASK_ID) ? {
+      workflowBatchRunner: "packages/belldandy-core/dist/workflow-batch-runner.js",
+    } : {}),
+    ...(manifestRevision === "v3" && task.id === PARALLEL_WRITE_SYSTEM_TASK_ID ? {
+      managedWorktree: "packages/belldandy-core/dist/managed-worktree.js",
+      userWorktreeRuntime: "packages/belldandy-core/dist/user-worktree-runtime.js",
+    } : {}),
+    ...(manifestRevision === "v3" && task.id === RESTART_DELIVERY_SYSTEM_TASK_ID ? {
+      reconciliationJournal: "packages/belldandy-core/dist/coding-run/reconciliation-journal.js",
+      workspaceRevision: "packages/belldandy-core/dist/workspace-revision.js",
+      userWorktreeRuntime: "packages/belldandy-core/dist/user-worktree-runtime.js",
+      fileTool: "packages/belldandy-skills/dist/builtin/file.js",
+    } : {}),
   };
   const readFile = dependencies.readFile ?? fs.readFile;
   const entrypoints = {};

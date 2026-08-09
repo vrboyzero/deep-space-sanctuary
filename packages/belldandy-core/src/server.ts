@@ -2566,6 +2566,8 @@ function parseCodingRunOptions(
     "toolAllow",
     "toolDeny",
     "permissionMode",
+    "toolArgumentPolicy",
+    "modelLoopBudgetPolicy",
     "maxWallTimeMs",
     "maxTurns",
     "maxTokens",
@@ -2607,6 +2609,22 @@ function parseCodingRunOptions(
     return { ok: false, message: "codingRun.permissionMode must be plan, acceptEdits, or confirm" };
   }
 
+  const toolArgumentPolicy = value.toolArgumentPolicy;
+  if (
+    toolArgumentPolicy !== undefined
+    && toolArgumentPolicy !== "bounded-navigation-v1"
+  ) {
+    return { ok: false, message: "codingRun.toolArgumentPolicy must be bounded-navigation-v1" };
+  }
+
+  const modelLoopBudgetPolicy = value.modelLoopBudgetPolicy;
+  if (
+    modelLoopBudgetPolicy !== undefined
+    && modelLoopBudgetPolicy !== "cost-containment-v1"
+  ) {
+    return { ok: false, message: "codingRun.modelLoopBudgetPolicy must be cost-containment-v1" };
+  }
+
   const maxWallTimeMs = parseCodingRunPositiveInteger(value.maxWallTimeMs, "maxWallTimeMs", 1_000);
   if (!maxWallTimeMs.ok) return maxWallTimeMs;
   const maxTurns = parseCodingRunPositiveInteger(value.maxTurns, "maxTurns");
@@ -2634,6 +2652,8 @@ function parseCodingRunOptions(
       ...(toolAllow.value ? { toolAllow: toolAllow.value } : {}),
       ...(toolDeny.value ? { toolDeny: toolDeny.value } : {}),
       ...(permissionMode ? { permissionMode } : {}),
+      ...(toolArgumentPolicy ? { toolArgumentPolicy } : {}),
+      ...(modelLoopBudgetPolicy ? { modelLoopBudgetPolicy } : {}),
       ...(maxWallTimeMs.value ? { maxWallTimeMs: maxWallTimeMs.value } : {}),
       ...(maxTurns.value ? { maxTurns: maxTurns.value } : {}),
       ...(maxTokens.value ? { maxTokens: maxTokens.value } : {}),

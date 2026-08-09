@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-snapshot-preflight-v1.json",
+  "title": "Star Sanctuary coding agent benchmark v3 repository snapshot preflight",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "taskId", "repositoryId", "status", "checks"],
+  "properties": {
+    "schemaVersion": { "const": "coding-agent-benchmark-snapshot-preflight/v1" },
+    "taskId": {
+      "enum": [
+        "real-go.bug-fix",
+        "real-go.public-api-migration",
+        "real-js.bug-fix",
+        "real-js.failed-test-fix",
+        "real-ts.api-migration",
+        "real-ts.cross-package-refactor",
+        "real-web.dependency-diagnosis",
+        "real-web.ui-regression"
+      ]
+    },
+    "repositoryId": { "enum": ["express", "preact", "spf13-cobra", "vscode-languageserver-node"] },
+    "status": { "enum": ["passed", "failed"] },
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifestBinding", "sourceIdentity", "license", "dependencyCache", "executionNetwork"],
+      "properties": {
+        "manifestBinding": { "$ref": "#/$defs/check" },
+        "sourceIdentity": { "$ref": "#/$defs/check" },
+        "license": { "$ref": "#/$defs/check" },
+        "dependencyCache": { "$ref": "#/$defs/check" },
+        "executionNetwork": { "$ref": "#/$defs/check" }
+      }
+    }
+  },
+  "$defs": {
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason"],
+      "properties": {
+        "status": { "enum": ["passed", "failed", "not_run"] },
+        "reason": { "type": ["string", "null"], "maxLength": 200 }
+      }
+    }
+  }
+}

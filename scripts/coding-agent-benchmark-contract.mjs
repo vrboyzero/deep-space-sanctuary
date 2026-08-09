@@ -3,12 +3,20 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  resolveCodingAgentBenchmarkV3ManifestPath,
+  validateCodingAgentBenchmarkV3Manifest,
+} from "./coding-agent-benchmark-v3-contract.mjs";
+
 export const CODING_AGENT_BENCHMARK_MANIFEST_VERSION = "coding-agent-benchmark-manifest/v1";
 export const CODING_AGENT_BENCHMARK_REPORT_VERSION = "coding-agent-benchmark-report/v1";
 export const CODING_AGENT_BENCHMARK_RUN_VERSION = "coding-agent-benchmark-run/v1";
 export const CODING_AGENT_BENCHMARK_MANIFEST_V2_VERSION = "coding-agent-benchmark-manifest/v2";
 export const CODING_AGENT_BENCHMARK_REPORT_V2_VERSION = "coding-agent-benchmark-report/v2";
 export const CODING_AGENT_BENCHMARK_RUN_V2_VERSION = "coding-agent-benchmark-run/v2";
+export const CODING_AGENT_BENCHMARK_MANIFEST_V3_VERSION = "coding-agent-benchmark-manifest/v3";
+export const CODING_AGENT_BENCHMARK_REPORT_V3_VERSION = "coding-agent-benchmark-report/v3";
+export const CODING_AGENT_BENCHMARK_RUN_V3_VERSION = "coding-agent-benchmark-run/v3";
 
 export function hashCodingAgentBenchmarkManifestText(value) {
   if (typeof value !== "string") {
@@ -166,6 +174,7 @@ const v2ManifestPath = path.resolve(
   "v2",
   "task-manifest.json",
 );
+const v3ManifestPath = resolveCodingAgentBenchmarkV3ManifestPath();
 const BENCHMARK_CONTRACTS = Object.freeze({
   v1: Object.freeze({
     revision: "v1",
@@ -190,6 +199,19 @@ const BENCHMARK_CONTRACTS = Object.freeze({
     budgets: FROZEN_BUDGETS,
     taskBudgetOverrides: FROZEN_TASK_BUDGET_OVERRIDES_V2,
     manifestPath: v2ManifestPath,
+    requiresPreflightArtifact: true,
+    requiresHarnessIdentity: true,
+  }),
+  v3: Object.freeze({
+    revision: "v3",
+    manifestVersion: CODING_AGENT_BENCHMARK_MANIFEST_V3_VERSION,
+    reportVersion: CODING_AGENT_BENCHMARK_REPORT_V3_VERSION,
+    runVersion: CODING_AGENT_BENCHMARK_RUN_V3_VERSION,
+    suiteId: "ss-project-coding-v3",
+    executionProfiles: FROZEN_EXECUTION_PROFILES_V2,
+    budgets: FROZEN_BUDGETS,
+    taskBudgetOverrides: FROZEN_TASK_BUDGET_OVERRIDES_V2,
+    manifestPath: v3ManifestPath,
     requiresPreflightArtifact: true,
     requiresHarnessIdentity: true,
   }),
@@ -292,13 +314,17 @@ export function validateCodingAgentBenchmarkManifest(manifest) {
     assertTaskAcceptance(task);
   }
 
-  for (const category of REQUIRED_TASK_CATEGORIES) {
-    if (!categories.has(category)) {
-      throw new Error(`Coding benchmark manifest is missing task category ${category}.`);
+  if (contract.revision === "v3") {
+    validateCodingAgentBenchmarkV3Manifest(manifest);
+  } else {
+    for (const category of REQUIRED_TASK_CATEGORIES) {
+      if (!categories.has(category)) {
+        throw new Error(`Coding benchmark manifest is missing task category ${category}.`);
+      }
     }
-  }
-  if (manifest.tasks.length !== REQUIRED_TASK_CATEGORIES.size) {
-    throw new Error(`Coding benchmark manifest requires exactly ${REQUIRED_TASK_CATEGORIES.size} tasks.`);
+    if (manifest.tasks.length !== REQUIRED_TASK_CATEGORIES.size) {
+      throw new Error(`Coding benchmark manifest requires exactly ${REQUIRED_TASK_CATEGORIES.size} tasks.`);
+    }
   }
   assertOrderedIds(manifest.failureTaxonomy, REQUIRED_FAILURE_CATEGORIES, "failure taxonomy");
   assertMetricDefinitions(manifest.metrics);
@@ -463,11 +489,11 @@ export function createCodingAgentBenchmarkReport(input) {
     notReachedRunCount: usageObservations.filter((item) => item.status === "not_reached").length,
   };
 
-  const productRuns = contract.revision === "v2"
+  const productRuns = contract.requiresHarnessIdentity
     ? input.runs.filter((run) => run.status !== "infrastructure_error")
     : input.runs;
   const infrastructureErrorRunCount = input.runs.filter((run) => run.status === "infrastructure_error").length;
-  const eligibleForProductComparison = contract.revision !== "v2"
+  const eligibleForProductComparison = !contract.requiresHarnessIdentity
     ? undefined
     : input.status === "completed"
       && input.runs.length === manifest.tasks.length * manifest.suite.requiredPlatforms.length * manifest.suite.sampleRuns
@@ -493,7 +519,7 @@ export function createCodingAgentBenchmarkReport(input) {
     runs: input.runs.map((run) => structuredClone(run)),
     summary: {
       runCount: input.runs.length,
-      ...(contract.revision === "v2" ? {
+      ...(contract.requiresHarnessIdentity ? {
         productRunCount: productRuns.length,
         infrastructureErrorRunCount,
         eligibleForProductComparison,
@@ -623,10 +649,10 @@ function assertRunRecord(run, tasksById, manifest) {
       throw new Error(`Failed coding benchmark run ${run.runId} requires a known failure category.`);
     }
   }
-  if (contract.revision === "v2"
+  if (contract.requiresHarnessIdentity
     && ((run.status === "infrastructure_error") !== (run.failureCategory === "infrastructure"))) {
     throw new Error(
-      `Coding benchmark v2 run ${run.runId} must pair infrastructure failures with status=infrastructure_error.`,
+      `Coding benchmark ${contract.revision} run ${run.runId} must pair infrastructure failures with status=infrastructure_error.`,
     );
   }
   if (!run.environment || typeof run.environment !== "object" || Array.isArray(run.environment)) {
@@ -706,7 +732,24 @@ function assertRunRecord(run, tasksById, manifest) {
     ...(task.id === "gateway.disconnect-recovery" ? ["faultInjection"] : []),
     ...(task.id === "gateway.client-cancel" ? ["cancelInjection"] : []),
     ...(task.id === "gateway.process-restart" ? ["restartInjection"] : []),
+    ...(contract.revision === "v3" && task.layer === "B"
+      ? ["repositorySnapshotPreflight", "repositorySnapshotReceipt"]
+      : []),
+    ...(contract.revision === "v3" && task.layer === "C"
+      ? ["systemScenario", "systemEvidence"]
+      : []),
   ];
+  const isV3BrowserRun = contract.revision === "v3" && task.id === "system.browser-behavior";
+  if (isV3BrowserRun && run.status === "passed"
+    && !Object.hasOwn(run.artifacts, "systemBrowserScreenshot")) {
+    throw new Error(
+      `Coding benchmark run ${run.runId} passed browser behavior without a screenshot artifact.`,
+    );
+  }
+  if (isV3BrowserRun && (run.status === "passed" || run.status === "failed")
+    && Object.hasOwn(run.artifacts, "systemBrowserScreenshot")) {
+    artifactFields.push("systemBrowserScreenshot");
+  }
   assertExactKeys(run.artifacts, artifactFields, `Coding benchmark run ${run.runId} artifacts`);
   for (const field of artifactFields) {
     const artifactPath = run.artifacts[field];

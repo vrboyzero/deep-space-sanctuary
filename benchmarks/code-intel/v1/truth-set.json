@@ -1,0 +1,171 @@
+{
+  "schemaVersion": "code-intel-truth-set/v1",
+  "id": "p1-a1-ts-js-core-v1",
+  "frozenAt": "2026-08-09T06:55:00.000Z",
+  "contractVersion": "code-intel/v1",
+  "thresholds": {
+    "precision": 0.95,
+    "recall": 0.95
+  },
+  "workspace": {
+    "root": "fixtures/ts-js-core",
+    "revision": "p1-a1-ts-js-core-v1",
+    "sourceFiles": [
+      {
+        "path": "src/caller.ts",
+        "sha256": "bda552f7425c3956b5aa83b5756b08a2659deac365ed605104849f5006f4d389"
+      },
+      {
+        "path": "src/helper.js",
+        "sha256": "1cd2721da7188eb965abff83c98175dd85031335bb401a3e2bfc313ff1aea914"
+      },
+      {
+        "path": "src/model.ts",
+        "sha256": "384b7e6b65364a1d93456afe71f858cfc1e4385c36abbf932db6e471ee03187c"
+      },
+      {
+        "path": "tsconfig.json",
+        "sha256": "919b6b99fa1247ae684c1278064739849cf87f2b562047d401b108eee7f07f6e"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "symbols.make-widget",
+      "operation": "symbols",
+      "query": "makeWidget",
+      "expected": [
+        {
+          "scope": "workspace",
+          "path": "src/model.ts",
+          "anchor": { "text": "makeWidget", "occurrence": 1 }
+        }
+      ]
+    },
+    {
+      "id": "definition.make-widget-call",
+      "operation": "definition",
+      "location": {
+        "path": "src/caller.ts",
+        "anchor": { "text": "makeWidget", "occurrence": 2 }
+      },
+      "expected": [
+        {
+          "scope": "workspace",
+          "path": "src/model.ts",
+          "anchor": { "text": "makeWidget", "occurrence": 1 }
+        }
+      ]
+    },
+    {
+      "id": "definition.javascript-helper",
+      "operation": "definition",
+      "location": {
+        "path": "src/caller.ts",
+        "anchor": { "text": "parseLabel", "occurrence": 2 }
+      },
+      "expected": [
+        {
+          "scope": "workspace",
+          "path": "src/helper.js",
+          "anchor": { "text": "parseLabel", "occurrence": 1 }
+        }
+      ]
+    },
+    {
+      "id": "definition.default-widget-constructor",
+      "operation": "definition",
+      "location": {
+        "path": "src/caller.ts",
+        "anchor": { "text": "DefaultWidget", "occurrence": 2 }
+      },
+      "expected": [
+        {
+          "scope": "workspace",
+          "path": "src/model.ts",
+          "anchor": { "text": "DefaultWidget", "occurrence": 1 }
+        },
+        {
+          "scope": "workspace",
+          "path": "src/model.ts",
+          "anchor": { "text": "constructor(public value: string) {}", "occurrence": 1 }
+        }
+      ]
+    },
+    {
+      "id": "references.widget-interface",
+      "operation": "references",
+      "location": {
+        "path": "src/model.ts",
+        "anchor": { "text": "Widget", "occurrence": 1 }
+      },
+      "expected": [
+        {
+          "scope": "workspace",
+          "path": "src/model.ts",
+          "anchor": { "text": "Widget", "occurrence": 1 }
+        },
+        {
+          "scope": "workspace",
+          "path": "src/model.ts",
+          "anchor": { "text": "Widget", "occurrence": 2 }
+        },
+        {
+          "scope": "workspace",
+          "path": "src/model.ts",
+          "anchor": { "text": "Widget", "occurrence": 3 }
+        },
+        {
+          "scope": "workspace",
+          "path": "src/caller.ts",
+          "anchor": { "text": "Widget", "occurrence": 1 }
+        },
+        {
+          "scope": "workspace",
+          "path": "src/caller.ts",
+          "anchor": { "text": "Widget", "occurrence": 2 }
+        }
+      ]
+    },
+    {
+      "id": "references.make-widget",
+      "operation": "references",
+      "location": {
+        "path": "src/model.ts",
+        "anchor": { "text": "makeWidget", "occurrence": 1 }
+      },
+      "expected": [
+        {
+          "scope": "workspace",
+          "path": "src/model.ts",
+          "anchor": { "text": "makeWidget", "occurrence": 1 }
+        },
+        {
+          "scope": "workspace",
+          "path": "src/caller.ts",
+          "anchor": { "text": "makeWidget", "occurrence": 1 }
+        },
+        {
+          "scope": "workspace",
+          "path": "src/caller.ts",
+          "anchor": { "text": "makeWidget", "occurrence": 2 }
+        }
+      ]
+    },
+    {
+      "id": "implementation.widget-interface",
+      "operation": "implementation",
+      "location": {
+        "path": "src/model.ts",
+        "anchor": { "text": "Widget", "occurrence": 1 }
+      },
+      "expected": [
+        {
+          "scope": "workspace",
+          "path": "src/model.ts",
+          "anchor": { "text": "DefaultWidget", "occurrence": 1 }
+        }
+      ]
+    }
+  ]
+}

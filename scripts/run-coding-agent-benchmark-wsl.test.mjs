@@ -18,9 +18,12 @@ describe("coding agent benchmark WSL launcher", () => {
       attempt: 2,
       taskId: "command.interactive-control",
       priorObservedCostUsd: 0.75,
+      maxTotalCostUsd: 2.5,
+      shadowCandidateId: "code-intel-semantic-live-v1",
       manifestRevision: "v2",
       sourceRoot: "E:/project/star-sanctuary-source-fd70990",
     }, {
+      baseEnv: {},
       resolvePath: (value) => path.win32.resolve(value),
       toWslPath(value) {
         return `/mnt/e/${path.win32.resolve(value).replace(/^E:[\\/]/i, "").replaceAll("\\", "/")}`;
@@ -38,6 +41,7 @@ describe("coding agent benchmark WSL launcher", () => {
       "node", "/mnt/e/project/star-sanctuary/scripts/run-coding-agent-benchmark.mjs",
       "--platform", "wsl2-linux",
       "--fixture-root", "/mnt/e/project/star-sanctuary/.tmp/coding-agent-fixtures-wsl",
+      "--gateway-fixture-root", "E:\\project\\star-sanctuary\\.tmp\\coding-agent-fixtures-wsl",
       "--artifact-root", "/mnt/e/project/star-sanctuary/artifacts/coding-agent-wsl",
       "--state-root", "/mnt/e/project/star-sanctuary/artifacts/coding-agent-state-wsl",
       "--provider", "openai",
@@ -46,6 +50,8 @@ describe("coding agent benchmark WSL launcher", () => {
       "--attempt", "2",
       "--task-id", "command.interactive-control",
       "--prior-observed-cost-usd", "0.75",
+      "--max-total-cost-usd", "2.5",
+      "--shadow-candidate-id", "code-intel-semantic-live-v1",
       "--manifest-revision", "v2",
       "--source-root", "/mnt/e/project/star-sanctuary-source-fd70990",
     ]);
@@ -80,4 +86,97 @@ describe("coding agent benchmark WSL launcher", () => {
       WSLENV: "EXISTING/u:BELLDANDY_AUTH_TOKEN",
     });
   });
+
+  it("forwards benchmark pricing to the WSL runner preflight", () => {
+    const invocation = buildWslBenchmarkInvocation({
+      distribution: "Ubuntu-22.04",
+      workspaceRoot: "E:/project/star-sanctuary",
+      fixtureRoot: "E:/project/star-sanctuary/.tmp/coding-agent-fixtures-wsl",
+      artifactRoot: "E:/project/star-sanctuary/artifacts/coding-agent-wsl",
+      stateRoot: "E:/project/star-sanctuary/artifacts/coding-agent-state-wsl",
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      credentialsConfigured: true,
+    }, {
+      baseEnv: {
+        BELLDANDY_MODEL_INPUT_USD_PER_1M: "0.125",
+        BELLDANDY_MODEL_OUTPUT_USD_PER_1M: "0.25",
+        BELLDANDY_MODEL_CACHE_READ_USD_PER_1M: "0.0025",
+      },
+      resolvePath: (value) => path.win32.resolve(value),
+      toWslPath(value) {
+        return `/mnt/e/${path.win32.resolve(value).replace(/^E:[\\/]/i, "").replaceAll("\\", "/")}`;
+      },
+    });
+
+    expect(invocation.args).toEqual(expect.arrayContaining([
+      "BELLDANDY_MODEL_INPUT_USD_PER_1M=0.125",
+      "BELLDANDY_MODEL_OUTPUT_USD_PER_1M=0.25",
+      "BELLDANDY_MODEL_CACHE_READ_USD_PER_1M=0.0025",
+    ]));
+  });
+
+  it("translates and forwards a v3 repository config without requiring a source root", () => {
+    const invocation = buildWslBenchmarkInvocation({
+      distribution: "Ubuntu-22.04",
+      workspaceRoot: "E:/project/star-sanctuary",
+      fixtureRoot: "E:/project/star-sanctuary/.tmp/coding-agent-fixtures-v3-wsl",
+      artifactRoot: "E:/project/star-sanctuary/artifacts/coding-agent-v3-wsl",
+      stateRoot: "E:/project/star-sanctuary/artifacts/coding-agent-state-v3-wsl",
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      credentialsConfigured: true,
+      taskId: "real-js.bug-fix",
+      manifestRevision: "v3",
+      v3RepositoryConfig: "E:/project/star-sanctuary/.tmp/v3-wsl/repository-inputs.json",
+    }, windowsPathDependencies());
+
+    expect(invocation.args).toEqual(expect.arrayContaining([
+      "BELLDANDY_TOOL_RESULT_EVENT_OUTPUT_CHAR_LIMIT=2048",
+      "--manifest-revision", "v3",
+      "--v3-repository-config", "/mnt/e/project/star-sanctuary/.tmp/v3-wsl/repository-inputs.json",
+    ]));
+    expect(invocation.args).not.toContain("--source-root");
+  });
+
+  it("accepts v3 A-layer launches without repository input and rejects cross-revision config", () => {
+    const baseInput = {
+      distribution: "Ubuntu-22.04",
+      workspaceRoot: "E:/project/star-sanctuary",
+      fixtureRoot: "E:/project/star-sanctuary/.tmp/coding-agent-fixtures-v3-wsl",
+      artifactRoot: "E:/project/star-sanctuary/artifacts/coding-agent-v3-wsl",
+      stateRoot: "E:/project/star-sanctuary/artifacts/coding-agent-state-v3-wsl",
+      provider: "fixture",
+      modelId: "v3-a-layer-fixture",
+      credentialsConfigured: false,
+      taskId: "rules.nested-precedence",
+    };
+    const invocation = buildWslBenchmarkInvocation({
+      ...baseInput,
+      manifestRevision: "v3",
+    }, windowsPathDependencies());
+    expect(invocation.args).toEqual(expect.arrayContaining(["--manifest-revision", "v3"]));
+    expect(invocation.args).not.toContain("--v3-repository-config");
+
+    expect(() => buildWslBenchmarkInvocation({
+      ...baseInput,
+      manifestRevision: "v2",
+      sourceRoot: "E:/project/star-sanctuary-source",
+      v3RepositoryConfig: "E:/project/star-sanctuary/.tmp/v3-wsl/repository-inputs.json",
+    }, windowsPathDependencies())).toThrow(/repository config requires manifestRevision v3/i);
+    expect(() => buildWslBenchmarkInvocation({
+      ...baseInput,
+      manifestRevision: "v4",
+    }, windowsPathDependencies())).toThrow(/v1, v2, or v3/i);
+  });
 });
+
+function windowsPathDependencies() {
+  return {
+    baseEnv: {},
+    resolvePath: (value) => path.win32.resolve(value),
+    toWslPath(value) {
+      return `/mnt/e/${path.win32.resolve(value).replace(/^E:[\\/]/i, "").replaceAll("\\", "/")}`;
+    },
+  };
+}

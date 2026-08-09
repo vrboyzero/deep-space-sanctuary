@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-repository-inputs-v1.json",
+  "title": "Star Sanctuary coding agent benchmark v3 repository inputs",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "repositories"],
+  "properties": {
+    "schemaVersion": { "const": "coding-agent-benchmark-repository-inputs/v1" },
+    "repositories": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["repositoryId", "repositoryRoot", "dependencyCacheRoot", "receiptPath"],
+        "properties": {
+          "repositoryId": { "enum": ["express", "preact", "spf13-cobra", "vscode-languageserver-node"] },
+          "repositoryRoot": { "$ref": "#/$defs/localPath" },
+          "dependencyCacheRoot": { "$ref": "#/$defs/localPath" },
+          "receiptPath": { "$ref": "#/$defs/localPath" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "localPath": { "type": "string", "minLength": 1, "maxLength": 1000 }
+  }
+}

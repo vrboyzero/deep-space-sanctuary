@@ -1,0 +1,495 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-model-loop-rollout-audit-v1.json",
+  "title": "Coding Agent Benchmark Model Loop Rollout Audit v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "generatedAt", "status", "platform", "policy", "rolloutDecision",
+    "contracts", "execution", "source", "diagnostics"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "coding-agent-benchmark-model-loop-rollout-audit/v1" },
+    "generatedAt": { "$ref": "#/$defs/timestamp" },
+    "status": { "const": "completed" },
+    "platform": { "enum": ["windows-native", "wsl2-linux"] },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "scope", "limits"],
+      "properties": {
+        "id": { "const": "cost-containment-v1" },
+        "scope": { "const": "explicit_opt_in" },
+        "limits": { "$ref": "#/$defs/policyLimits" }
+      }
+    },
+    "rolloutDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status", "defaultEnablementAllowed", "realProviderCanaryAllowed",
+        "requiresFreshAuthorizationForProviderCanary", "candidateCreated", "candidateLineStatus",
+        "budgetLimitRaised", "totalTokenBudget", "aggregateExpansionAllowed", "totalMatrixTasks",
+        "taskUplift"
+      ],
+      "properties": {
+        "status": { "const": "hold_explicit_opt_in" },
+        "defaultEnablementAllowed": { "const": false },
+        "realProviderCanaryAllowed": { "const": false },
+        "requiresFreshAuthorizationForProviderCanary": { "const": true },
+        "candidateCreated": { "const": false },
+        "candidateLineStatus": { "const": "stopped" },
+        "budgetLimitRaised": { "const": false },
+        "totalTokenBudget": { "const": 24000 },
+        "aggregateExpansionAllowed": { "const": false },
+        "totalMatrixTasks": { "const": 144 },
+        "taskUplift": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": { "status": { "const": "not_measured" } }
+        }
+      }
+    },
+    "contracts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repairPreflight", "steering", "toolBatchTermination", "followUpIsolation",
+        "gatewayProjection", "ordinaryProfileCompatibility"
+      ],
+      "properties": {
+        "repairPreflight": { "$ref": "#/$defs/repairPreflight" },
+        "steering": { "$ref": "#/$defs/steering" },
+        "toolBatchTermination": { "$ref": "#/$defs/toolBatchTermination" },
+        "followUpIsolation": { "$ref": "#/$defs/followUpIsolation" },
+        "gatewayProjection": { "$ref": "#/$defs/gatewayProjection" },
+        "ordinaryProfileCompatibility": { "$ref": "#/$defs/ordinaryProfile" }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode", "gatewayStarts", "modelCalls", "providerCalls", "providerCostCny",
+        "networkCalls", "hostCommandToolCalls", "credentialsRead", "manifestModified",
+        "v3AggregateModified"
+      ],
+      "properties": {
+        "mode": { "const": "offline-contract-replay" },
+        "gatewayStarts": { "const": 0 },
+        "modelCalls": { "const": 0 },
+        "providerCalls": { "const": 0 },
+        "providerCostCny": { "const": 0 },
+        "networkCalls": { "const": 0 },
+        "hostCommandToolCalls": { "const": 0 },
+        "credentialsRead": { "const": false },
+        "manifestModified": { "const": false },
+        "v3AggregateModified": { "const": false }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "p028Artifacts", "p027AnalysisSha256", "frozenAggregateSha256",
+        "frozenAggregateRunCount", "frozenAggregatePassedRunCount", "runtimeSources",
+        "runtimeExecutables"
+      ],
+      "properties": {
+        "p028Artifacts": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["platform", "sha256"],
+              "properties": {
+                "platform": { "const": "windows-native" },
+                "sha256": { "const": "c31bc494f46fbf8c9bcbb3678dfbb152e2670f566ee58e911675951f0e74b4df" }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["platform", "sha256"],
+              "properties": {
+                "platform": { "const": "wsl2-linux" },
+                "sha256": { "const": "5404052627a007793679b15831ddda0a48e6cabb55ca15adb62010c6d7dd1724" }
+              }
+            }
+          ],
+          "items": false
+        },
+        "p027AnalysisSha256": {
+          "const": "cb3b746701c931a2d21b60f4dd0c74e4d2eb45cb120ed7b557815cf89df1d7cf"
+        },
+        "frozenAggregateSha256": {
+          "const": "f008259be7068ed53e27202b1f9b21c7649ebe7e410b4468cafc75db3f12a994"
+        },
+        "frozenAggregateRunCount": { "const": 6 },
+        "frozenAggregatePassedRunCount": { "const": 2 },
+        "runtimeSources": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "prefixItems": [
+            { "$ref": "#/$defs/reactBudgetSource" },
+            { "$ref": "#/$defs/agentIndexSource" },
+            { "$ref": "#/$defs/toolAgentSource" },
+            { "$ref": "#/$defs/steerMailboxSource" },
+            { "$ref": "#/$defs/gatewayAdapterSource" }
+          ],
+          "items": false
+        },
+        "runtimeExecutables": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "prefixItems": [
+            { "$ref": "#/$defs/reactBudgetExecutable" },
+            { "$ref": "#/$defs/steerMailboxExecutable" },
+            { "$ref": "#/$defs/gatewayAdapterExecutable" }
+          ],
+          "items": false
+        }
+      }
+    },
+    "diagnostics": { "const": [] }
+  },
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "policyLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxModelCalls", "maxFileReadCalls", "maxTextSearchCalls", "minimumOutputTokenReserve"],
+      "properties": {
+        "maxModelCalls": { "const": 4 },
+        "maxFileReadCalls": { "const": 2 },
+        "maxTextSearchCalls": { "const": 2 },
+        "minimumOutputTokenReserve": { "const": 1024 }
+      }
+    },
+    "termination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["budget", "limit", "observed", "policyId", "stage", "reasonCode"],
+      "properties": {
+        "budget": { "enum": ["model_calls", "file_read_calls", "text_search_calls", "total_tokens"] },
+        "limit": { "type": "number", "minimum": 0 },
+        "observed": { "type": "number", "minimum": 0 },
+        "policyId": { "const": "cost-containment-v1" },
+        "stage": { "enum": ["before_model_call", "before_tool_call"] },
+        "reasonCode": {
+          "enum": [
+            "model_call_limit", "file_read_call_limit", "text_search_call_limit",
+            "insufficient_remaining_tokens"
+          ]
+        }
+      }
+    },
+    "modelCallTermination": {
+      "allOf": [
+        { "$ref": "#/$defs/termination" },
+        {
+          "properties": {
+            "budget": { "const": "model_calls" },
+            "limit": { "const": 4 },
+            "observed": { "const": 5 },
+            "stage": { "const": "before_model_call" },
+            "reasonCode": { "const": "model_call_limit" }
+          }
+        }
+      ]
+    },
+    "repairPreflight": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "preflightKind", "checkIsReadOnly", "consumedTokens", "minimumRepairInputTokens",
+        "minimumOutputTokenReserve", "projectedTokens", "providerDispatchAllowed", "termination"
+      ],
+      "properties": {
+        "preflightKind": { "const": "structured_output_repair" },
+        "checkIsReadOnly": { "const": true },
+        "consumedTokens": { "const": 22000 },
+        "minimumRepairInputTokens": { "const": 1500 },
+        "minimumOutputTokenReserve": { "const": 1024 },
+        "projectedTokens": { "const": 24524 },
+        "providerDispatchAllowed": { "const": false },
+        "termination": {
+          "allOf": [
+            { "$ref": "#/$defs/termination" },
+            {
+              "properties": {
+                "budget": { "const": "total_tokens" },
+                "limit": { "const": 24000 },
+                "observed": { "const": 24524 },
+                "stage": { "const": "before_model_call" },
+                "reasonCode": { "const": "insufficient_remaining_tokens" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "steering": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["blockedPreflight", "admittedPreflight"],
+      "properties": {
+        "blockedPreflight": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "previewedCommandCount", "statusBeforePreflight", "statusAfterPreflight", "consumeCalled",
+            "providerDispatchAllowed", "statusAfterRunClose", "termination"
+          ],
+          "properties": {
+            "previewedCommandCount": { "const": 1 },
+            "statusBeforePreflight": { "const": "queued" },
+            "statusAfterPreflight": { "const": "queued" },
+            "consumeCalled": { "const": false },
+            "providerDispatchAllowed": { "const": false },
+            "statusAfterRunClose": { "const": "failed" },
+            "termination": { "$ref": "#/$defs/modelCallTermination" }
+          }
+        },
+        "admittedPreflight": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "previewedCommandCount", "statusBeforePreflight", "preflightPassed",
+            "consumeCalledAfterPreflight", "consumedCommandCount", "deliveredCount",
+            "statusAfterConsume", "providerDispatchAllowed"
+          ],
+          "properties": {
+            "previewedCommandCount": { "const": 1 },
+            "statusBeforePreflight": { "const": "queued" },
+            "preflightPassed": { "const": true },
+            "consumeCalledAfterPreflight": { "const": true },
+            "consumedCommandCount": { "const": 1 },
+            "deliveredCount": { "const": 1 },
+            "statusAfterConsume": { "const": "delivered" },
+            "providerDispatchAllowed": { "const": true }
+          }
+        }
+      }
+    },
+    "toolBatchTermination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fileRead", "textSearch"],
+      "properties": {
+        "fileRead": { "$ref": "#/$defs/fileReadBatch" },
+        "textSearch": { "$ref": "#/$defs/textSearchBatch" }
+      }
+    },
+    "toolBatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestedTools", "executedTools", "blockedRequestIndex", "subsequentToolExecuted", "termination"],
+      "properties": {
+        "requestedTools": { "type": "array", "minItems": 4, "maxItems": 4, "items": { "type": "string" } },
+        "executedTools": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "string" } },
+        "blockedRequestIndex": { "const": 3 },
+        "subsequentToolExecuted": { "const": false },
+        "termination": { "$ref": "#/$defs/termination" }
+      }
+    },
+    "fileReadBatch": {
+      "allOf": [
+        { "$ref": "#/$defs/toolBatch" },
+        {
+          "properties": {
+            "requestedTools": { "const": ["file_read", "file_read", "file_read", "file_glob"] },
+            "executedTools": { "const": ["file_read", "file_read"] },
+            "termination": {
+              "allOf": [
+                { "$ref": "#/$defs/termination" },
+                {
+                  "properties": {
+                    "budget": { "const": "file_read_calls" },
+                    "limit": { "const": 2 },
+                    "observed": { "const": 3 },
+                    "stage": { "const": "before_tool_call" },
+                    "reasonCode": { "const": "file_read_call_limit" }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "textSearchBatch": {
+      "allOf": [
+        { "$ref": "#/$defs/toolBatch" },
+        {
+          "properties": {
+            "requestedTools": { "const": ["text_search", "text_search", "text_search", "file_glob"] },
+            "executedTools": { "const": ["text_search", "text_search"] },
+            "termination": {
+              "allOf": [
+                { "$ref": "#/$defs/termination" },
+                {
+                  "properties": {
+                    "budget": { "const": "text_search_calls" },
+                    "limit": { "const": 2 },
+                    "observed": { "const": 3 },
+                    "stage": { "const": "before_tool_call" },
+                    "reasonCode": { "const": "text_search_call_limit" }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "followUpIsolation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "firstRunTermination", "newBudgetTrackerPerRun", "policyInheritedByOrdinaryFollowUp",
+        "explicitReselectionRequired", "ordinaryFollowUpReservationsAdmitted", "selectedFollowUpPolicyId",
+        "selectedFollowUpModelCallsAfterFirstAdmission"
+      ],
+      "properties": {
+        "firstRunTermination": { "$ref": "#/$defs/modelCallTermination" },
+        "newBudgetTrackerPerRun": { "const": true },
+        "policyInheritedByOrdinaryFollowUp": { "const": false },
+        "explicitReselectionRequired": { "const": true },
+        "ordinaryFollowUpReservationsAdmitted": { "const": 5 },
+        "selectedFollowUpPolicyId": { "const": "cost-containment-v1" },
+        "selectedFollowUpModelCallsAfterFirstAdmission": { "const": 1 }
+      }
+    },
+    "gatewayProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "eventTypes", "budgetEventCount", "terminalType", "terminalErrorCode",
+        "runCompletedEmitted", "structuredBudget"
+      ],
+      "properties": {
+        "eventTypes": { "const": ["run.started", "run.budget_exhausted", "run.status", "run.failed"] },
+        "budgetEventCount": { "const": 1 },
+        "terminalType": { "const": "run.failed" },
+        "terminalErrorCode": { "const": "budget_exhausted" },
+        "runCompletedEmitted": { "const": false },
+        "structuredBudget": { "$ref": "#/$defs/modelCallTermination" }
+      }
+    },
+    "ordinaryProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policyEnabled", "outputReserveApplied", "repairPreflightAllowedWithoutPolicyReserve",
+        "modelReservationsAttempted", "modelReservationsAdmitted", "toolReservationsAttempted",
+        "toolReservationsAdmitted", "budgetBehavior"
+      ],
+      "properties": {
+        "policyEnabled": { "const": false },
+        "outputReserveApplied": { "const": false },
+        "repairPreflightAllowedWithoutPolicyReserve": { "const": true },
+        "modelReservationsAttempted": { "const": 5 },
+        "modelReservationsAdmitted": { "const": 5 },
+        "toolReservationsAttempted": { "const": 6 },
+        "toolReservationsAdmitted": { "const": 6 },
+        "budgetBehavior": { "const": "post_usage_budget_semantics_preserved" }
+      }
+    },
+    "runtimeSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourcePath", "sha256"],
+      "properties": {
+        "sourcePath": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "reactBudgetSource": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeSource" },
+        { "properties": { "sourcePath": { "const": "packages/belldandy-agent/src/react-run-budget.ts" } } }
+      ]
+    },
+    "agentIndexSource": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeSource" },
+        { "properties": { "sourcePath": { "const": "packages/belldandy-agent/src/index.ts" } } }
+      ]
+    },
+    "toolAgentSource": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeSource" },
+        { "properties": { "sourcePath": { "const": "packages/belldandy-agent/src/tool-agent.ts" } } }
+      ]
+    },
+    "steerMailboxSource": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeSource" },
+        {
+          "properties": {
+            "sourcePath": {
+              "const": "packages/belldandy-core/src/coding-run/conversation-steer-mailbox.ts"
+            }
+          }
+        }
+      ]
+    },
+    "gatewayAdapterSource": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeSource" },
+        {
+          "properties": {
+            "sourcePath": {
+              "const": "packages/belldandy-core/src/coding-run/gateway-conversation-event-adapter.ts"
+            }
+          }
+        }
+      ]
+    },
+    "reactBudgetExecutable": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeSource" },
+        {
+          "properties": {
+            "sourcePath": { "const": "packages/belldandy-agent/dist/react-run-budget.js" }
+          }
+        }
+      ]
+    },
+    "steerMailboxExecutable": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeSource" },
+        {
+          "properties": {
+            "sourcePath": {
+              "const": "packages/belldandy-core/dist/coding-run/conversation-steer-mailbox.js"
+            }
+          }
+        }
+      ]
+    },
+    "gatewayAdapterExecutable": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeSource" },
+        {
+          "properties": {
+            "sourcePath": {
+              "const": "packages/belldandy-core/dist/coding-run/gateway-conversation-event-adapter.js"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

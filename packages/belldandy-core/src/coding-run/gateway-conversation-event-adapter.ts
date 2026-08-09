@@ -152,11 +152,23 @@ export function createGatewayConversationEventAdapter(input: {
       }
       if (event === "agent.budget_exhausted") {
         budgetExhausted = true;
+        const policyId = gatewayPayload.policyId === "cost-containment-v1"
+          ? gatewayPayload.policyId
+          : undefined;
+        const stage = gatewayPayload.stage === "before_model_call" || gatewayPayload.stage === "before_tool_call"
+          ? gatewayPayload.stage
+          : undefined;
+        const reasonCode = isModelLoopBudgetReasonCode(gatewayPayload.reasonCode)
+          ? gatewayPayload.reasonCode
+          : undefined;
         return emit("run.budget_exhausted", {
           budget: {
             budget: gatewayPayload.budget,
             limit: gatewayPayload.limit,
             observed: gatewayPayload.observed,
+            ...(policyId ? { policyId } : {}),
+            ...(stage ? { stage } : {}),
+            ...(reasonCode ? { reasonCode } : {}),
           },
         });
       }
@@ -208,6 +220,19 @@ export function createGatewayConversationEventAdapter(input: {
     getTerminalEvent: () => terminalEvent,
     hasTerminated: () => sequencer?.hasTerminated() ?? false,
   };
+}
+
+function isModelLoopBudgetReasonCode(value: unknown): value is
+  | "model_call_limit"
+  | "file_read_call_limit"
+  | "text_search_call_limit"
+  | "insufficient_remaining_tokens"
+  | "insufficient_remaining_cost" {
+  return value === "model_call_limit"
+    || value === "file_read_call_limit"
+    || value === "text_search_call_limit"
+    || value === "insufficient_remaining_tokens"
+    || value === "insufficient_remaining_cost";
 }
 
 function getMatchingGatewayPayload(value: unknown, binding: GatewayRunBinding): Record<string, unknown> | undefined {

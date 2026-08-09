@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-preflight-v3.json",
+  "title": "Star Sanctuary coding agent benchmark v3 runtime preflight artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "manifestRevision", "taskId", "runId", "status", "checks"],
+  "properties": {
+    "schemaVersion": { "const": "coding-agent-benchmark-preflight/v1" },
+    "manifestRevision": { "const": "v3" },
+    "taskId": { "type": "string", "minLength": 1, "maxLength": 100 },
+    "runId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$", "maxLength": 200 },
+    "status": { "enum": ["passed", "failed"] },
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractSource",
+        "workspaceWriteClosure",
+        "agentProfile",
+        "executionBudget",
+        "pricing",
+        "oci",
+        "eventProjection",
+        "fault"
+      ],
+      "properties": {
+        "contractSource": { "$ref": "#/$defs/contractSource" },
+        "workspaceWriteClosure": { "$ref": "#/$defs/workspaceWriteClosure" },
+        "agentProfile": { "$ref": "#/$defs/agentProfile" },
+        "executionBudget": { "$ref": "#/$defs/executionBudget" },
+        "pricing": { "$ref": "#/$defs/check" },
+        "oci": { "$ref": "#/$defs/oci" },
+        "eventProjection": { "$ref": "#/$defs/eventProjection" },
+        "fault": { "$ref": "#/$defs/check" }
+      }
+    }
+  },
+  "$defs": {
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason"],
+      "properties": {
+        "status": { "enum": ["passed", "failed", "not_applicable"] },
+        "reason": { "type": ["string", "null"], "maxLength": 200 }
+      }
+    },
+    "contractSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason"],
+      "properties": {
+        "status": { "enum": ["passed", "failed"] },
+        "reason": { "type": ["string", "null"], "maxLength": 200 },
+        "manifestVersion": { "const": "coding-agent-benchmark-manifest/v3" },
+        "profile": { "$ref": "#/$defs/profile" },
+        "toolAllow": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 100 }
+        },
+        "entrypoints": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["bdd", "gateway", "contracts"],
+          "properties": {
+            "bdd": { "$ref": "#/$defs/entrypoint" },
+            "gateway": { "$ref": "#/$defs/entrypoint" },
+            "contracts": { "$ref": "#/$defs/entrypoint" },
+            "workflowBatchRunner": { "$ref": "#/$defs/entrypoint" },
+            "managedWorktree": { "$ref": "#/$defs/entrypoint" },
+            "userWorktreeRuntime": { "$ref": "#/$defs/entrypoint" },
+            "reconciliationJournal": { "$ref": "#/$defs/entrypoint" },
+            "workspaceRevision": { "$ref": "#/$defs/entrypoint" },
+            "fileTool": { "$ref": "#/$defs/entrypoint" }
+          }
+        }
+      }
+    },
+    "workspaceWriteClosure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason"],
+      "properties": {
+        "status": { "enum": ["passed", "failed", "not_applicable"] },
+        "reason": { "type": ["string", "null"], "maxLength": 200 },
+        "missingTools": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["file_read", "file_edit", "apply_patch"] }
+        },
+        "toolAllow": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 100 }
+        },
+        "testCommandCount": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "agentProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason"],
+      "properties": {
+        "status": { "enum": ["passed", "failed", "not_applicable"] },
+        "reason": { "type": ["string", "null"], "maxLength": 200 },
+        "agentId": { "const": "coding-benchmark-command-control-v2" },
+        "maxHighRiskToolCalls": { "const": 5 },
+        "configSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "executionBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason"],
+      "properties": {
+        "status": { "enum": ["passed", "failed"] },
+        "reason": { "type": ["string", "null"], "maxLength": 200 },
+        "taskId": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "timeoutMs": { "const": 300000 },
+        "maxTurns": { "const": 12 },
+        "maxTokens": { "enum": [24000, 32000, 36000] }
+      }
+    },
+    "oci": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason"],
+      "properties": {
+        "status": { "enum": ["passed", "failed", "not_applicable"] },
+        "reason": { "type": ["string", "null"], "maxLength": 200 },
+        "runtime": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "image": { "type": "string", "pattern": "^.+@sha256:[a-fA-F0-9]{64}$", "maxLength": 1000 }
+      }
+    },
+    "eventProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason"],
+      "properties": {
+        "status": { "enum": ["passed", "failed", "not_applicable"] },
+        "reason": { "type": ["string", "null"], "maxLength": 200 },
+        "limit": { "const": 2048 }
+      }
+    },
+    "entrypoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "profile": {
+      "enum": ["plan", "navigation-read", "workspace-write", "command-control", "safety-probe", "recovery-control", "git-local"]
+    },
+    "sha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" }
+  }
+}

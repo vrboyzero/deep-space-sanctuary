@@ -41,7 +41,7 @@ export async function aggregateCodingAgentBenchmarkReports(input) {
   const harness = inputReports[0].report.harness;
   for (const inputReport of inputReports.slice(1)) {
     assertSameIdentity(source, inputReport.report.source, inputReport.reportPath, "source");
-    if (manifest.schemaVersion === "coding-agent-benchmark-manifest/v2") {
+    if (requiresHarnessIdentity(manifest)) {
       assertSameIdentity(harness, inputReport.report.harness, inputReport.reportPath, "harness");
     }
   }
@@ -143,7 +143,7 @@ export async function verifyCodingAgentBaselineArtifact(input) {
   const harness = inputReports[0].report.harness;
   for (const inputReport of inputReports.slice(1)) {
     assertSameIdentity(source, inputReport.report.source, inputReport.reportPath, "source");
-    if (manifest.schemaVersion === "coding-agent-benchmark-manifest/v2") {
+    if (requiresHarnessIdentity(manifest)) {
       assertSameIdentity(harness, inputReport.report.harness, inputReport.reportPath, "harness");
     }
   }
@@ -186,8 +186,8 @@ export async function verifyCodingAgentBaselineArtifact(input) {
   for (const run of report.runs) {
     for (const artifactPath of Object.values(run.artifacts)) {
       const target = resolveInside(outputRoot, artifactPath);
-      const stats = await fs.lstat(target);
-      if (!stats.isFile()) {
+      const stats = await fs.lstat(target).catch(() => null);
+      if (!stats?.isFile()) {
         throw new Error(`Coding benchmark artifact is not a regular file: ${artifactPath}.`);
       }
     }
@@ -221,8 +221,8 @@ async function readInputReport(input) {
     }
     for (const artifactPath of Object.values(run.artifacts)) {
       const sourcePath = resolveInside(reportRoot, artifactPath);
-      const stats = await fs.lstat(sourcePath);
-      if (!stats.isFile()) {
+      const stats = await fs.lstat(sourcePath).catch(() => null);
+      if (!stats?.isFile()) {
         throw new Error(`Coding benchmark source artifact is not a regular file: ${sourcePath}.`);
       }
     }
@@ -256,6 +256,11 @@ function assertSameIdentity(expected, actual, reportPath, label) {
   if (!equal) {
     throw new Error(`Coding benchmark ${label} identity drifted: ${reportPath}.`);
   }
+}
+
+function requiresHarnessIdentity(manifest) {
+  return manifest?.schemaVersion === "coding-agent-benchmark-manifest/v2"
+    || manifest?.schemaVersion === "coding-agent-benchmark-manifest/v3";
 }
 
 function assertUniqueRunAttempts(runs) {
@@ -479,6 +484,9 @@ export function parseCodingAgentBenchmarkAggregationCliArguments(argv) {
         throw new Error("--manifest-revision may only be provided once.");
       }
       const manifestRevision = requireInput(argv[index + 1], "--manifest-revision");
+      if (manifestRevision !== "v1" && manifestRevision !== "v2" && manifestRevision !== "v3") {
+        throw new Error("Coding benchmark aggregation manifest revision must be v1, v2, or v3.");
+      }
       resolveCodingAgentBenchmarkManifestPath(manifestRevision);
       options.manifestRevision = manifestRevision;
       index += 1;

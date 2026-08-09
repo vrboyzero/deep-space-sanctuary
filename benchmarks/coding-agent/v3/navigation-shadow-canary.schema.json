@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-navigation-shadow-canary-v1.json",
+  "title": "Coding Agent Benchmark Navigation Shadow Canary v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "status",
+    "taskId",
+    "platform",
+    "candidateId",
+    "frozen",
+    "authorization",
+    "execution",
+    "workspace",
+    "source",
+    "diagnostics"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "coding-agent-benchmark-navigation-shadow-canary/v1" },
+    "generatedAt": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$"
+    },
+    "status": { "const": "ready_for_authorization" },
+    "taskId": { "const": "real-js.bug-fix" },
+    "platform": { "enum": ["windows-native", "wsl2-linux"] },
+    "candidateId": { "const": "workspace-write-navigation-candidate-v1" },
+    "frozen": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifestModified", "manifestSha256", "baselineCommit"],
+      "properties": {
+        "manifestModified": { "const": false },
+        "manifestSha256": { "$ref": "#/$defs/sha256" },
+        "baselineCommit": { "$ref": "#/$defs/sha1" }
+      }
+    },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "provider",
+        "modelId",
+        "maxCostCny",
+        "credentialsRead",
+        "requiresExplicitUserConfirmation"
+      ],
+      "properties": {
+        "status": { "const": "pending_confirmation" },
+        "provider": { "type": "string", "minLength": 1 },
+        "modelId": { "type": "string", "minLength": 1 },
+        "maxCostCny": { "type": "number", "minimum": 0, "maximum": 30 },
+        "credentialsRead": { "const": false },
+        "requiresExplicitUserConfirmation": { "const": true }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "modelCalls",
+        "providerCostUsd",
+        "networkCalls",
+        "hostCommandToolCalls",
+        "tokenImpact"
+      ],
+      "properties": {
+        "mode": { "const": "dry-run" },
+        "modelCalls": { "const": 0 },
+        "providerCostUsd": { "const": 0 },
+        "networkCalls": { "const": 0 },
+        "hostCommandToolCalls": { "const": 0 },
+        "tokenImpact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason"],
+          "properties": {
+            "status": { "const": "not_measured" },
+            "reason": { "const": "dry_run_no_model_call" }
+          }
+        }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unchanged", "dirty"],
+      "properties": {
+        "unchanged": { "const": true },
+        "dirty": { "const": false }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "navigationEvidenceSha256",
+        "baselineRunId",
+        "baselineTaskId",
+        "baselineCommit",
+        "manifestSha256"
+      ],
+      "properties": {
+        "navigationEvidenceSha256": { "$ref": "#/$defs/sha256" },
+        "baselineRunId": { "type": "string", "minLength": 1 },
+        "baselineTaskId": { "const": "real-js.bug-fix" },
+        "baselineCommit": { "$ref": "#/$defs/sha1" },
+        "manifestSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "$defs": {
+    "sha1": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

@@ -1,0 +1,436 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-model-loop-budget-termination-v1.json",
+  "title": "Coding Agent Benchmark Model Loop Budget Termination v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "generatedAt", "status", "platform", "taskId", "policy",
+    "decisionBoundary", "replays", "observedCandidate", "ordinaryProfileCompatibility",
+    "execution", "source", "diagnostics"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "coding-agent-benchmark-model-loop-budget-termination/v1" },
+    "generatedAt": { "$ref": "#/$defs/timestamp" },
+    "status": { "const": "completed" },
+    "platform": { "enum": ["windows-native", "wsl2-linux"] },
+    "taskId": { "const": "real-js.bug-fix" },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "objective", "scope", "limits", "taskUplift", "promotionEligible",
+        "candidateCreated", "providerExpansionAllowed"
+      ],
+      "properties": {
+        "id": { "const": "cost-containment-v1" },
+        "objective": { "const": "cost_containment" },
+        "scope": { "const": "explicit_opt_in" },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "maxModelCalls", "maxFileReadCalls", "maxTextSearchCalls",
+            "minimumOutputTokenReserve"
+          ],
+          "properties": {
+            "maxModelCalls": { "const": 4 },
+            "maxFileReadCalls": { "const": 2 },
+            "maxTextSearchCalls": { "const": 2 },
+            "minimumOutputTokenReserve": { "const": 1024 }
+          }
+        },
+        "taskUplift": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": { "status": { "const": "not_measured" } }
+        },
+        "promotionEligible": { "const": false },
+        "candidateCreated": { "const": false },
+        "providerExpansionAllowed": { "const": false }
+      }
+    },
+    "decisionBoundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceDecision", "candidateLineStatus", "nextAction", "budgetLimitRaised",
+        "totalTokenBudget", "aggregateExpansionAllowed", "totalMatrixTasks"
+      ],
+      "properties": {
+        "sourceDecision": { "const": "do_not_promote" },
+        "candidateLineStatus": { "const": "stopped" },
+        "nextAction": { "const": "separate-model-loop-budget-and-termination-contract" },
+        "budgetLimitRaised": { "const": false },
+        "totalTokenBudget": { "const": 24000 },
+        "aggregateExpansionAllowed": { "const": false },
+        "totalMatrixTasks": { "const": 144 }
+      }
+    },
+    "replays": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "modelCallLimit", "fileReadLimit", "textSearchLimit", "remainingTokenReserve",
+        "remainingCost"
+      ],
+      "properties": {
+        "modelCallLimit": { "$ref": "#/$defs/modelCallLimitReplay" },
+        "fileReadLimit": { "$ref": "#/$defs/fileReadLimitReplay" },
+        "textSearchLimit": { "$ref": "#/$defs/textSearchLimitReplay" },
+        "remainingTokenReserve": { "$ref": "#/$defs/tokenReserveReplay" },
+        "remainingCost": { "$ref": "#/$defs/costReplay" }
+      }
+    },
+    "observedCandidate": { "$ref": "#/$defs/observedCandidate" },
+    "ordinaryProfileCompatibility": { "$ref": "#/$defs/ordinaryProfile" },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode", "modelCalls", "providerCalls", "providerCostCny", "networkCalls",
+        "hostCommandToolCalls", "credentialsRead", "manifestModified", "v3AggregateModified"
+      ],
+      "properties": {
+        "mode": { "const": "offline-replay" },
+        "modelCalls": { "const": 0 },
+        "providerCalls": { "const": 0 },
+        "providerCostCny": { "const": 0 },
+        "networkCalls": { "const": 0 },
+        "hostCommandToolCalls": { "const": 0 },
+        "credentialsRead": { "const": false },
+        "manifestModified": { "const": false },
+        "v3AggregateModified": { "const": false }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "analysisSha256", "frozenAggregateSha256", "frozenAggregateRunCount",
+        "frozenAggregatePassedRunCount", "cumulativeHistoricalProviderCostCny", "runtimeSources"
+      ],
+      "properties": {
+        "analysisSha256": {
+          "const": "cb3b746701c931a2d21b60f4dd0c74e4d2eb45cb120ed7b557815cf89df1d7cf"
+        },
+        "frozenAggregateSha256": {
+          "const": "f008259be7068ed53e27202b1f9b21c7649ebe7e410b4468cafc75db3f12a994"
+        },
+        "frozenAggregateRunCount": { "const": 6 },
+        "frozenAggregatePassedRunCount": { "const": 2 },
+        "cumulativeHistoricalProviderCostCny": { "const": 0.08318752 },
+        "runtimeSources": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "prefixItems": [
+            { "$ref": "#/$defs/reactBudgetSource" },
+            { "$ref": "#/$defs/toolAgentSource" },
+            { "$ref": "#/$defs/executorSource" },
+            { "$ref": "#/$defs/cliSource" },
+            { "$ref": "#/$defs/protocolSource" },
+            { "$ref": "#/$defs/eventAdapterSource" }
+          ],
+          "items": false
+        }
+      }
+    },
+    "diagnostics": { "const": [] }
+  },
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "nonNegative": { "type": "number", "minimum": 0 },
+    "termination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["budget", "limit", "observed", "policyId", "stage", "reasonCode"],
+      "properties": {
+        "budget": {
+          "enum": ["model_calls", "file_read_calls", "text_search_calls", "total_tokens", "cost_usd"]
+        },
+        "limit": { "$ref": "#/$defs/nonNegative" },
+        "observed": { "$ref": "#/$defs/nonNegative" },
+        "policyId": { "const": "cost-containment-v1" },
+        "stage": { "enum": ["before_model_call", "before_tool_call"] },
+        "reasonCode": {
+          "enum": [
+            "model_call_limit", "file_read_call_limit", "text_search_call_limit",
+            "insufficient_remaining_tokens", "insufficient_remaining_cost"
+          ]
+        }
+      }
+    },
+    "modelCallLimitReplay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempted", "admitted", "wouldBlockProviderDispatch", "termination"],
+      "properties": {
+        "attempted": { "const": 5 },
+        "admitted": { "const": 4 },
+        "wouldBlockProviderDispatch": { "const": true },
+        "termination": {
+          "allOf": [
+            { "$ref": "#/$defs/termination" },
+            {
+              "properties": {
+                "budget": { "const": "model_calls" },
+                "limit": { "const": 4 },
+                "observed": { "const": 5 },
+                "stage": { "const": "before_model_call" },
+                "reasonCode": { "const": "model_call_limit" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "fileReadLimitReplay": {
+      "allOf": [
+        { "$ref": "#/$defs/toolLimitReplay" },
+        {
+          "properties": {
+            "toolName": { "const": "file_read" },
+            "termination": {
+              "allOf": [
+                { "$ref": "#/$defs/termination" },
+                {
+                  "properties": {
+                    "budget": { "const": "file_read_calls" },
+                    "reasonCode": { "const": "file_read_call_limit" }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "textSearchLimitReplay": {
+      "allOf": [
+        { "$ref": "#/$defs/toolLimitReplay" },
+        {
+          "properties": {
+            "toolName": { "const": "text_search" },
+            "termination": {
+              "allOf": [
+                { "$ref": "#/$defs/termination" },
+                {
+                  "properties": {
+                    "budget": { "const": "text_search_calls" },
+                    "reasonCode": { "const": "text_search_call_limit" }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "toolLimitReplay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["toolName", "attempted", "admitted", "wouldBlockToolExecutor", "termination"],
+      "properties": {
+        "toolName": { "enum": ["file_read", "text_search"] },
+        "attempted": { "const": 3 },
+        "admitted": { "const": 2 },
+        "wouldBlockToolExecutor": { "const": true },
+        "termination": {
+          "allOf": [
+            { "$ref": "#/$defs/termination" },
+            {
+              "properties": {
+                "limit": { "const": 2 },
+                "observed": { "const": 3 },
+                "stage": { "const": "before_tool_call" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "tokenReserveReplay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "consumedTokens", "minimumNextInputTokens", "minimumOutputTokenReserve",
+        "projectedTokens", "wouldBlockProviderDispatch", "termination"
+      ],
+      "properties": {
+        "consumedTokens": { "const": 22000 },
+        "minimumNextInputTokens": { "const": 1500 },
+        "minimumOutputTokenReserve": { "const": 1024 },
+        "projectedTokens": { "const": 24524 },
+        "wouldBlockProviderDispatch": { "const": true },
+        "termination": {
+          "allOf": [
+            { "$ref": "#/$defs/termination" },
+            {
+              "properties": {
+                "budget": { "const": "total_tokens" },
+                "limit": { "const": 24000 },
+                "observed": { "const": 24524 },
+                "stage": { "const": "before_model_call" },
+                "reasonCode": { "const": "insufficient_remaining_tokens" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "costReplay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxCostUsd", "consumedCostUsd", "minimumNextCostUsd", "projectedCostUsd",
+        "wouldBlockProviderDispatch", "termination"
+      ],
+      "properties": {
+        "maxCostUsd": { "const": 0.001 },
+        "consumedCostUsd": { "const": 0.0008 },
+        "minimumNextCostUsd": { "const": 0.0003 },
+        "projectedCostUsd": { "const": 0.0011 },
+        "wouldBlockProviderDispatch": { "const": true },
+        "termination": {
+          "allOf": [
+            { "$ref": "#/$defs/termination" },
+            {
+              "properties": {
+                "budget": { "const": "cost_usd" },
+                "limit": { "const": 0.001 },
+                "observed": { "const": 0.0011 },
+                "stage": { "const": "before_model_call" },
+                "reasonCode": { "const": "insufficient_remaining_cost" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "toolName": {
+      "enum": ["file_glob", "file_read", "text_search"]
+    },
+    "observedCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateId", "runId", "originalModelCalls", "originalTotalTokens",
+        "originalBudgetObserved", "originalToolSequence", "toolCounts", "enteredEditPhase",
+        "changedFileCount", "budgetExhausted", "taskCompleted", "policyCounterfactual"
+      ],
+      "properties": {
+        "candidateId": { "const": "workspace-write-navigation-candidate-v3" },
+        "runId": { "type": "string", "minLength": 1 },
+        "originalModelCalls": { "const": 6 },
+        "originalTotalTokens": { "type": "integer", "minimum": 24001 },
+        "originalBudgetObserved": { "type": "integer", "minimum": 24001 },
+        "originalToolSequence": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "items": { "$ref": "#/$defs/toolName" }
+        },
+        "toolCounts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["fileReadCalls", "textSearchCalls"],
+          "properties": {
+            "fileReadCalls": { "type": "integer", "minimum": 2, "maximum": 3 },
+            "textSearchCalls": { "type": "integer", "minimum": 1, "maximum": 2 }
+          }
+        },
+        "enteredEditPhase": { "const": false },
+        "changedFileCount": { "const": 0 },
+        "budgetExhausted": { "const": true },
+        "taskCompleted": { "const": false },
+        "policyCounterfactual": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "modelTerminationBeforeCall", "admittedModelCalls", "firstToolTermination",
+            "admittedToolsBeforeTermination", "allObservedToolsWithinLimits", "taskOutcomeNotInferred"
+          ],
+          "properties": {
+            "modelTerminationBeforeCall": { "const": 5 },
+            "admittedModelCalls": { "const": 4 },
+            "firstToolTermination": {
+              "anyOf": [{ "$ref": "#/$defs/termination" }, { "type": "null" }]
+            },
+            "admittedToolsBeforeTermination": { "type": "integer", "minimum": 0, "maximum": 6 },
+            "allObservedToolsWithinLimits": { "type": "boolean" },
+            "taskOutcomeNotInferred": { "const": true }
+          }
+        }
+      }
+    },
+    "ordinaryProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policyEnabled", "modelReservationsAttempted", "modelReservationsAdmitted",
+        "observedToolCallsAttempted", "allObservedToolsAdmitted", "outputReserveApplied",
+        "budgetBehavior"
+      ],
+      "properties": {
+        "policyEnabled": { "const": false },
+        "modelReservationsAttempted": { "const": 6 },
+        "modelReservationsAdmitted": { "const": 6 },
+        "observedToolCallsAttempted": { "const": 6 },
+        "allObservedToolsAdmitted": { "const": true },
+        "outputReserveApplied": { "const": false },
+        "budgetBehavior": { "const": "post_usage_budget_semantics_preserved" }
+      }
+    },
+    "runtimeSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourcePath", "sha256"],
+      "properties": {
+        "sourcePath": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "reactBudgetSource": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeSource" },
+        { "properties": { "sourcePath": { "const": "packages/belldandy-agent/src/react-run-budget.ts" } } }
+      ]
+    },
+    "toolAgentSource": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeSource" },
+        { "properties": { "sourcePath": { "const": "packages/belldandy-agent/src/tool-agent.ts" } } }
+      ]
+    },
+    "executorSource": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeSource" },
+        { "properties": { "sourcePath": { "const": "packages/belldandy-skills/src/executor.ts" } } }
+      ]
+    },
+    "cliSource": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeSource" },
+        { "properties": { "sourcePath": { "const": "packages/belldandy-core/src/cli/commands/agent/run.ts" } } }
+      ]
+    },
+    "protocolSource": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeSource" },
+        { "properties": { "sourcePath": { "const": "packages/belldandy-protocol/src/index.ts" } } }
+      ]
+    },
+    "eventAdapterSource": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeSource" },
+        { "properties": { "sourcePath": { "const": "packages/belldandy-core/src/coding-run/gateway-conversation-event-adapter.ts" } } }
+      ]
+    }
+  }
+}

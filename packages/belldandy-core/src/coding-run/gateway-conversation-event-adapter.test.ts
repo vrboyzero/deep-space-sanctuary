@@ -217,6 +217,9 @@ describe("Gateway Conversation coding-run event adapter", () => {
         budget: "token",
         limit: 1,
         observed: 2,
+        policyId: "cost-containment-v1",
+        stage: "before_model_call",
+        reasonCode: "insufficient_remaining_tokens",
       },
     });
     adapter.consume({
@@ -238,6 +241,18 @@ describe("Gateway Conversation coding-run event adapter", () => {
       "run.status",
       "run.failed",
     ]);
+    expect(events[1]).toMatchObject({
+      payload: {
+        budget: {
+          budget: "token",
+          limit: 1,
+          observed: 2,
+          policyId: "cost-containment-v1",
+          stage: "before_model_call",
+          reasonCode: "insufficient_remaining_tokens",
+        },
+      },
+    });
     expect(events[3]).toMatchObject({
       payload: {
         usage: {

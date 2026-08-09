@@ -71,6 +71,9 @@ export type {
   DelegationTeamMode,
 } from "./delegation-protocol.js";
 
+// Language-neutral code intelligence contract and deterministic test Provider.
+export * from "./code-intel/index.js";
+
 // Skill 系统
 export type {
   SkillDefinition,
@@ -186,6 +189,8 @@ export { resolvePrivilegedWorkspaceWriteChannels } from "./builtin/privileged-wo
 export { listFilesTool } from "./builtin/list-files.js";
 export { textSearchTool } from "./builtin/text-search.js";
 export { fileGlobTool } from "./builtin/file-glob.js";
+export { CODE_INTEL_TOOL_NAME, createCodeIntelTool } from "./builtin/code-intel.js";
+export type { CreateCodeIntelToolOptions } from "./builtin/code-intel.js";
 export { applyPatchTool } from "./builtin/apply-patch/index.js";
 export { webSearchTool } from "./builtin/web-search/index.js";
 export { createToolSearchTool, TOOL_SEARCH_NAME } from "./builtin/tool-search.js";

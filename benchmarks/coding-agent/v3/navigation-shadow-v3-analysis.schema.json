@@ -1,0 +1,404 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-navigation-shadow-v3-analysis-v1.json",
+  "title": "Coding Agent Benchmark Navigation Shadow v3 Analysis v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "generatedAt", "status", "taskId", "candidateId", "model",
+    "decision", "execution", "baseline", "offlineCandidate", "platforms", "crossPlatform",
+    "runtimeGuardBenefit", "attribution", "source", "diagnostics"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "coding-agent-benchmark-navigation-shadow-v3-analysis/v1" },
+    "generatedAt": { "$ref": "#/$defs/timestamp" },
+    "status": { "const": "completed" },
+    "taskId": { "const": "real-js.bug-fix" },
+    "candidateId": { "const": "workspace-write-navigation-candidate-v3" },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "id"],
+      "properties": {
+        "provider": { "const": "deepseek" },
+        "id": { "const": "deepseek-v4-flash" }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status", "reasonCodes", "candidateLineStatus", "technicalDebtDecision", "nextAction",
+        "nextActionMode", "providerExpansionAllowed", "requiresNewProviderAuthorizationForAnyFutureCanary"
+      ],
+      "properties": {
+        "status": { "const": "do_not_promote" },
+        "reasonCodes": {
+          "const": [
+            "runtime_contract_stable_without_task_uplift",
+            "response_surface_reduced_without_token_uplift",
+            "shared_budget_exhaustion_before_edit",
+            "machine_evaluator_failed",
+            "navigation_candidate_line_stopped"
+          ]
+        },
+        "candidateLineStatus": { "const": "stopped" },
+        "technicalDebtDecision": { "const": "split_task" },
+        "nextAction": { "const": "separate-model-loop-budget-and-termination-contract" },
+        "nextActionMode": { "const": "offline" },
+        "providerExpansionAllowed": { "const": false },
+        "requiresNewProviderAuthorizationForAnyFutureCanary": { "const": true }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode", "modelCalls", "providerCostUsd", "networkCalls", "hostCommandToolCalls",
+        "manifestModified", "v3AggregateModified"
+      ],
+      "properties": {
+        "mode": { "const": "offline-analysis" },
+        "modelCalls": { "const": 0 },
+        "providerCostUsd": { "const": 0 },
+        "networkCalls": { "const": 0 },
+        "hostCommandToolCalls": { "const": 0 },
+        "manifestModified": { "const": false },
+        "v3AggregateModified": { "const": false }
+      }
+    },
+    "baseline": { "$ref": "#/$defs/baseline" },
+    "offlineCandidate": { "$ref": "#/$defs/offlineCandidate" },
+    "platforms": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        { "allOf": [{ "$ref": "#/$defs/platform" }, { "properties": { "platform": { "const": "windows-native" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/platform" }, { "properties": { "platform": { "const": "wsl2-linux" } } }] }
+      ],
+      "items": false
+    },
+    "crossPlatform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sameManifestSha256", "sameBaselineCommit", "sameRepositorySnapshotIdentity",
+        "providerModelMatched", "sharedFailureSignature", "allCandidatesFailedBeforeEdit",
+        "providerUsageComplete", "preflightsPassed", "runtimeContractStable",
+        "v3TokenRegressionVsBaselineOnBothPlatforms", "totalObservedCostCny"
+      ],
+      "properties": {
+        "sameManifestSha256": { "const": true },
+        "sameBaselineCommit": { "const": true },
+        "sameRepositorySnapshotIdentity": { "const": true },
+        "providerModelMatched": { "const": true },
+        "sharedFailureSignature": { "const": true },
+        "allCandidatesFailedBeforeEdit": { "const": true },
+        "providerUsageComplete": { "const": true },
+        "preflightsPassed": { "const": true },
+        "runtimeContractStable": { "const": true },
+        "v3TokenRegressionVsBaselineOnBothPlatforms": { "const": true },
+        "totalObservedCostCny": { "$ref": "#/$defs/nonNegative" }
+      }
+    },
+    "runtimeGuardBenefit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "globArgumentContractStable", "responseBytesReducedVsBaselineOnBothPlatforms",
+        "responseBytesReducedVsV2OnBothPlatforms", "v3ResponseBytesSpread", "taskOutcomeImproved",
+        "tokenUpliftObserved", "boundary"
+      ],
+      "properties": {
+        "globArgumentContractStable": { "const": true },
+        "responseBytesReducedVsBaselineOnBothPlatforms": { "const": true },
+        "responseBytesReducedVsV2OnBothPlatforms": { "const": true },
+        "v3ResponseBytesSpread": { "type": "integer", "minimum": 0 },
+        "taskOutcomeImproved": { "const": false },
+        "tokenUpliftObserved": { "const": false },
+        "boundary": {
+          "const": [
+            "does_not_bound_cumulative_model_call_count",
+            "does_not_bound_repeated_file_read_or_search_loop",
+            "does_not_force_edit_or_termination_transition_before_budget_exhaustion"
+          ]
+        }
+      }
+    },
+    "attribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary", "contributors", "excluded"],
+      "properties": {
+        "primary": { "const": "tool_argument_guard_reduces_response_surface_but_not_model_loop_budget" },
+        "contributors": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "excluded": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v1AnalysisSha256", "v2AnalysisSha256", "baselineEventsSha256", "platforms"],
+      "properties": {
+        "v1AnalysisSha256": { "$ref": "#/$defs/sha256" },
+        "v2AnalysisSha256": { "$ref": "#/$defs/sha256" },
+        "baselineEventsSha256": { "$ref": "#/$defs/sha256" },
+        "platforms": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            { "allOf": [{ "$ref": "#/$defs/sourcePlatform" }, { "properties": { "platform": { "const": "windows-native" } } }] },
+            { "allOf": [{ "$ref": "#/$defs/sourcePlatform" }, { "properties": { "platform": { "const": "wsl2-linux" } } }] }
+          ],
+          "items": false
+        }
+      }
+    },
+    "diagnostics": { "const": [] }
+  },
+  "$defs": {
+    "timestamp": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$" },
+    "sha1": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "nonNegative": { "type": "number", "minimum": 0 },
+    "toolName": {
+      "enum": ["file_read", "list_files", "text_search", "file_glob", "file_edit", "apply_patch", "file_write", "file_delete"]
+    },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runId", "inputTokens", "outputTokens", "totalTokens", "modelCalls", "toolCallCount",
+        "changedFileCount", "budgetExhausted", "modelVisibleResponseBytes", "toolSequence", "eventsSha256"
+      ],
+      "properties": {
+        "runId": { "type": "string", "minLength": 1 },
+        "inputTokens": { "type": "integer", "minimum": 0 },
+        "outputTokens": { "type": "integer", "minimum": 0 },
+        "totalTokens": { "type": "integer", "minimum": 1 },
+        "modelCalls": { "type": "integer", "minimum": 1 },
+        "toolCallCount": { "type": "integer", "minimum": 1 },
+        "changedFileCount": { "const": 0 },
+        "budgetExhausted": { "const": true },
+        "modelVisibleResponseBytes": { "type": "integer", "minimum": 1 },
+        "toolSequence": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/toolName" } },
+        "eventsSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "offlineCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["toolCallCount", "modelVisibleResponseBytes", "tokenImpactStatus"],
+      "properties": {
+        "toolCallCount": { "type": "integer", "minimum": 1 },
+        "modelVisibleResponseBytes": { "type": "integer", "minimum": 1 },
+        "tokenImpactStatus": { "const": "not_measured" }
+      }
+    },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "candidates", "offlineCandidate", "v3RuntimeContract", "comparison", "source"],
+      "properties": {
+        "platform": { "enum": ["windows-native", "wsl2-linux"] },
+        "candidates": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "prefixItems": [
+            { "allOf": [{ "$ref": "#/$defs/candidate" }, { "properties": { "candidateId": { "const": "workspace-write-navigation-candidate-v1" }, "enforcement": { "const": "prompt_only" }, "runtimeToolGuard": { "const": false } } }] },
+            { "allOf": [{ "$ref": "#/$defs/candidate" }, { "properties": { "candidateId": { "const": "workspace-write-navigation-candidate-v2" }, "enforcement": { "const": "prompt_contract" }, "runtimeToolGuard": { "const": false } } }] },
+            { "allOf": [{ "$ref": "#/$defs/candidate" }, { "properties": { "candidateId": { "const": "workspace-write-navigation-candidate-v3" }, "enforcement": { "const": "runtime_contract" }, "runtimeToolGuard": { "const": true } } }] }
+          ],
+          "items": false
+        },
+        "offlineCandidate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["toolCallCount", "modelVisibleResponseBytes"],
+          "properties": {
+            "toolCallCount": { "type": "integer", "minimum": 1 },
+            "modelVisibleResponseBytes": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "v3RuntimeContract": { "$ref": "#/$defs/runtimeContract" },
+        "comparison": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "v3VsBaselineTotalTokenDelta", "v3VsCandidateV1TotalTokenDelta", "v3VsCandidateV2TotalTokenDelta",
+            "v3VsBaselineResponseBytesDelta", "v3VsCandidateV1ResponseBytesDelta", "v3VsCandidateV2ResponseBytesDelta"
+          ],
+          "properties": {
+            "v3VsBaselineTotalTokenDelta": { "type": "integer", "minimum": 1 },
+            "v3VsCandidateV1TotalTokenDelta": { "type": "integer", "maximum": -1 },
+            "v3VsCandidateV2TotalTokenDelta": { "type": "integer" },
+            "v3VsBaselineResponseBytesDelta": { "type": "integer", "maximum": -1 },
+            "v3VsCandidateV1ResponseBytesDelta": { "type": "integer", "maximum": -1 },
+            "v3VsCandidateV2ResponseBytesDelta": { "type": "integer", "maximum": -1 }
+          }
+        },
+        "source": { "$ref": "#/$defs/platformSource" }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateId", "runId", "enforcement", "runtimeToolGuard", "usage", "budget", "tools",
+        "modelVisibleResponseBytes", "totalTokens", "modelCalls", "outcome", "execution", "evaluator"
+      ],
+      "properties": {
+        "candidateId": { "enum": ["workspace-write-navigation-candidate-v1", "workspace-write-navigation-candidate-v2", "workspace-write-navigation-candidate-v3"] },
+        "runId": { "type": "string", "minLength": 1 },
+        "enforcement": { "enum": ["prompt_only", "prompt_contract", "runtime_contract"] },
+        "runtimeToolGuard": { "type": "boolean" },
+        "usage": { "$ref": "#/$defs/usage" },
+        "budget": { "$ref": "#/$defs/budget" },
+        "tools": { "$ref": "#/$defs/tools" },
+        "modelVisibleResponseBytes": { "type": "integer", "minimum": 1 },
+        "totalTokens": { "type": "integer", "minimum": 24001 },
+        "modelCalls": { "type": "integer", "minimum": 1 },
+        "outcome": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "failureCategory"],
+          "properties": {
+            "status": { "const": "failed" },
+            "failureCategory": { "const": "product_workflow" }
+          }
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enteredEditPhase", "budgetExhausted", "changedFileCount", "preflightsPassed"],
+          "properties": {
+            "enteredEditPhase": { "const": false },
+            "budgetExhausted": { "const": true },
+            "changedFileCount": { "const": 0 },
+            "preflightsPassed": { "const": true }
+          }
+        },
+        "evaluator": { "$ref": "#/$defs/evaluator" }
+      }
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "complete", "inputTokens", "outputTokens", "totalTokens", "modelCalls", "costUsd", "costCny"],
+      "properties": {
+        "source": { "const": "provider_reported" },
+        "complete": { "const": true },
+        "inputTokens": { "type": "integer", "minimum": 0 },
+        "outputTokens": { "type": "integer", "minimum": 0 },
+        "totalTokens": { "type": "integer", "minimum": 24001 },
+        "modelCalls": { "type": "integer", "minimum": 1 },
+        "costUsd": { "$ref": "#/$defs/nonNegative" },
+        "costCny": { "$ref": "#/$defs/nonNegative" }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "limit", "observed"],
+      "properties": {
+        "kind": { "const": "total_tokens" },
+        "limit": { "const": 24000 },
+        "observed": { "type": "integer", "minimum": 24001 }
+      }
+    },
+    "tools": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["callCount", "successfulCount", "failedCount", "sequence", "modelVisibleResponseBytes", "editCallCount"],
+      "properties": {
+        "callCount": { "type": "integer", "minimum": 1 },
+        "successfulCount": { "type": "integer", "minimum": 1 },
+        "failedCount": { "type": "integer", "minimum": 0 },
+        "sequence": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/toolName" } },
+        "modelVisibleResponseBytes": { "type": "integer", "minimum": 1 },
+        "editCallCount": { "const": 0 }
+      }
+    },
+    "evaluator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "taskCompleted", "testsPassed", "patchAccepted", "regressionCount", "manualInterventionCount"],
+      "properties": {
+        "source": { "const": "machine" },
+        "taskCompleted": { "const": false },
+        "testsPassed": { "const": false },
+        "patchAccepted": { "const": false },
+        "regressionCount": { "type": "integer", "minimum": 1 },
+        "manualInterventionCount": { "const": 0 }
+      }
+    },
+    "runtimeContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "strategyId", "enforcement", "runtimeToolGuard", "promptHashMatched", "toolArgumentPolicy",
+        "compliant", "policyMetadataObserved", "invalidGlobCallsBlocked", "invalidGlobCallCount",
+        "blockedGlobCallCount", "cappedGlobCallCount", "navigationSequenceCompliant",
+        "fileGlobBeforeSourceRead", "regressionTestReadBeforeSourceInspection", "boundedTextSearchObserved",
+        "fullTargetReadBeforeLocalization", "repeatedCompleteFileReadCount", "toolSequence"
+      ],
+      "properties": {
+        "strategyId": { "const": "bounded-navigation-runtime-contract/v1" },
+        "enforcement": { "const": "runtime_contract" },
+        "runtimeToolGuard": { "const": true },
+        "promptHashMatched": { "const": true },
+        "toolArgumentPolicy": { "const": "bounded-navigation-v1" },
+        "compliant": { "const": true },
+        "policyMetadataObserved": { "const": true },
+        "invalidGlobCallsBlocked": { "const": true },
+        "invalidGlobCallCount": { "type": "integer", "minimum": 0 },
+        "blockedGlobCallCount": { "type": "integer", "minimum": 0 },
+        "cappedGlobCallCount": { "type": "integer", "minimum": 1 },
+        "navigationSequenceCompliant": { "type": "boolean" },
+        "fileGlobBeforeSourceRead": { "const": true },
+        "regressionTestReadBeforeSourceInspection": { "const": true },
+        "boundedTextSearchObserved": { "const": true },
+        "fullTargetReadBeforeLocalization": { "const": false },
+        "repeatedCompleteFileReadCount": { "type": "integer", "minimum": 0 },
+        "toolSequence": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/toolName" } }
+      }
+    },
+    "platformSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifestSha256", "baselineCommit", "repositorySnapshotIdentitySha256", "v1ShadowArtifactSha256",
+        "v2ShadowArtifactSha256", "v3CandidateEvidenceSha256", "v3ShadowArtifactSha256", "v3EventsSha256"
+      ],
+      "properties": {
+        "manifestSha256": { "$ref": "#/$defs/sha256" },
+        "baselineCommit": { "$ref": "#/$defs/sha1" },
+        "repositorySnapshotIdentitySha256": { "$ref": "#/$defs/sha256" },
+        "v1ShadowArtifactSha256": { "$ref": "#/$defs/sha256" },
+        "v2ShadowArtifactSha256": { "$ref": "#/$defs/sha256" },
+        "v3CandidateEvidenceSha256": { "$ref": "#/$defs/sha256" },
+        "v3ShadowArtifactSha256": { "$ref": "#/$defs/sha256" },
+        "v3EventsSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "sourcePlatform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform", "v1ShadowArtifactSha256", "v2ShadowArtifactSha256", "v3CandidateEvidenceSha256",
+        "v3ShadowArtifactSha256", "v3EventsSha256"
+      ],
+      "properties": {
+        "platform": { "enum": ["windows-native", "wsl2-linux"] },
+        "v1ShadowArtifactSha256": { "$ref": "#/$defs/sha256" },
+        "v2ShadowArtifactSha256": { "$ref": "#/$defs/sha256" },
+        "v3CandidateEvidenceSha256": { "$ref": "#/$defs/sha256" },
+        "v3ShadowArtifactSha256": { "$ref": "#/$defs/sha256" },
+        "v3EventsSha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

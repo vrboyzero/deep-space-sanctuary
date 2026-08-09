@@ -135,6 +135,12 @@ export class ConversationSteerMailbox implements AgentRunSteeringMailbox {
     return this.commands.some((command) => command.status === "queued" || command.status === "claimed");
   }
 
+  peekPending(): AgentRunSteerCommand[] {
+    return this.commands
+      .filter((command) => command.status === "queued")
+      .map((command) => ({ commandId: command.commandId, prompt: command.prompt }));
+  }
+
   async consumePending(input: { modelCallIndex: number }): Promise<AgentRunSteerCommand[]> {
     const modelCallIndex = positiveInteger(input.modelCallIndex, 1);
     const pending = this.commands.filter((command) => command.status === "queued");

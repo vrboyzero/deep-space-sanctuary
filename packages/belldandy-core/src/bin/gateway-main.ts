@@ -179,6 +179,7 @@ import {
   listFilesTool,
   textSearchTool,
   fileGlobTool,
+  createCodeIntelTool,
   createMemorySearchTool,
   createMemoryGetTool,
   memoryReadTool,
@@ -997,6 +998,7 @@ const emailOutboundConfirmationStore = new EmailOutboundConfirmationStore();
 const currentConversationBindingStore = createFileCurrentConversationBindingStore(
   resolveCurrentConversationBindingStorePath(stateDir),
 );
+const codeIntelTool = createCodeIntelTool();
 
 // 3. Init Executor (conditional)
 // Inject browser logger before registering tools
@@ -1017,6 +1019,7 @@ const gatewayToolPoolAssembler = new ToolPoolAssembler([
       listFilesTool,
       textSearchTool,
       fileGlobTool,
+      codeIntelTool,
       createMemorySearchTool(),
       createMemoryGetTool(),
       memoryReadTool,
@@ -1294,6 +1297,7 @@ const CORE_TOOL_NAMES = new Set<string>([
   listFilesTool.definition.name,
   textSearchTool.definition.name,
   fileGlobTool.definition.name,
+  codeIntelTool.definition.name,
   commandJobTool.definition.name,
   runCommandTool.definition.name,
 ]);
@@ -1477,7 +1481,7 @@ if (toolsEnabled) {
 
 // 4. Log enabled tools
 if (toolsEnabled) {
-  const safeTools = "web_fetch, apply_patch, file_read, file_edit, file_write, file_delete, list_files, text_search, file_glob, memory_search, memory_get, memory_read, memory_write, memory_share_promote, task_search, task_get, task_recent, conversation_list, conversation_read, experience_candidate_get, experience_candidate_list, experience_usage_get, experience_usage_list, ptc_runtime, browser_*, log_read, log_search";
+  const safeTools = "web_fetch, apply_patch, file_read, file_edit, file_write, file_delete, list_files, text_search, file_glob, code_intel, memory_search, memory_get, memory_read, memory_write, memory_share_promote, task_search, task_get, task_recent, conversation_list, conversation_read, experience_candidate_get, experience_candidate_list, experience_usage_get, experience_usage_list, ptc_runtime, browser_*, log_read, log_search";
   if (dangerousToolsEnabled) {
     logger.warn("tools", "⚠️ DANGEROUS_TOOLS_ENABLED=true: run_command and command_job are active");
     logger.info("tools", `Tools enabled: ${safeTools}, run_command, command_job`);

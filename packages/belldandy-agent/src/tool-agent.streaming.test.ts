@@ -33,6 +33,7 @@ describe("ToolEnabledAgent Provider streaming", () => {
     const sealIfIdle = vi.fn()
       .mockReturnValueOnce(false)
       .mockReturnValueOnce(true);
+    const peekPending = vi.fn(() => []);
     const agent = new ToolEnabledAgent({
       baseUrl: provider.baseUrl,
       apiKey: "local-test-key",
@@ -44,7 +45,7 @@ describe("ToolEnabledAgent Provider streaming", () => {
     const items = await collectItems(agent.run({
       conversationId: "steer-model-boundary",
       text: "initial task",
-      steering: { consumePending, sealIfIdle },
+      steering: { peekPending, consumePending, sealIfIdle },
     }));
 
     expect(agent.getCodingRunCapabilities()).toMatchObject({ steerAtModelBoundary: true });
@@ -100,6 +101,7 @@ describe("ToolEnabledAgent Provider streaming", () => {
       streamingEnabled: false,
     } as any);
     const steering = {
+      peekPending: vi.fn(() => []),
       consumePending: vi.fn(async ({ modelCallIndex }: { modelCallIndex: number }) =>
         modelCallIndex === 2 ? [{ commandId: "steer-1", prompt: "check the tool result" }] : []
       ),

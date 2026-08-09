@@ -8,12 +8,40 @@ export const DEFAULT_MAX_RUN_WALL_TIME_MS = 300_000;
 export const DEFAULT_MAX_TOTAL_TOKENS = 128_000;
 export const DEFAULT_MAX_HIGH_RISK_TOOL_CALLS = 4;
 
-export type ReActRunBudgetKind = "wall_time_ms" | "total_tokens" | "high_risk_tool_calls" | "cost_usd";
+export const MODEL_LOOP_COST_CONTAINMENT_POLICY_ID = "cost-containment-v1" as const;
+export const MODEL_LOOP_COST_CONTAINMENT_LIMITS = Object.freeze({
+  maxModelCalls: 4,
+  maxFileReadCalls: 2,
+  maxTextSearchCalls: 2,
+  minimumOutputTokenReserve: 1_024,
+});
+
+export type ModelLoopBudgetPolicy = typeof MODEL_LOOP_COST_CONTAINMENT_POLICY_ID;
+
+export type ReActRunBudgetKind =
+  | "wall_time_ms"
+  | "total_tokens"
+  | "high_risk_tool_calls"
+  | "cost_usd"
+  | "model_calls"
+  | "file_read_calls"
+  | "text_search_calls";
+
+export type ReActRunBudgetStage = "before_model_call" | "before_tool_call";
+export type ReActRunBudgetReasonCode =
+  | "model_call_limit"
+  | "file_read_call_limit"
+  | "text_search_call_limit"
+  | "insufficient_remaining_tokens"
+  | "insufficient_remaining_cost";
 
 export type ReActRunBudgetExhausted = {
   budget: ReActRunBudgetKind;
   limit: number;
   observed: number;
+  policyId?: ModelLoopBudgetPolicy;
+  stage?: ReActRunBudgetStage;
+  reasonCode?: ReActRunBudgetReasonCode;
 };
 
 export type ReActRunBudgetUsage = {
@@ -33,6 +61,8 @@ export type ReActRunBudgetUsage = {
 export type ReActModelCallPreflight = {
   /** 本次调用至少需要发送的输入 token；不预估未知输出。 */
   minimumInputTokens: number;
+  /** 受控策略为模型输出预留的 token；普通运行默认为 0。 */
+  minimumOutputTokens?: number;
   /** 有价格表时，本次最小输入成本。 */
   minimumCostUsd?: number;
 };
@@ -41,6 +71,7 @@ export type ReActRunBudgetTrackerOptions = {
   maxTotalTokens: number;
   maxHighRiskToolCalls: number;
   maxCostUsd?: number;
+  modelLoopBudgetPolicy?: ModelLoopBudgetPolicy;
 };
 
 export type ReActRunAbortController = {
@@ -139,14 +170,21 @@ export class ReActRunBudgetTracker {
   readonly maxTotalTokens: number;
   readonly maxHighRiskToolCalls: number;
   readonly maxCostUsd?: number;
+  readonly modelLoopBudgetPolicy?: ModelLoopBudgetPolicy;
   totalTokens = 0;
   highRiskToolCalls = 0;
   totalCostUsd = 0;
+  modelCalls = 0;
+  fileReadCalls = 0;
+  textSearchCalls = 0;
 
   constructor(options: ReActRunBudgetTrackerOptions) {
     this.maxTotalTokens = normalizeMaxTotalTokens(options.maxTotalTokens);
     this.maxHighRiskToolCalls = normalizeMaxHighRiskToolCalls(options.maxHighRiskToolCalls);
     this.maxCostUsd = normalizePositiveCostLimit(options.maxCostUsd);
+    this.modelLoopBudgetPolicy = options.modelLoopBudgetPolicy === MODEL_LOOP_COST_CONTAINMENT_POLICY_ID
+      ? options.modelLoopBudgetPolicy
+      : undefined;
   }
 
   /**
@@ -183,12 +221,26 @@ export class ReActRunBudgetTracker {
 
   /** 在额外模型调用前失败关闭；只读检查，不预扣实际 usage。 */
   checkModelCallPreflight(input: ReActModelCallPreflight): ReActRunBudgetExhausted | undefined {
-    const projectedTokens = this.totalTokens + normalizeNonNegativeNumber(input.minimumInputTokens);
+    const policyEnabled = this.modelLoopBudgetPolicy === MODEL_LOOP_COST_CONTAINMENT_POLICY_ID;
+    const minimumOutputTokens = policyEnabled
+      ? Math.max(
+        normalizeNonNegativeNumber(input.minimumOutputTokens),
+        MODEL_LOOP_COST_CONTAINMENT_LIMITS.minimumOutputTokenReserve,
+      )
+      : normalizeNonNegativeNumber(input.minimumOutputTokens);
+    const projectedTokens = this.totalTokens
+      + normalizeNonNegativeNumber(input.minimumInputTokens)
+      + minimumOutputTokens;
     if (projectedTokens > this.maxTotalTokens) {
       return {
         budget: "total_tokens",
         limit: this.maxTotalTokens,
         observed: projectedTokens,
+        ...(policyEnabled ? {
+          policyId: MODEL_LOOP_COST_CONTAINMENT_POLICY_ID,
+          stage: "before_model_call" as const,
+          reasonCode: "insufficient_remaining_tokens" as const,
+        } : {}),
       };
     }
     if (this.maxCostUsd !== undefined) {
@@ -198,8 +250,79 @@ export class ReActRunBudgetTracker {
           budget: "cost_usd",
           limit: this.maxCostUsd,
           observed: projectedCostUsd,
+          ...(policyEnabled ? {
+            policyId: MODEL_LOOP_COST_CONTAINMENT_POLICY_ID,
+            stage: "before_model_call" as const,
+            reasonCode: "insufficient_remaining_cost" as const,
+          } : {}),
         };
       }
+    }
+    return undefined;
+  }
+
+  /**
+   * 受控成本策略在 Provider dispatch 前原子预留一次模型调用。
+   * 未启用策略时保持普通 profile 的既有 post-usage 预算语义。
+   */
+  reserveModelCall(input: ReActModelCallPreflight): ReActRunBudgetExhausted | undefined {
+    if (this.modelLoopBudgetPolicy !== MODEL_LOOP_COST_CONTAINMENT_POLICY_ID) {
+      return undefined;
+    }
+    const observed = this.modelCalls + 1;
+    if (observed > MODEL_LOOP_COST_CONTAINMENT_LIMITS.maxModelCalls) {
+      return this.costContainmentExhausted(
+        "model_calls",
+        MODEL_LOOP_COST_CONTAINMENT_LIMITS.maxModelCalls,
+        observed,
+        "before_model_call",
+        "model_call_limit",
+      );
+    }
+    const preflight = this.checkModelCallPreflight(input);
+    if (preflight) {
+      return {
+        ...preflight,
+        policyId: this.modelLoopBudgetPolicy,
+        stage: "before_model_call",
+        reasonCode: preflight.budget === "cost_usd"
+          ? "insufficient_remaining_cost"
+          : "insufficient_remaining_tokens",
+      };
+    }
+    this.modelCalls = observed;
+    return undefined;
+  }
+
+  /** 仅对真实执行前的 file_read/text_search 尝试计数，其他 Tool 不受影响。 */
+  reserveToolCall(toolName: string): ReActRunBudgetExhausted | undefined {
+    if (this.modelLoopBudgetPolicy !== MODEL_LOOP_COST_CONTAINMENT_POLICY_ID) {
+      return undefined;
+    }
+    if (toolName === "file_read") {
+      const observed = this.fileReadCalls + 1;
+      if (observed > MODEL_LOOP_COST_CONTAINMENT_LIMITS.maxFileReadCalls) {
+        return this.costContainmentExhausted(
+          "file_read_calls",
+          MODEL_LOOP_COST_CONTAINMENT_LIMITS.maxFileReadCalls,
+          observed,
+          "before_tool_call",
+          "file_read_call_limit",
+        );
+      }
+      this.fileReadCalls = observed;
+    } else if (toolName === "text_search") {
+      const observed = this.textSearchCalls + 1;
+      if (observed > MODEL_LOOP_COST_CONTAINMENT_LIMITS.maxTextSearchCalls) {
+        return this.costContainmentExhausted(
+          "text_search_calls",
+          MODEL_LOOP_COST_CONTAINMENT_LIMITS.maxTextSearchCalls,
+          observed,
+          "before_tool_call",
+          "text_search_call_limit",
+        );
+      }
+      this.textSearchCalls = observed;
     }
     return undefined;
   }
@@ -216,6 +339,23 @@ export class ReActRunBudgetTracker {
     }
     this.highRiskToolCalls = observed;
     return undefined;
+  }
+
+  private costContainmentExhausted(
+    budget: ReActRunBudgetKind,
+    limit: number,
+    observed: number,
+    stage: ReActRunBudgetStage,
+    reasonCode: ReActRunBudgetReasonCode,
+  ): ReActRunBudgetExhausted {
+    return {
+      budget,
+      limit,
+      observed,
+      policyId: MODEL_LOOP_COST_CONTAINMENT_POLICY_ID,
+      stage,
+      reasonCode,
+    };
   }
 }
 

@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { compileOutputSchema } from "../packages/belldandy-core/src/cli/shared/output-schema.ts";
 import { startGatewayServer } from "../packages/belldandy-core/src/server.ts";
 import { resolveWebRoot } from "../packages/belldandy-core/src/server-testkit.ts";
 
@@ -423,6 +424,47 @@ describe("coding agent benchmark corrected v2 contract", () => {
         failureCategory: "infrastructure",
       })],
     })).toThrow(/infrastructure_error/i);
+  });
+
+  it("keeps v2 run and report schemas aligned with versioned fixtures and bounded overrides", async () => {
+    const manifest = await loadCodingAgentBenchmarkManifest(resolveCodingAgentBenchmarkManifestPath("v2"));
+    const task = manifest.tasks.find((item) => item.id === "safety.boundary-enforcement");
+    const run = v2Run(task, {
+      runId: "safety-v2-windows-a1",
+      attempt: 1,
+      status: "passed",
+    });
+    run.execution.budgets = resolveCodingAgentBenchmarkTaskBudgets(manifest, task.id);
+    run.evaluation.dangerousOperationBlocked = true;
+    run.artifacts.approvalContract = `${run.runId}/approval-contract.json`;
+    run.artifacts.approvalEvidence = `${run.runId}/approval-evidence.json`;
+    const report = createCodingAgentBenchmarkReport({
+      status: "partial",
+      generatedAt: "2026-08-05T00:00:00.000Z",
+      manifest,
+      manifestSha256: "a".repeat(64),
+      harness: repositoryIdentity("b"),
+      source: repositoryIdentity("c"),
+      runs: [run],
+    });
+
+    for (const [filename, sample] of [
+      ["benchmark-run.schema.json", run],
+      ["benchmark-report.schema.json", report],
+    ]) {
+      const schema = JSON.parse(await fs.readFile(path.join(
+        workspaceRoot,
+        "benchmarks",
+        "coding-agent",
+        "v2",
+        filename,
+      ), "utf-8"));
+      const compiled = compileOutputSchema(schema);
+      expect(compiled.ok, filename).toBe(true);
+      if (!compiled.ok) continue;
+      const validation = compiled.validator.validateOutput(JSON.stringify(sample));
+      expect(validation, `${filename}: ${validation.message ?? "unknown validation failure"}`).toMatchObject({ ok: true });
+    }
   });
 });
 

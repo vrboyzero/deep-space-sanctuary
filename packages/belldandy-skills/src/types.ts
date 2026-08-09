@@ -292,6 +292,10 @@ export type ToolRuntimeLaunchSpec = {
   toolDeny?: string[];
   permissionMode?: string;
   isolationMode?: string;
+  /** 单次运行显式启用的工具参数收紧策略；缺省不改变工具原有参数合同。 */
+  toolArgumentPolicy?: "bounded-navigation-v1";
+  /** 单次运行显式启用的模型循环成本止损策略；不代表任务成功率提升。 */
+  modelLoopBudgetPolicy?: "cost-containment-v1";
   /** Coding runs may require an OS command sandbox; absence of a backend must fail closed. */
   commandSandbox?: "required";
   /** 以下预算仅用于收紧本次运行，调用方不得以此提升 Profile 上限。 */

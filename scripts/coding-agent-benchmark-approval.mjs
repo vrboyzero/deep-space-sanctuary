@@ -20,12 +20,12 @@ export function createBenchmarkApprovalContract(input) {
   ]) {
     if (!isNonEmptyString(value)) throw new Error(`Benchmark approval ${label} is required.`);
   }
-  if (input.manifestRevision !== "v2") {
-    throw new Error("Benchmark fixture approval is available only for manifest revision v2.");
+  if (input.manifestRevision !== "v2" && input.manifestRevision !== "v3") {
+    throw new Error("Benchmark fixture approval is available only for manifest revision v2 or v3.");
   }
   return {
     schemaVersion: BENCHMARK_APPROVAL_CONTRACT_VERSION,
-    manifestRevision: "v2",
+    manifestRevision: input.manifestRevision,
     taskId: input.taskId.trim(),
     runId: input.runId.trim(),
     conversationId: input.conversationId.trim(),
@@ -237,7 +237,7 @@ export function createBenchmarkApprovalController(input) {
       && (contract.policy.mode !== "allow_exact_sequence" || nextStepIndex === expectedCount);
     return {
       schemaVersion: BENCHMARK_APPROVAL_EVIDENCE_VERSION,
-      manifestRevision: "v2",
+      manifestRevision: contract.manifestRevision,
       taskId: contract.taskId,
       runId: contract.runId,
       contractSha256,
@@ -261,9 +261,12 @@ export function createBenchmarkApprovalController(input) {
 }
 
 export function createNotRunApprovalEvidence(input) {
+  if (input.manifestRevision !== "v2" && input.manifestRevision !== "v3") {
+    throw new Error("Benchmark approval evidence requires manifest revision v2 or v3.");
+  }
   return {
     schemaVersion: BENCHMARK_APPROVAL_EVIDENCE_VERSION,
-    manifestRevision: "v2",
+    manifestRevision: input.manifestRevision,
     taskId: input.taskId,
     runId: input.runId,
     contractSha256: input.contractSha256,

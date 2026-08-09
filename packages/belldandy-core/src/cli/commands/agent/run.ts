@@ -43,6 +43,8 @@ export type AgentRunCliOptionsInput = {
   toolAllow?: unknown;
   toolDeny?: unknown;
   permissionMode?: unknown;
+  toolArgumentPolicy?: unknown;
+  modelLoopBudgetPolicy?: unknown;
   maxTurns?: unknown;
   maxTokens?: unknown;
   maxCostUsd?: unknown;
@@ -91,6 +93,10 @@ export function resolveAgentRunCliOptions(
   if (!toolDeny.ok) return toolDeny;
   const permissionMode = parsePermissionModeOption(input.permissionMode);
   if (!permissionMode.ok) return permissionMode;
+  const toolArgumentPolicy = parseToolArgumentPolicyOption(input.toolArgumentPolicy);
+  if (!toolArgumentPolicy.ok) return toolArgumentPolicy;
+  const modelLoopBudgetPolicy = parseModelLoopBudgetPolicyOption(input.modelLoopBudgetPolicy);
+  if (!modelLoopBudgetPolicy.ok) return modelLoopBudgetPolicy;
   const maxTurns = parsePositiveIntegerOption(input.maxTurns, "--max-turns");
   if (!maxTurns.ok) return maxTurns;
   const maxTokens = parsePositiveIntegerOption(input.maxTokens, "--max-tokens");
@@ -104,6 +110,8 @@ export function resolveAgentRunCliOptions(
     ...(toolAllow.value ? { toolAllow: toolAllow.value } : {}),
     ...(toolDeny.value ? { toolDeny: toolDeny.value } : {}),
     ...(permissionMode.value ? { permissionMode: permissionMode.value } : {}),
+    ...(toolArgumentPolicy.value ? { toolArgumentPolicy: toolArgumentPolicy.value } : {}),
+    ...(modelLoopBudgetPolicy.value ? { modelLoopBudgetPolicy: modelLoopBudgetPolicy.value } : {}),
     ...(timeoutMs === undefined ? {} : { maxWallTimeMs: timeoutMs }),
     ...(maxTurns.value === undefined ? {} : { maxTurns: maxTurns.value }),
     ...(maxTokens.value === undefined ? {} : { maxTokens: maxTokens.value }),
@@ -426,7 +434,15 @@ function resolveCwdOption(value: unknown): { ok: true; value?: string } | { ok: 
   if (typeof value !== "string" || !value.trim()) {
     return { ok: false, message: "--cwd must be a non-empty path." };
   }
-  return { ok: true, value: path.resolve(value.trim()) };
+  return { ok: true, value: resolveAgentRunCwd(value.trim()) };
+}
+
+export function resolveAgentRunCwd(
+  value: string,
+  runtimePath: Pick<typeof path, "resolve"> = path,
+): string {
+  if (path.posix.isAbsolute(value) || path.win32.isAbsolute(value)) return value;
+  return runtimePath.resolve(value);
 }
 
 function parseToolListOption(
@@ -467,6 +483,26 @@ function parseAutomationProfileOption(
     return { ok: true, value: "bare" };
   }
   return { ok: false, message: "--automation-profile must be bare." };
+}
+
+function parseToolArgumentPolicyOption(
+  value: unknown,
+): { ok: true; value?: CodingRunOptions["toolArgumentPolicy"] } | { ok: false; message: string } {
+  if (value === undefined) return { ok: true };
+  if (typeof value === "string" && value.trim() === "bounded-navigation-v1") {
+    return { ok: true, value: "bounded-navigation-v1" };
+  }
+  return { ok: false, message: "--tool-argument-policy must be bounded-navigation-v1." };
+}
+
+function parseModelLoopBudgetPolicyOption(
+  value: unknown,
+): { ok: true; value?: CodingRunOptions["modelLoopBudgetPolicy"] } | { ok: false; message: string } {
+  if (value === undefined) return { ok: true };
+  if (typeof value === "string" && value.trim() === "cost-containment-v1") {
+    return { ok: true, value: "cost-containment-v1" };
+  }
+  return { ok: false, message: "--model-loop-budget-policy must be cost-containment-v1." };
 }
 
 function parsePositiveIntegerOption(
@@ -528,6 +564,8 @@ export default defineCommand({
     "tool-allow": { type: "string", description: "Comma-separated tool allowlist" },
     "tool-deny": { type: "string", description: "Comma-separated tool denylist (takes precedence)" },
     "permission-mode": { type: "string", description: "plan, accept-edits, or confirm" },
+    "tool-argument-policy": { type: "string", description: "Optional tool argument policy (bounded-navigation-v1)" },
+    "model-loop-budget-policy": { type: "string", description: "Optional model-loop cost containment policy (cost-containment-v1)" },
     "max-turns": { type: "string", description: "Maximum model-call turns for this run" },
     "max-tokens": { type: "string", description: "Maximum cumulative tokens for this run" },
     "max-cost-usd": { type: "string", description: "Maximum priced model cost in USD for this run" },
@@ -548,6 +586,8 @@ export default defineCommand({
       toolAllow: args["tool-allow"],
       toolDeny: args["tool-deny"],
       permissionMode: args["permission-mode"],
+      toolArgumentPolicy: args["tool-argument-policy"],
+      modelLoopBudgetPolicy: args["model-loop-budget-policy"],
       maxTurns: args["max-turns"],
       maxTokens: args["max-tokens"],
       maxCostUsd: args["max-cost-usd"],

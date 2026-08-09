@@ -7,12 +7,62 @@ import {
   CODING_AGENT_BENCHMARK_COMMAND_CONTROL_AGENT_PROFILE,
   CODING_AGENT_BENCHMARK_MANIFEST_VERSION,
   CODING_AGENT_BENCHMARK_MANIFEST_V2_VERSION,
+  CODING_AGENT_BENCHMARK_MANIFEST_V3_VERSION,
   CODING_AGENT_BENCHMARK_REPORT_VERSION,
   CODING_AGENT_BENCHMARK_REPORT_V2_VERSION,
+  CODING_AGENT_BENCHMARK_REPORT_V3_VERSION,
   CODING_AGENT_BENCHMARK_RUN_VERSION,
   CODING_AGENT_BENCHMARK_RUN_V2_VERSION,
+  CODING_AGENT_BENCHMARK_RUN_V3_VERSION,
   loadCodingAgentBenchmarkManifest,
 } from "./coding-agent-benchmark-contract.mjs";
+import {
+  CODING_AGENT_BENCHMARK_SCORECARD_V3_VERSION,
+  validateCodingAgentBenchmarkScorecardV3,
+} from "./coding-agent-benchmark-v3-contract.mjs";
+import {
+  CODING_AGENT_BENCHMARK_SNAPSHOT_RECEIPT_VERSION,
+  validateCodingAgentBenchmarkV3SnapshotReceipt,
+} from "./coding-agent-benchmark-v3-fixtures.mjs";
+import {
+  CODING_AGENT_BENCHMARK_LINUX_SNAPSHOT_PREPARATION_VERSION,
+} from "./coding-agent-benchmark-linux-snapshot-preparation.mjs";
+import {
+  CODING_AGENT_BENCHMARK_NAVIGATION_EFFICIENCY_VERSION,
+} from "./run-coding-agent-benchmark-navigation-efficiency.mjs";
+import {
+  CODING_AGENT_BENCHMARK_NAVIGATION_SHADOW_CANARY_VERSION,
+} from "./run-coding-agent-benchmark-navigation-shadow-canary.mjs";
+import {
+  CODING_AGENT_BENCHMARK_NAVIGATION_SHADOW_REAL_VERSION,
+} from "./run-coding-agent-benchmark-navigation-shadow-real.mjs";
+import {
+  CODING_AGENT_BENCHMARK_NAVIGATION_SHADOW_REAL_V2_VERSION,
+} from "./run-coding-agent-benchmark-navigation-shadow-real-v2.mjs";
+import {
+  CODING_AGENT_BENCHMARK_NAVIGATION_SHADOW_REAL_V3_VERSION,
+} from "./run-coding-agent-benchmark-navigation-shadow-real-v3.mjs";
+import {
+  CODING_AGENT_BENCHMARK_NAVIGATION_SHADOW_ANALYSIS_VERSION,
+} from "./run-coding-agent-benchmark-navigation-shadow-analysis.mjs";
+import {
+  CODING_AGENT_BENCHMARK_NAVIGATION_SHADOW_V2_ANALYSIS_VERSION,
+} from "./run-coding-agent-benchmark-navigation-shadow-v2-analysis.mjs";
+import {
+  CODING_AGENT_BENCHMARK_NAVIGATION_SHADOW_V3_ANALYSIS_VERSION,
+} from "./run-coding-agent-benchmark-navigation-shadow-v3-analysis.mjs";
+import {
+  CODING_AGENT_BENCHMARK_MODEL_LOOP_BUDGET_TERMINATION_VERSION,
+} from "./run-coding-agent-benchmark-model-loop-budget-termination.mjs";
+import {
+  CODING_AGENT_BENCHMARK_MODEL_LOOP_ROLLOUT_AUDIT_VERSION,
+} from "./run-coding-agent-benchmark-model-loop-rollout-audit.mjs";
+import {
+  CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V2_VERSION,
+} from "./run-coding-agent-benchmark-navigation-candidate-v2.mjs";
+import {
+  CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V3_VERSION,
+} from "./run-coding-agent-benchmark-navigation-candidate-v3.mjs";
 import { resolveCodingCiProfile } from "./run-coding-agent-ci.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
@@ -60,7 +110,73 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   const faultV2Schema = await readJson("benchmarks/coding-agent/v2/fault-injection.schema.json");
   const cancelV2Schema = await readJson("benchmarks/coding-agent/v2/cancel-injection.schema.json");
   const restartV2Schema = await readJson("benchmarks/coding-agent/v2/restart-injection.schema.json");
+  const manifestV3Path = "benchmarks/coding-agent/v3/task-manifest.json";
+  const manifestV3 = await readJson(manifestV3Path);
+  const scorecardV3 = await readJson("benchmarks/coding-agent/v3/scorecard.json");
+  const manifestV3Schema = await readJson("benchmarks/coding-agent/v3/task-manifest.schema.json");
+  const runV3Schema = await readJson("benchmarks/coding-agent/v3/benchmark-run.schema.json");
+  const reportV3Schema = await readJson("benchmarks/coding-agent/v3/benchmark-report.schema.json");
+  const scorecardV3Schema = await readJson("benchmarks/coding-agent/v3/scorecard.schema.json");
+  const repositoryInputsV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/repository-inputs.schema.json",
+  );
+  const linuxSnapshotPreparationV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/linux-snapshot-preparation.schema.json",
+  );
+  const runtimePreflightV3Schema = await readJson("benchmarks/coding-agent/v3/preflight.schema.json");
+  const snapshotPreflightV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/repository-snapshot-preflight.schema.json",
+  );
+  const snapshotReceiptV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/repository-snapshot-receipt.schema.json",
+  );
+  const systemScenarioV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/system-scenario.schema.json",
+  );
+  const systemEvidenceV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/system-evidence.schema.json",
+  );
+  const navigationEfficiencyV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/navigation-efficiency.schema.json",
+  );
+  const navigationShadowCanaryV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/navigation-shadow-canary.schema.json",
+  );
+  const navigationShadowRealV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/navigation-shadow-real.schema.json",
+  );
+  const navigationShadowRealV2V3Schema = await readJson(
+    "benchmarks/coding-agent/v3/navigation-shadow-real-v2.schema.json",
+  );
+  const navigationShadowRealCandidateV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/navigation-shadow-real-v3.schema.json",
+  );
+  const navigationShadowAnalysisV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/navigation-shadow-analysis.schema.json",
+  );
+  const navigationShadowV2AnalysisV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/navigation-shadow-v2-analysis.schema.json",
+  );
+  const navigationShadowV3AnalysisV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/navigation-shadow-v3-analysis.schema.json",
+  );
+  const modelLoopBudgetTerminationV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/model-loop-budget-termination.schema.json",
+  );
+  const modelLoopRolloutAuditV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/model-loop-rollout-audit.schema.json",
+  );
+  const navigationCandidateV2V3Schema = await readJson(
+    "benchmarks/coding-agent/v3/navigation-candidate-v2.schema.json",
+  );
+  const navigationCandidateV3V3Schema = await readJson(
+    "benchmarks/coding-agent/v3/navigation-candidate-v3.schema.json",
+  );
   const readme = await readText("benchmarks/coding-agent/README.md");
+  await readText("scripts/coding-agent-benchmark-v3-contract.mjs");
+  await readText("scripts/coding-agent-benchmark-v3-fixtures.mjs");
+  await readText("scripts/coding-agent-benchmark-linux-snapshot-preparation.mjs");
+  await readText("scripts/coding-agent-benchmark-parallel-read-harness.mjs");
   await readText("scripts/coding-agent-benchmark-fixtures.mjs");
   await readText("scripts/coding-agent-benchmark-approval.mjs");
   await readText("scripts/coding-agent-benchmark-preflight.mjs");
@@ -70,6 +186,19 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   await readText("scripts/aggregate-coding-agent-benchmark.mjs");
   await readText("scripts/run-coding-agent-benchmark.mjs");
   await readText("scripts/run-coding-agent-benchmark-wsl.mjs");
+  await readText("scripts/run-coding-agent-benchmark-system-smoke.mjs");
+  await readText("scripts/run-coding-agent-benchmark-navigation-efficiency.mjs");
+  await readText("scripts/run-coding-agent-benchmark-navigation-shadow-canary.mjs");
+  await readText("scripts/run-coding-agent-benchmark-navigation-shadow-real.mjs");
+  await readText("scripts/run-coding-agent-benchmark-navigation-shadow-real-v2.mjs");
+  await readText("scripts/run-coding-agent-benchmark-navigation-shadow-real-v3.mjs");
+  await readText("scripts/run-coding-agent-benchmark-navigation-shadow-analysis.mjs");
+  await readText("scripts/run-coding-agent-benchmark-navigation-shadow-v2-analysis.mjs");
+  await readText("scripts/run-coding-agent-benchmark-navigation-shadow-v3-analysis.mjs");
+  await readText("scripts/run-coding-agent-benchmark-model-loop-budget-termination.mjs");
+  await readText("scripts/run-coding-agent-benchmark-model-loop-rollout-audit.mjs");
+  await readText("scripts/run-coding-agent-benchmark-navigation-candidate-v2.mjs");
+  await readText("scripts/run-coding-agent-benchmark-navigation-candidate-v3.mjs");
   const projectMap = await readText("docs/project-map.md");
   const qualityGates = await readText(".github/workflows/quality-gates.yml");
 
@@ -87,6 +216,55 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
       failures.push(`coding benchmark v2 manifest failed semantic validation: ${safeMessage(error)}`);
     }
   }
+  if (manifestV3) {
+    try {
+      await loadCodingAgentBenchmarkManifest(path.join(workspaceRoot, manifestV3Path));
+    } catch (error) {
+      failures.push(`coding benchmark v3 manifest failed semantic validation: ${safeMessage(error)}`);
+    }
+  }
+  if (scorecardV3) {
+    try {
+      validateCodingAgentBenchmarkScorecardV3(scorecardV3);
+    } catch (error) {
+      failures.push(`coding benchmark v3 scorecard failed semantic validation: ${safeMessage(error)}`);
+    }
+  }
+  let snapshotReceiptV3Sample;
+  if (manifestV3?.repositories?.[0]) {
+    const repository = manifestV3.repositories[0];
+    snapshotReceiptV3Sample = {
+      schemaVersion: CODING_AGENT_BENCHMARK_SNAPSHOT_RECEIPT_VERSION,
+      repositoryId: repository.id,
+      source: {
+        url: repository.source.url,
+        commit: repository.source.commit,
+        workspaceDirty: false,
+        worktreeContentSha256: "1".repeat(64),
+        dependencyInputsSha256: "2".repeat(64),
+      },
+      license: {
+        spdx: repository.license.spdx,
+        path: repository.license.path,
+        sha256: "3".repeat(64),
+      },
+      dependencyCache: {
+        cacheKey: `${repository.id}-${repository.source.commit}`,
+        contentSha256: "4".repeat(64),
+      },
+      policy: {
+        preparationNetwork: repository.snapshot.preparationNetwork,
+        executionNetwork: repository.snapshot.executionNetwork,
+        dependencyPolicy: repository.snapshot.dependencyPolicy,
+      },
+      preparedAt: "2026-08-05T00:00:00.000Z",
+    };
+    try {
+      validateCodingAgentBenchmarkV3SnapshotReceipt(manifestV3, snapshotReceiptV3Sample);
+    } catch (error) {
+      failures.push(`coding benchmark v3 snapshot receipt failed semantic validation: ${safeMessage(error)}`);
+    }
+  }
   validateSchema(failures, "task manifest", manifestSchema, manifest);
   validateSchema(failures, "benchmark run", runSchema);
   validateSchema(failures, "benchmark report", reportSchema);
@@ -102,6 +280,40 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   validateSchema(failures, "v2 fault injection", faultV2Schema);
   validateSchema(failures, "v2 cancel injection", cancelV2Schema);
   validateSchema(failures, "v2 restart injection", restartV2Schema);
+  validateSchema(failures, "v3 task manifest", manifestV3Schema, manifestV3);
+  validateSchema(failures, "v3 benchmark run", runV3Schema);
+  validateSchema(failures, "v3 benchmark report", reportV3Schema);
+  validateSchema(failures, "v3 scorecard", scorecardV3Schema, scorecardV3);
+  validateSchema(failures, "v3 repository inputs", repositoryInputsV3Schema);
+  validateSchema(failures, "v3 Linux snapshot preparation", linuxSnapshotPreparationV3Schema);
+  validateSchema(failures, "v3 runtime preflight", runtimePreflightV3Schema);
+  validateSchema(failures, "v3 repository snapshot preflight", snapshotPreflightV3Schema);
+  validateSchema(failures, "v3 repository snapshot receipt", snapshotReceiptV3Schema, snapshotReceiptV3Sample);
+  validateSchema(failures, "v3 system scenario", systemScenarioV3Schema);
+  validateSchema(failures, "v3 system evidence", systemEvidenceV3Schema);
+  validateSchema(failures, "v3 navigation efficiency", navigationEfficiencyV3Schema);
+  validateSchema(failures, "v3 navigation shadow canary", navigationShadowCanaryV3Schema);
+  validateSchema(failures, "v3 navigation shadow real", navigationShadowRealV3Schema);
+  validateSchema(failures, "v3 navigation shadow real v2", navigationShadowRealV2V3Schema);
+  validateSchema(failures, "v3 navigation shadow real candidate v3", navigationShadowRealCandidateV3Schema);
+  validateSchema(failures, "v3 navigation shadow analysis", navigationShadowAnalysisV3Schema);
+  validateSchema(
+    failures,
+    "v3 navigation shadow v2 analysis",
+    navigationShadowV2AnalysisV3Schema,
+  );
+  validateSchema(
+    failures,
+    "v3 navigation shadow v3 analysis",
+    navigationShadowV3AnalysisV3Schema,
+  );
+  validateSchema(
+    failures,
+    "v3 model-loop budget termination",
+    modelLoopBudgetTerminationV3Schema,
+  );
+  validateSchema(failures, "v3 navigation candidate v2", navigationCandidateV2V3Schema);
+  validateSchema(failures, "v3 navigation candidate v3", navigationCandidateV3V3Schema);
   if (JSON.stringify(benchmarkAgentsV2) !== JSON.stringify({
     agents: [CODING_AGENT_BENCHMARK_COMMAND_CONTROL_AGENT_PROFILE],
   })) {
@@ -126,9 +338,163 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   if (reportV2Schema?.properties?.schemaVersion?.const !== CODING_AGENT_BENCHMARK_REPORT_V2_VERSION) {
     failures.push("v2 benchmark report Schema version drifted from the corrected contract.");
   }
+  if (manifestV3Schema?.properties?.schemaVersion?.const !== CODING_AGENT_BENCHMARK_MANIFEST_V3_VERSION) {
+    failures.push("v3 task manifest Schema version drifted from the external-validity contract.");
+  }
+  if (runV3Schema?.properties?.schemaVersion?.const !== CODING_AGENT_BENCHMARK_RUN_V3_VERSION) {
+    failures.push("v3 benchmark run Schema version drifted from the external-validity contract.");
+  }
+  if (reportV3Schema?.properties?.schemaVersion?.const !== CODING_AGENT_BENCHMARK_REPORT_V3_VERSION) {
+    failures.push("v3 benchmark report Schema version drifted from the external-validity contract.");
+  }
+  if (scorecardV3Schema?.properties?.schemaVersion?.const !== CODING_AGENT_BENCHMARK_SCORECARD_V3_VERSION) {
+    failures.push("v3 scorecard Schema version drifted from the 9.5 target contract.");
+  }
+  if (snapshotReceiptV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_BENCHMARK_SNAPSHOT_RECEIPT_VERSION) {
+    failures.push("v3 repository snapshot receipt Schema version drifted from the preparation contract.");
+  }
+  if (repositoryInputsV3Schema?.properties?.schemaVersion?.const
+    !== "coding-agent-benchmark-repository-inputs/v1") {
+    failures.push("v3 repository inputs Schema version drifted from the runner CLI contract.");
+  }
+  if (linuxSnapshotPreparationV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_BENCHMARK_LINUX_SNAPSHOT_PREPARATION_VERSION) {
+    failures.push("v3 Linux snapshot preparation Schema version drifted from the preparation owner.");
+  }
+  if (runtimePreflightV3Schema?.properties?.manifestRevision?.const !== "v3") {
+    failures.push("v3 runtime preflight Schema drifted from the v3 manifest binding.");
+  }
+  const runtimeEntrypoints = runtimePreflightV3Schema?.$defs?.contractSource?.properties?.entrypoints?.properties;
+  for (const entrypoint of [
+    "workflowBatchRunner",
+    "managedWorktree",
+    "userWorktreeRuntime",
+    "reconciliationJournal",
+    "workspaceRevision",
+    "fileTool",
+  ]) {
+    if (runtimeEntrypoints?.[entrypoint]?.$ref !== "#/$defs/entrypoint") {
+      failures.push(`v3 runtime preflight Schema must expose the ${entrypoint} identity.`);
+    }
+  }
+  if (snapshotPreflightV3Schema?.properties?.schemaVersion?.const
+    !== "coding-agent-benchmark-snapshot-preflight/v1") {
+    failures.push("v3 repository snapshot preflight Schema version drifted from the Provider contract.");
+  }
+  if (systemScenarioV3Schema?.properties?.schemaVersion?.const
+    !== "coding-agent-benchmark-system-scenario/v1") {
+    failures.push("v3 system scenario Schema version drifted from the system Provider contract.");
+  }
+  if (systemEvidenceV3Schema?.$defs?.harnessEvidence?.properties?.schemaVersion?.const
+    !== "coding-agent-benchmark-system-evidence/v1"
+    || systemEvidenceV3Schema?.$defs?.notRunEvidence?.properties?.schemaVersion?.const
+      !== "coding-agent-benchmark-system-evidence-not-run/v1") {
+    failures.push("v3 system evidence Schema versions drifted from the harness contract.");
+  }
+  if (navigationEfficiencyV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_BENCHMARK_NAVIGATION_EFFICIENCY_VERSION) {
+    failures.push("v3 navigation efficiency Schema version drifted from the offline probe contract.");
+  }
+  if (navigationShadowCanaryV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_BENCHMARK_NAVIGATION_SHADOW_CANARY_VERSION) {
+    failures.push("v3 navigation shadow canary Schema version drifted from the authorization contract.");
+  }
+  if (navigationShadowRealV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_BENCHMARK_NAVIGATION_SHADOW_REAL_VERSION) {
+    failures.push("v3 navigation shadow real Schema version drifted from the confirmed execution contract.");
+  }
+  if (navigationShadowRealV2V3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_BENCHMARK_NAVIGATION_SHADOW_REAL_V2_VERSION) {
+    failures.push("v3 navigation shadow real v2 Schema version drifted from the candidate v2 contract.");
+  }
+  if (navigationShadowRealCandidateV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_BENCHMARK_NAVIGATION_SHADOW_REAL_V3_VERSION) {
+    failures.push("v3 navigation shadow real v3 Schema version drifted from the runtime-contract candidate.");
+  }
+  if (navigationShadowAnalysisV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_BENCHMARK_NAVIGATION_SHADOW_ANALYSIS_VERSION) {
+    failures.push("v3 navigation shadow analysis Schema version drifted from the offline decision contract.");
+  }
+  if (navigationShadowV2AnalysisV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_BENCHMARK_NAVIGATION_SHADOW_V2_ANALYSIS_VERSION) {
+    failures.push("v3 navigation shadow v2 analysis Schema version drifted from the runtime-contract decision.");
+  }
+  if (navigationShadowV3AnalysisV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_BENCHMARK_NAVIGATION_SHADOW_V3_ANALYSIS_VERSION) {
+    failures.push("v3 navigation shadow v3 analysis Schema version drifted from the candidate-line decision.");
+  }
+  if (modelLoopBudgetTerminationV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_BENCHMARK_MODEL_LOOP_BUDGET_TERMINATION_VERSION) {
+    failures.push("v3 model-loop budget termination Schema version drifted from the cost-containment contract.");
+  }
+  if (modelLoopRolloutAuditV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_BENCHMARK_MODEL_LOOP_ROLLOUT_AUDIT_VERSION) {
+    failures.push("v3 model-loop rollout audit Schema version drifted from the rollout safety contract.");
+  }
+  if (navigationCandidateV2V3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V2_VERSION) {
+    failures.push("v3 navigation candidate v2 Schema version drifted from the offline preflight contract.");
+  }
+  if (navigationCandidateV3V3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V3_VERSION) {
+    failures.push("v3 navigation candidate v3 Schema version drifted from the runtime preflight contract.");
+  }
   if (packageJson?.scripts?.["verify:coding-benchmark"]
     !== "node --import tsx scripts/verify-coding-agent-benchmark-contract.mjs") {
     failures.push("package.json must expose verify:coding-benchmark.");
+  }
+  if (packageJson?.scripts?.["benchmark:coding-agent:v3:prepare-linux"]
+    !== "node scripts/coding-agent-benchmark-linux-snapshot-preparation.mjs") {
+    failures.push("package.json must expose benchmark:coding-agent:v3:prepare-linux.");
+  }
+  if (packageJson?.scripts?.["benchmark:coding-agent:v3:navigation-efficiency"]
+    !== "node scripts/run-coding-agent-benchmark-navigation-efficiency.mjs") {
+    failures.push("package.json must expose benchmark:coding-agent:v3:navigation-efficiency.");
+  }
+  if (packageJson?.scripts?.["benchmark:coding-agent:v3:navigation-shadow-dry-run"]
+    !== "node scripts/run-coding-agent-benchmark-navigation-shadow-canary.mjs") {
+    failures.push("package.json must expose benchmark:coding-agent:v3:navigation-shadow-dry-run.");
+  }
+  if (packageJson?.scripts?.["benchmark:coding-agent:v3:navigation-shadow-real"]
+    !== "node scripts/run-coding-agent-benchmark-navigation-shadow-real.mjs") {
+    failures.push("package.json must expose benchmark:coding-agent:v3:navigation-shadow-real.");
+  }
+  if (packageJson?.scripts?.["benchmark:coding-agent:v3:navigation-shadow-real-v2"]
+    !== "node scripts/run-coding-agent-benchmark-navigation-shadow-real-v2.mjs") {
+    failures.push("package.json must expose benchmark:coding-agent:v3:navigation-shadow-real-v2.");
+  }
+  if (packageJson?.scripts?.["benchmark:coding-agent:v3:navigation-shadow-real-v3"]
+    !== "node scripts/run-coding-agent-benchmark-navigation-shadow-real-v3.mjs") {
+    failures.push("package.json must expose benchmark:coding-agent:v3:navigation-shadow-real-v3.");
+  }
+  if (packageJson?.scripts?.["benchmark:coding-agent:v3:navigation-shadow-analysis"]
+    !== "node scripts/run-coding-agent-benchmark-navigation-shadow-analysis.mjs") {
+    failures.push("package.json must expose benchmark:coding-agent:v3:navigation-shadow-analysis.");
+  }
+  if (packageJson?.scripts?.["benchmark:coding-agent:v3:navigation-shadow-v2-analysis"]
+    !== "node scripts/run-coding-agent-benchmark-navigation-shadow-v2-analysis.mjs") {
+    failures.push("package.json must expose benchmark:coding-agent:v3:navigation-shadow-v2-analysis.");
+  }
+  if (packageJson?.scripts?.["benchmark:coding-agent:v3:navigation-shadow-v3-analysis"]
+    !== "node scripts/run-coding-agent-benchmark-navigation-shadow-v3-analysis.mjs") {
+    failures.push("package.json must expose benchmark:coding-agent:v3:navigation-shadow-v3-analysis.");
+  }
+  if (packageJson?.scripts?.["benchmark:coding-agent:v3:model-loop-budget-termination"]
+    !== "node scripts/run-coding-agent-benchmark-model-loop-budget-termination.mjs") {
+    failures.push("package.json must expose benchmark:coding-agent:v3:model-loop-budget-termination.");
+  }
+  if (packageJson?.scripts?.["benchmark:coding-agent:v3:model-loop-rollout-audit"]
+    !== "node scripts/run-coding-agent-benchmark-model-loop-rollout-audit.mjs") {
+    failures.push("package.json must expose benchmark:coding-agent:v3:model-loop-rollout-audit.");
+  }
+  if (packageJson?.scripts?.["benchmark:coding-agent:v3:navigation-candidate-v2"]
+    !== "node scripts/run-coding-agent-benchmark-navigation-candidate-v2.mjs") {
+    failures.push("package.json must expose benchmark:coding-agent:v3:navigation-candidate-v2.");
+  }
+  if (packageJson?.scripts?.["benchmark:coding-agent:v3:navigation-candidate-v3"]
+    !== "node scripts/run-coding-agent-benchmark-navigation-candidate-v3.mjs") {
+    failures.push("package.json must expose benchmark:coding-agent:v3:navigation-candidate-v3.");
   }
   if (packageJson?.scripts?.["benchmark:coding-agent:stage0b"]
     !== "node scripts/run-coding-agent-benchmark.mjs --platform windows-native") {
@@ -207,8 +573,98 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "coding-agent-benchmark-manifest/v2",
     "coding-agent-benchmark-run/v2",
     "coding-agent-benchmark-report/v2",
+    "coding-agent-benchmark-manifest/v3",
+    "coding-agent-benchmark-run/v3",
+    "coding-agent-benchmark-report/v3",
+    "coding-agent-benchmark-scorecard/v3",
+    "coding-agent-benchmark-snapshot-receipt/v1",
+    "coding-agent-benchmark-linux-snapshot-preparation/v1",
+    "coding-agent-benchmark-repository-inputs/v1",
+    "linux-snapshot-preparation.schema.json",
+    "repository-inputs.schema.json",
+    "repository-snapshot-preflight.schema.json",
+    "repository-snapshot-receipt.schema.json",
+    "system-scenario.schema.json",
+    "system-evidence.schema.json",
+    "navigation-efficiency.schema.json",
+    "navigation-shadow-canary.schema.json",
+    "navigation-shadow-real.schema.json",
+    "navigation-shadow-real-v2.schema.json",
+    "navigation-shadow-real-v3.schema.json",
+    "navigation-shadow-v2-analysis.schema.json",
+    "navigation-shadow-v3-analysis.schema.json",
+    "model-loop-budget-termination.schema.json",
+    "model-loop-rollout-audit.schema.json",
+    "systemBrowserScreenshot",
+    "browser-screenshot.png",
+    "coding-agent-benchmark-parallel-read-harness.mjs",
+    "coding-agent-benchmark-parallel-write-harness.mjs",
+    "coding-agent-benchmark-restart-delivery-harness.mjs",
+    "run-coding-agent-benchmark-system-smoke.mjs",
+    "coding-agent-benchmark-linux-snapshot-preparation.mjs",
+    "coding-agent-benchmark-system-smoke/v1",
+    "coding-agent-benchmark-navigation-efficiency/v1",
+    "benchmark:coding-agent:v3:navigation-shadow-dry-run",
+    "coding-agent-benchmark-navigation-shadow-canary/v1",
+    "benchmark:coding-agent:v3:navigation-shadow-real",
+    "coding-agent-benchmark-navigation-shadow-real/v1",
+    "benchmark:coding-agent:v3:navigation-shadow-real-v2",
+    "coding-agent-benchmark-navigation-shadow-real-v2/v1",
+    "benchmark:coding-agent:v3:navigation-shadow-real-v3",
+    "coding-agent-benchmark-navigation-shadow-real-v3/v1",
+    "benchmark:coding-agent:v3:navigation-shadow-analysis",
+    "coding-agent-benchmark-navigation-shadow-analysis/v1",
+    "benchmark:coding-agent:v3:navigation-shadow-v2-analysis",
+    "coding-agent-benchmark-navigation-shadow-v2-analysis/v1",
+    "benchmark:coding-agent:v3:navigation-shadow-v3-analysis",
+    "coding-agent-benchmark-navigation-shadow-v3-analysis/v1",
+    "benchmark:coding-agent:v3:model-loop-budget-termination",
+    "coding-agent-benchmark-model-loop-budget-termination/v1",
+    "benchmark:coding-agent:v3:model-loop-rollout-audit",
+    "coding-agent-benchmark-model-loop-rollout-audit/v1",
+    "hold_explicit_opt_in",
+    "defaultEnablementAllowed",
+    "realProviderCanaryAllowed",
+    "cost-containment-v1",
+    "taskUplift",
+    "tool_argument_guard_reduces_response_surface_but_not_model_loop_budget",
+    "separate-model-loop-budget-and-termination-contract",
+    "prompt_only_navigation_contract_not_runtime_stable",
+    "navigation-candidate-v3-runtime-contract-required",
+    "benchmark:coding-agent:v3:navigation-candidate-v2",
+    "coding-agent-benchmark-navigation-candidate-v2/v1",
+    "bounded-localize-before-read/v1",
+    "prompt_contract",
+    "runtimeToolGuard",
+    "maxResults=4",
+    "contextLines=5",
+    "navigation-candidate-v2.schema.json",
+    "workspace-write-navigation-candidate-v2",
+    "benchmark:coding-agent:v3:navigation-candidate-v3",
+    "coding-agent-benchmark-navigation-candidate-v3/v1",
+    "navigation-candidate-v3.schema.json",
+    "workspace-write-navigation-candidate-v3",
+    "bounded-navigation-runtime-contract/v1",
+    "bounded-navigation-v1",
+    "runtime_contract",
+    "do_not_promote",
+    "pending_confirmation",
+    "benchmark:coding-agent:v3:navigation-efficiency",
+    "tokenImpact",
+    "no_model_call",
+    "workflowBatchRunner",
+    "managedWorktree",
+    "userWorktreeRuntime",
+    "reconciliationJournal",
+    "workspaceRevision",
+    "fileTool",
+    "--v3-repository-config",
+    "repository-snapshot-preflight.json",
+    "system-evidence.json",
+    "144",
     "--manifest-revision v2",
     "aggregate:coding-agent:baseline --manifest-revision v2",
+    "aggregate:coding-agent:baseline --manifest-revision v3",
     "--source-root",
     "preflight.json",
     "v2/agents.json",
@@ -221,7 +677,9 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "阶段 0A",
     "阶段 0B",
     "benchmark:coding-agent:stage0b",
+    "benchmark:coding-agent:v3:prepare-linux",
     "benchmark:coding-agent:stage0c:wsl",
+    "benchmark:coding-agent:stage0c:wsl --manifest-revision v3",
     "benchmark:coding-agent:stage0c:interactive:windows",
     "benchmark:coding-agent:stage0c:interactive:wsl",
     "benchmark:coding-agent:stage0c:safety:windows",
@@ -258,6 +716,7 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "WSLENV",
     "回退到 primary",
     "coding-agent-benchmark-fixtures.mjs",
+    "coding-agent-benchmark-v3-fixtures.mjs",
     "工作区外",
   ]) {
     if (!readme.includes(requiredText)) {
@@ -268,7 +727,13 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "benchmarks/coding-agent/v1/",
     "benchmarks/coding-agent/v2/",
     "benchmarks/coding-agent/v2/agents.json",
+    "benchmarks/coding-agent/v3/",
     "scripts/coding-agent-benchmark-contract.mjs",
+    "scripts/coding-agent-benchmark-v3-contract.mjs",
+    "scripts/coding-agent-benchmark-v3-fixtures.mjs",
+    "scripts/coding-agent-benchmark-linux-snapshot-preparation.mjs",
+    "scripts/coding-agent-benchmark-parallel-read-harness.mjs",
+    "scripts/coding-agent-benchmark-system-harness.mjs",
     "scripts/coding-agent-benchmark-fixtures.mjs",
     "scripts/coding-agent-benchmark-approval.mjs",
     "scripts/coding-agent-benchmark-preflight.mjs",
@@ -278,6 +743,31 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "scripts/aggregate-coding-agent-benchmark.mjs",
     "scripts/run-coding-agent-benchmark.mjs",
     "scripts/run-coding-agent-benchmark-wsl.mjs",
+    "scripts/run-coding-agent-benchmark-system-smoke.mjs",
+    "scripts/run-coding-agent-benchmark-navigation-efficiency.mjs",
+    "benchmarks/coding-agent/v3/navigation-efficiency.schema.json",
+    "scripts/run-coding-agent-benchmark-navigation-shadow-canary.mjs",
+    "benchmarks/coding-agent/v3/navigation-shadow-canary.schema.json",
+    "scripts/run-coding-agent-benchmark-navigation-shadow-real.mjs",
+    "benchmarks/coding-agent/v3/navigation-shadow-real.schema.json",
+    "scripts/run-coding-agent-benchmark-navigation-shadow-real-v2.mjs",
+    "benchmarks/coding-agent/v3/navigation-shadow-real-v2.schema.json",
+    "scripts/run-coding-agent-benchmark-navigation-shadow-real-v3.mjs",
+    "benchmarks/coding-agent/v3/navigation-shadow-real-v3.schema.json",
+    "scripts/run-coding-agent-benchmark-navigation-shadow-analysis.mjs",
+    "benchmarks/coding-agent/v3/navigation-shadow-analysis.schema.json",
+    "scripts/run-coding-agent-benchmark-navigation-shadow-v2-analysis.mjs",
+    "benchmarks/coding-agent/v3/navigation-shadow-v2-analysis.schema.json",
+    "scripts/run-coding-agent-benchmark-navigation-shadow-v3-analysis.mjs",
+    "benchmarks/coding-agent/v3/navigation-shadow-v3-analysis.schema.json",
+    "scripts/run-coding-agent-benchmark-model-loop-budget-termination.mjs",
+    "benchmarks/coding-agent/v3/model-loop-budget-termination.schema.json",
+    "scripts/run-coding-agent-benchmark-model-loop-rollout-audit.mjs",
+    "benchmarks/coding-agent/v3/model-loop-rollout-audit.schema.json",
+    "scripts/run-coding-agent-benchmark-navigation-candidate-v2.mjs",
+    "benchmarks/coding-agent/v3/navigation-candidate-v2.schema.json",
+    "scripts/run-coding-agent-benchmark-navigation-candidate-v3.mjs",
+    "benchmarks/coding-agent/v3/navigation-candidate-v3.schema.json",
     "scripts/verify-coding-agent-benchmark-contract.mjs",
   ]) {
     if (!projectMap.includes(requiredPath)) {
@@ -343,7 +833,7 @@ function safeMessage(error) {
 async function main() {
   const failures = await collectCodingAgentBenchmarkContractFailures();
   if (failures.length === 0) {
-    console.log("[verify:coding-benchmark] manifest, schemas, docs, and platform gates are aligned");
+    console.log("[verify:coding-benchmark] v1/v2/v3 manifests, schemas, docs, and platform gates are aligned");
     return;
   }
   console.error("[verify:coding-benchmark] contract failures:");

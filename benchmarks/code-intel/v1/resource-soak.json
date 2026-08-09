@@ -1,0 +1,59 @@
+{
+  "schemaVersion": "code-intel-resource-soak/v1",
+  "id": "p1-a1-typescript-provider-resource-soak-v1",
+  "frozenAt": "2026-08-09T09:00:00.000Z",
+  "contractVersion": "code-intel/v1",
+  "workload": {
+    "workspaceCount": 5,
+    "maxWorkspaceSessions": 3,
+    "rounds": 3,
+    "queryLimit": 1
+  },
+  "limits": {
+    "maxDurationMs": 60000,
+    "maxQueryDurationMs": 10000,
+    "maxPeakHeapIncreaseBytes": 268435456,
+    "maxRetainedHeapIncreaseBytes": 134217728
+  },
+  "expectations": {
+    "minimumLruEvictions": 10,
+    "minimumSessionReuses": 1,
+    "revisionReloads": 1
+  },
+  "sourceIdentity": {
+    "files": [
+      {
+        "path": "packages/belldandy-skills/src/code-intel/typescript-provider.ts",
+        "runtimePath": "packages/belldandy-skills/dist/code-intel/typescript-provider.js",
+        "sha256": "6cb46568701baa68002e672512fa5cbfb3786515fa5d9edfadb83e156645c83f"
+      },
+      {
+        "path": "packages/belldandy-skills/src/code-intel/code-intel.ts",
+        "runtimePath": "packages/belldandy-skills/dist/code-intel/code-intel.js",
+        "sha256": "7807c38913ec9f447e056a807813d603d055716d96fbd96edb62d35447f464aa"
+      },
+      {
+        "path": "packages/belldandy-skills/src/code-intel/types.ts",
+        "runtimePath": "packages/belldandy-skills/dist/code-intel/types.js",
+        "sha256": "02f1861ddc52223b710de011e8307f0b95e7b784f09549685c4c9d3fbd12205b"
+      },
+      {
+        "path": "scripts/run-code-intel-resource-soak.mjs",
+        "runtimePath": "scripts/run-code-intel-resource-soak.mjs",
+        "sha256": "1d97cd69267210352581b9eeda4290216ea59df55f7f2f3514cee82a5637ba15"
+      }
+    ]
+  },
+  "exclusions": [
+    "gateway",
+    "model",
+    "paid-provider",
+    "network",
+    "host-command",
+    "production-workspace-mutation",
+    "external-lsp",
+    "go",
+    "csharp",
+    "scip"
+  ]
+}

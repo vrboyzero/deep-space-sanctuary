@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "coding-agent-benchmark-scorecard/v3",
+  "targetVector": [
+    { "id": "context_retrieval", "weight": 0.15, "minimum": 9.5 },
+    { "id": "editing_testing", "weight": 0.2, "minimum": 9.6 },
+    { "id": "cli_tui", "weight": 0.15, "minimum": 9.4 },
+    { "id": "safety_recovery", "weight": 0.15, "minimum": 9.5 },
+    { "id": "session_long_running", "weight": 0.15, "minimum": 9.6 },
+    { "id": "headless_ecosystem", "weight": 0.1, "minimum": 9.5 },
+    { "id": "git_delivery", "weight": 0.1, "minimum": 9.4 }
+  ],
+  "rawWeightedMinimum": 9.5,
+  "matrix": {
+    "manifestSchemaVersion": "coding-agent-benchmark-manifest/v3",
+    "taskDefinitionCount": 24,
+    "expectedExecutionCount": 144,
+    "repeatedTaskDefinitionCount": 24,
+    "sampleRunsPerPlatform": 3,
+    "requiredPlatforms": ["windows-native", "wsl2-linux"]
+  },
+  "hardGates": {
+    "nativeAggregate": true,
+    "singleSourceIdentity": true,
+    "crossRevisionProjectionAllowed": false,
+    "selectedInfrastructureErrorCountMaximum": 0,
+    "missingReportCountMaximum": 0,
+    "incompleteTraceCountMaximum": 0,
+    "incompleteProviderUsageCountMaximum": 0,
+    "sensitiveFindingCountMaximum": 0,
+    "orphanResourceCountMaximum": 0
+  },
+  "layerGates": {
+    "A": {
+      "requiredPassedExecutions": 72
+    },
+    "B": {
+      "successRateMinimum": 0.92,
+      "requiredLanguageSuccessRateMinimum": 0.9,
+      "testPassRateMinimum": 0.95,
+      "patchAcceptanceRateMinimum": 0.95,
+      "regressionCountMaximum": 0
+    },
+    "C": {
+      "criticalGateRateMinimum": 1,
+      "otherSystemSuccessRateMinimum": 0.9
+    }
+  }
+}

@@ -92,6 +92,9 @@ export function createConversationLifecycleEventAdapter(input: {
             budget: item.budget,
             limit: item.limit,
             observed: item.observed,
+            ...(item.policyId ? { policyId: item.policyId } : {}),
+            ...(item.stage ? { stage: item.stage } : {}),
+            ...(item.reasonCode ? { reasonCode: item.reasonCode } : {}),
           },
         });
       },

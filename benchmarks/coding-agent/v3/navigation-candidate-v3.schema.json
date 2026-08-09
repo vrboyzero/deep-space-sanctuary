@@ -1,0 +1,356 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-navigation-candidate-v3-v1.json",
+  "title": "Coding Agent Benchmark Navigation Candidate v3 Evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "platform",
+    "status",
+    "taskId",
+    "candidate",
+    "prompt",
+    "execution",
+    "runtimeContract",
+    "replay",
+    "comparison",
+    "security",
+    "source",
+    "decision",
+    "diagnostics"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "coding-agent-benchmark-navigation-candidate-v3/v1" },
+    "generatedAt": { "$ref": "#/$defs/timestamp" },
+    "platform": { "enum": ["windows-native", "wsl2-linux"] },
+    "status": { "const": "eligible_for_shadow_readiness" },
+    "taskId": { "const": "real-js.bug-fix" },
+    "candidate": { "$ref": "#/$defs/candidate" },
+    "prompt": { "$ref": "#/$defs/prompt" },
+    "execution": { "$ref": "#/$defs/execution" },
+    "runtimeContract": { "$ref": "#/$defs/runtimeContract" },
+    "replay": { "$ref": "#/$defs/replay" },
+    "comparison": { "$ref": "#/$defs/comparison" },
+    "security": { "$ref": "#/$defs/security" },
+    "source": { "$ref": "#/$defs/source" },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "requiresNewProviderAuthorization", "tokenUpliftClaimed"],
+      "properties": {
+        "status": { "const": "eligible_for_shadow_readiness" },
+        "requiresNewProviderAuthorization": { "const": true },
+        "tokenUpliftClaimed": { "const": false }
+      }
+    },
+    "diagnostics": { "type": "array", "maxItems": 0 }
+  },
+  "$defs": {
+    "timestamp": { "type": "string", "format": "date-time" },
+    "sha1": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "baseProfile",
+        "permissionMode",
+        "toolAllow",
+        "toolDeny",
+        "manifestModified",
+        "toolArgumentPolicy",
+        "strategy"
+      ],
+      "properties": {
+        "id": { "const": "workspace-write-navigation-candidate-v3" },
+        "baseProfile": { "const": "workspace-write" },
+        "permissionMode": { "const": "acceptEdits" },
+        "toolAllow": {
+          "const": [
+            "file_read",
+            "list_files",
+            "text_search",
+            "file_glob",
+            "file_edit",
+            "apply_patch",
+            "file_write",
+            "file_delete"
+          ]
+        },
+        "toolDeny": { "const": ["run_command", "spawn_subagent"] },
+        "manifestModified": { "const": false },
+        "toolArgumentPolicy": { "const": "bounded-navigation-v1" },
+        "strategy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "enforcement", "runtimeToolGuard"],
+          "properties": {
+            "id": { "const": "bounded-navigation-runtime-contract/v1" },
+            "enforcement": { "const": "runtime_contract" },
+            "runtimeToolGuard": { "const": true }
+          }
+        }
+      }
+    },
+    "prompt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "strategyId",
+        "enforcement",
+        "runtimeToolGuard",
+        "toolArgumentPolicy",
+        "basePromptSha256",
+        "contractSha256",
+        "renderedPromptSha256"
+      ],
+      "properties": {
+        "strategyId": { "const": "bounded-navigation-runtime-contract/v1" },
+        "enforcement": { "const": "runtime_contract" },
+        "runtimeToolGuard": { "const": true },
+        "toolArgumentPolicy": { "const": "bounded-navigation-v1" },
+        "basePromptSha256": { "$ref": "#/$defs/sha256" },
+        "contractSha256": { "$ref": "#/$defs/sha256" },
+        "renderedPromptSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "modelCalls",
+        "providerCostUsd",
+        "networkCalls",
+        "hostCommandToolCalls",
+        "manifestModified",
+        "v3AggregateModified"
+      ],
+      "properties": {
+        "mode": { "const": "offline-runtime-replay" },
+        "modelCalls": { "const": 0 },
+        "providerCostUsd": { "const": 0 },
+        "networkCalls": { "const": 0 },
+        "hostCommandToolCalls": { "const": 0 },
+        "manifestModified": { "const": false },
+        "v3AggregateModified": { "const": false }
+      }
+    },
+    "runtimeContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policyId",
+        "runtimeToolGuard",
+        "missingIncludeBlocked",
+        "arrayIncludeBlocked",
+        "rootWideIncludeBlocked",
+        "missingMaxResultsCappedTo",
+        "oversizedMaxResultsCappedTo",
+        "policyMetadataObserved",
+        "sourceFiles",
+        "sourceAggregateSha256"
+      ],
+      "properties": {
+        "policyId": { "const": "bounded-navigation-v1" },
+        "runtimeToolGuard": { "const": true },
+        "missingIncludeBlocked": { "const": true },
+        "arrayIncludeBlocked": { "const": true },
+        "rootWideIncludeBlocked": { "const": true },
+        "missingMaxResultsCappedTo": { "const": 20 },
+        "oversizedMaxResultsCappedTo": { "const": 20 },
+        "policyMetadataObserved": { "const": true },
+        "sourceFiles": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "prefixItems": [
+            { "$ref": "#/$defs/protocolSource" },
+            { "$ref": "#/$defs/serverSource" },
+            { "$ref": "#/$defs/queryRuntimeSource" },
+            { "$ref": "#/$defs/cliSource" },
+            { "$ref": "#/$defs/skillsTypesSource" },
+            { "$ref": "#/$defs/executorSource" }
+          ],
+          "items": false
+        },
+        "sourceAggregateSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "sourceFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "protocolSource": {
+      "allOf": [
+        { "$ref": "#/$defs/sourceFile" },
+        { "properties": { "path": { "const": "packages/belldandy-protocol/src/index.ts" } } }
+      ]
+    },
+    "serverSource": {
+      "allOf": [
+        { "$ref": "#/$defs/sourceFile" },
+        { "properties": { "path": { "const": "packages/belldandy-core/src/server.ts" } } }
+      ]
+    },
+    "queryRuntimeSource": {
+      "allOf": [
+        { "$ref": "#/$defs/sourceFile" },
+        { "properties": { "path": { "const": "packages/belldandy-core/src/query-runtime-message-send.ts" } } }
+      ]
+    },
+    "cliSource": {
+      "allOf": [
+        { "$ref": "#/$defs/sourceFile" },
+        { "properties": { "path": { "const": "packages/belldandy-core/src/cli/commands/agent/run.ts" } } }
+      ]
+    },
+    "skillsTypesSource": {
+      "allOf": [
+        { "$ref": "#/$defs/sourceFile" },
+        { "properties": { "path": { "const": "packages/belldandy-skills/src/types.ts" } } }
+      ]
+    },
+    "executorSource": {
+      "allOf": [
+        { "$ref": "#/$defs/sourceFile" },
+        { "properties": { "path": { "const": "packages/belldandy-skills/src/executor.ts" } } }
+      ]
+    },
+    "replay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "toolCallCount",
+        "sequence",
+        "calls",
+        "modelVisibleResponseBytes",
+        "fileContentBytesExposed",
+        "fullTargetReadCount",
+        "targetLocalized",
+        "bugSignatureObserved"
+      ],
+      "properties": {
+        "toolCallCount": { "const": 4 },
+        "sequence": { "const": ["file_glob", "file_glob", "file_read", "text_search"] },
+        "calls": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": { "$ref": "#/$defs/toolCall" }
+        },
+        "modelVisibleResponseBytes": { "type": "integer", "minimum": 1 },
+        "fileContentBytesExposed": { "type": "integer", "minimum": 1 },
+        "fullTargetReadCount": { "const": 0 },
+        "targetLocalized": { "const": true },
+        "bugSignatureObserved": { "const": true }
+      }
+    },
+    "toolCall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "arguments",
+        "success",
+        "responseBytes",
+        "outputSha256",
+        "fileContentBytes",
+        "fullFileRead",
+        "relativePath"
+      ],
+      "properties": {
+        "name": { "enum": ["file_glob", "file_read", "text_search"] },
+        "arguments": { "type": "object" },
+        "effectiveMaxResults": { "const": 20 },
+        "success": { "const": true },
+        "responseBytes": { "type": "integer", "minimum": 0 },
+        "outputSha256": { "$ref": "#/$defs/sha256" },
+        "fileContentBytes": { "type": "integer", "minimum": 0 },
+        "fullFileRead": { "type": "boolean" },
+        "relativePath": { "type": ["string", "null"] },
+        "metadata": { "type": "object" }
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateV2ReplayModelVisibleResponseBytes",
+        "candidateV3ReplayModelVisibleResponseBytes",
+        "tokenImpact"
+      ],
+      "properties": {
+        "candidateV2ReplayModelVisibleResponseBytes": { "type": "integer", "minimum": 1 },
+        "candidateV3ReplayModelVisibleResponseBytes": { "type": "integer", "minimum": 1 },
+        "tokenImpact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason"],
+          "properties": {
+            "status": { "const": "not_measured" },
+            "reason": { "const": "no_model_call" }
+          }
+        }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspaceUnchanged",
+        "textSearchTraversalRejected",
+        "fileGlobTraversalRejected",
+        "before",
+        "after"
+      ],
+      "properties": {
+        "workspaceUnchanged": { "const": true },
+        "textSearchTraversalRejected": { "const": true },
+        "fileGlobTraversalRejected": { "const": true },
+        "before": { "$ref": "#/$defs/gitState" },
+        "after": { "$ref": "#/$defs/gitState" }
+      }
+    },
+    "gitState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["head", "dirty", "statusSha256"],
+      "properties": {
+        "head": { "$ref": "#/$defs/sha1" },
+        "dirty": { "const": false },
+        "statusSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "analysisSha256",
+        "candidateV2EvidenceSha256",
+        "shadowV2ArtifactSha256",
+        "manifestSha256",
+        "baselineCommit",
+        "candidateFixtureBaselineCommit",
+        "repositorySnapshotIdentitySha256"
+      ],
+      "properties": {
+        "analysisSha256": { "$ref": "#/$defs/sha256" },
+        "candidateV2EvidenceSha256": { "$ref": "#/$defs/sha256" },
+        "shadowV2ArtifactSha256": { "$ref": "#/$defs/sha256" },
+        "manifestSha256": { "$ref": "#/$defs/sha256" },
+        "baselineCommit": { "$ref": "#/$defs/sha1" },
+        "candidateFixtureBaselineCommit": { "$ref": "#/$defs/sha1" },
+        "repositorySnapshotIdentitySha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

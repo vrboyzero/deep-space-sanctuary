@@ -1,0 +1,375 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-navigation-shadow-analysis-v1.json",
+  "title": "Coding Agent Benchmark Navigation Shadow Analysis v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "status",
+    "taskId",
+    "candidateId",
+    "model",
+    "decision",
+    "execution",
+    "baseline",
+    "offlineCandidate",
+    "platforms",
+    "crossPlatform",
+    "attribution",
+    "diagnostics"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "coding-agent-benchmark-navigation-shadow-analysis/v1" },
+    "generatedAt": { "$ref": "#/$defs/timestamp" },
+    "status": { "const": "completed" },
+    "taskId": { "const": "real-js.bug-fix" },
+    "candidateId": { "const": "workspace-write-navigation-candidate-v1" },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "id"],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "reasonCodes",
+        "technicalDebtDecision",
+        "nextCandidate",
+        "requiresNewProviderAuthorization"
+      ],
+      "properties": {
+        "status": { "const": "do_not_promote" },
+        "reasonCodes": {
+          "const": [
+            "cross_platform_product_failure",
+            "total_token_regression",
+            "navigation_response_regression",
+            "edit_phase_not_reached",
+            "machine_evaluator_failed"
+          ]
+        },
+        "technicalDebtDecision": { "const": "split_task" },
+        "nextCandidate": { "const": "navigation-candidate-v2-required" },
+        "requiresNewProviderAuthorization": { "const": true }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "modelCalls",
+        "providerCostUsd",
+        "networkCalls",
+        "hostCommandToolCalls",
+        "manifestModified",
+        "v3AggregateModified"
+      ],
+      "properties": {
+        "mode": { "const": "offline-analysis" },
+        "modelCalls": { "const": 0 },
+        "providerCostUsd": { "const": 0 },
+        "networkCalls": { "const": 0 },
+        "hostCommandToolCalls": { "const": 0 },
+        "manifestModified": { "const": false },
+        "v3AggregateModified": { "const": false }
+      }
+    },
+    "baseline": { "$ref": "#/$defs/baseline" },
+    "offlineCandidate": { "$ref": "#/$defs/offlineCandidate" },
+    "platforms": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "$ref": "#/$defs/platform" }
+    },
+    "crossPlatform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sameManifestSha256",
+        "sameBaselineCommit",
+        "sameRepositorySnapshotIdentity",
+        "providerModelMatched",
+        "sharedFailureSignature",
+        "providerUsageComplete",
+        "preflightsPassed",
+        "navigationToolsObserved",
+        "totalObservedCostCny"
+      ],
+      "properties": {
+        "sameManifestSha256": { "const": true },
+        "sameBaselineCommit": { "const": true },
+        "sameRepositorySnapshotIdentity": { "const": true },
+        "providerModelMatched": { "const": true },
+        "sharedFailureSignature": { "const": true },
+        "providerUsageComplete": { "const": true },
+        "preflightsPassed": { "const": true },
+        "navigationToolsObserved": { "const": true },
+        "totalObservedCostCny": { "type": "number", "minimum": 0 }
+      }
+    },
+    "attribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary", "contributors", "excluded"],
+      "properties": {
+        "primary": { "const": "model_navigation_strategy_not_constrained" },
+        "contributors": {
+          "const": [
+            "cumulative_context_replay",
+            "broad_search_result_ellipsization",
+            "full_target_read_before_text_search"
+          ]
+        },
+        "excluded": {
+          "const": [
+            "gateway_infrastructure",
+            "workspace_identity_drift",
+            "provider_usage_incomplete",
+            "evaluator_infrastructure"
+          ]
+        }
+      }
+    },
+    "diagnostics": { "const": [] }
+  },
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$"
+    },
+    "sha1": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runId",
+        "inputTokens",
+        "outputTokens",
+        "totalTokens",
+        "modelCalls",
+        "toolCallCount",
+        "changedFileCount",
+        "budgetExhausted",
+        "modelVisibleResponseBytes"
+      ],
+      "properties": {
+        "runId": { "type": "string", "minLength": 1 },
+        "inputTokens": { "type": "integer", "minimum": 0 },
+        "outputTokens": { "type": "integer", "minimum": 0 },
+        "totalTokens": { "type": "integer", "minimum": 0 },
+        "modelCalls": { "type": "integer", "minimum": 0 },
+        "toolCallCount": { "type": "integer", "minimum": 0 },
+        "changedFileCount": { "const": 0 },
+        "budgetExhausted": { "const": true },
+        "modelVisibleResponseBytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "offlineCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["toolCallCount", "modelVisibleResponseBytes", "tokenImpactStatus"],
+      "properties": {
+        "toolCallCount": { "type": "integer", "minimum": 0 },
+        "modelVisibleResponseBytes": { "type": "integer", "minimum": 0 },
+        "tokenImpactStatus": { "const": "not_measured" }
+      }
+    },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "runId",
+        "outcome",
+        "usage",
+        "budget",
+        "tools",
+        "execution",
+        "evaluator",
+        "comparison",
+        "source"
+      ],
+      "properties": {
+        "platform": { "enum": ["windows-native", "wsl2-linux"] },
+        "runId": { "type": "string", "minLength": 1 },
+        "outcome": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "failureCategory"],
+          "properties": {
+            "status": { "const": "failed" },
+            "failureCategory": { "const": "product_workflow" }
+          }
+        },
+        "usage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source",
+            "complete",
+            "inputTokens",
+            "outputTokens",
+            "totalTokens",
+            "modelCalls",
+            "costUsd",
+            "costCny"
+          ],
+          "properties": {
+            "source": { "const": "provider_reported" },
+            "complete": { "const": true },
+            "inputTokens": { "type": "integer", "minimum": 0 },
+            "outputTokens": { "type": "integer", "minimum": 0 },
+            "totalTokens": { "type": "integer", "minimum": 0 },
+            "modelCalls": { "type": "integer", "minimum": 1 },
+            "costUsd": { "type": "number", "minimum": 0 },
+            "costCny": { "type": "number", "minimum": 0 }
+          }
+        },
+        "budget": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "limit", "observed"],
+          "properties": {
+            "kind": { "const": "total_tokens" },
+            "limit": { "type": "integer", "minimum": 1 },
+            "observed": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "tools": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "callCount",
+            "completedCount",
+            "allSucceeded",
+            "sequence",
+            "modelVisibleResponseBytes",
+            "ellipsizedResultCount",
+            "textSearchReturnedCount",
+            "fullTargetReadBeforeTextSearch",
+            "supplementalFullFileReadCalls",
+            "editCallCount"
+          ],
+          "properties": {
+            "callCount": { "type": "integer", "minimum": 1 },
+            "completedCount": { "type": "integer", "minimum": 1 },
+            "allSucceeded": { "const": true },
+            "sequence": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "enum": [
+                  "file_read",
+                  "list_files",
+                  "text_search",
+                  "file_glob",
+                  "file_edit",
+                  "apply_patch",
+                  "file_write",
+                  "file_delete"
+                ]
+              }
+            },
+            "modelVisibleResponseBytes": { "type": "integer", "minimum": 1 },
+            "ellipsizedResultCount": { "type": "integer", "minimum": 1 },
+            "textSearchReturnedCount": { "type": "integer", "minimum": 1 },
+            "fullTargetReadBeforeTextSearch": { "const": true },
+            "supplementalFullFileReadCalls": { "type": "integer", "minimum": 0 },
+            "editCallCount": { "const": 0 }
+          }
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enteredEditPhase",
+            "budgetExhausted",
+            "changedFileCount",
+            "preflightsPassed"
+          ],
+          "properties": {
+            "enteredEditPhase": { "const": false },
+            "budgetExhausted": { "const": true },
+            "changedFileCount": { "const": 0 },
+            "preflightsPassed": { "const": true }
+          }
+        },
+        "evaluator": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source",
+            "taskCompleted",
+            "testsPassed",
+            "patchAccepted",
+            "regressionCount",
+            "manualInterventionCount"
+          ],
+          "properties": {
+            "source": { "const": "machine" },
+            "taskCompleted": { "const": false },
+            "testsPassed": { "const": false },
+            "patchAccepted": { "const": false },
+            "regressionCount": { "type": "integer", "minimum": 1 },
+            "manualInterventionCount": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "comparison": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "totalTokenDelta",
+            "totalTokenIncreaseRatio",
+            "modelCallDelta",
+            "toolCallDelta",
+            "modelVisibleResponseBytesDelta",
+            "modelVisibleResponseIncreaseRatio",
+            "actualVsOfflineResponseBytesDelta"
+          ],
+          "properties": {
+            "totalTokenDelta": { "type": "integer", "minimum": 1 },
+            "totalTokenIncreaseRatio": { "type": "number", "exclusiveMinimum": 0 },
+            "modelCallDelta": { "type": "integer", "minimum": 1 },
+            "toolCallDelta": { "type": "integer", "minimum": 1 },
+            "modelVisibleResponseBytesDelta": { "type": "integer", "minimum": 1 },
+            "modelVisibleResponseIncreaseRatio": { "type": "number", "exclusiveMinimum": 0 },
+            "actualVsOfflineResponseBytesDelta": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "shadowArtifactSha256",
+            "navigationEvidenceSha256",
+            "eventsSha256",
+            "executionReportSha256",
+            "manifestSha256",
+            "baselineCommit",
+            "repositorySnapshotIdentitySha256"
+          ],
+          "properties": {
+            "shadowArtifactSha256": { "$ref": "#/$defs/sha256" },
+            "navigationEvidenceSha256": { "$ref": "#/$defs/sha256" },
+            "eventsSha256": { "$ref": "#/$defs/sha256" },
+            "executionReportSha256": { "$ref": "#/$defs/sha256" },
+            "manifestSha256": { "$ref": "#/$defs/sha256" },
+            "baselineCommit": { "$ref": "#/$defs/sha1" },
+            "repositorySnapshotIdentitySha256": { "$ref": "#/$defs/sha256" }
+          }
+        }
+      }
+    }
+  }
+}
