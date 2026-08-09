@@ -787,7 +787,7 @@ C# 风险等级高、Spike 前生产可行性为中低。其成本主要购买 .
 
 ## 13. 后续计划
 
-P1-A1 的 language-neutral contract/fake、官方 TypeScript Language Service live Provider、fixed TS/JS truth set、真实 Agent uplift Gate、只读 Context Inspector、首个 `code_intel` coding-tool consumer、双平台 resource soak 与 paired-run readiness 已完成。已授权的真实 paired-run 连续七个 attempt 均失败关闭：a1/a2/a4-a6 分别在 pricing、pairing、attempt 合同、pairing target 与 WSL state 前置阶段零费用停止；a3 因动态 fixture commit 导致 pair identity 漂移，执行 2 个 cell 后停止，费用 `0.08647368 RMB`；a7 零费用 Gate 全部通过，但 Windows 第 7 个 cell 因 command-control agent profile 缺失和 OCI 配置无效而停止，执行 `7/8` 个 cell、费用 `0.12060688 RMB`，累计 `0.20708056 RMB`，WSL2 未启动。a7 前 6 个 cell 虽有完整 usage，但 task/patch/test 全部失败、没有 mutation，candidate 也没有成功采用 `semantic-live`，因此当前证据不能通过 uplift Gate。历史 artifact 不覆盖、不重试；完整 4 任务 cohort runtime preflight、隔离 command-control profile 与 digest-pinned OCI 已按 `fix_now` 补齐并在 Windows/WSL2 零费用通过。真实 8 对矩阵继续按 `defer` 等待新的 a8 人工授权；不得自动注册 a8，也不改变 P0 aggregate 与 `cost-containment-v1` rollout 边界。
+P1-A1 的 language-neutral contract/fake、官方 TypeScript Language Service live Provider、fixed TS/JS truth set、真实 Agent uplift Gate、只读 Context Inspector、首个 `code_intel` coding-tool consumer、双平台 resource soak 与 paired-run readiness 已完成。已授权的真实 paired-run 连续七个 attempt 均失败关闭：a1/a2/a4-a6 分别在 pricing、pairing、attempt 合同、pairing target 与 WSL state 前置阶段零费用停止；a3 因动态 fixture commit 导致 pair identity 漂移，执行 2 个 cell 后停止，费用 `0.08647368 RMB`；a7 零费用 Gate 全部通过，但 Windows 第 7 个 cell 因 command-control agent profile 缺失和 OCI 配置无效而停止，执行 `7/8` 个 cell、费用 `0.12060688 RMB`，累计 `0.20708056 RMB`，WSL2 未启动。a7 前 6 个 cell 虽有完整 usage，但 task/patch/test 全部失败、没有 mutation，candidate 也没有成功采用 `semantic-live`，因此当前证据不能通过 uplift Gate。历史 artifact 不覆盖、不重试；完整 4 任务 cohort runtime preflight、隔离 command-control profile 与 digest-pinned OCI 已按 `fix_now` 补齐并在 Windows/WSL2 零费用通过。用户已于 2026-08-09 对同一 `DeepSeek-V4-Flash`、Windows/WSL2 共 8 对矩阵和累计 `40 RMB` 上限给予持续授权；a8 为首个可执行新 attempt，在范围和费用上限不变且未触发熔断时，后续 attempt 无需逐次重新申请。该授权不改变 P0 aggregate 与 `cost-containment-v1` rollout 边界。
 
 ### P0.21 实施约束（已完成阶段）
 
@@ -797,7 +797,7 @@ P1-A1 的 language-neutral contract/fake、官方 TypeScript Language Service li
 - **闭合边界**：包含只读绑定 P0.19/P0.20 哈希证据，复算两端工具序列、响应字节、token、预算、编辑阶段、evaluator 与 source identity，并给出 candidate v1 晋级/技术债决策；不修改冻结 v3 manifest/aggregate，不提高预算，不发起 Provider 请求，不实现 candidate v2。完成标准是单一写入一次、Schema-valid、零敏感信息的跨平台分析 artifact 与可追溯决策。
 - **预期效果**：把“真实 canary 失败”收敛为可机读的共同失败签名，排除 Gateway、workspace identity、Provider usage 与 evaluator infrastructure，停止继续扩样 candidate v1，并为 candidate v2 明确需约束真实模型导航策略而非只增加工具。
 
-当前还缺的关键闭环是：`cost-containment-v1` 的真实任务效果验证、24 项定义在双平台各 3 次的真实 runner/artifact 覆盖与 completed aggregate、TS/JS 固定真实大仓 Agent uplift 的 8 对完整有效运行、Go 独立 Provider 的通用性证据、测试影响选择与 Browser 行为验证、跨 owner 统一只读投影、并行写入 soak/fault matrix、两个外部消费者，以及两个连续候选版本的 `>=9.500` 证据。navigation candidate line 已停止，不能把成本早停、零调用前置失败、a3 的不具可比性 pair 或 a7 的失败 cell 当作 candidate/task uplift；P1-A1 的完整 cohort preflight 已恢复，但新 attempt 仍须使用全新 state 在 Gateway 启动前 provision profile，并在 Provider 前重新取得同合同双平台 passed 证据。当前不得创建 a8、覆盖或重跑 a1-a7。WSL workspace execution owner 已通过无模型链路关闭；C# 仍缺真实需求权重与安全可分发方案，因此保持条件项；P2 Supervisor 和生态入口在 P1 contract 与安全 Gate 完成前不启动。
+当前还缺的关键闭环是：`cost-containment-v1` 的真实任务效果验证、24 项定义在双平台各 3 次的真实 runner/artifact 覆盖与 completed aggregate、TS/JS 固定真实大仓 Agent uplift 的 8 对完整有效运行、Go 独立 Provider 的通用性证据、测试影响选择与 Browser 行为验证、跨 owner 统一只读投影、并行写入 soak/fault matrix、两个外部消费者，以及两个连续候选版本的 `>=9.500` 证据。navigation candidate line 已停止，不能把成本早停、零调用前置失败、a3 的不具可比性 pair 或 a7 的失败 cell 当作 candidate/task uplift；P1-A1 的完整 cohort preflight 已恢复，但新 attempt 仍须使用全新 state 在 Gateway 启动前 provision profile，并在 Provider 前重新取得同合同双平台 passed 证据。当前按第 14.9 节持续授权创建全新 a8，但不得覆盖或重跑 a1-a7。WSL workspace execution owner 已通过无模型链路关闭；C# 仍缺真实需求权重与安全可分发方案，因此保持条件项；P2 Supervisor 和生态入口在 P1 contract 与安全 Gate 完成前不启动。
 
 ### P0.22 实施约束
 
@@ -933,9 +933,9 @@ P1-A1 的 language-neutral contract/fake、官方 TypeScript Language Service li
 
 ### 14.5 继续条件与关闭边界
 
-1. P1-A1 曾触发三轮 Fix 熔断。deterministic fixture commit、attempt 解耦、blocked report、pairing target 与 WSL state 布局已按 `fix_now` 修复；用户于 2026-08-09 先后有条件授权 a4-a7，全部按各自 selected failure 失败关闭且未重试。a7 已产生真实费用并完成 Windows 结算，WSL2 未启动；不得重跑 a1-a7、自动创建 a8，也不放行 P1-A2。
+1. P1-A1 曾触发三轮 Fix 熔断。deterministic fixture commit、attempt 解耦、blocked report、pairing target 与 WSL state 布局已按 `fix_now` 修复；用户于 2026-08-09 先后有条件授权 a4-a7，全部按各自 selected failure 失败关闭且未重试。a7 已产生真实费用并完成 Windows 结算，WSL2 未启动；不得重跑 a1-a7，也不放行 P1-A2。第 14.9 节的持续授权允许创建全新 a8 及符合相同边界的后续 attempt。
 2. a7 新暴露的技术债已按 `fix_now` 关闭：runner 现在会在任何 selected cell 前检查完整 4 任务 cohort；独立 preflight 可在 Gateway 启动前向全新隔离 state 写入冻结 command-control profile，并验证 OCI backend/runtime 与本地 pinned image digest。任一项不满足时写零费用 blocked 报告，且不创建平台输出根。
-3. 后续若人工另行授权新 attempt，必须使用全新 artifact 根、递增 attempt、共享且隔离的 Gateway/runner state、完整 pricing 注入和成功的双平台 pairing probe；每个 selected failure 不重试。Windows 必须先完成 usage/cost 结算，WSL2 才能使用剩余额度启动。
+3. 后续新 attempt 必须使用全新 artifact 根、递增 attempt、共享且隔离的 Gateway/runner state、完整 pricing 注入和成功的双平台 pairing probe；每个 selected failure 不重试。Windows 必须先完成 usage/cost 结算，只有结果有效时 WSL2 才能使用剩余额度启动。同范围且累计费用未达到上限时无需逐次申请授权，但每次必须基于新的修复或证据，禁止在相同失败上重复试错。
 4. P1-A1 的完成条件仍是 Windows/WSL2 共 8 对有效 baseline/candidate，以及 `semantic-live`、task/patch/test、context-waste、Provider failure 和费用 Gate 的最终聚合；a1-a7 均不得进入 uplift 分母。
 5. 其余计划仍包括 completed 144-run aggregate、Go 独立 Provider、验证 DAG/Browser、TaskProjection/capability closure、Supervisor/fault matrix、两个外部消费者和两个连续候选版本原始分 `>=9.500`。P1-A3 C# 继续保持条件项。
 
@@ -945,7 +945,7 @@ P1-A1 的 language-neutral contract/fake、官方 TypeScript Language Service li
 
 - **授权范围**：使用 `DeepSeek-V4-Flash` 执行 Windows/WSL2 共 8 对真实 uplift，仅允许全新 a7；总费用上限继续为 `40 RMB`，定价保持缓存命中输入 `0.02 RMB / 1M tokens`、缓存未命中输入 `1 RMB / 1M tokens`、输出 `2 RMB / 1M tokens`，按 `1 USD = 8 RMB` 注入。
 - **执行约束**：全新 artifact/state、递增 attempt、双平台零费用 pairing、完整 pricing 与 identity Gate；Windows 先运行并结算，只有全部有效才启动 WSL2；selected failure 不重试。
-- **明确排除**：不自动创建 a8，不重跑 a1-a7，不扩大任务、模型或预算，不修改冻结 aggregate，不推进 P1-A2，不执行公开或远端写入。
+- **明确排除**：a7 授权当时不包含自动创建 a8；后续已由第 14.9 节持续授权取代。仍不重跑 a1-a7，不扩大任务、模型或预算，不修改冻结 aggregate，不推进 P1-A2，不执行公开或远端写入。
 - **风险与预期**：高风险受控真实调用；重点防止 pairing/state/identity 漂移、usage 或费用缺失、基础设施错误和无效 pair 进入 uplift 分母。完成标准仍是双平台 8 对全部有效并通过最终硬 Gate。
 
 #### P1-A1 attempt 7 实现结论：Windows 真实 uplift 失败关闭（2026-08-09）
@@ -978,7 +978,7 @@ P1-A1 的 language-neutral contract/fake、官方 TypeScript Language Service li
 #### 后续计划（P1-A1 尚未结束）
 
 - **已完成前置**：完整 4 任务 cohort runtime preflight 已接入 runner，隔离 profile、OCI backend/runtime、固定 digest 与双平台 sentinel 均已零费用通过；本轮未创建 a8 artifact。
-- **下一步**：等待人工另行授权全新 a8。授权后必须在全新 state 上先 provision profile、重跑同合同 cohort preflight，再启动 Gateway/pairing，并继续遵守完整 pricing/identity、Windows 先结算和 selected failure 不重试边界。
+- **下一步**：第 14.9 节持续授权已生效，创建全新 a8；必须在全新 state 上先 provision profile、重跑同合同 cohort preflight，再启动 Gateway/pairing，并继续遵守完整 pricing/identity、Windows 先结算和 selected failure 不重试边界。
 - **当前关键缺口**：双平台 8 对有效 baseline/candidate、`semantic-live` 采用、task/patch/test 零回退、context-waste、Provider failure 与最终费用聚合仍未闭合，因此不得推进 P1-A2。
 
 ### 14.7 P1-A1 零费用完整 cohort runtime preflight
@@ -999,7 +999,7 @@ P1-A1 的 language-neutral contract/fake、官方 TypeScript Language Service li
 3. **效果**：
    - a7 的 profile/OCI 问题会在任何 Provider 调用前暴露，不再等到第 7 个 cell。
    - Windows/WSL2 使用相同冻结 profile 和本地 digest-pinned Linux/amd64 镜像，且不拉取镜像。
-   - 新 attempt 仍须重新执行新鲜 Gate；本轮结果不构成 a8 授权，也不进入 uplift 分母。
+   - 新 attempt 仍须重新执行新鲜 Gate；本轮结果当时不构成 a8 授权，也不进入 uplift 分母，后续授权见第 14.9 节。
 
 ##### 验证结果
 
@@ -1012,7 +1012,7 @@ P1-A1 的 language-neutral contract/fake、官方 TypeScript Language Service li
 
 #### 后续计划（P1-A1 尚未结束）
 
-- **下一步准备做什么**：取得覆盖全新 a8、`DeepSeek-V4-Flash`、双平台 8 对和剩余累计额度的明确授权后，创建全新 state/artifact 根，先重复本节零费用 Gate，再按 Windows 先行、结算后 WSL2 执行。
+- **下一步准备做什么**：持续授权已覆盖全新 a8、`DeepSeek-V4-Flash`、双平台 8 对和剩余累计额度；创建全新 state/artifact 根，先重复本节零费用 Gate，再按 Windows 先行、结算有效后 WSL2 执行。
 - **为什么先做它**：环境前置已关闭，当前唯一能补齐 P1-A1 证据的动作是取得完整、有效且可比较的 8 对真实结果；继续增加离线检查不会替代 task/patch/test 与 `semantic-live` uplift。
 - **当前还缺的关键闭环**：8 对有效 baseline/candidate、最终费用链、二值零回退、Provider failure、语义采用和 context-waste 聚合；未闭合前不得推进 P1-A2。
 
@@ -1038,7 +1038,7 @@ P1-A1 的 language-neutral contract/fake、官方 TypeScript Language Service li
 4. **效果**：
    - “实现完成”和“验证完成”已有独立、可机读终态，不再需要用实现成功推断测试成功。
    - 定向选择证据缺失时会显式扩大范围；必要节点失败或未运行均不能得到整体完成。
-   - a8 授权、P0 aggregate 与 `cost-containment-v1` 边界未改变。
+   - 本切片自身未改变当时的 a8 授权、P0 aggregate 与 `cost-containment-v1` 边界；后续 a8 授权见第 14.9 节。
 
 ##### 验证结果
 
@@ -1052,13 +1052,29 @@ P1-A1 的 language-neutral contract/fake、官方 TypeScript Language Service li
 - **为什么先做它**：当前合同能正确规划和归类，但尚未消费真实执行 owner 的权威终态；先闭合 command job 证据，才能让 Browser Relay 成为同一 DAG 的可靠节点而不是第二套状态机。
 - **当前还缺的关键闭环**：真实 command job/evidence binding、测试影响 truth set `>=95%`、有界失败最小化、Browser Relay 的 DOM/console/request/screenshot artifact、预算/断线/取消资源收敛和双平台重复验证。
 
+### 14.9 P1-A1 持续费用授权与 a8 执行计划
+
+#### 授权与风险边界（2026-08-09）
+
+- **持续授权范围**：使用 Gateway 中已验证的 `openai` Provider 路由和 `deepseek-v4-flash` 模型（对外名称 `DeepSeek-V4-Flash`），完成 Windows/WSL2 共 8 对真实 uplift。累计费用上限为 `40 RMB`；a3/a7 已结算 `0.20708056 RMB`，当前剩余 `39.79291944 RMB`。
+- **定价与费用链**：缓存命中输入 `0.02 RMB / 1M tokens`、缓存未命中输入 `1 RMB / 1M tokens`、输出 `2 RMB / 1M tokens`，按 `1 USD = 8 RMB` 注入为 `0.0025/0.125/0.25 USD / 1M tokens`。Windows 必须先完整结算 usage/cost；只有 Windows 结果有效且余额充足，WSL2 才能启动。
+- **授权有效期**：在模型、Provider 路由、4 个冻结任务、Windows/WSL2 平台、定价和累计 `40 RMB` 上限均不变，且用户未叫停、未触发 Fix 熔断时，a8 及后续必要 attempt 无需逐次申请付费授权。达到上限、用户叫停、范围变化或触发熔断时，授权立即停止。
+- **不被授权豁免的 Gate**：每个 attempt 使用递增编号和全新 artifact/state/preflight 根；Gateway 启动前 provision 隔离 profile；双平台完整 cohort preflight 均须 `4/4 passed`、`providerCalls=0`；pricing、pairing、identity 与 cohort Gate 全部通过；selected failure 不重试。新 attempt 必须有新的修复或证据，不得覆盖或重跑 a1-a7。
+- **明确排除**：不修改 P0 aggregate 或 `cost-containment-v1` rollout，不扩大任务、模型、平台、定价或费用上限，不自动推进 P1-A2，不执行公开发布或远端写入。
+
+#### a8 执行计划（P1-A1 尚未结束）
+
+- **下一步准备做什么**：建立全新 a8 artifact/state/preflight 根，完成双平台零费用 runtime preflight 与 fresh pairing probe；随后运行 Windows 8 个 selected cell，完整结算后再决定是否启动 WSL2，最终生成双平台 aggregate 或不可覆盖的 blocked evidence。
+- **为什么先做它**：P1-B 首切片已经独立提交，P1-A1 的 profile/OCI 前置也已关闭；当前最关键且不可由离线检查替代的证据，是完整真实任务的 task/patch/test 与 `semantic-live` uplift。
+- **当前还缺的关键闭环**：Windows/WSL2 共 8 对有效 baseline/candidate、二值零回退、Provider failure=0、语义采用、context-waste 与最终费用聚合。任一 selected failure 均关闭当前 attempt，不以重复调用补结果。
+
 ## 实施计划进度表
 
 | 项目 | 优先级 | 状态 | 粗略工作量 | 完成边界 |
 |---|---|---|---:|---|
 | 本轮 SS 能力复核与 9.5 增强规划 | - | 已完成 | - | 已复核当前 scorecard、目标向量 `9.510`、C#/Go 投入收益、现成多语言方案与三款竞品一手资料；竞品未做同环境 benchmark |
 | P0：Benchmark v3 与外部有效性 | P0 | 进行中（P0.1-P0.29 已完成；`cost-containment-v1` rollout=`hold_explicit_opt_in`、默认启用/未授权 Provider canary 均禁止、`taskUplift=not_measured`；candidate v1-v3 均=`do_not_promote`，navigation candidate line 已停止；冻结 aggregate 仍为同 identity `6/144`、历史 2/6 passed，三轮 navigation shadow 累计费用复算为 `0.08318752 RMB`） | 14-22 人日 | A/B/C 三层、至少 4 个固定仓与 144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；当前禁止扩展付费矩阵，不含 candidate v4、竞品代跑和公开排行榜 |
-| P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | 等待 a8 人工授权（a1-a7 均失败关闭；完整 4 任务 cohort runtime preflight、隔离 command-control profile 与 digest-pinned OCI 已在 Windows/WSL2 零费用 `4/4` passed，`providerCalls=0`；a7 累计费用仍为 `0.20708056 RMB`、余额 `39.79291944 RMB`，a1-a7 不进入 uplift 分母） | 8-12 人日 | 新授权后使用全新 attempt/artifact/state，在 Gateway 前 provision profile，并重新通过合同/状态/pricing/双平台 pairing/identity/完整 cohort Gate；再按 Windows 先结算、WSL2 后启动完成 8 对有效运行；任一 selected failure 不重试，不含自动创建 a8、外部 LSP、Go/C# GA、SCIP store 或 P1-A2 |
+| P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | a8 持续授权已生效，准备执行（a1-a7 均失败关闭；完整 4 任务 cohort runtime preflight、隔离 command-control profile 与 digest-pinned OCI 已在 Windows/WSL2 零费用 `4/4` passed，`providerCalls=0`；累计费用 `0.20708056 RMB`、余额 `39.79291944 RMB`，a1-a7 不进入 uplift 分母） | 8-12 人日 | 使用全新 a8 attempt/artifact/state，在 Gateway 前 provision profile，并重新通过合同/状态/pricing/双平台 pairing/identity/完整 cohort Gate；再按 Windows 先结算、仅有效时 WSL2 后启动完成 8 对有效运行；同范围未达累计 `40 RMB` 上限时无需逐次申请授权，任一 selected failure 不重试，不含外部 LSP、Go/C# GA、SCIP store 或 P1-A2 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | 等待 P1-A1 | 6-11 人日 | 通用进程宿主、pinned `gopls`、Doctor/sandbox/kill-reap、真实 Go Gate；通过后升为 production，并作为当前 9.5 必选第二后端 |
 | P1-A3：C# 条件接入 | 条件 | 延后，等待真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild 执行面、禁止 restore/联网与生命周期；未命中需求 Gate 不进入生产，也不阻断当前 9.5 |
 | P1-B：验证 DAG 与 Browser Relay 闭环 | P1 | 进行中（首切片验证 DAG Schema、changed-path/依赖/Browser 条件选择、四类终态、首次失败与不可覆盖 plan/replay artifact 已完成；16 个定向测试通过，当前保持零命令执行/Provider/mutation） | 10-16 人日 | 下一步接现有 command job 权威结果、预算/取消/exit taxonomy 与 pnpm/Vitest、`go test` 结构化 replay；随后补影响 truth set、失败最小化和 Browser 行为 artifact，不含云浏览器或无条件多 Agent Review |
