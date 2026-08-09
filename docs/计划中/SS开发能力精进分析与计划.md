@@ -1093,6 +1093,7 @@ P1-A1 的 language-neutral contract/fake、官方 TypeScript Language Service li
 
 - 双平台真实任务运行链路、usage/cost 结算、pair identity 和 artifact 追溯已经闭合，未消耗无效 WSL2 预算，也未污染 a1-a7 或 P0 aggregate。
 - a8 证明当前 candidate 的问题已从环境前置收敛为模型语义工具采用不足和二值结果退化；context-waste 两项无回退且至少一个改善替代条件通过，但不足以抵消硬 Gate 失败。
+- 零费用 event 归因确认 16/16 cell 均为 `run.failed`、`cliExitCode=4`、`budget_exhausted`；candidate 的 `code_intel` 4 次调用中 1 次成功、3 次失败，且 8 个 candidate 均无 mutation。该技术债按 `split_task` 处理：必须先独立修复 candidate/tool contract 与预算终止策略并通过离线回放，不能在 a8 相同证据上重试。
 
 ##### 验证结果
 
@@ -1103,8 +1104,8 @@ P1-A1 的 language-neutral contract/fake、官方 TypeScript Language Service li
 
 #### 后续计划（P1-A1 尚未结束）
 
-- **下一步准备做什么**：先做零费用 event/结果归因，明确 `semantic-live` 未采用、candidate 二值退化和 `budget_exhausted` 的共同原因；随后修复 candidate/tool contract，并用确定性 fixture 与离线 replay 验证。
-- **为什么先做它**：a8 的基础设施、双平台配对和费用链均有效，继续在相同策略上付费扩样不会改变 Gate 结果；只有新的修复或证据才满足持续授权的后续 attempt 条件。
+- **下一步准备做什么**：建立独立的 candidate/tool contract 与 budget-termination 离线 fixture，覆盖“工具未调用、工具失败、工具成功后未形成 mutation、预算耗尽”四类结果；修复后先完成确定性 replay 和既有 uplift 单测，再评估新 attempt。
+- **为什么先做它**：a8 的基础设施、双平台配对和费用链均有效，零费用归因已经把阻塞点收敛到模型 loop/contract；继续在相同策略上付费扩样不会改变 Gate 结果，只有新的修复或证据才满足持续授权的后续 attempt 条件。
 - **当前还缺的关键闭环**：candidate `semantic-live` 至少 6 次且每平台至少 3 次、binary regression `0` 和最终 Gate 通过；未闭合前不得推进 P1-A2。a8 不重跑，新的 attempt 必须递增且使用全新 artifact/state。
 
 ## 实施计划进度表
@@ -1113,7 +1114,7 @@ P1-A1 的 language-neutral contract/fake、官方 TypeScript Language Service li
 |---|---|---|---:|---|
 | 本轮 SS 能力复核与 9.5 增强规划 | - | 已完成 | - | 已复核当前 scorecard、目标向量 `9.510`、C#/Go 投入收益、现成多语言方案与三款竞品一手资料；竞品未做同环境 benchmark |
 | P0：Benchmark v3 与外部有效性 | P0 | 进行中（P0.1-P0.29 已完成；`cost-containment-v1` rollout=`hold_explicit_opt_in`、默认启用/未授权 Provider canary 均禁止、`taskUplift=not_measured`；candidate v1-v3 均=`do_not_promote`，navigation candidate line 已停止；冻结 aggregate 仍为同 identity `6/144`、历史 2/6 passed，三轮 navigation shadow 累计费用复算为 `0.08318752 RMB`） | 14-22 人日 | A/B/C 三层、至少 4 个固定仓与 144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；当前禁止扩展付费矩阵，不含 candidate v4、竞品代跑和公开排行榜 |
-| P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | a8 已完成双平台 `8/8`，aggregate=`blocked`（环境/usage/cost/pairing 有效；Gate 失败为 binary regression `2` 与 semantic adoption `1/8`；累计 `0.58739376 RMB`、余额 `39.41260624 RMB`），持续授权保留但暂停同证据重试 | 8-12 人日 | 先完成零费用归因与 candidate/tool contract 修复，再以全新 attempt/artifact/state 重跑完整 Gate；持续授权范围、模型、平台、定价和 `40 RMB` 上限不变时无需逐次申请；a8 不重跑，不含外部 LSP、Go/C# GA、SCIP store 或 P1-A2 |
+| P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | a8 已完成双平台 `8/8`，aggregate=`blocked`（环境/usage/cost/pairing 有效；Gate 失败为 binary regression `2` 与 semantic adoption `1/8`；16/16 cell 为预算终止，累计 `0.58739376 RMB`、余额 `39.41260624 RMB`）；零费用归因已完成，当前进入 contract/budget 修复切片 | 8-12 人日 | 先通过独立 candidate/tool contract 与 budget-termination fixture/replay，再以全新 attempt/artifact/state 重跑完整 Gate；持续授权范围、模型、平台、定价和 `40 RMB` 上限不变时无需逐次申请；a8 不重跑，不含外部 LSP、Go/C# GA、SCIP store 或 P1-A2 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | 等待 P1-A1 | 6-11 人日 | 通用进程宿主、pinned `gopls`、Doctor/sandbox/kill-reap、真实 Go Gate；通过后升为 production，并作为当前 9.5 必选第二后端 |
 | P1-A3：C# 条件接入 | 条件 | 延后，等待真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild 执行面、禁止 restore/联网与生命周期；未命中需求 Gate 不进入生产，也不阻断当前 9.5 |
 | P1-B：验证 DAG 与 Browser Relay 闭环 | P1 | 进行中（首切片验证 DAG Schema、changed-path/依赖/Browser 条件选择、四类终态、首次失败与不可覆盖 plan/replay artifact 已完成；16 个定向测试通过，当前保持零命令执行/Provider/mutation） | 10-16 人日 | 下一步接现有 command job 权威结果、预算/取消/exit taxonomy 与 pnpm/Vitest、`go test` 结构化 replay；随后补影响 truth set、失败最小化和 Browser 行为 artifact，不含云浏览器或无条件多 Agent Review |
