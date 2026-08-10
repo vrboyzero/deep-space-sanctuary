@@ -25,7 +25,7 @@
       {
         "path": "packages/belldandy-skills/src/code-intel/typescript-provider.ts",
         "runtimePath": "packages/belldandy-skills/dist/code-intel/typescript-provider.js",
-        "sha256": "6cb46568701baa68002e672512fa5cbfb3786515fa5d9edfadb83e156645c83f"
+        "sha256": "5e20bbac333747786e00445ef939bf2f30f61e13f17c4702e30a04514605da7f"
       },
       {
         "path": "packages/belldandy-skills/src/code-intel/code-intel.ts",

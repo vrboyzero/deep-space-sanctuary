@@ -1102,11 +1102,448 @@ P1-A1 的 language-neutral contract/fake、官方 TypeScript Language Service li
 - 2 个平台报告各 48 个 artifact 引用、aggregate 及费用均通过 hash/usage 复核；敏感模式扫描 269 个保留文件、0 命中。
 - Gateway 端口无监听，a8 专属 Node 进程与 digest-pinned OCI 容器均为 0。
 
+#### 技术债处理
+
+- a8 的 candidate/tool 与 budget-termination 失败归因按 `split_task` 拆出的零费用合同工作已由第 14.11 节完成；a8 artifact、Gate 结论和费用链保持不变。
+
+### 14.11 P1-A1 candidate/tool contract 与预算终止离线 replay
+
+#### P1-A1 contract/budget 实现结论：a8 四类结果零费用 fixture/replay（2026-08-10）
+
+##### 已完成内容
+
+1. **`run-code-intel-agent-uplift-contract-replay.mjs` 新建**：
+   - 新增公开 `evaluateCodeIntelCandidateToolOutcome()`，分别固定工具未调用、调用失败、`semantic-live` 成功但未形成 mutation、预算耗尽四类失败关闭决策；预算终态优先，四类结果均不得声明 task uplift 或直接创建新 attempt。
+   - 新增普通 profile 预算 fixture，直接调用生产 `ReActRunBudgetTracker.recordModelUsage()`，复算 `24001 > 24000` 的 `total_tokens` 终止，不启用或修改 `cost-containment-v1`。
+   - 新增版本化 runner/CLI，显式校验 a8 aggregate SHA-256、attempt 8、8 个 pair、固定 Gate failure 和五份 runtime source identity，并以新目录和 `wx` 写入不可覆盖 artifact。
+
+2. **`agent-uplift-contract-replay.schema.json`、测试与命令接入**：
+   - 新增封闭 v1 Schema，约束真实 a8 coverage、四个 fixture、blocked 决策、普通 profile budget replay 和零外部调用/费用/mutation 证据。
+   - 新增 13 个定向测试，覆盖四类结果、生产预算 owner、Schema/哈希/不可覆盖写入、source Gate/8-pair/runtime path 漂移、非法 candidate cell 和 CLI 合同。
+   - `package.json` 新增 `benchmark:code-intel:agent-uplift-contract-replay`，benchmark README 与项目地图同步维护。
+
+3. **`artifacts/p1-a1-code-intel-agent-uplift-contract-replay-20260810-r2/` 双平台证据**：
+   - Windows 原生与 WSL2 原生进程分别读取 a8 aggregate，双端均为 `completed`，并通过同一封闭 Schema；source report SHA、replay/uplift/budget/tool/provider 五份 runtime source SHA 与 coverage 完全一致。
+   - Windows/WSL2 artifact SHA-256 分别为 `ce7753c010a880aee2a973b8e06b1a1d4559d6a6bf31d2a530bc0f174149bbbf`、`060a7579fa33ddbdfebb468eeb9d1a567c7635aec81839fe91b430c7f7d1fa42`。
+
+4. **效果**：
+   - a8 的“未调用/失败/成功无 mutation/预算耗尽”不再混为 task uplift，失败类别具有可重复、可审计的确定性 replay。
+   - 普通 profile 的既有预算后置终止语义被生产 owner 直接证明，未借机更改 ToolAgent、candidate profile、uplift aggregate 或默认成本 rollout。
+   - 本切片未启动 Gateway、模型、Provider 或网络，Provider 调用、费用和 workspace mutation 均为 0；candidate 仍保持 blocked，不把合同证据误当成修复或新 attempt 授权。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误（`corepack pnpm build:incremental`）。
+- 3 个定向测试文件共 25 个测试全部通过（含 13 个新增 candidate/tool contract replay 测试）。
+- Windows/WSL2 两份实际 replay artifact 均通过封闭 Schema；双端 a8 source/runtime/coverage identity 一致，`providerCalls=0`、`providerCostCny=0`、`networkCalls=0`。
+
+### 14.12 P1-A1 candidate/tool 生产行为修复
+
+#### P1-A1 contract/budget 实现结论：真实仓 Provider 容量与模型可见工具合同修复（2026-08-10）
+
+##### 已完成内容
+
+1. **`typescript-provider.ts` 修改**：
+   - 从 a8 三次 `provider_failure/environment_error` 的原始事件反查本地固定 snapshot，确认 `vscode-languageserver-node` 有 37 个有效 `tsconfig/jsconfig`，超过原默认 32-project 硬上限，查询在 Language Service 执行前即失败。
+   - 将默认有界项目数提高到 64；显式 `maxProjects` 覆盖、20,000 文件总上限、4 个 workspace session、外部根、deadline/cancel 和 dispose 边界保持不变。
+   - 新增 33-project 公共 `CodeIntel.query()` 回归，修复前稳定返回 `provider_failure`，修复后 `semantic-live` symbols 正常完成。
+
+2. **`builtin/code-intel.ts` 修改**：
+   - 将模型可见描述改为英文执行合同，要求 TS/JS 语义问题在宽泛目录/整文件探索前优先使用 `code_intel`。
+   - 明确成功查询后必须检查指向源码并形成或验证任务进展，不能把只读查询本身当作任务完成；失败后应调整参数或回退，不原样重试。
+   - 新增 Tool 公共 definition 回归；工具权限、参数、返回结构和只读边界不变。
+
+3. **离线 identity 与资源 Gate 更新**：
+   - candidate contract replay 扩为绑定 replay、uplift、budget、tool、Provider 五份 runtime source，双平台 r2 artifact 通过同一封闭 Schema且 identity/coverage 一致。
+   - `resource-soak.json` 只更新 TypeScript Provider source SHA-256，不改 workload 或 Gate；全新 `artifacts/p1-a1-code-intel-resource-soak-20260810-r3/` 双平台均 passed，官方 comparator=`passed=true`。
+   - resource-soak Windows/WSL2 报告 SHA-256 分别为 `c69c52c362ed131f5a7128fa57584e5690c0b5a6b05853093bf2c93a841cfca2`、`135cabca4330fe108cd7489f9ba933962b571e94685f167100882049b343fa2a`。
+
+4. **效果**：
+   - a8 的三次语义调用环境失败已收敛并消除：实际 `dist` 在同一 37-config snapshot 上，Windows references/symbols 分别返回 2/4 项，WSL2 正确坐标 references 返回 2 项、symbols 返回 4 项，均无 Provider failure。
+   - a8 WSL2 的 `line=38,column=15` 被确认越过注释行长度，修复后返回可诊断 `invalid_location` partial，而非环境崩溃；模型可见合同继续强调 0-based 坐标。
+   - 工具采用和成功后的实际 mutation 仍须由新的真实 Agent attempt 证明；本轮不把描述合同或离线 Provider 成功误报为 task uplift。
+
+##### 验证结果
+
+- `@belldandy/skills` 构建与 workspace TypeScript 增量编译无错误。
+- 7 个 CodeIntel/uplift 定向测试文件共 50 个测试全部通过（含 2 个新增生产修复回归和 13 个 contract replay 测试）。
+- Windows/WSL2 实际 `dist` 真实仓查询、candidate contract replay r2、resource soak r3 及跨平台 comparator 均通过；本轮 `providerCalls=0`、`providerCostCny=0`、`networkCalls=0`。
+
 #### 后续计划（P1-A1 尚未结束）
 
-- **下一步准备做什么**：建立独立的 candidate/tool contract 与 budget-termination 离线 fixture，覆盖“工具未调用、工具失败、工具成功后未形成 mutation、预算耗尽”四类结果；修复后先完成确定性 replay 和既有 uplift 单测，再评估新 attempt。
-- **为什么先做它**：a8 的基础设施、双平台配对和费用链均有效，零费用归因已经把阻塞点收敛到模型 loop/contract；继续在相同策略上付费扩样不会改变 Gate 结果，只有新的修复或证据才满足持续授权的后续 attempt 条件。
-- **当前还缺的关键闭环**：candidate `semantic-live` 至少 6 次且每平台至少 3 次、binary regression `0` 和最终 Gate 通过；未闭合前不得推进 P1-A2。a8 不重跑，新的 attempt 必须递增且使用全新 artifact/state。
+- **下一步准备做什么**：使用重建后的 dist 和全新目录执行 attempt 9 的双平台 readiness、完整 4 任务 cohort runtime preflight、profile/OCI/pairing 零费用 Gate；全部通过后，才依据第 14.9 节持续授权评估是否启动真实 paired run。
+- **为什么先做它**：生产缺陷已有代码、测试、真实 snapshot 和双平台资源证据，但 a8 readiness/runtime identity 已因 source/dist 变化而过期；必须先证明新 runtime、pricing、state、repository receipt 和 candidate 唯一差异仍闭合。
+- **当前还缺的关键闭环**：新的零费用前置 Gate、真实模型对新工具描述的采用、成功查询后的 mutation/task/patch/test 结果、binary regression `0` 和最终 uplift Gate 通过；未闭合前不得推进 P1-A2，也不得把 a8 或离线 replay 纳入通过分母。
+
+### 14.13 P1-A1 attempt 9 零费用前置审计
+
+#### P1-A1 前置审计实现结论：新 runtime 的双平台授权资格（2026-08-10）
+
+##### 已完成内容
+
+1. **`tmp/p1-a1-code-intel-agent-uplift-20260810-r9/preflight-audit-r2.mjs` 执行**：
+   - 汇总新 attempt 9 的 Windows/WSL2 readiness、4 任务 cohort runtime preflight、pairing、candidate/tool contract replay r2 与 resource soak r3。
+   - 双平台五类检查全部通过，确认新 source/dist、profile、OCI digest、pricing、pair identity 和 repository receipt 仍保持冻结合同。
+
+2. **审计边界与证据**：
+   - 审计 artifact：`tmp/p1-a1-code-intel-agent-uplift-20260810-r9/preflight-audit-r2.json`，SHA-256 为 `2f92db36b67598d830ca1778934e6b431e2ee6aeb73c215a513baa09bcac111`。
+   - Windows/WSL2 readiness、cohort、pairing、contract replay、resource soak 均以 SHA-256 绑定；contract replay 与 resource soak 分别复用既有 r2/r3 双平台 artifact，不覆盖历史输出。
+
+3. **效果**：
+   - attempt 9 已满足 `newAttemptPreflightEligible=true`，但 `candidatePromotionEligible=false`、`taskUplift=not_measured`；离线前置证据不计入真实 uplift 通过分母。
+   - 本次审计保持 `gatewayCalls=0`、`modelCalls=0`、`providerCalls=0`、`providerCostCny=0`、`networkCalls=0`、`productionWorkspaceMutations=0`。
+
+##### 验证结果
+
+- `node tmp/p1-a1-code-intel-agent-uplift-20260810-r9/preflight-audit-r2.mjs` 通过，输出 `status=passed` 且 `failures=[]`。
+- 双平台 readiness/cohort/pairing/replay/resource 五类 Gate 全部为 `passed`；当前未启动真实 paired run，未验证模型工具采用、mutation、task/patch/test uplift 或最终 aggregate Gate。
+
+#### 后续计划（P1-A1 尚未结束）
+
+- **下一步准备做什么**：在现有持续授权范围内，以全新 `artifacts/p1-a1-code-intel-agent-uplift-20260810-r9/` 输出根先运行 Windows attempt 9 的完整 paired matrix；Windows usage/cost、artifact hash 和 cleanup 全部闭合后，再用其累计费用链启动 WSL2。
+- **为什么先做它**：零费用审计已证明新 runtime 的前置条件和回放合同没有漂移，下一项唯一能验证的关键差距是模型是否采用 `code_intel` 并在成功后形成真实 mutation/task progress。
+- **当前还缺的关键闭环**：Windows/WSL2 各 `8/8` paired cell、Provider usage/cost 完整、Provider failure `0`、binary regression `0`、semantic adoption `>=6/8` 且每平台 `>=3/4`，以及 context-waste Gate；未通过前不得推进 P1-A2。
+
+### 14.14 P1-A1 attempt 9 Windows 真实运行与费用止损
+
+#### P1-A1 真实运行实现结论：attempt 9 Windows paired matrix（2026-08-10）
+
+##### 已完成内容
+
+1. **`artifacts/p1-a1-code-intel-agent-uplift-20260810-r9/windows-native/agent-uplift-platform.json` 执行**：
+   - Windows 4 个任务、baseline/candidate 共 8/8 cell completed，`retryCount=0`，Provider failure 为 0。
+   - 48 个 artifact 引用全部通过 hash 复核；candidate `semantic-live` 采用为 `1/4`，candidate mutation 为 `0/4`，8/8 均在 mutation 前以 `budget_exhausted` 终止。
+
+2. **费用与跨平台边界**：
+   - 本轮费用 `0.20789464 RMB`，累计费用 `0.79528840 RMB`，余额 `39.20471160 RMB`；平台报告 SHA-256 为 `e515f7034c2ad119d73f5e551308159a35727f3e18696dcea35219565d5951f7`。
+   - Windows 已低于每平台 `>=3/4 semantic-live` 硬 Gate，因此没有启动 WSL2；Gateway 已关闭、无 listener，固定 OCI 容器残留为 0。
+
+3. **效果**：
+   - attempt 9 证明 Provider/费用/清理链闭合，但模型采用和真实任务 uplift 仍未达到 Gate；a9 保持 blocked，不进入通过分母，不修改 P0 aggregate。
+
+##### 验证结果
+
+- 8/8 Windows cell completed，`retryCount=0`，Provider failure `0`，48 个 artifact hash 全部一致。
+- semantic-live adoption 为 `1/4`、mutation 为 `0/4`，因此按硬 Gate 停止 WSL2；本次未形成 task uplift 通过证据。
+- 费用累计复算为 `0.79528840 RMB`，Gateway/OCI 清理检查通过。
+
+#### 后续计划（P1-A1 尚未结束）
+
+- **下一步准备做什么**：完成 trusted-lib evidence 回归与模型可见合同增强后，生成全新 contract replay r4，并据此重建 attempt 10 的双平台零费用 readiness/cohort/pairing/audit。
+- **为什么先做它**：a9 的失败主因已从 Provider 越界、工具描述触发词不足和公开顺序不利三个可验证边界收敛；必须先绑定最新 source/dist identity，再决定是否再次产生费用。
+- **当前还缺的关键闭环**：attempt 10 零费用前置 Gate、真实模型首轮 `code_intel` 采用、成功后 mutation/task/patch/test 结果和双平台 semantic adoption 硬 Gate；未闭合前不得推进 P1-A2。
+
+### 14.15 P1-A1 trusted-lib 修复、模型合同增强与 r4 replay
+
+#### P1-A1 生产行为实现结论：Provider containment 与 candidate/tool 合同（2026-08-10）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/code-intel/typescript-provider.ts` 与测试**：
+   - 过滤未位于 workspace 或显式 `externalRoots` 的 trusted TypeScript library evidence，保持 Facade 的 external containment 合同；新增 AbortSignal/trusted-lib 回归。
+   - 默认有界项目数从 32 提升至 64，保留显式上限、20,000 文件、session LRU、deadline/cancel 与 dispose 边界。
+
+2. **`packages/belldandy-skills/src/builtin/code-intel.ts`、`packages/belldandy-core/src/bin/gateway-main.ts` 与 wiring 测试**：
+   - 模型可见 description 明确 TS/JS 的 symbol/API/function/class/reference 任务应先调用，`symbols.query` 使用单个标识符或短子串；成功后立即检查目标源码并进入 mutation/verification，失败后调整参数或回退。
+   - Gateway ToolPool 将 `code_intel` 放到宽泛 `file_read`/`list_files`/`text_search`/`file_glob` 之前；Tool contract、只读权限和 ToolAgent/预算实现保持不变。
+
+3. **双平台零费用 artifact**：
+   - `artifacts/p1-a1-code-intel-resource-soak-20260810-r4/` Windows/WSL2 均 passed，comparator 为 `passed=true`；报告 SHA-256 分别为 `ff0c4b470a863e0e66de800a7014397dbcb1fd8fb6bace6b1082a9c7d545ae52`、`985f09812e27ba9915d10082411f24e0e1925d7cdcf70cf6e84e15a9d0f21cf5`。
+   - `artifacts/p1-a1-code-intel-agent-uplift-contract-replay-20260810-r4/` 双端 Schema-valid，Windows/WSL2 artifact SHA-256 分别为 `dff0e0a5fd161b80109630d3cdd8a46271de6cd84a3d00f4cff713b58d3b9a1f`、`8b65e4ce7d967075634b5f834d8e578af46c7e73ad0e2d4f1af09d974687336a`；四类覆盖计数均为工具未调用 `5`、调用失败 `2`、成功无 mutation `1`、预算耗尽 `8`。
+
+4. **效果**：
+   - `"subdomain offset"` 在 Express workspace 重放返回 `ok=true`、`completed`、5 项 workspace evidence，消除了 trusted-lib 越界导致的 Provider contract invalid。
+   - replay r4 继续固定 `taskUplift=not_measured`、`candidatePromotionEligible=false`、`newAttemptEligible=false`，Provider/网络/费用/生产 workspace mutation 均为 0；合同修复不被误报为真实 uplift。
+
+##### 验证结果
+
+- `corepack pnpm build:incremental` 通过。
+- 5 个定向测试文件共 41 个测试全部通过；其中 3 个 CodeIntel 测试文件 26/26，Gateway wiring 2/2，contract replay 13/13。
+- 双平台 replay artifact 通过 `agent-uplift-contract-replay.schema.json` 校验，source/runtime identity 和 a8 aggregate SHA 一致；resource soak r4 comparator 通过。
+
+#### 后续计划（P1-A1 尚未结束）
+
+- **下一步准备做什么**：以 `priorObservedCostCny=0.79528840 RMB` 创建 attempt 10 全新 state/readiness/cohort/pairing/preflight/audit；Windows 先执行，只有每平台 semantic-live 预算 Gate 满足时才启动 WSL2。
+- **为什么先做它**：r4 已锁定最新 Provider、tool contract 和预算 owner identity，零费用前置审计是再次付费前唯一缺失的授权资格闭环。
+- **当前还缺的关键闭环**：attempt 10 的 readiness/cohort/pairing/audit 全部 Schema-valid、Windows/WSL2 真实 paired cell、Provider usage/cost 完整、semantic adoption `>=6/8` 且每平台 `>=3/4`、binary regression `0` 与 context-waste Gate；否则保持 blocked 并停止费用。
+
+### 14.16 P1-A1 attempt 10 零费用前置失败关闭
+
+#### P1-A1 前置审计实现结论：attempt 10 WSL 原生材料阻塞（2026-08-10）
+
+##### 已完成内容
+
+1. **`tmp/p1-a1-code-intel-agent-uplift-20260810-r10/readiness/windows-native/` 与 source/dist identity**：
+   - Windows readiness 为 `ready_for_authorization`，报告 SHA-256 为 `b75f1d19109dbdcb64bfe73d189253a25dd037cdaa287fc9b2169ed0f79aa1fa`。
+   - readiness 绑定的 9 份 source 与 6 份 dist hash 均与当前文件一致；最新 source/runtime aggregate 分别为 `54189c40075352c19321b4391cc3644852567303d884acfa93a11fa7f9eeff36`、`1fefe9b8121bf60014a7d4a836bcaeafcc0c6ea96fea19457115fc96101231b7`。
+
+2. **`cohort-preflight/`、隔离 state 与 pairing probe**：
+   - Windows/WSL2 cohort preflight 均 passed，各覆盖 4 个任务且 `providerCalls=0`；两端报告 SHA-256 分别为 `bff6c6438950fbdf694a6aeea0049724bde954675b2feb20edbc569114dc7409`、`e52c24ca036f239091f5b81c73ea9890940eefa1f1df4a38e7aa2f912109c1a4`。
+   - attempt 10 独立 state 与 Windows-host/WSL-native `agents.roster.get` pairing 均 passed；pairing 报告 SHA-256 分别为 `3c13d94e9c9b5645d57cb095cf5ad549d66c1e788870e4908dff1a54d03020c2`、`fff1d3ec41eeff3754929e5454e93b4710da7cf9489d997efa5da1a1eb4045d6`，Provider 调用与 credentials read 均为 0。
+
+3. **WSL readiness 与离线 snapshot preparation 失败关闭**：
+   - r9 后保留的挂载盘 Express checkout 在 WSL Git 下因 Windows CRLF 形态表现为 `repository_worktree_dirty`，且 r9 Linux dependency cache 已不存在；未复用旧 readiness 冒充新鲜证据。
+   - 两次全新 ext4 offline preparation 均为 `ready=0/blocked=4`：WSL `~/.npm` 缺 `yocto-queue@0.1.0`，Windows npm cache 作为第二只读输入时缺 `isexe@2.0.0`，Preact 另缺 Linux esbuild，Go 无工具链；全程没有网络回退。两份报告 SHA-256 分别为 `0ff2eb99b653cafb300e8209f3d1aa97a134aee4ab89d95798311b9947d7d5c0`、`0e582c8ec975350f126f754e8c61bec89056d818f1512c00f578c56d9b032d0e`。
+   - 材料诊断中的 `npm cache verify` 对 Windows 本地 npm cache 执行了实际维护：验证 6,851 个已索引对象，并回收 4,774 个未索引对象（约 2.56 GB）；源码、artifact 与凭据未被修改，该缓存可通过后续显式重新拉取依赖恢复，但本轮不联网修复。
+
+4. **`preflight-audit.json` 新建**：
+   - 审计绑定 Windows readiness、双端 cohort/pairing、contract replay r4、resource soak r4 及两份 blocked preparation，唯一 failure 为 `wslReadinessPassed`。
+   - 报告 SHA-256 为 `7f69f0db1602d88418ddf2f8ca07e94d6252583d9de0f0e4e6964791f2af5b78`，固定 `status=blocked`、`newAttemptPreflightEligible=false`、`candidatePromotionEligible=false`、`taskUplift=not_measured`。
+
+5. **效果**：
+   - attempt 10 没有获得真实 Provider 运行资格，费用仍为累计 `0.79528840 RMB`、余额 `39.20471160 RMB`；未启动任何 paired cell，也未修改 P0 aggregate。
+   - WSL 新鲜材料缺口已从模糊环境失败收敛为两个缺失 npm tarball、Linux esbuild 与可选 Go 工具链；P1-A1 所需的硬 blocker 是 Express/VSCode 的 Linux cache。
+
+##### 验证结果
+
+- Windows readiness 与双端 cohort artifact 均通过封闭 Schema；15 份 source/dist hash 全部匹配当前文件。
+- 双端 pairing、contract replay r4、resource soak r4 均 passed；attempt 10 audit 除 WSL readiness 外 9 项检查全部通过。
+- 6 份保留报告的敏感值扫描 0 命中；端口 `28893` listener、attempt 10 Node/WSL 进程和固定 OCI 容器残留均为 0。
+
+#### 技术债处理
+
+- WSL 原生 repository/dependency cache 材料恢复按 `split_task` 处理：它属于可重复的 benchmark 输入准备，不通过修改 CodeIntel、放宽 readiness 或联网回退掩盖；材料修复前 attempt 10 保持 blocked。
+
+### 14.17 P1-A1 attempt 10 WSL 材料恢复与前置授权
+
+#### P1-A1 前置审计实现结论：Linux offline cache 恢复与 a10 Gate 通过（2026-08-10）
+
+##### 已完成内容
+
+1. **Linux npm 材料恢复**：
+   - 按冻结 lockfile 精确补充 `yocto-queue@0.1.0`、`yallist@3.1.1`、`isexe@2.0.0` 与 `@esbuild/linux-x64@0.25.8` 缓存材料；材料获取阶段显式访问 npm registry，后续 snapshot preparation 仍固定使用 `npm ci --offline --ignore-scripts`。
+   - WSL `~/.npm` 的 r3 尝试继续失败关闭并保留，未通过逐包试错伪造完整缓存；随后使用 r2 已证明近完整的 Windows npm cache，仅补其实际缺失的 `isexe` 与 Linux esbuild，再以第四个全新 ext4 根执行。
+
+2. **`/home/vrboyzero/star-sanctuary-p1-a1-r10-linux-snapshots-r4/` preparation**：
+   - Express 与 `vscode-languageserver-node` 两个 P1-A1 必需仓均为 `ready`，生成 2 份 receipt 和 4 份任务 preflight；Preact 的 `@oxfmt/binding-linux-x64-gnu@0.32.0` 与 Go 工具链继续作为非 P1-A1 blocker 保留，不进入 ready-only config。
+   - preparation 报告为 `partial ready=2/blocked=2`，Schema-valid，SHA-256 为 `1259a83e2c86169c469fb2d2b29dfff976694dbc6a93165aa7f12eb2b6da7171`；没有覆盖 r1-r3 历史根。
+
+3. **WSL readiness 与 `preflight-audit-r2.json` 新建**：
+   - WSL readiness 为 `ready_for_authorization`、prepared pair `4/4`，报告 SHA-256 为 `0652f0006e082e5a37358ebdd3405900291ed693abab2c2e03011d7b2275b862`；与 Windows 的 gate、task/truth set、source/runtime、profile、pair matrix 和 repository identity comparator 全部一致。
+   - 新 audit 哈希绑定 r1-r4 preparation、双端 readiness/cohort/pairing/replay/resource，12 项检查全部通过；报告 SHA-256 为 `027f165fa9b3cce7665adaaf20d4474db5014891272a9eee1484684007f5f228`，固定 `status=passed`、`newAttemptPreflightEligible=true`。
+
+4. **效果**：
+   - attempt 10 的零费用前置阻塞已经关闭，允许在既有 `40 RMB` 持续授权和 Windows-first 早停规则下评估真实 Provider attempt。
+   - candidate promotion 仍为 false、`taskUplift=not_measured`；本切片未启动真实 cell，累计费用仍为 `0.79528840 RMB`、余额 `39.20471160 RMB`，不修改 P0 aggregate。
+   - audit/readiness 执行保持 Gateway、模型、Provider、费用、credentials read 与 production workspace mutation 为 0；网络仅发生在 audit 外的显式依赖缓存补充阶段。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误（`corepack pnpm build:incremental`）。
+- 5 个定向测试文件共 41 个测试全部通过；15 份 source/dist hash 在编译后仍与 readiness 一致。
+- Linux preparation 与 WSL readiness 均通过封闭 Schema，双平台 readiness comparator=`passed=true`；3 份新增关键报告敏感模式扫描 0 命中，端口、attempt 10 进程与固定 OCI 容器残留均为 0。
+
+### 14.18 P1-A1 attempt 10 Windows 真实运行与语义采用早停
+
+#### P1-A1 真实运行实现结论：a10 Windows paired matrix（2026-08-10）
+
+##### 已完成内容
+
+1. **`artifacts/p1-a1-code-intel-agent-uplift-20260810-r10/windows-native/` 执行**：
+   - Windows 4 个任务、baseline/candidate 共 `8/8` cell completed，`retryCount=0`、Provider failure `0`；48 个 artifact 引用全部通过 SHA-256 复算。
+   - 平台报告通过封闭 Schema，SHA-256 为 `2d646edc9a1b6313a5d1ee8c42373437a7f4e39af66dd163b94ef61372041207`。
+
+2. **采用、mutation 与费用结果**：
+   - candidate `semantic-live` 成功 run 为 `2/4`、成功调用共 3 次：cross-package refactor 1 次、JavaScript bug fix 2 次；API migration 与 failed-test diagnosis 未调用。
+   - candidate mutation 为 `0/4`，8 个 cell 全部以 `budget_exhausted` 终止；candidate/baseline 均未形成 task 或 patch uplift。
+   - 本轮费用 `0.19482896 RMB`，累计费用 `0.99011736 RMB`，余额 `39.00988264 RMB`；费用由 8 份完整 Provider usage 按冻结汇率复算一致。
+
+3. **早停与零费用行为复盘**：
+   - Windows candidate adoption 低于每平台 `>=3/4` 硬 Gate，因此没有启动 WSL2，a10 保持 blocked 且不进入通过分母。
+   - 结构化事件显示，API migration 在 1 次 `list_files` 和 3 次 `file_read` 后终止；cross-package 在 5 次宽泛探索后才调用 `code_intel`，成功后又回到 `list_files/file_read`；JavaScript bug fix 在 3 次宽泛探索后调用语义工具，成功后仍继续读文件；failed-test diagnosis 未调用语义工具。
+   - 三个 workspace-write 任务的冻结 prompt 均提供可直接查询的 identifier/行为线索，但模型没有稳定遵循“先语义定位、成功后进入 mutation”的工具描述合同；该失败不归因于 Provider、pairing、费用或平台环境。
+
+4. **效果**：
+   - a10 将 a9 的 Windows semantic adoption 从 `1/4` 提高到 `2/4`，但仍未达到授权 WSL2 的硬门槛；真实数据继续证明仅调整工具顺序和现有描述不足以形成稳定任务进展。
+   - Gateway、attempt 10 runner 进程与固定 OCI 容器均已清理，端口 `28893` 无 listener；平台报告与 Gateway 日志敏感模式扫描 0 命中。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误；5 个定向测试文件共 41 个测试全部通过。
+- Windows 平台报告 Schema-valid，48 个 artifact hash 全部一致，`8/8` usage 均为 `provider_reported` 且费用复算无差异。
+- `semantic-live=2/4 < 3/4`，WSL2 早停规则生效；未修改 P0 aggregate、默认预算、ToolAgent 或 `cost-containment-v1`。
+
+### 14.19 P1-A1 首调用与成功后进展合同增强
+
+#### P1-A1 Tool 合同实现结论：identifier-first 与 next-action guidance（2026-08-10）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/builtin/code-intel.ts` 修改**：
+   - 模型可见 description 将 `code_intel` 明确为 TS/JS primary navigation tool；任务命名或隐含 symbol/API/function/class/method/behavior/reference 时，要求从任务抽取单个 identifier，并在 `list_files`、宽泛搜索或整文件读取前调用。
+   - 成功结果在既有 language-neutral evidence 外增加有界 `nextAction`：最多返回 3 个去重 target path，要求使用已返回 path/range 后立即 mutation 或 verification，再考虑宽泛探索；空结果只允许调整一次 identifier 后回退。
+   - Provider、Facade、权限、只读边界、坐标、分页、response byte Gate 和失败 taxonomy 均保持不变。
+
+2. **`packages/belldandy-skills/src/builtin/code-intel.test.ts` 扩展**：
+   - 先以失败断言固定首调用 description、任务 identifier 提取与成功输出 guidance，再完成生产实现。
+   - 既有 128-byte response budget 失败关闭测试继续通过，证明新增 guidance 不绕过 Tool policy 上限。
+
+3. **`artifacts/p1-a1-code-intel-agent-uplift-contract-replay-20260810-r5/` 双平台证据**：
+   - Windows/WSL2 replay 均 completed 且通过封闭 Schema；source、contract、fixture identity 完全一致，最新 Tool source SHA-256 为 `081dce1ecf98313dc8ac451b4e0d0c5bdacdb824d1d0c6ab51fb562ff389282c`。
+   - Windows/WSL2 报告 SHA-256 分别为 `ace77f7f4da2b9ff2cfd22c81fccf8a07bcadd3236e178d06ab57dc1566775d9`、`380ad68525678aa513872bbc3a9cc92dc3e46c6f9d320af0e5bbc6c43a22614a`。
+
+4. **效果**：
+   - a10 暴露的“宽泛探索优先”和“语义成功后继续探索”分别获得调用前、调用后两段模型可见约束；Tool 成功不再只返回只读证据而缺少明确进展动作。
+   - replay 继续固定四类失败关闭、`taskUplift=not_measured` 与禁止 candidate promotion；本切片没有把合同增强误报为真实采用或 task uplift。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误（`corepack pnpm build:incremental`）。
+- 5 个定向测试文件共 41 个测试全部通过，含新增 description/nextAction 断言和既有响应预算回归。
+- 双平台 replay r5 Schema-valid 且 identity 一致，Provider、模型、网络、费用、credentials read 与 workspace mutation 均为 0；敏感模式扫描 0 命中。
+
+#### 后续计划（P1-A1 尚未结束）
+
+- **下一步准备做什么**：创建 attempt 11 全新 state/readiness/cohort/pairing/audit，绑定 replay r5、既有 Provider resource soak r4 和累计费用 `0.99011736 RMB`；全部零费用 Gate 通过后再评估 Windows-first 真实运行。
+- **为什么先做它**：Tool source/dist 已变化，a10 readiness 与 runtime identity 已过期；新的描述/输出合同只有在 source/runtime/profile/repository 与费用链重新闭合后才具备付费验证资格。
+- **当前还缺的关键闭环**：a11 双平台 readiness comparator、cohort/pairing、preflight audit、真实 `semantic-live >=3/4` 与 mutation/task/patch/test uplift；未通过前不得启动真实 Provider cell。
+
+### 14.20 P1-A1 attempt 11 零费用前置授权
+
+#### P1-A1 前置审计实现结论：identifier-first runtime 的双平台 Gate（2026-08-10）
+
+##### 已完成内容
+
+1. **`tmp/p1-a1-code-intel-agent-uplift-20260810-r11/readiness/` 与 comparator 执行**：
+   - Windows/WSL2 readiness 均为 `ready_for_authorization`、prepared pair 均为 `4/4`，报告 SHA-256 分别为 `b7dfac596eb0a282051045dd4d19e12ea4fab27d0d43ed581bc52f8a5fd5c254`、`af0c35b749d00ca63b2036a05c8ff0746deebb6e430a29bfacedc137380331aa`。
+   - 官方 comparator 为 `passed=true`；task/truth set、source/runtime、profile、pair matrix 与 repository identity 保持一致，WSL 只读复用 a10 已闭合的 ext4 preparation。
+
+2. **双平台 cohort/pairing 与 `preflight-audit.json` 新建**：
+   - Windows/WSL2 cohort preflight 均 passed，各固定 4 个任务且 Provider 调用为 0；报告 SHA-256 分别为 `405dca4d29cf5cb2222420e6f70538a25a5fc22e0bdcddca763580b9627d6127`、`d594ef3079a2175a70ee29ffafa8be6ea9b5e34e5c63fc6e8e6f71e6209a4b2a`。
+   - 双端 `agents.roster.get` pairing 均 passed，attempt 固定为 11，报告 SHA-256 分别为 `1c74545435e474e7e1a439f654eba7b8b7c06a8ea0180e5640d0d29369d2a66e`、`658416dae28c755ab310d06d3e72b527486c4ddf0494ef75f3f1e5fb98e56154`；Provider 调用为 0、credentials read 为 false。
+   - WSL 原生审计绑定 readiness/cohort/pairing、contract replay r5 与 resource soak r4，12 项检查全部通过；审计 SHA-256 为 `be2027428b3d1bb48ab3bd17f22ce875dac6b079067d94e1f1248e84692f29de`。
+
+3. **效果**：
+   - attempt 11 获得 `newAttemptPreflightEligible=true`，允许在既有 `40 RMB` 总额度与 Windows-first 规则内验证真实 Provider；candidate promotion 仍为 false、`taskUplift=not_measured`。
+   - 本切片 Gateway、模型、Provider、网络、费用与 production workspace mutation 均为 0，不把前置资格误报为 uplift。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误；5 个定向测试文件共 41 个测试全部通过，最新 source/dist identity 与 readiness 一致。
+- 双平台 readiness/comparator、cohort、pairing、replay、resource 与 audit 均通过各自封闭合同；审计 `status=passed`、`failures=[]`。
+- 11 份前置非 state 报告/log 敏感模式扫描 0 命中，端口 `28893`、attempt 11 进程与 pinned OCI 容器在启动真实运行前均为 0。
+
+### 14.21 P1-A1 attempt 11 双平台真实运行与 aggregate 失败关闭
+
+#### P1-A1 真实运行实现结论：identifier-first/nextAction 双平台 uplift Gate（2026-08-10）
+
+##### 已完成内容
+
+1. **Windows/WSL2 paired matrix 执行**：
+   - 两个平台均完成 4 个任务、baseline/candidate 共 `8/8` cell，合计 `16/16` usage 为 `provider_reported`、`retryCount=0`、Provider failure 为 0；双端各 48 个 artifact 引用全部通过 SHA-256 复算。
+   - Windows/WSL2 平台报告均通过封闭 Schema，SHA-256 分别为 `d3ade7bc10e1496f2b2d31385947cdd869e137ff1b0dac38aa7c4c4c47d25ccd`、`a009d2e3a856c1ecc2af1b58aa49452ea394c00463baeb23804c59e5722745d0`。
+
+2. **采用、mutation 与预算终态**：
+   - Windows candidate `semantic-live=4/4`、成功调用 6 次，首次达到单平台采用 Gate；WSL2 candidate 仅 `1/4`、成功调用 1 次，双平台总计 `5/8`，低于总计 `>=6/8` 且每平台 `>=3/4` 的冻结 Gate。
+   - 16 个 cell 全部以 `budget_exhausted` 终止；candidate 非空 patch 为 `0/8`，没有形成 task/patch uplift，既有四类 contract replay 归因继续适用。
+
+3. **费用、context 与官方 aggregate**：
+   - Windows/WSL2 本轮费用分别为 `0.15135136 RMB`、`0.18672800 RMB`，attempt 11 合计 `0.33807936 RMB`；累计费用为 `1.32819672 RMB`、余额 `38.67180328 RMB`，平台报告与 aggregate 均按冻结汇率复算一致。
+   - 官方 aggregate 为 `blocked`，SHA-256 为 `4dac56a8cc7927c1bcd6f96bb65603af55e731a0ee165277717f468a8bd4b81a`；唯一失败为 `semantic_adoption_below_gate` 与 `context_waste_improvement_below_gate`，binary regression 与 Provider failure 均为 0。
+   - context 没有回退，但导航字节只减少 `3.579594%`，非目标整文件读取只减少 `14.285714%`（绝对减少 3 次），均未达到预注册的 `>=15%` 或 `>=25% 且至少 2 次` 改善分支。
+
+4. **效果**：
+   - identifier-first/nextAction 合同证明可在 Windows 将采用提高到 `4/4`，但 WSL2 仅 `1/4`，跨平台稳定性不成立；a11 保持 blocked，不进入通过分母，也不修改 P0 aggregate、默认预算、ToolAgent 或 `cost-containment-v1`。
+   - 双平台 Gateway 已关闭；端口、Windows/WSL attempt 进程与 pinned OCI 容器均为 0。非 state 文本敏感模式扫描覆盖 11,827 个文件、0 命中。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误；5 个定向测试文件共 41 个测试全部通过。
+- 两份平台报告及 aggregate 均 Schema-valid；跨平台 96/96 artifact hash、16/16 Provider usage 与三段费用链全部一致。
+- aggregate 固定 `status=blocked`、`pairCount=8`、`regressionCount=0`、`providerFailureCount=0`、`semanticSuccessfulRuns=5`，未重跑 selected failure。
+
+#### 技术债处理
+
+- description/Tool 输出指导在平台间表现不稳定按 `split_task` 处理：先对 a11 结构化事件做零费用调用顺序与成功后行为归因，再判断是否需要 candidate profile 级执行合同；不以 a12 重跑替代根因证据。
+
+#### 后续计划（P1-A1 尚未结束）
+
+- **下一步准备做什么**：零费用汇总 a11 双平台 candidate 的首个工具、`code_intel` 前宽泛探索、成功后 mutation/verification 与预算终态，比较 Windows `4/4` 和 WSL2 `1/4` 的可观察差异；随后以测试先行评估最小 candidate profile 合同，不直接启动 attempt 12。
+- **为什么先做它**：Provider、费用、identity、pairing 和资源路径均已排除，剩余失败是模型采用与任务进展的跨平台不稳定；未定位触发差异前继续付费只会增加随机重试成本。
+- **当前还缺的关键闭环**：稳定达到双平台 `semantic-live >=6/8` 且每平台 `>=3/4`、context 改善 Gate、candidate mutation/task/patch/test 进展和最终 aggregate passed；未闭合前不得推进 P1-A2。
+
+### 14.22 P1-A1 a11 WSL 超时与 Gateway transport 归因
+
+#### P1-A1 零费用归因实现结论：WSL native CodeIntel 与 Windows-host UNC 差异（2026-08-10）
+
+##### 已完成内容
+
+1. **`tmp/p1-a1-code-intel-agent-uplift-20260810-r11/analyze-events.mjs` 与事件审计**：
+   - 对 a11 双平台 8 个 candidate cell 只读取结构化 `tool.started/tool.completed/run.budget_exhausted` 事件，不保存工具输出正文；审计 SHA-256 为 `fb99e714dc795195d131db3ef37a4d6d915730d574e678b7a9784f1766ff5469`。
+   - Windows 4/4 均调用成功 `code_intel`（6 次），但首调用前合计 8 次工具调用、4 次宽泛探索；WSL2 4/4 均发起语义调用（4 次），其中 3 次以 `environment_error: timeout` 失败，只有 cross-package refactor 的第二次 symbols 调用成功。
+   - 成功调用后的首个工具没有直接使用 `nextAction.targetPaths`，两端 mutation/verification 调用均为 0；16 个 cell 均在 `budget_exhausted` 终止。
+
+2. **`replay-wsl-cold-query.mjs` 零费用对照**：
+   - WSL 原生 ext4 workspace 冷查询：VSCode references `3.324s` 返回 3 项，Express `req.subdomains` `1.558s` 完成，Express `subdomains` `1.522s` 返回 2 项，均为 `semantic-live`。
+   - Windows 进程经 `\\wsl.localhost` 读取同一 WSL workspace：VSCode references `25.603s`、Express symbols `10.156s`；a11 中首次 UNC 查询达到 `97.478s`，随后两个查询为 `36.023s/38.473s`，超过默认 30s deadline 后被丢弃。
+
+3. **`wsl-native-gateway-smoke.mjs` 失败关闭**：
+   - 尝试让 Gateway 在 WSL 原生绑定 `127.0.0.1`，启动即因挂载盘 `node_modules` 的 Windows `better_sqlite3.node` 报 `ERR_DLOPEN_FAILED: invalid ELF header`；未启动 listener，smoke 进程已清理。
+   - 已确认现有 `/home/vrboyzero` 只有 benchmark Linux snapshot，没有可复用的 Linux Gateway 依赖根；未通过禁用 memory、忽略 ELF 错误或继续使用 Windows-host Gateway 掩盖平台差异。
+
+4. **效果**：
+   - a11 aggregate 仍固定 `blocked`，不进入通过分母；WSL `semantic-live=1/4` 当前只能作为“Windows-host/UNC transport 下的失败证据”，不能证明 Linux native Provider 本身不可用。
+   - 真实 blocker 已从“模型跨平台不稳定”收敛为 native WSL Gateway 的 Linux dependency root 与 runner transport 合同；Provider 代码、默认预算和 ToolAgent 暂不修改。
+
+##### 验证结果
+
+- 事件审计脚本语法检查通过，零费用 WSL native/Windows UNC replay 均未调用 Gateway、模型、Provider 或网络。
+- WSL native smoke 失败原因由日志中的 `better_sqlite3.node: invalid ELF header` 直接确认；端口、runner/Gateway 进程和 pinned OCI 容器清理保持为 0。
+- a11 双平台平台报告与 aggregate 的 Schema/hash/费用验证结果不变；本归因未覆盖或改写任何历史 artifact。
+
+#### 技术债处理
+
+- **`split_task`**：Linux Gateway 依赖 root/WSL-native transport 材料恢复属于 benchmark execution prerequisite，必须独立完成 receipt、native health、pairing 与 zero-cost preflight；不得修改 CodeIntel deadline 或把 UNC 运行伪装成 WSL native。
+
+#### 后续计划（P1-A1 尚未结束）
+
+- **下一步准备做什么**：盘点并离线构造全新 ext4 Linux Gateway dependency root，先通过 `better-sqlite3` ELF、native `/health`、Gateway/Provider zero-cost smoke，再重建 attempt 12 的 readiness/cohort/pairing/audit。
+- **为什么先做它**：没有 Linux Gateway 原生 runtime，任何 WSL semantic adoption 或 timeout 结果都混入跨宿主 I/O，无法作为 P1-A1 的跨平台能力证据。
+- **当前还缺的关键闭环**：可复现的 WSL-native Gateway process、零费用 pairing/preflight、双平台真实 `semantic-live >=6/8`、context 改善与 mutation/task/patch/test uplift；材料未闭合前不得启动 attempt 12 Provider cell。
+
+### 14.23 P1-A1 WSL ext4 原生 Gateway runtime 恢复
+
+#### P1-A1 runtime 前置实现结论：Linux dependency root 与 native zero-cost smoke（2026-08-10）
+
+##### 已完成内容
+
+1. **`/home/vrboyzero/star-sanctuary-p1-a1-gateway-r1/` 新建**：
+   - 使用 `rsync` 将当前源码同步到全新 WSL ext4 根，显式排除 `.git`、`node_modules`、`artifacts`、`tmp`、`.tmp*`、`.playwright-mcp`、`.env` 与 `.env.local`；receipt 为约 `320 MB`、58 个顶层项，关键 lockfile/源码存在且全部排除项不存在。
+   - 在 ext4 根执行 `pnpm install --offline --frozen-lockfile --ignore-scripts`，13 个 workspace project 共链接 519 个 package，`downloaded=0`；未复制 Windows `node_modules` 或 attempt state。
+   - 使用 npm 自带 `node-gyp@11.5.0`、`/usr/include/node` 与本机编译器定向构建 `better-sqlite3@11.10.0`，产物为 Linux x86-64 ELF；从 `packages/belldandy-memory` 的真实 pnpm 解析路径成功打开 SQLite `3.49.2` 内存库。
+
+2. **`tmp/p1-a1-code-intel-wsl-native-gateway-20260810-r2/` 失败关闭**：
+   - 新 launcher 将代码/依赖/state 固定在 ext4，仅从 `/mnt/e/project/star-sanctuary` 只读加载 `.env/.env.local`，不复制或输出凭据；Gateway 已在 `127.0.0.1:28893` 原生健康启动，不再出现 `invalid ELF header`。
+   - 首次 r2 smoke 因 RPC 调用进程未显式设置端口而连接默认 `28889`，在 pairing Gate 失败；r2 stdout/stderr 与 ext4 state 原样保留，未覆盖或伪装为成功，Gateway 已清理。
+
+3. **`tmp/p1-a1-code-intel-wsl-native-gateway-20260810-r3/` 修复与通过**：
+   - r3 显式固定 RPC `host=127.0.0.1`、`port=28893`、`auth=none`，并清空从 Windows env 带入的 tools policy、extra workspace、webhook/channel 与 Obsidian 路径配置；Gateway health、`agents.roster.get` 自动 pairing 和 1 个 Agent roster 全部通过。
+   - 在同一 ext4 source/dependency 环境、ext4 fixture 和默认 30 秒 deadline 下，VSCode references 用时 `1.161s` 返回 3 项，Express symbols 用时 `0.306s` 返回 2 项，均为 `completed/semantic-live`。
+   - 报告 `native-gateway-smoke-r3.json` 为 `passed`，SHA-256 为 `b6188cff32090f149d6a0d0b4800c4e6cd64e3e22e87e326003d2fe363ae07df`；Gateway/CodeIntel/TypeScript Provider dist 与两层 launcher 共 5 项 identity 均和当前文件一致。
+
+4. **效果**：
+   - WSL Gateway 已从 Windows addon/UNC transport 恢复为 Linux 原生 source、dependency、state 与 CodeIntel workspace 路径；a11 的 3 次 UNC timeout 不再是 attempt 12 的既定运行方式。
+   - 本环节模型调用、付费 Provider 调用、Provider 费用、外部网络调用和 production workspace mutation 均为 0；attempt 12 尚未创建或授权，a11 aggregate 与累计费用 `1.32819672 RMB` 保持不变。
+   - ext4 source 根内 `.env/.env.local` 仍不存在；凭据只在 launcher 子进程内从明确挂载根加载，非 state 日志/报告未出现凭据值或 Windows tools-policy 路径。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误（`corepack pnpm build:incremental`）。
+- 5 个定向测试文件共 41 个测试全部通过；native smoke 另完成 health、pairing、2 个 `semantic-live` 查询与 addon ELF/SQLite 加载验证。
+- r3 报告 `status=passed`、`failure=null`、cleanup=true；3 个非 state JSON/log 敏感模式扫描 0 命中，端口监听与 attempt 进程均为 0。
+- Docker Desktop daemon 的 Windows/WSL 两个只读 `docker ps` 查询均超时，pinned OCI 容器状态本轮无法从 daemon 侧复核；本 smoke 未调用 command sandbox 或创建 OCI，故该项记录为未验证而不推断成功。
+- addon 早期验证曾直接 import 未隔离的 Gateway 入口，进程在缺少 token 退出前解析到 WSL 默认 state，并记录清理 `/home/vrboyzero/.star_sanctuary/storage/attachment-understanding-cache`；未启动 listener，未修改项目源码或 attempt artifact，但该可重建的 attachment-understanding runtime cache 可能已被清空。后续 r2/r3 全部改用独立 ext4 state，未再访问默认 state。
+
+#### 技术债处理
+
+- **`defer`**：Docker Desktop daemon 可用性与 pinned OCI 枚举留待 attempt 12 零费用 readiness 前重新验证；若仍超时，attempt 12 必须失败关闭，不得启动真实 Provider cell。
+- **`split_task`**：ext4 runtime root 已闭合，但 attempt 12 的 source/runtime receipt、双平台 readiness/cohort/pairing/audit 仍需使用新目录重建；本环节不提前创建 attempt 或复用 a11 授权。
+
+#### 后续计划（P1-A1 尚未结束）
+
+- **下一步准备做什么**：暂停后以 ext4 native Gateway root 为运行前置，创建 attempt 12 全新 state/readiness/cohort/pairing/preflight audit，绑定 replay r5、resource soak r4、当前 source/dist identity 与累计费用 `1.32819672 RMB`；先恢复 Docker/OCI 只读 Gate，全部零费用材料通过后再评估 Windows-first 真实运行。
+- **为什么先做它**：native runtime 已排除 ELF 与 UNC transport 混杂，但 a11 的 readiness、pairing 和授权材料仍绑定旧的 Windows-host Gateway 路径，不能直接迁移到新 attempt。
+- **当前还缺的关键闭环**：attempt 12 双平台零费用授权、真实 `semantic-live >=6/8` 且每平台 `>=3/4`、context 改善 Gate、candidate mutation/task/patch/test uplift 与最终 aggregate passed；未闭合前不得推进 P1-A2。
 
 ## 实施计划进度表
 
@@ -1114,7 +1551,7 @@ P1-A1 的 language-neutral contract/fake、官方 TypeScript Language Service li
 |---|---|---|---:|---|
 | 本轮 SS 能力复核与 9.5 增强规划 | - | 已完成 | - | 已复核当前 scorecard、目标向量 `9.510`、C#/Go 投入收益、现成多语言方案与三款竞品一手资料；竞品未做同环境 benchmark |
 | P0：Benchmark v3 与外部有效性 | P0 | 进行中（P0.1-P0.29 已完成；`cost-containment-v1` rollout=`hold_explicit_opt_in`、默认启用/未授权 Provider canary 均禁止、`taskUplift=not_measured`；candidate v1-v3 均=`do_not_promote`，navigation candidate line 已停止；冻结 aggregate 仍为同 identity `6/144`、历史 2/6 passed，三轮 navigation shadow 累计费用复算为 `0.08318752 RMB`） | 14-22 人日 | A/B/C 三层、至少 4 个固定仓与 144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；当前禁止扩展付费矩阵，不含 candidate v4、竞品代跑和公开排行榜 |
-| P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | a8 已完成双平台 `8/8`，aggregate=`blocked`（环境/usage/cost/pairing 有效；Gate 失败为 binary regression `2` 与 semantic adoption `1/8`；16/16 cell 为预算终止，累计 `0.58739376 RMB`、余额 `39.41260624 RMB`）；零费用归因已完成，当前进入 contract/budget 修复切片 | 8-12 人日 | 先通过独立 candidate/tool contract 与 budget-termination fixture/replay，再以全新 attempt/artifact/state 重跑完整 Gate；持续授权范围、模型、平台、定价和 `40 RMB` 上限不变时无需逐次申请；a8 不重跑，不含外部 LSP、Go/C# GA、SCIP store 或 P1-A2 |
+| P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | a8-a11 aggregate=`blocked`；a11 Windows `semantic-live=4/4`、WSL2 `1/4` 的 3 次失败已归因为旧 Windows-host/UNC transport；ext4 Linux dependency root、native Gateway health/pairing 与 2 个 CodeIntel zero-cost smoke 已通过，candidate patch 仍为 `0/8`，累计费用 `1.32819672 RMB` | 8-12 人日 | 下一步创建 attempt 12 全新零费用 readiness/cohort/pairing/audit，并先恢复 Docker/OCI Gate；未通过 native runtime/source/test/replay/preflight 前不启动 Provider，不含外部 LSP、Go/C# GA、SCIP store 或 P1-A2 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | 等待 P1-A1 | 6-11 人日 | 通用进程宿主、pinned `gopls`、Doctor/sandbox/kill-reap、真实 Go Gate；通过后升为 production，并作为当前 9.5 必选第二后端 |
 | P1-A3：C# 条件接入 | 条件 | 延后，等待真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild 执行面、禁止 restore/联网与生命周期；未命中需求 Gate 不进入生产，也不阻断当前 9.5 |
 | P1-B：验证 DAG 与 Browser Relay 闭环 | P1 | 进行中（首切片验证 DAG Schema、changed-path/依赖/Browser 条件选择、四类终态、首次失败与不可覆盖 plan/replay artifact 已完成；16 个定向测试通过，当前保持零命令执行/Provider/mutation） | 10-16 人日 | 下一步接现有 command job 权威结果、预算/取消/exit taxonomy 与 pnpm/Vitest、`go test` 结构化 replay；随后补影响 truth set、失败最小化和 Browser 行为 artifact，不含云浏览器或无条件多 Agent Review |

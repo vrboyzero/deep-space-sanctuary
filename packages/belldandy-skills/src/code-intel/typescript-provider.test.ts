@@ -345,6 +345,50 @@ describe("TypeScriptLanguageServiceProvider", () => {
     });
   });
 
+  it("supports a bounded real-repository project count above 32", async () => {
+    const fixture = await createManyProjectFixture(33);
+    const codeIntel = createFacade();
+
+    const symbols = await codeIntel.query({
+      workspace: { rootPath: fixture.root, revision: "many-projects-revision-1" },
+      operation: "symbols",
+      query: "targetSymbol",
+      requiredCapability: "semantic-live",
+      deadlineAtMs: 2_000,
+    });
+
+    expect(symbols).toMatchObject({
+      ok: true,
+      result: {
+        status: "completed",
+        items: [expect.objectContaining({
+          location: expect.objectContaining({ path: "project-00/index.ts" }),
+        })],
+      },
+    });
+  });
+
+  it("filters trusted TypeScript library symbols without an explicit external root", async () => {
+    const fixture = await createTypeScriptFixture();
+    const codeIntel = createFacade();
+
+    const outcome = await codeIntel.query({
+      workspace: { rootPath: fixture.root, revision: "trusted-lib-revision-1" },
+      operation: "symbols",
+      query: "AbortSignal",
+      requiredCapability: "semantic-live",
+      deadlineAtMs: 2_000,
+    });
+
+    expect(outcome).toMatchObject({
+      ok: true,
+      result: {
+        status: "completed",
+        items: [],
+      },
+    });
+  });
+
   it("requires an explicit external root before resolving dependency evidence", async () => {
     const fixture = await createExternalDependencyFixture();
     const withoutAllowlist = createFacade();
@@ -531,6 +575,25 @@ async function createExternalDependencyFixture() {
   await writeFile(externalFile, "export function externalThing() { return 42; }\n", "utf-8");
   await writeFile(path.join(root, "src", "caller.ts"), callerSource, "utf-8");
   return { root, externalRoot, externalFile, callerSource };
+}
+
+async function createManyProjectFixture(projectCount: number) {
+  const root = await createTemporaryRoot("ss-code-intel-many-projects-");
+  await Promise.all(Array.from({ length: projectCount }, async (_, index) => {
+    const projectName = `project-${String(index).padStart(2, "0")}`;
+    const projectRoot = path.join(root, projectName);
+    await mkdir(projectRoot, { recursive: true });
+    await writeJson(path.join(projectRoot, "tsconfig.json"), {
+      compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext", target: "ES2022" },
+      include: ["index.ts"],
+    });
+    await writeFile(
+      path.join(projectRoot, "index.ts"),
+      index === 0 ? "export const targetSymbol = 1;\n" : `export const value${index} = ${index};\n`,
+      "utf-8",
+    );
+  }));
+  return { root };
 }
 
 async function createTemporaryRoot(prefix: string): Promise<string> {

@@ -1010,6 +1010,7 @@ if (toolsEnabled) {
 const gatewayToolPoolAssembler = new ToolPoolAssembler([
   {
     tools: [
+      codeIntelTool,
       fetchTool,
       applyPatchTool,
       fileReadTool,
@@ -1019,7 +1020,6 @@ const gatewayToolPoolAssembler = new ToolPoolAssembler([
       listFilesTool,
       textSearchTool,
       fileGlobTool,
-      codeIntelTool,
       createMemorySearchTool(),
       createMemoryGetTool(),
       memoryReadTool,

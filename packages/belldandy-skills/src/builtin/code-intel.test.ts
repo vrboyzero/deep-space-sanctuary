@@ -104,12 +104,33 @@ describe("code_intel tool", () => {
         observedAtMs: expect.any(Number),
       },
       diagnostics: [],
+      nextAction: {
+        action: "inspect_returned_source_then_mutate_or_verify",
+        targetPaths: ["src/greeter.ts"],
+        instruction: expect.stringContaining("before any further broad exploration"),
+      },
     });
     expect(result.metadata).toMatchObject({
       providerId: "typescript-language-service",
       capability: "semantic-live",
       returnedCount: 1,
       truncated: false,
+    });
+  });
+
+  it("publishes an adoption and post-query progress contract to coding agents", () => {
+    const tool = createCodeIntelTool({ codeIntel });
+
+    expect(tool.definition.description).toContain("PRIMARY TS/JS NAVIGATION TOOL");
+    expect(tool.definition.description).toContain("call code_intel before list_files");
+    expect(tool.definition.description).toContain("Start with symbols and one identifier from the task");
+    expect(tool.definition.description).toContain("before any further broad exploration");
+    expect(tool.definition.parameters).toMatchObject({
+      properties: {
+        query: {
+          description: expect.stringContaining("extract one identifier from the task"),
+        },
+      },
     });
   });
 

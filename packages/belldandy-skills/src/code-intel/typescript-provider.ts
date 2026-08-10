@@ -14,7 +14,7 @@ import type {
   CodeIntelProviderResult,
 } from "./types.js";
 
-const DEFAULT_MAX_PROJECTS = 32;
+const DEFAULT_MAX_PROJECTS = 64;
 const DEFAULT_MAX_FILES = 20_000;
 const DEFAULT_MAX_WORKSPACE_SESSIONS = 4;
 const DEFAULT_RESULT_LIMIT = 50;
@@ -134,7 +134,12 @@ export class TypeScriptLanguageServiceProvider implements CodeIntelProvider {
     }
 
     const items = deduplicateEvidence(spans.flatMap((span) => {
-      const item = toEvidenceItem(span, session.rootPath, projects);
+      const item = toEvidenceItem(
+        span,
+        session.rootPath,
+        request.workspace.externalRoots ?? [],
+        projects,
+      );
       return item === undefined ? [] : [item];
     }));
     const pageItems = items.slice(offset, offset + limit);
@@ -476,6 +481,7 @@ function findSymbolNameSpan(
 function toEvidenceItem(
   span: EvidenceSpan,
   workspaceRoot: string,
+  externalRoots: string[],
   projects: ProjectSession[],
 ): CodeIntelEvidenceItem | undefined {
   const fileName = path.resolve(span.fileName);
@@ -489,6 +495,9 @@ function toEvidenceItem(
   const start = ts.getLineAndCharacterOfPosition(sourceFile, span.textSpan.start);
   const end = ts.getLineAndCharacterOfPosition(sourceFile, span.textSpan.start + span.textSpan.length);
   const insideWorkspace = isPathInside(workspaceRoot, fileName);
+  if (!insideWorkspace && !externalRoots.some((root) => isPathInside(root, fileName))) {
+    return undefined;
+  }
   return {
     location: {
       scope: insideWorkspace ? "workspace" : "external",

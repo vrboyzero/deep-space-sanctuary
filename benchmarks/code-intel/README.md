@@ -72,3 +72,16 @@ corepack pnpm benchmark:code-intel:agent-uplift --mode aggregate --windows-root 
 `--attempt` 默认为 `1`，并同时绑定 platform report、pair/cell ID、benchmark run ID 与底层 suite attempt。若先前 attempt 已失败关闭，只能在用户明确决定继续后使用全新 artifact 根和递增 attempt；例如新的第二次实验必须在 Windows/WSL2 两端都传入 `--attempt 2`。aggregate 会拒绝两端 attempt 不一致，旧 attempt artifact 继续保留且不得覆盖或改写。
 
 真实运行需要外部已隔离 Gateway 和显式 Provider/模型/费用授权。凭据只能由 Gateway 进程环境注入，不得进入命令参数、报告或仓库文件；本流程不修改冻结 P0 aggregate，也不推进默认成本策略 rollout。
+
+## P1-A1 candidate/tool contract 与预算终止离线 replay
+
+`v1/agent-uplift-contract-replay.schema.json` 与 `run-code-intel-agent-uplift-contract-replay.mjs` 把失败关闭的 a8 aggregate 绑定为只读输入，独立复算 candidate 的四类可观察结果：未调用 `code_intel`、调用失败、`semantic-live` 成功但没有 mutation，以及 `budget_exhausted`。预算 fixture 直接使用生产 `ReActRunBudgetTracker` 的普通 profile，把 `24001` 个 observed token 对 `24000` 上限的终止结果固定为 `total_tokens`；它不启用 `cost-containment-v1`，也不改变 ToolAgent、candidate profile 或 uplift aggregate。
+
+Windows 与 WSL2 必须从同一 a8 aggregate SHA-256 和同一源码树执行，并使用全新输出目录：
+
+```powershell
+corepack pnpm benchmark:code-intel:agent-uplift-contract-replay --platform windows-native --source-root . --uplift-report <a8-root>/aggregate/agent-uplift-report.json --expected-uplift-report-sha256 <a8-report-sha256> --output-root <fresh-artifact-root>/windows-native
+wsl.exe --distribution Ubuntu-22.04 --cd /mnt/e/project/star-sanctuary --exec node scripts/run-code-intel-agent-uplift-contract-replay.mjs --platform wsl2-linux --source-root /mnt/e/project/star-sanctuary --uplift-report <mounted-a8-root>/aggregate/agent-uplift-report.json --expected-uplift-report-sha256 <a8-report-sha256> --output-root <mounted-fresh-artifact-root>/wsl2-linux
+```
+
+runner 要求 source report 保持 attempt 8、8 个 pair 和固定两项 Gate failure，并记录 replay、uplift runner 与生产预算 owner 的源码 SHA-256。报告固定 `taskUplift=not_measured`、`candidatePromotionEligible=false`、`newAttemptEligible=false`，且 Gateway、模型、Provider、网络、host command、费用和 workspace mutation 均为 0。该证据只关闭失败分类与预算终止合同，不代表 candidate 已修复，也不授权创建新 attempt。

@@ -1,0 +1,331 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/code-intel-agent-uplift-contract-replay-v1.json",
+  "title": "CodeIntel Agent Uplift Candidate Tool Contract Replay v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "generatedAt", "status", "platform", "candidateId", "contract",
+    "source", "observedCoverage", "observedOutcomes", "fixtures", "decision", "execution",
+    "diagnostics"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "code-intel-agent-uplift-contract-replay/v1" },
+    "generatedAt": { "$ref": "#/$defs/timestamp" },
+    "status": { "const": "completed" },
+    "platform": { "enum": ["windows-native", "wsl2-linux"] },
+    "candidateId": { "const": "code-intel-semantic-live-v1" },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "requiredTool", "requiredCapability", "mutationEvidence", "terminalEvidence",
+        "budgetOwner"
+      ],
+      "properties": {
+        "id": { "const": "code-intel-candidate-tool-contract-v1" },
+        "requiredTool": { "const": "code_intel" },
+        "requiredCapability": { "const": "semantic-live" },
+        "mutationEvidence": { "const": "contextWaste.firstMutationTool" },
+        "terminalEvidence": { "const": "provider.terminalErrorCode" },
+        "budgetOwner": { "const": "ReActRunBudgetTracker" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "upliftReportSha256", "upliftReportStatus", "attempt", "gateFailures", "runtimeSources"
+      ],
+      "properties": {
+        "upliftReportSha256": { "$ref": "#/$defs/sha256" },
+        "upliftReportStatus": { "const": "blocked" },
+        "attempt": { "const": 8 },
+        "gateFailures": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            { "const": "binary_outcome_regression" },
+            { "const": "semantic_adoption_below_gate" }
+          ],
+          "items": false
+        },
+        "runtimeSources": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/runtimeSource",
+              "properties": {
+                "path": { "const": "scripts/run-code-intel-agent-uplift-contract-replay.mjs" }
+              }
+            },
+            {
+              "$ref": "#/$defs/runtimeSource",
+              "properties": {
+                "path": { "const": "scripts/run-code-intel-agent-uplift.mjs" }
+              }
+            },
+            {
+              "$ref": "#/$defs/runtimeSource",
+              "properties": {
+                "path": { "const": "packages/belldandy-agent/src/react-run-budget.ts" }
+              }
+            },
+            {
+              "$ref": "#/$defs/runtimeSource",
+              "properties": {
+                "path": { "const": "packages/belldandy-skills/src/builtin/code-intel.ts" }
+              }
+            },
+            {
+              "$ref": "#/$defs/runtimeSource",
+              "properties": {
+                "path": { "const": "packages/belldandy-skills/src/code-intel/typescript-provider.ts" }
+              }
+            }
+          ],
+          "items": false
+        }
+      }
+    },
+    "observedCoverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateCount", "toolNotInvokedCount", "toolFailedCount",
+        "toolSucceededWithoutMutationCount", "budgetExhaustedCount", "allRequiredOutcomesCovered"
+      ],
+      "properties": {
+        "candidateCount": { "const": 8 },
+        "toolNotInvokedCount": { "const": 5 },
+        "toolFailedCount": { "const": 2 },
+        "toolSucceededWithoutMutationCount": { "const": 1 },
+        "budgetExhaustedCount": { "const": 8 },
+        "allRequiredOutcomesCovered": { "const": true }
+      }
+    },
+    "observedOutcomes": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": { "$ref": "#/$defs/outcome" }
+    },
+    "fixtures": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "prefixItems": [
+        { "$ref": "#/$defs/toolNotInvokedFixture" },
+        { "$ref": "#/$defs/toolFailedFixture" },
+        { "$ref": "#/$defs/toolSucceededWithoutMutationFixture" },
+        { "$ref": "#/$defs/budgetExhaustedFixture" }
+      ],
+      "items": false
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status", "taskUplift", "candidatePromotionEligible", "newAttemptEligible", "nextAction"
+      ],
+      "properties": {
+        "status": { "const": "blocked" },
+        "taskUplift": { "const": "not_measured" },
+        "candidatePromotionEligible": { "const": false },
+        "newAttemptEligible": { "const": false },
+        "nextAction": { "const": "fix_candidate_tool_and_budget_contract" }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode", "gatewayCalls", "modelCalls", "providerCalls", "providerCostCny", "networkCalls",
+        "hostCommandToolCalls", "workspaceMutations", "credentialsRead", "upliftReportModified"
+      ],
+      "properties": {
+        "mode": { "const": "offline-replay" },
+        "gatewayCalls": { "const": 0 },
+        "modelCalls": { "const": 0 },
+        "providerCalls": { "const": 0 },
+        "providerCostCny": { "const": 0 },
+        "networkCalls": { "const": 0 },
+        "hostCommandToolCalls": { "const": 0 },
+        "workspaceMutations": { "const": 0 },
+        "credentialsRead": { "const": false },
+        "upliftReportModified": { "const": false }
+      }
+    },
+    "diagnostics": { "const": [] }
+  },
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "runtimeSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "semanticInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["successfulCallCount", "failedCallCount", "capabilities"],
+      "properties": {
+        "successfulCallCount": { "type": "integer", "minimum": 0 },
+        "failedCallCount": { "type": "integer", "minimum": 0 },
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "const": "semantic-live" }
+        }
+      }
+    },
+    "candidateInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scenarioId", "semantic", "contextWaste", "provider"],
+      "properties": {
+        "scenarioId": { "type": "string", "minLength": 1 },
+        "semantic": { "$ref": "#/$defs/semanticInput" },
+        "contextWaste": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["firstMutationTool"],
+          "properties": {
+            "firstMutationTool": {
+              "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+            }
+          }
+        },
+        "provider": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["terminalErrorCode"],
+          "properties": {
+            "terminalErrorCode": {
+              "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+            }
+          }
+        }
+      }
+    },
+    "observations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "toolInvoked", "semanticLiveSucceeded", "toolFailed", "mutationObserved", "budgetExhausted"
+      ],
+      "properties": {
+        "toolInvoked": { "type": "boolean" },
+        "semanticLiveSucceeded": { "type": "boolean" },
+        "toolFailed": { "type": "boolean" },
+        "mutationObserved": { "type": "boolean" },
+        "budgetExhausted": { "type": "boolean" }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scenarioId", "observations", "decision"],
+      "properties": {
+        "scenarioId": { "type": "string", "minLength": 1 },
+        "observations": { "$ref": "#/$defs/observations" },
+        "decision": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "primaryReason", "taskUplift", "nextAction", "newAttemptEligible"],
+          "properties": {
+            "status": { "const": "blocked" },
+            "primaryReason": {
+              "enum": [
+                "tool_not_invoked", "tool_failed", "tool_succeeded_without_mutation", "budget_exhausted"
+              ]
+            },
+            "taskUplift": { "const": "not_measured" },
+            "nextAction": {
+              "enum": [
+                "require_semantic_tool_adoption", "diagnose_semantic_tool_failure",
+                "require_post_tool_progress_or_safe_diagnosis", "terminate_without_task_uplift_claim"
+              ]
+            },
+            "newAttemptEligible": { "const": false }
+          }
+        }
+      }
+    },
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scenarioId", "input", "outcome"],
+      "properties": {
+        "scenarioId": { "type": "string", "minLength": 1 },
+        "input": { "$ref": "#/$defs/candidateInput" },
+        "outcome": { "$ref": "#/$defs/outcome" }
+      }
+    },
+    "toolNotInvokedFixture": {
+      "allOf": [
+        { "$ref": "#/$defs/fixture" },
+        { "properties": { "scenarioId": { "const": "tool-not-invoked" } } }
+      ]
+    },
+    "toolFailedFixture": {
+      "allOf": [
+        { "$ref": "#/$defs/fixture" },
+        { "properties": { "scenarioId": { "const": "tool-failed" } } }
+      ]
+    },
+    "toolSucceededWithoutMutationFixture": {
+      "allOf": [
+        { "$ref": "#/$defs/fixture" },
+        { "properties": { "scenarioId": { "const": "tool-succeeded-without-mutation" } } }
+      ]
+    },
+    "budgetExhaustedFixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scenarioId", "input", "outcome", "budgetReplay"],
+      "properties": {
+        "scenarioId": { "const": "budget-exhausted" },
+        "input": { "$ref": "#/$defs/candidateInput" },
+        "outcome": { "$ref": "#/$defs/outcome" },
+        "budgetReplay": { "$ref": "#/$defs/budgetReplay" }
+      }
+    },
+    "budgetReplay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policyEnabled", "maxTotalTokens", "recordedTokens", "termination",
+        "providerDispatchAllowedAfterTermination", "taskUplift"
+      ],
+      "properties": {
+        "policyEnabled": { "const": false },
+        "maxTotalTokens": { "const": 24000 },
+        "recordedTokens": { "const": 24001 },
+        "termination": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["budget", "limit", "observed"],
+          "properties": {
+            "budget": { "const": "total_tokens" },
+            "limit": { "const": 24000 },
+            "observed": { "const": 24001 }
+          }
+        },
+        "providerDispatchAllowedAfterTermination": { "const": false },
+        "taskUplift": { "const": "not_measured" }
+      }
+    }
+  }
+}

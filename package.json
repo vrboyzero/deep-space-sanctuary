@@ -74,6 +74,7 @@
     "benchmark:code-intel:resource-soak": "node --expose-gc scripts/run-code-intel-resource-soak.mjs",
     "benchmark:code-intel:agent-uplift-readiness": "node scripts/run-code-intel-agent-uplift-readiness.mjs",
     "benchmark:code-intel:agent-uplift": "node scripts/run-code-intel-agent-uplift.mjs",
+    "benchmark:code-intel:agent-uplift-contract-replay": "node scripts/run-code-intel-agent-uplift-contract-replay.mjs",
     "benchmark:channel-ingress": "node --import tsx scripts/run-channel-ingress-benchmark.mjs",
     "benchmark:tool-catalog": "node --import tsx scripts/run-tool-catalog-benchmark.mjs",
     "benchmark:mcp-in-memory": "node --import tsx scripts/run-mcp-in-memory-benchmark.mjs",

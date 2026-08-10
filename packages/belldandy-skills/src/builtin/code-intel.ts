@@ -52,7 +52,7 @@ export function createCodeIntelTool(options: CreateCodeIntelToolOptions = {}): T
   return withToolContract({
     definition: {
       name: CODE_INTEL_TOOL_NAME,
-      description: "查询当前 coding workspace 的实时语义符号、定义、引用或实现。结果路径与 line/column 均为工作区相对、0-based 坐标；只返回 semantic-live 证据，不访问外部根。",
+      description: "PRIMARY TS/JS NAVIGATION TOOL. For a coding task that names or implies a symbol, API, function, class, method, behavior, or reference, call code_intel before list_files, broad glob/search, or whole-file reads. Start with symbols and one identifier from the task; do not inspect the tree first. Query live workspace symbols, definitions, references, or implementations. Paths and line/column are workspace-relative and 0-based; results are read-only semantic-live evidence and never access external roots. After success, inspect only the returned paths/ranges and perform the requested mutation or verification before any further broad exploration. After failure, change the arguments or fall back instead of repeating the same call.",
       parameters: {
         type: "object",
         properties: {
@@ -63,7 +63,7 @@ export function createCodeIntelTool(options: CreateCodeIntelToolOptions = {}): T
           },
           query: {
             type: "string",
-            description: "symbols 操作必填的符号名称或子串",
+            description: "For symbols, extract one identifier from the task and provide that single identifier or a short substring, not a natural-language phrase.",
           },
           path: {
             type: "string",
@@ -126,7 +126,21 @@ export function createCodeIntelTool(options: CreateCodeIntelToolOptions = {}): T
         }
 
         const payload = projectCodeIntelQueryResult(outcome.result);
-        const output = JSON.stringify(payload);
+        const targetPaths = [...new Set(
+          payload.items.map((item) => item.location.path),
+        )].slice(0, 3);
+        const nextAction = targetPaths.length > 0
+          ? {
+              action: "inspect_returned_source_then_mutate_or_verify",
+              targetPaths,
+              instruction: "Inspect the returned paths/ranges, then perform the requested mutation or verification before any further broad exploration.",
+            }
+          : {
+              action: "refine_identifier_or_fallback",
+              targetPaths: [],
+              instruction: "Retry once with one identifier from the task, then use bounded file search if no workspace evidence is returned.",
+            };
+        const output = JSON.stringify({ ...payload, nextAction });
         const maxResponseBytes = normalizeResponseByteLimit(context.policy.maxResponseBytes);
         if (Buffer.byteLength(output, "utf-8") > maxResponseBytes) {
           return makeError(
