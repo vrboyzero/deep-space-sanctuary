@@ -249,6 +249,46 @@ test("bdd doctor json output includes tool behavior observability", async () => 
   }
 }, CLI_DOCTOR_TEST_TIMEOUT_MS);
 
+test("bdd doctor json exposes inactive Go CodeIntel capability", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-cli-code-intel-doctor-"));
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+  try {
+    await withEnv({
+      BELLDANDY_CODE_INTEL_GO_ENABLED: "false",
+      BELLDANDY_CODE_INTEL_GOPLS_COMMAND: "C:\\private\\gopls.exe",
+      BELLDANDY_CODE_INTEL_GO_COMMAND: "C:\\private\\go.exe",
+    }, async () => {
+      await doctorCommand.run?.({
+        args: {
+          json: true,
+          "state-dir": stateDir,
+        },
+      } as never);
+    });
+
+    const output = String(logSpy.mock.calls.at(-1)?.[0] ?? "");
+    const parsed = JSON.parse(output);
+    expect(parsed.codeIntelGo).toMatchObject({
+      summary: {
+        status: "inactive",
+        active: false,
+        canaryReady: false,
+        productionEligible: false,
+      },
+    });
+    expect(parsed.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: "Go CodeIntel",
+        status: "pass",
+      }),
+    ]));
+    expect(JSON.stringify(parsed.codeIntelGo)).not.toContain("C:\\private");
+  } finally {
+    await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+}, CLI_DOCTOR_TEST_TIMEOUT_MS);
+
 test("bdd doctor accepts pnpm resolved via corepack", async () => {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-cli-doctor-corepack-"));
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});

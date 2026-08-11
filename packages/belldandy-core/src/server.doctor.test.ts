@@ -345,6 +345,67 @@ test("system.doctor exposes tool behavior observability summary", async () => {
   }
 });
 
+test("system.doctor exposes inactive Go CodeIntel capability independently", async () => {
+  await withEnv({
+    BELLDANDY_CODE_INTEL_GO_ENABLED: "false",
+    BELLDANDY_CODE_INTEL_GOPLS_COMMAND: "C:\\private\\gopls.exe",
+    BELLDANDY_CODE_INTEL_GO_COMMAND: "C:\\private\\go.exe",
+  }, async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-code-intel-doctor-"));
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+    });
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+    const frames: any[] = [];
+    const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+    ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+    try {
+      await pairWebSocketClient(ws, frames, stateDir);
+      ws.send(JSON.stringify({
+        type: "req",
+        id: "system-doctor-code-intel-go",
+        method: "system.doctor",
+        params: {},
+      }));
+      await waitFor(() => frames.some((frame) => (
+        frame.type === "res"
+        && frame.id === "system-doctor-code-intel-go"
+        && frame.ok === true
+      )));
+
+      const response = frames.find((frame) => frame.id === "system-doctor-code-intel-go");
+      expect(response.payload?.codeIntelGo).toMatchObject({
+        summary: {
+          status: "inactive",
+          active: false,
+          canaryReady: false,
+          productionEligible: false,
+        },
+        configuration: {
+          goplsCommandConfigured: true,
+          goCommandConfigured: true,
+        },
+      });
+      expect(response.payload?.checks).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: "code_intel_go",
+          status: "pass",
+        }),
+      ]));
+      expect(JSON.stringify(response.payload?.codeIntelGo)).not.toContain("C:\\private");
+    } finally {
+      ws.close();
+      await closeP;
+      await server.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+});
+
 test("system.doctor exposes dream runtime summary", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
   const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-dream-doctor-"));

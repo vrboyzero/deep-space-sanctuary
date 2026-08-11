@@ -210,6 +210,7 @@ export {
   type CommandJobReadResult,
   type CommandJobSnapshot,
   type CommandJobStatus,
+  type CommandJobTerminationReason,
 } from "./command-job.js";
 export {
   bridgeTargetListTool,

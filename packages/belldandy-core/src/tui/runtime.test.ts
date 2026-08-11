@@ -731,6 +731,7 @@ describe("CodingTuiRuntime", () => {
         createdAt: 1,
         updatedAt: 3,
         endedAt: 3,
+        terminationReason: "cancelled",
         supportsResize: false,
         oldestCursor: 0,
         nextCursor: 0,
@@ -752,7 +753,11 @@ describe("CodingTuiRuntime", () => {
       invokeGateway,
     });
 
-    await expect(runtime.cancelCommandJob(jobId)).resolves.toMatchObject({ jobId, status: "cancelled" });
+    await expect(runtime.cancelCommandJob(jobId)).resolves.toMatchObject({
+      jobId,
+      status: "cancelled",
+      terminationReason: "cancelled",
+    });
     expect(invokeGateway).toHaveBeenCalledWith(expect.objectContaining({
       method: "command.job.cancel",
       params: { jobId },

@@ -89,7 +89,88 @@
         "strategy": { "const": "changed-paths-v1" },
         "scope": { "enum": ["targeted", "expanded", "browser"] },
         "expanded": { "type": "boolean" },
-        "reason": { "enum": ["affected-paths", "scope-unavailable", "browser-required", "no-nodes"] }
+        "reason": { "enum": ["affected-paths", "scope-unavailable", "impact-unknown", "impact-evidence", "browser-required", "no-nodes"] },
+        "impactEvidence": { "$ref": "#/$defs/impactEvidence" }
+      }
+    },
+    "impactEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "revision", "sources", "coverage"],
+      "properties": {
+        "schemaVersion": { "const": "verification-impact-evidence/v1" },
+        "revision": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["commit", "workspaceHash"],
+          "properties": {
+            "commit": { "type": "string", "pattern": "^[0-9a-f]{7,64}$" },
+            "workspaceHash": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "kind", "contractVersion", "status", "artifact"],
+            "properties": {
+              "id": { "$ref": "#/$defs/id" },
+              "kind": { "enum": ["code-intel-reference", "project-dependency"] },
+              "contractVersion": { "enum": ["code-intel/v1", "project-dependency/v1"] },
+              "status": { "enum": ["complete", "partial"] },
+              "artifact": { "$ref": "#/$defs/evidence" }
+            },
+            "allOf": [
+              {
+                "oneOf": [
+                  {
+                    "properties": {
+                      "kind": { "const": "code-intel-reference" },
+                      "contractVersion": { "const": "code-intel/v1" }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "kind": { "const": "project-dependency" },
+                      "contractVersion": { "const": "project-dependency/v1" }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "coverage": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["changedPath", "status", "sourceIds", "impactedPaths"],
+            "properties": {
+              "changedPath": { "$ref": "#/$defs/relativePath" },
+              "status": { "enum": ["complete", "partial"] },
+              "sourceIds": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 16,
+                "uniqueItems": true,
+                "items": { "$ref": "#/$defs/id" }
+              },
+              "impactedPaths": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 512,
+                "uniqueItems": true,
+                "items": { "$ref": "#/$defs/relativePath" }
+              }
+            }
+          }
+        }
       }
     },
     "node": {
@@ -115,6 +196,7 @@
         "status": { "enum": ["planned", "passed", "failed", "skipped", "timed_out", "cancelled", "not_run"] },
         "attempts": {
           "type": "array",
+          "maxItems": 3,
           "items": { "$ref": "#/$defs/attempt" }
         },
         "firstFailure": {
@@ -122,7 +204,8 @@
             { "$ref": "#/$defs/failure" },
             { "type": "null" }
           ]
-        }
+        },
+        "replay": { "$ref": "#/$defs/replaySummary" }
       }
     },
     "attempt": {
@@ -130,9 +213,309 @@
       "additionalProperties": false,
       "required": ["attempt", "status"],
       "properties": {
-        "attempt": { "type": "integer", "const": 1 },
+        "attempt": { "type": "integer", "minimum": 1, "maximum": 3 },
         "status": { "enum": ["passed", "failed", "skipped", "timed_out", "cancelled", "not_run"] },
-        "evidence": { "$ref": "#/$defs/evidence" }
+        "evidence": { "$ref": "#/$defs/evidence" },
+        "commandJob": { "$ref": "#/$defs/commandJobReplay" },
+        "testReport": { "$ref": "#/$defs/testReportReplay" },
+        "browserReport": { "$ref": "#/$defs/browserReportReplay" },
+        "replayEvidence": { "$ref": "#/$defs/replayEvidence" }
+      }
+    },
+    "nullableNonNegativeInteger": {
+      "anyOf": [
+        { "type": "integer", "minimum": 0 },
+        { "type": "null" }
+      ]
+    },
+    "nullablePositiveInteger": {
+      "anyOf": [
+        { "type": "integer", "minimum": 1 },
+        { "type": "null" }
+      ]
+    },
+    "commandJobReplay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jobId", "status", "terminationReason", "exit", "timing", "recoveryLifecycle"],
+      "properties": {
+        "jobId": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[1-5][a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$"
+        },
+        "status": { "enum": ["completed", "failed", "cancelled", "lost"] },
+        "terminationReason": {
+          "anyOf": [
+            { "enum": ["cancelled", "timed_out"] },
+            { "type": "null" }
+          ]
+        },
+        "exit": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["taxonomy", "exitCode", "signal"],
+          "properties": {
+            "taxonomy": {
+              "enum": ["zero_exit", "non_zero_exit", "signal", "runtime_error", "timed_out", "cancelled", "cancellation_failed", "owner_lost"]
+            },
+            "exitCode": { "$ref": "#/$defs/nullableNonNegativeInteger" },
+            "signal": {
+              "anyOf": [
+                { "type": "string", "minLength": 1, "maxLength": 64 },
+                { "type": "integer" },
+                { "type": "null" }
+              ]
+            }
+          }
+        },
+        "timing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["timeoutMs", "deadlineAt", "endedAt", "budgetExhausted"],
+          "properties": {
+            "timeoutMs": { "$ref": "#/$defs/nullablePositiveInteger" },
+            "deadlineAt": { "$ref": "#/$defs/nullablePositiveInteger" },
+            "endedAt": { "$ref": "#/$defs/nullablePositiveInteger" },
+            "budgetExhausted": { "type": "boolean" }
+          }
+        },
+        "recoveryLifecycle": { "enum": ["settled", "lost"] }
+      }
+    },
+    "testReportCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "passed", "failed", "skipped"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "testReportTestCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "passed", "failed", "skipped", "todo"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 },
+        "todo": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "testReportReplay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["framework", "format", "runnerVersion", "artifact", "status", "reason", "groupKind", "groups", "tests", "failedBuilds"],
+      "properties": {
+        "framework": { "enum": ["vitest", "go-test"] },
+        "format": { "enum": ["vitest-json/v3.2.7", "go-test-json/v1"] },
+        "runnerVersion": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "artifact": { "$ref": "#/$defs/evidence" },
+        "status": { "enum": ["passed", "failed", "incomplete"] },
+        "reason": { "enum": ["all_tests_passed", "test_failures", "no_tests_executed", "runner_incomplete"] },
+        "groupKind": { "enum": ["suite", "package"] },
+        "groups": { "$ref": "#/$defs/testReportCounts" },
+        "tests": { "$ref": "#/$defs/testReportTestCounts" },
+        "failedBuilds": { "type": "integer", "minimum": 0 }
+      },
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "framework": { "const": "vitest" },
+                "format": { "const": "vitest-json/v3.2.7" },
+                "runnerVersion": { "const": "3.2.7" },
+                "groupKind": { "const": "suite" },
+                "failedBuilds": { "const": 0 }
+              }
+            },
+            {
+              "properties": {
+                "framework": { "const": "go-test" },
+                "format": { "const": "go-test-json/v1" },
+                "runnerVersion": { "pattern": "^go1\\.(?:2[0-9]|[3-9][0-9])(?:\\.\\d+)?$" },
+                "groupKind": { "const": "package" }
+              }
+            }
+          ]
+        },
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "status": { "const": "passed" },
+                "reason": { "const": "all_tests_passed" }
+              }
+            },
+            {
+              "properties": {
+                "status": { "const": "failed" },
+                "reason": { "const": "test_failures" }
+              }
+            },
+            {
+              "properties": {
+                "status": { "const": "incomplete" },
+                "reason": { "enum": ["no_tests_executed", "runner_incomplete"] }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "browserReportReplay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "runner", "source", "revision", "observedAt", "route", "viewport", "status", "reason", "page", "dom", "console", "requests", "screenshot", "lifecycle"],
+      "properties": {
+        "schemaVersion": { "const": "verification-browser-evidence/v1" },
+        "runner": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "contractVersion"],
+          "properties": {
+            "id": { "const": "browser-relay" },
+            "contractVersion": { "const": "browser-relay/v1" }
+          }
+        },
+        "source": { "$ref": "#/$defs/evidence" },
+        "revision": { "$ref": "#/$defs/browserRevision" },
+        "observedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+        },
+        "route": { "$ref": "#/$defs/browserRoute" },
+        "viewport": { "$ref": "#/$defs/browserViewport" },
+        "status": { "enum": ["passed", "failed", "incomplete"] },
+        "reason": { "enum": ["all_checks_passed", "page_load_failed", "dom_assertion_failed", "console_error", "request_failure", "lifecycle_incomplete"] },
+        "page": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["loaded", "finalRoute"],
+          "properties": {
+            "loaded": { "type": "boolean" },
+            "finalRoute": { "$ref": "#/$defs/browserRoute" }
+          }
+        },
+        "dom": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["changed", "beforeSha256", "afterSha256", "assertions"],
+          "properties": {
+            "changed": { "type": "boolean" },
+            "beforeSha256": { "$ref": "#/$defs/sha256" },
+            "afterSha256": { "$ref": "#/$defs/sha256" },
+            "assertions": { "$ref": "#/$defs/browserAssertions" }
+          }
+        },
+        "console": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["errorCount", "warningCount"],
+          "properties": {
+            "errorCount": { "type": "integer", "minimum": 0 },
+            "warningCount": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "requests": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["observedCount", "failedCount", "blockedExternalCount", "assertions", "outcomes"],
+          "properties": {
+            "observedCount": { "type": "integer", "minimum": 0 },
+            "failedCount": { "type": "integer", "minimum": 0 },
+            "blockedExternalCount": { "type": "integer", "minimum": 0 },
+            "assertions": { "$ref": "#/$defs/browserAssertions" },
+            "outcomes": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 50,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/browserRequestOutcome" }
+            }
+          }
+        },
+        "screenshot": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["artifact", "bytes", "width", "height"],
+          "properties": {
+            "artifact": { "$ref": "#/$defs/evidence" },
+            "bytes": { "type": "integer", "minimum": 1, "maximum": 5242880 },
+            "width": { "type": "integer", "minimum": 1, "maximum": 16384 },
+            "height": { "type": "integer", "minimum": 1, "maximum": 16384 }
+          }
+        },
+        "lifecycle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "pageClosed", "browserClosed", "pendingRequestCount", "orphanResourceCount"],
+          "properties": {
+            "status": { "enum": ["settled", "incomplete"] },
+            "pageClosed": { "type": "boolean" },
+            "browserClosed": { "type": "boolean" },
+            "pendingRequestCount": { "type": "integer", "minimum": 0 },
+            "orphanResourceCount": { "type": "integer", "minimum": 0 }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "oneOf": [
+            { "properties": { "status": { "const": "passed" }, "reason": { "const": "all_checks_passed" } } },
+            { "properties": { "status": { "const": "failed" }, "reason": { "enum": ["page_load_failed", "dom_assertion_failed", "console_error", "request_failure"] } } },
+            { "properties": { "status": { "const": "incomplete" }, "reason": { "const": "lifecycle_incomplete" } } }
+          ]
+        }
+      ]
+    },
+    "browserRevision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "workspaceHash"],
+      "properties": {
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{7,64}$" },
+        "workspaceHash": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "browserRoute": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "^/[^?#\\\\]*$"
+    },
+    "browserViewport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height", "deviceScaleFactor"],
+      "properties": {
+        "width": { "type": "integer", "minimum": 320, "maximum": 4096 },
+        "height": { "type": "integer", "minimum": 240, "maximum": 4096 },
+        "deviceScaleFactor": { "type": "number", "minimum": 1, "maximum": 4 }
+      }
+    },
+    "browserAssertions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "failed"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "failed": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "browserRequestOutcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "route", "status", "count"],
+      "properties": {
+        "method": { "enum": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] },
+        "route": { "$ref": "#/$defs/browserRoute" },
+        "status": { "type": "integer", "minimum": 100, "maximum": 599 },
+        "count": { "type": "integer", "minimum": 1, "maximum": 10000 }
       }
     },
     "failure": {
@@ -154,6 +537,46 @@
         "sha256": { "$ref": "#/$defs/sha256" }
       }
     },
+    "replayBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["environmentHash", "inputHash"],
+      "properties": {
+        "environmentHash": { "$ref": "#/$defs/sha256" },
+        "inputHash": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "replayEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["binding", "failureFingerprint"],
+      "properties": {
+        "binding": { "$ref": "#/$defs/replayBinding" },
+        "failureFingerprint": {
+          "anyOf": [
+            { "$ref": "#/$defs/sha256" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "replaySummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxAttempts", "replayCount", "classification", "binding", "failureFingerprint"],
+      "properties": {
+        "maxAttempts": { "type": "integer", "const": 3 },
+        "replayCount": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "classification": { "enum": ["not_requested", "reproducible_failure", "flaky", "incomplete", "non_reproducible"] },
+        "binding": { "$ref": "#/$defs/replayBinding" },
+        "failureFingerprint": {
+          "anyOf": [
+            { "$ref": "#/$defs/sha256" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
     "execution": {
       "type": "object",
       "additionalProperties": false,
@@ -168,8 +591,20 @@
           "additionalProperties": false,
           "required": ["maxAttempts", "preserveFirstFailure"],
           "properties": {
-            "maxAttempts": { "type": "integer", "const": 1 },
+            "maxAttempts": { "type": "integer", "const": 3 },
             "preserveFirstFailure": { "const": true }
+          }
+        },
+        "replay": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["authority", "source", "snapshotCount", "terminalOnly"],
+          "properties": {
+            "authority": { "const": "command-job" },
+            "source": { "const": "terminal-snapshot" },
+            "snapshotCount": { "type": "integer", "minimum": 0 },
+            "terminalOnly": { "const": true },
+            "testReportCount": { "type": "integer", "minimum": 1 }
           }
         }
       }

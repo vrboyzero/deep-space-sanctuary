@@ -11,6 +11,40 @@ import {
 const workspaceRoot = path.resolve("fixtures/code-intel-workspace");
 
 describe("CodeIntel.query", () => {
+  it("waits for asynchronous Provider disposal and disposes each Provider once", async () => {
+    let releaseDispose: (() => void) | undefined;
+    let disposeCalls = 0;
+    const codeIntel = new CodeIntel({
+      providers: [{
+        profile: {
+          id: "async-dispose",
+          version: "1.0.0",
+          status: "available",
+          operations: ["symbols"],
+          capabilities: ["semantic-live"],
+        },
+        async query() {
+          return providerResult();
+        },
+        async dispose() {
+          disposeCalls += 1;
+          await new Promise<void>((resolve) => {
+            releaseDispose = resolve;
+          });
+        },
+      }],
+    });
+
+    const firstDispose = codeIntel.disposeAsync();
+    await Promise.resolve();
+    expect(disposeCalls).toBe(1);
+
+    releaseDispose?.();
+    await firstDispose;
+    await codeIntel.disposeAsync();
+    expect(disposeCalls).toBe(1);
+  });
+
   it("accepts a workspace symbol query without requiring a source location", async () => {
     const codeIntel = new CodeIntel({
       providers: [new InMemoryCodeIntelProvider({

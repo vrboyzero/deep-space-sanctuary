@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/verification-impact-evidence-v1.json",
+  "title": "Star Sanctuary verification impact evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "revision", "sources", "coverage"],
+  "properties": {
+    "schemaVersion": { "const": "verification-impact-evidence/v1" },
+    "revision": { "$ref": "#/$defs/revision" },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": { "$ref": "#/$defs/source" }
+    },
+    "coverage": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/coverage" }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*\\\\)(?!.*(?:^|/)\\.{1,2}(?:/|$)).+$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "revision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "workspaceHash"],
+      "properties": {
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{7,64}$" },
+        "workspaceHash": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "contractVersion", "status", "artifact"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": { "enum": ["code-intel-reference", "project-dependency"] },
+        "contractVersion": { "enum": ["code-intel/v1", "project-dependency/v1"] },
+        "status": { "enum": ["complete", "partial"] },
+        "artifact": { "$ref": "#/$defs/artifact" }
+      },
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "kind": { "const": "code-intel-reference" },
+                "contractVersion": { "const": "code-intel/v1" }
+              }
+            },
+            {
+              "properties": {
+                "kind": { "const": "project-dependency" },
+                "contractVersion": { "const": "project-dependency/v1" }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["changedPath", "status", "sourceIds", "impactedPaths"],
+      "properties": {
+        "changedPath": { "$ref": "#/$defs/relativePath" },
+        "status": { "enum": ["complete", "partial"] },
+        "sourceIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "impactedPaths": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 512,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/relativePath" }
+        }
+      }
+    }
+  }
+}

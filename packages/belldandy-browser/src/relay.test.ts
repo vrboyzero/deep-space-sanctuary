@@ -75,4 +75,153 @@ describe("RelayServer", () => {
         owner.close();
         cdp.close();
     });
+
+    it("reports lifecycle counters and clears a pending CDP request when the extension disconnects", async () => {
+        const relay = new RelayServer(0, { token: relayToken, requestTimeoutMs: 10_000 });
+        relays.push(relay);
+        await relay.start();
+        const baseUrl = `ws://127.0.0.1:${relay.port}`;
+        const extension = new WebSocket(
+            `${baseUrl}/extension`,
+            `belldandy-relay-v1.${relayToken}`,
+            { origin: "chrome-extension://test-extension" },
+        );
+        const cdp = new WebSocket(`${baseUrl}/cdp`, {
+            headers: { Authorization: `Bearer ${relayToken}` },
+        });
+        await Promise.all([waitForOpen(extension), waitForOpen(cdp)]);
+
+        expect(relay.getLifecycleSnapshot()).toEqual({
+            state: "running",
+            httpListening: true,
+            extensionConnected: true,
+            extensionConnectionCount: 1,
+            cdpClientCount: 1,
+            pendingRequestCount: 0,
+        });
+
+        cdp.send(JSON.stringify({ id: 7, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
+        await waitForJsonMessage(extension, (message) => message.method === "forwardCDPCommand");
+        expect(relay.getLifecycleSnapshot().pendingRequestCount).toBe(1);
+
+        const responsePromise = waitForJsonMessage(cdp, (message) => message.id === 7);
+        extension.close();
+        const response = await responsePromise;
+        expect(response).toMatchObject({ id: 7, error: { message: "Extension disconnected" } });
+        expect(relay.getLifecycleSnapshot()).toMatchObject({
+            extensionConnected: false,
+            cdpClientCount: 1,
+            pendingRequestCount: 0,
+        });
+
+        await relay.stop();
+        await relay.stop();
+        expect(relay.getLifecycleSnapshot()).toEqual({
+            state: "stopped",
+            httpListening: false,
+            extensionConnected: false,
+            extensionConnectionCount: 1,
+            cdpClientCount: 0,
+            pendingRequestCount: 0,
+        });
+    });
+
+    it("force-terminates an unresponsive WebSocket peer within the shutdown grace", async () => {
+        const relay = new RelayServer(0, {
+            token: relayToken,
+            shutdownGraceMs: 20,
+        });
+        relays.push(relay);
+        await relay.start();
+        const extension = new WebSocket(
+            `ws://127.0.0.1:${relay.port}/extension`,
+            `belldandy-relay-v1.${relayToken}`,
+            { origin: "chrome-extension://test-extension" },
+        );
+        extension.on("error", () => {});
+        await waitForOpen(extension);
+        (extension as any)._socket.pause();
+
+        const startedAt = Date.now();
+        await relay.stop();
+
+        expect(Date.now() - startedAt).toBeLessThan(1_000);
+        expect(relay.getLifecycleSnapshot()).toEqual({
+            state: "stopped",
+            httpListening: false,
+            extensionConnected: false,
+            extensionConnectionCount: 1,
+            cdpClientCount: 0,
+            pendingRequestCount: 0,
+        });
+    }, 2_000);
+
+    it("requests one extension reconnect and records the replacement connection", async () => {
+        const relay = new RelayServer(0, { token: relayToken });
+        relays.push(relay);
+        await relay.start();
+        const baseUrl = `ws://127.0.0.1:${relay.port}`;
+        const first = new WebSocket(
+            `${baseUrl}/extension`,
+            `belldandy-relay-v1.${relayToken}`,
+            { origin: "chrome-extension://test-extension" },
+        );
+        await waitForOpen(first);
+        const firstClosed = new Promise<void>((resolve) => first.once("close", () => resolve()));
+
+        expect(relay.requestExtensionReconnect()).toBe(true);
+        await firstClosed;
+        expect(relay.getLifecycleSnapshot()).toMatchObject({
+            extensionConnected: false,
+            extensionConnectionCount: 1,
+        });
+
+        const replacement = new WebSocket(
+            `${baseUrl}/extension`,
+            `belldandy-relay-v1.${relayToken}`,
+            { origin: "chrome-extension://test-extension" },
+        );
+        await waitForOpen(replacement);
+        expect(relay.getLifecycleSnapshot()).toMatchObject({
+            extensionConnected: true,
+            extensionConnectionCount: 2,
+        });
+        replacement.close();
+    });
 });
+
+async function waitForOpen(socket: WebSocket): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+        socket.once("open", resolve);
+        socket.once("error", reject);
+    });
+}
+
+async function waitForJsonMessage(
+    socket: WebSocket,
+    predicate: (message: Record<string, any>) => boolean,
+): Promise<Record<string, any>> {
+    return new Promise((resolve, reject) => {
+        const onMessage = (data: WebSocket.RawData) => {
+            try {
+                const message = JSON.parse(data.toString()) as Record<string, any>;
+                if (!predicate(message)) return;
+                cleanup();
+                resolve(message);
+            } catch (error) {
+                cleanup();
+                reject(error);
+            }
+        };
+        const onError = (error: Error) => {
+            cleanup();
+            reject(error);
+        };
+        const cleanup = () => {
+            socket.off("message", onMessage);
+            socket.off("error", onError);
+        };
+        socket.on("message", onMessage);
+        socket.on("error", onError);
+    });
+}

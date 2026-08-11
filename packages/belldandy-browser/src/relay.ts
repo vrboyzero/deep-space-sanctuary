@@ -41,6 +41,16 @@ export type RelayServerOptions = {
     maxCdpClients?: number;
     maxPendingRequests?: number;
     requestTimeoutMs?: number;
+    shutdownGraceMs?: number;
+};
+
+export type RelayServerLifecycleSnapshot = {
+    state: "created" | "starting" | "running" | "stopping" | "stopped";
+    httpListening: boolean;
+    extensionConnected: boolean;
+    extensionConnectionCount: number;
+    cdpClientCount: number;
+    pendingRequestCount: number;
 };
 
 type RelayEndpoint = "extension" | "cdp";
@@ -49,6 +59,7 @@ const DEFAULT_MAX_PAYLOAD_BYTES = 512 * 1024;
 const DEFAULT_MAX_CDP_CLIENTS = 8;
 const DEFAULT_MAX_PENDING_REQUESTS = 64;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_SHUTDOWN_GRACE_MS = 1_000;
 const MAX_BUFFERED_BYTES = 1024 * 1024;
 const EXTENSION_PROTOCOL_PREFIX = "belldandy-relay-v1.";
 
@@ -60,6 +71,7 @@ export class RelayServer {
     private cdpClients = new Set<WebSocket>();
     private extensionGeneration = 0;
     private stopPromise: Promise<void> | null = null;
+    private lifecycleState: RelayServerLifecycleSnapshot["state"] = "created";
 
     // 发送给插件的挂起请求（等待响应）
     private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
@@ -72,6 +84,7 @@ export class RelayServer {
     private readonly maxCdpClients: number;
     private readonly maxPendingRequests: number;
     private readonly requestTimeoutMs: number;
+    private readonly shutdownGraceMs: number;
 
     constructor(port: number, options: RelayServerOptions, logger?: Logger) {
         this.logger = logger;
@@ -81,6 +94,7 @@ export class RelayServer {
         this.maxCdpClients = normalizePositiveLimit(options.maxCdpClients, DEFAULT_MAX_CDP_CLIENTS, "maxCdpClients");
         this.maxPendingRequests = normalizePositiveLimit(options.maxPendingRequests, DEFAULT_MAX_PENDING_REQUESTS, "maxPendingRequests");
         this.requestTimeoutMs = normalizePositiveLimit(options.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS, "requestTimeoutMs");
+        this.shutdownGraceMs = normalizePositiveLimit(options.shutdownGraceMs, DEFAULT_SHUTDOWN_GRACE_MS, "shutdownGraceMs");
         this.server = createServer((req, res) => {
             const requestUrl = new URL(req.url ?? "/", "http://localhost");
             // 基础健康检查与版本信息
@@ -480,9 +494,14 @@ export class RelayServer {
     }
 
     public async start(): Promise<void> {
+        if (this.lifecycleState !== "created") {
+            throw new Error(`Relay server cannot start from ${this.lifecycleState} state.`);
+        }
+        this.lifecycleState = "starting";
         return new Promise<void>((resolve, reject) => {
             const onError = (error: Error) => {
                 this.server.off("error", onError);
+                this.lifecycleState = "created";
                 reject(error);
             };
             this.server.once("error", onError);
@@ -492,27 +511,50 @@ export class RelayServer {
                 if (address && typeof address !== "string") {
                     this.port = (address as AddressInfo).port;
                 }
+                this.lifecycleState = "running";
                 this.logger?.info(`Relay server listening on 127.0.0.1:${this.port}`);
                 resolve();
             });
         });
     }
 
+    public getLifecycleSnapshot(): RelayServerLifecycleSnapshot {
+        return {
+            state: this.lifecycleState,
+            httpListening: this.server.listening,
+            extensionConnected: this.isExtensionConnected(),
+            extensionConnectionCount: this.extensionGeneration,
+            cdpClientCount: this.cdpClients.size,
+            pendingRequestCount: this.pending.size,
+        };
+    }
+
+    public requestExtensionReconnect(): boolean {
+        if (!this.isExtensionConnected() || !this.extensionWs) return false;
+        safeClose(this.extensionWs, 1012, "relay reconnect requested");
+        return true;
+    }
+
     public async stop(): Promise<void> {
         if (this.stopPromise) return this.stopPromise;
         this.stopPromise = (async () => {
-            this.rejectPending("Relay stopped");
-            this.extensionWs && safeClose(this.extensionWs, 1001, "relay stopped");
-            for (const client of this.cdpClients) {
-                safeClose(client, 1001, "relay stopped");
+            this.lifecycleState = "stopping";
+            try {
+                this.rejectPending("Relay stopped");
+                this.extensionWs && safeClose(this.extensionWs, 1001, "relay stopped");
+                for (const client of this.cdpClients) {
+                    safeClose(client, 1001, "relay stopped");
+                }
+                this.cdpClients.clear();
+                this.extensionWs = null;
+                await Promise.all([
+                    closeWebSocketServer(this.wssExtension, this.shutdownGraceMs),
+                    closeWebSocketServer(this.wssCdp, this.shutdownGraceMs),
+                    closeHttpServer(this.server, this.shutdownGraceMs),
+                ]);
+            } finally {
+                this.lifecycleState = "stopped";
             }
-            this.cdpClients.clear();
-            this.extensionWs = null;
-            await Promise.all([
-                closeWebSocketServer(this.wssExtension),
-                closeWebSocketServer(this.wssCdp),
-                closeHttpServer(this.server),
-            ]);
         })();
         return this.stopPromise;
     }
@@ -584,22 +626,58 @@ function safeClose(socket: WebSocket, code: number, reason: string): void {
     }
 }
 
-async function closeWebSocketServer(wss: WebSocketServer): Promise<void> {
+async function closeWebSocketServer(wss: WebSocketServer, graceMs: number): Promise<void> {
     await new Promise<void>((resolve) => {
-        try {
-            wss.close(() => resolve());
-        } catch {
+        let settled = false;
+        let hardTimer: NodeJS.Timeout | undefined;
+        const finish = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(forceTimer);
+            if (hardTimer) clearTimeout(hardTimer);
             resolve();
+        };
+        const forceTimer = setTimeout(() => {
+            for (const client of wss.clients) {
+                try {
+                    client.terminate();
+                } catch {
+                    // A concurrent close may already have released the socket.
+                }
+            }
+            hardTimer = setTimeout(finish, graceMs);
+            hardTimer.unref();
+        }, graceMs);
+        forceTimer.unref();
+        try {
+            wss.close(finish);
+        } catch {
+            finish();
         }
     });
 }
 
-async function closeHttpServer(server: Server): Promise<void> {
+async function closeHttpServer(server: Server, graceMs: number): Promise<void> {
     await new Promise<void>((resolve) => {
-        try {
-            server.close(() => resolve());
-        } catch {
+        let settled = false;
+        let hardTimer: NodeJS.Timeout | undefined;
+        const finish = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(forceTimer);
+            if (hardTimer) clearTimeout(hardTimer);
             resolve();
+        };
+        const forceTimer = setTimeout(() => {
+            server.closeAllConnections?.();
+            hardTimer = setTimeout(finish, graceMs);
+            hardTimer.unref();
+        }, graceMs);
+        forceTimer.unref();
+        try {
+            server.close(finish);
+        } catch {
+            finish();
         }
     });
 }

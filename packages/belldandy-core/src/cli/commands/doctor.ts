@@ -25,6 +25,7 @@ import {
 } from "../../tool-behavior-observability.js";
 import {
   buildCameraRuntimeDoctorReport,
+  buildGoCodeIntelDoctorReport,
   buildToolContractV2Summary,
   listToolContractsV2,
 } from "@belldandy/skills";
@@ -361,6 +362,7 @@ export default defineCommand({
       modelConnectivityCheck,
       configuredProfiles,
       optionalCapabilities,
+      codeIntelGo,
       cameraRuntime,
       runtimeResilience,
       mcpConfigCheck,
@@ -372,6 +374,7 @@ export default defineCommand({
       args["check-model"] ? checkModelConnectivity() : Promise.resolve<CheckResult | undefined>(undefined),
       loadAgentProfiles(path.join(stateDir, "agents.json")),
       buildOptionalCapabilitiesDoctorReport(),
+      buildGoCodeIntelDoctorReport(),
       buildCameraRuntimeDoctorReport({
         context: {
           conversationId: "bdd.doctor",
@@ -448,6 +451,14 @@ export default defineCommand({
       message: optionalCapabilities.summary.headline,
       fix: optionalCapabilities.summary.fix,
     });
+    results.push({
+      name: "Go CodeIntel",
+      status: codeIntelGo.summary.status === "unavailable"
+        || codeIntelGo.summary.status === "incompatible"
+        ? "warn"
+        : "pass",
+      message: codeIntelGo.summary.headline,
+    });
     if (cameraRuntime) {
       results.push({
         name: "Camera Runtime",
@@ -494,6 +505,7 @@ export default defineCommand({
         residentAgents,
         deploymentBackends,
         optionalCapabilities,
+        codeIntelGo,
         mcpRouting,
         ...(cameraRuntime ? { cameraRuntime } : {}),
         ...(runtimeResilience ? { runtimeResilience } : {}),

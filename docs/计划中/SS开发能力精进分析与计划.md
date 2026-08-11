@@ -1545,16 +1545,1156 @@ P1-A1 的 language-neutral contract/fake、官方 TypeScript Language Service li
 - **为什么先做它**：native runtime 已排除 ELF 与 UNC transport 混杂，但 a11 的 readiness、pairing 和授权材料仍绑定旧的 Windows-host Gateway 路径，不能直接迁移到新 attempt。
 - **当前还缺的关键闭环**：attempt 12 双平台零费用授权、真实 `semantic-live >=6/8` 且每平台 `>=3/4`、context 改善 Gate、candidate mutation/task/patch/test uplift 与最终 aggregate passed；未闭合前不得推进 P1-A2。
 
+### 14.24 P1-A1 attempt 12 零费用前置失败关闭
+
+#### P1-A1 前置审计实现结论：Docker/OCI Gate 阻塞与双平台材料闭合（2026-08-10）
+
+##### 已完成内容
+
+1. **`tmp/p1-a1-code-intel-agent-uplift-20260810-r12/readiness/` 新建**：
+   - Windows/WSL2 readiness 均为 `ready_for_authorization`、prepared pair 均为 `4/4`，报告 SHA-256 分别为 `b3fe6ed514e15515d64572fdc1a3f28b7c055de4073f590116f94c26039b2775`、`4393a43e89d0c4ba2064a2156360f1f06b6e145e251a9131eb5f1e2890898d65`。
+   - 双端 task/truth set、source/runtime、profile 与 pair matrix identity comparator 全部一致；WSL 绑定 ext4 原生 Gateway smoke r3 与已闭合的 Linux snapshot preparation，不再经 Windows-host/UNC 运行 CodeIntel。
+
+2. **双平台 pairing probe 执行**：
+   - Windows r1 因 45 秒 Gateway 冷启动窗口耗尽而 `blocked`，该失败 receipt 原样保留；将健康等待上限显式调整为 120 秒后，Windows r2 的 `agents.roster.get`、paired 与 cleanup 均通过，报告 SHA-256 为 `fb0e5bddbc431be74482e9c3341db88995b2876dda44f584d79d722d9cd6f7b1`。
+   - WSL ext4 native r1 的 health、`agents.roster.get`、paired 与 cleanup 均通过，报告 SHA-256 为 `d85f607d9a1f139b3d79ec18c1c7725c3bf9b71aaa345717e5d4af9ed4dcecb9`；两端 Provider 调用均为 0、credentials read 均为 false。
+
+3. **`docker-oci-gate-r1.json` 与 cohort failure binding 新建**：
+   - Windows `docker image inspect` 在 5 秒内无响应，WSL Docker socket `_ping` 以 curl exit `28` 超时；Docker/OCI Gate 固定为 `blocked`，报告 SHA-256 为 `9d204df64e211d0423086d70bb1fcae9c5eb4b12cf098f5baa6aab7d1b50f542`。
+   - Windows/WSL2 cohort 均固定 4 个任务、`providerCalls=0`，唯一 blocking failure 均为 `real-js.failed-test-fix:oci:image_not_present`；两份 binding 明确记录未执行 live production OCI probe，不能授权 Provider attempt。
+   - 未擅自重启 Docker Desktop，避免中断用户可能正在运行的其他容器；r1 Gate/cohort/binding 均保留，后续恢复不得覆盖。
+
+4. **`preflight-audit-r1.json` 新建**：
+   - 审计绑定 Docker Gate、双端 readiness/cohort/binding/pairing、contract replay r5、resource soak r4 与 WSL native smoke；除 `dockerOciGatePassed`、`windowsCohortPassed`、`wslCohortPassed` 外其余检查全部通过。
+   - 报告 SHA-256 为 `b9a9bd76d492fe35ff833946a93a1e14c5ccfeffc79ba26ba80ca826fa46d74c`，固定 `status=blocked`、`providerAttemptEligible=false`、`candidatePromotionEligible=false`、`taskUplift=not_measured`。
+
+5. **效果**：
+   - attempt 12 readiness 与双平台原生 pairing 已闭合，剩余阻塞被收敛为 Docker engine/固定 OCI image 可用性，不再混入 WSL ELF、UNC transport、source/runtime 或 pairing 差异。
+   - 本环节 Gateway 审计调用、模型调用、付费 Provider 调用、外部网络调用、credentials read 与 production workspace mutation 均为 0；未启动任何真实 baseline/candidate cell。
+   - 累计费用保持 `1.32819672 RMB`、余额 `38.67180328 RMB`，a11 aggregate、P0 aggregate、默认预算、ToolAgent 与 `cost-containment-v1` 均未修改。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误（`corepack pnpm build:incremental`）。
+- 7 个定向测试文件共 53 个测试全部通过；readiness comparator、pairing、replay r5、resource soak r4、native Gateway smoke 与 cohort failure binding 均通过对应合同检查。
+- attempt 12 的 22 个非 state 文件敏感模式扫描 0 命中；端口 `28893` listener、attempt 12 进程与残留 `docker.exe` 客户端均为 0。
+
+#### 技术债处理
+
+- **`split_task`**：Docker Desktop engine 恢复属于本机运行前置，重启可能中断其他容器，需由用户手动恢复或明确授权重启；不得通过跳过 OCI Gate、复用 r1 failure receipt 或放宽 command-control profile 继续付费运行。
+
+#### 后续计划（P1-A1 尚未结束）
+
+- **下一步准备做什么**：由用户手动恢复 Docker engine，或在明确授权后重启 Docker Desktop；恢复后创建全新的 Docker/OCI Gate r2、双平台 production cohort r2 与 preflight audit r2，全部通过后再按 Windows-first 规则评估 attempt 12 真实 Provider 运行。
+- **为什么先做它**：command-control 任务依赖固定 OCI image，当前 daemon 无响应使 production cohort 无法证明真实执行前置；在该 Gate 关闭前启动付费 cell 会破坏费用早停与可比性合同。
+- **当前还缺的关键闭环**：Docker engine/socket 健康、固定 digest image 可枚举、双端 live production cohort 与 audit r2 全通过，以及后续真实 `semantic-live >=6/8` 且每平台 `>=3/4`、context 改善、mutation/task/patch/test uplift 和最终 aggregate passed；r2 未通过前不得调用 Provider 或推进 P1-A2。
+
+### 14.25 P1-A1 attempt 12 Docker/OCI 恢复与零费用授权
+
+#### P1-A1 前置审计实现结论：Docker/OCI Gate、双平台 cohort 与 audit 闭合（2026-08-10）
+
+##### 已完成内容
+
+1. **`docker-oci-gate-r2.mjs` 新建并修正证据语义**：
+   - Windows Docker Desktop `4.56.0` / Engine `29.1.3` 与 WSL2 socket 均恢复可用，固定 `node@sha256:62f550497561d6285e10abd952730db89c905be990237eaf8744137929c72844` 镜像可枚举。
+   - 首份 `docker-oci-gate-r2.json` 实际检查通过，但 WSL 成功项仍带 `reason=unexpected_ping_response`；该 receipt 原样保留且不用于授权。生成器改为成功时固定 `reason=null` 后创建权威 `docker-oci-gate-r3.json`，SHA-256 为 `ee74d56b653b4e40a5c9a369449613774b24ae20c1d873cadf6b71e609f98187`。
+
+2. **双平台 production cohort r2 执行**：
+   - Windows 与 WSL2 均以真实 production preflight 覆盖 4 个冻结任务，`status=passed`、`providerCalls=0`、`blockingFailures=[]`。
+   - `real-js.failed-test-fix` 在双端均通过 command-control Agent Profile 与 live OCI image probe；Windows/WSL2 报告 SHA-256 分别为 `ae0556137d0ae3b7e5870e4686163bd872d25c6689c0a2970a00f5fa6e50846a`、`c03d4610a273bac4211eb0a7320eb8ded348b10aeb13d976b1b9458c8a9b79d3`。
+
+3. **`preflight-audit-r2.mjs` 与审计 evidence 新建**：
+   - 审计绑定权威 Docker Gate r3、双端 readiness/cohort/pairing、contract replay r5、resource soak r4、Linux preparation 与 WSL native Gateway smoke，14 项授权检查全部通过。
+   - `preflight-audit-r2.json` SHA-256 为 `6a1f13a9628c3f31669341c2d117bcee62b3bb58286c9289a562bfcd97ebb15c`，固定 `status=passed`、`providerAttemptEligible=true`、`candidatePromotionEligible=false`、`taskUplift=not_measured`。
+
+4. **效果**：
+   - attempt 12 的 Docker engine/socket、固定 OCI image、双平台 production cohort 与零费用授权资格已经闭合，可以按既有 `40 RMB` 持续授权和 Windows-first 早停规则启动真实 Provider 运行。
+   - 本环节模型、Provider、外部网络、credentials read 与 production workspace mutation 均为 0；累计费用保持 `1.32819672 RMB`，未修改 a11/P0 aggregate、默认预算、ToolAgent 或 `cost-containment-v1`。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误（`corepack pnpm build:incremental`）。
+- 6 个 CodeIntel/uplift 定向测试文件共 51 个测试全部通过；两个 r2 脚本均通过 `node --check`。
+- Docker Gate r3、双平台 cohort r2 与 audit r2 均通过结构化检查；5 份关键 evidence 的 SHA-256 已复算。
+- 固定 digest 容器、端口 `28893`、Windows/WSL attempt 进程残留均为 0；r2/r3 非 state evidence 的 token 形敏感模式扫描为 0 命中。
+
+#### 技术债处理
+
+- **`record_only`**：`docker-oci-gate-r2.json` 的成功状态与非空失败原因不一致，已保留为失败证据并由 r3 替代；后续审计只绑定 r3，不覆盖或删除 r2。
+
+#### 后续计划（P1-A1 尚未结束）
+
+- **下一步准备做什么**：使用当前已通过的 audit r2，以全新正式输出根执行 attempt 12 Windows 4 任务、baseline/candidate 共 8 个 cell；完成 usage/cost、artifact hash、敏感与 cleanup 复核后，按每平台 `semantic-live >=3/4` 的早停 Gate 决定是否启动 WSL2 native matrix。
+- **为什么先做它**：所有零费用前置和 production OCI 能力已重新闭合，当前唯一未验证的关键变量是 identifier-first/nextAction candidate 在 WSL native transport 条件下能否形成稳定语义采用、mutation 与任务结果改善。
+- **当前还缺的关键闭环**：Windows/WSL2 真实 `semantic-live >=6/8` 且每平台 `>=3/4`、context-waste 改善、binary regression `0`、candidate mutation/task/patch/test uplift 与最终 aggregate passed；未通过前不得推进 P1-A2。
+
+### 14.26 P1-A1 attempt 12 Windows 真实运行
+
+#### P1-A1 真实运行实现结论：Windows semantic adoption Gate 与 WSL2 放行（2026-08-10）
+
+##### 已完成内容
+
+1. **`run-windows-a12.mjs` 与隔离 Gateway launcher 新建**：
+   - 复用已通过 production cohort 的冻结 command-control Profile state，在 Gateway 启动前固定 Agent 配置；Gateway 仅绑定 `127.0.0.1:28893`，加载项目环境后关闭 Memory、MCP、Browser Relay、Channels、Heartbeat/Cron 等非 benchmark runtime。
+   - 新的 fixture、cohort-run、state、日志与正式 artifact 路径均执行不存在检查，selected cell 不自动重试，最终统一关闭 Gateway。
+
+2. **Windows paired matrix 完成**：
+   - 4 个任务、baseline/candidate 共 `8/8` cell completed，`retryCount=0`，8/8 usage 为 `provider_reported`，Provider failure 为 0。
+   - 平台报告 SHA-256 为 `4245c5f0c23b1e7eda8a45b66bbda2cb2f393a6fb0f935ed8e462f9ce64fd18e`；48 个 artifact 引用全部通过 SHA-256 复算。
+
+3. **采用、任务结果与费用**：
+   - 四个 candidate 均成功使用 `semantic-live`，调用次数分别为 `1/5/3/1`，Windows `semantic-live=4/4`，达到每平台 `>=3/4` 的 WSL2 放行 Gate。
+   - candidate patch 与 task success 仍为 `0/4`，8 个 cell 全部以 `budget_exhausted` 终止；failed-test candidate 仅保留既有 test success，不能计为 task uplift。
+   - 本轮费用 `0.15530024 RMB`，累计费用 `1.48349696 RMB`，余额 `38.51650304 RMB`；未修改 P0 aggregate 或历史 a8-a11 证据。
+
+4. **效果**：
+   - Windows 再次证明 identifier-first/nextAction 合同可以稳定触发语义工具，但成功查询尚未转化为 mutation、patch 或任务完成。
+   - Windows 早停条件允许启动 WSL2；该结论只放行跨平台测量，不代表 candidate promotion 或 P1-A1 完成。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误；同一 runtime 的 6 个 CodeIntel/uplift 定向测试文件共 51 个测试全部通过。
+- Windows platform report 结构完整，`8/8` usage 与费用可复算，48/48 artifact hash 一致。
+- 端口 `28893` 无 listener，固定 digest OCI 容器无残留；artifact 与 Gateway log 的 token 形敏感模式扫描为 0 命中。
+
+#### 后续计划（P1-A1 尚未结束）
+
+- **下一步准备做什么**：以累计费用 `1.48349696 RMB`、同一 attempt 12 readiness 和 ext4 native Gateway runtime 执行 WSL2 4 任务、8 个 paired cell；完成后生成官方 aggregate。
+- **为什么先做它**：Windows 已满足预注册的平台采用门槛，只有 WSL native 运行才能验证 a11 的 UNC timeout 是否已消除，并给出双平台总采用、context、binary regression 与任务结果。
+- **当前还缺的关键闭环**：WSL2 `semantic-live >=3/4`、双平台总计 `>=6/8`、context-waste 改善、binary regression `0`、candidate mutation/task/patch/test uplift 和 aggregate passed；任一硬 Gate 失败都必须保持 P1-A1 blocked。
+
+### 14.27 P1-A1 attempt 12 WSL2 原生真实运行
+
+#### P1-A1 真实运行实现结论：WSL native transport 与双平台 adoption 闭合（2026-08-10）
+
+##### 已完成内容
+
+1. **ext4 原生 Gateway runner 新建**：
+   - Gateway source、Linux dependencies、state 与 fixture 全部位于 WSL ext4；只从明确挂载的仓库根加载环境文件，不复制凭据，不再使用 Windows-host Gateway 或 UNC CodeIntel workspace。
+   - 启动前复核 6 个 runtime 文件与 readiness hash 全部一致，command-control Profile hash 为冻结值；所有日志、cohort-run、fixture 和正式 artifact 目标执行不存在检查。
+
+2. **WSL2 paired matrix 完成**：
+   - 4 个任务、baseline/candidate 共 `8/8` cell completed，`retryCount=0`，8/8 usage 为 `provider_reported`，Provider failure 为 0。
+   - 平台报告 SHA-256 为 `8dcf1aa11b55f72e0f619d3325379e3de499ba23b89815dd076e3f5e00892595`；48 个 artifact 引用全部通过 SHA-256 复算。
+
+3. **采用、任务结果与费用**：
+   - API migration、cross-package refactor 与 failed-test candidate 成功使用 `semantic-live`，WSL2 `semantic-live=3/4`，成功调用 `5` 次、失败调用 `0`；a11 的 3 次 UNC timeout 已消除。
+   - 双平台 candidate 总采用达到 `7/8`，超过总计 `>=6/8` 且每平台 `>=3/4` 的冻结 Gate；但 candidate patch 与 task success 仍为 `0/8`，16 个 cell 全部以 `budget_exhausted` 终止。
+   - WSL2 本轮费用 `0.19864376 RMB`，attempt 12 双平台费用 `0.35394400 RMB`，累计费用 `1.68214072 RMB`，余额 `38.31785928 RMB`。
+
+4. **效果**：
+   - WSL native runtime 已把平台差异从 transport/timeout 问题收敛为真实模型行为；CodeIntel Provider、pairing、OCI、usage 和 cleanup 链均闭合。
+   - semantic adoption 已达标，但成功语义查询仍未转化为 mutation、patch 或任务完成；是否通过 context 与 binary outcome Gate 由官方 aggregate 决定。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误；同一 runtime 的 6 个 CodeIntel/uplift 定向测试文件共 51 个测试全部通过。
+- WSL2 platform report 结构完整，`8/8` usage 与费用可复算，48/48 artifact hash 一致。
+- WSL `28893` listener、attempt 进程与固定 digest OCI 容器残留均为 0；artifact 与 Gateway log 的 token 形敏感模式扫描为 0 命中。
+
+#### 后续计划（P1-A1 尚未结束）
+
+- **下一步准备做什么**：使用 Windows/WSL2 两份 attempt 12 platform report 生成不可覆盖的官方 aggregate，复算 adoption、binary regression、context-waste、Provider failure、费用与 artifact identity。
+- **为什么先做它**：平台运行只能证明各自执行完整，P1-A1 是否通过必须由预注册 aggregate Gate 统一判断，不能用 `7/8` adoption 单项替代任务和 context 结果。
+- **当前还缺的关键闭环**：aggregate passed、binary regression `0`、context-waste 改善和 candidate mutation/task/patch/test uplift；若 aggregate blocked，必须在不重复付费 attempt 12 的前提下完成零费用归因并裁决后续路线。
+
+### 14.28 P1-A1 attempt 12 aggregate 与阶段关闭
+
+#### P1-A1 实现结论：TS/JS CodeIntel 真实 uplift Gate 通过（2026-08-10）
+
+##### 已完成内容
+
+1. **官方 aggregate 生成**：
+   - 使用 attempt 12 Windows/WSL2 两份完整 platform report 生成不可覆盖的 `aggregate/agent-uplift-report.json`，Schema 为 `code-intel-agent-uplift-report/v1`。
+   - aggregate SHA-256 为 `48bd89322e389600f4d24800b1403da4ad4f2b82669bdd3764a234f7cf7e00b5`，`status=passed`、`failures=[]`、8 对 pair identity 完整。
+
+2. **预注册 Gate 结果**：
+   - binary regression 为 `0`，Provider failure 为 `0`；candidate `semantic-live=7/8`，Windows `4/4`、WSL2 `3/4`，满足总计和双平台下限。
+   - 模型可见导航字节从 `78,477` 降至 `76,877`，相对减少 `2.038814%`；非目标整文件读取从 `21` 降至 `14`，相对减少 `33.333333%`、绝对减少 7 次，满足预注册的 context-waste 替代改善分支。
+   - 16/16 usage 均为 `provider_reported`；attempt 12 双平台费用 `0.35394400 RMB`，累计费用 `1.68214072 RMB`，余额 `38.31785928 RMB`。
+
+3. **P1-A1 关闭边界**：
+   - language-neutral contract/fake、TypeScript live Provider、固定 truth set、Context Inspector、resource soak、双平台 readiness/cohort/pairing、WSL native runtime 与真实 Agent uplift Gate 均已闭合。
+   - P1-A1 只证明 candidate 相对冻结 baseline 无 task/patch/test 二值回退、语义采用和 context 改善达到预注册门槛；16/16 cell 仍为 `budget_exhausted`，candidate task success 与 patch acceptance 绝对值仍为 `0/8`，不得表述为真实任务已成功。
+
+4. **效果**：
+   - TS/JS `semantic-live` 已从合同和离线精度证据升级为双平台真实 Agent 采用证据，Windows-host/UNC timeout 不再污染 Linux 结论。
+   - P1-A1 前置已满足，可以进入 P1-A2 通用 LSP Host 与 Go canary；现有 TypeScript Provider、默认预算和 P0 aggregate 保持不变。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误；6 个 CodeIntel/uplift 定向测试文件共 51 个测试全部通过。
+- 两份 platform report、96 个 cell artifact 引用与 aggregate 均通过结构、SHA-256、usage 和费用复算。
+- attempt 12 artifact token 形敏感模式扫描为 0 命中；Windows/WSL `28893` listener、attempt 进程与固定 digest OCI 容器残留均为 0。
+
+#### 技术债处理
+
+- **`split_task`**：绝对 task/patch success 为 0 且全部预算耗尽属于模型循环与任务完成能力问题，不回退 P1-A1 已冻结的相对 uplift 结论；后续由 P0/P1-B 的预算终止、验证 DAG 和真实任务 Gate 独立治理，不通过重复 a12 或放宽预算处理。
+
+### 14.29 P1-A2 通用 LSP Host 首切片
+
+#### P1-A2 实现结论：language-neutral out-of-process LSP Host（2026-08-10）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/code-intel/lsp-process-host.ts` 新建**：
+   - 建立只暴露 `request()`、`getDiagnostics()`、`dispose()` 的 LSP Host interface；调用方不接触 JSON-RPC framing、request id、initialize/shutdown 或 ChildProcess。
+   - 固定 `vscode-jsonrpc@8.2.0` 与 `vscode-languageserver-protocol@3.17.5`，实现 `initialize` / `initialized`、有界 deadline、AbortSignal 取消、显式环境、stderr 上限、crash 分类、graceful shutdown、kill/reap 与状态 diagnostics。
+   - 子进程使用绝对 command、`shell=false`、workspace cwd、显式 env 和 detached process group；不继承调用方环境，不在 query 阶段下载 binary/SDK、restore 依赖或写全局 cache。
+
+2. **`packages/belldandy-skills/src/code-intel/lsp-process-host.test.ts` 与 `fixtures/fake-lsp-server.mjs` 新建**：
+   - 通过真实 stdio 子进程覆盖 initialize、正常请求、显式环境/敏感变量隔离、deadline/cancel、stderr 过量、server crash、忽略 exit 后强制终止与已过期请求 fail-closed。
+   - 测试只穿过 Host interface，使用假 server 验证协议和生命周期，不断言内部 request id 或 framing 状态。
+
+3. **`packages/belldandy-skills/src/code-intel/index.ts`、`packages/belldandy-skills/package.json`、`pnpm-lock.yaml` 与 `docs/project-map.md` 更新**：
+   - 从 CodeIntel 现有入口导出 Host 类型/错误；新增两项 MIT 协议依赖并保持既有依赖顺序；项目图补充 Host seam 与当前尚未验证的 sandbox/network-off 边界。
+
+##### 效果
+
+- TypeScript/JS Provider 之外已有可承载 `gopls` 和未来 LSP server 的统一进程 seam，调用方无需理解 LSP 生命周期。
+- 超时、调用方取消、server crash 和退出不响应均收敛为稳定错误或停止状态；stderr 诊断有硬字节上限，子进程可被 kill/reap，环境变量不会隐式泄漏。
+- 该切片只完成通用 Host contract 与进程治理，不把声明性的 network-off、只读 sandbox、Go capability、Doctor 或真实双平台 canary 提前表述为已完成。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm build:incremental`）。
+- CodeIntel 目录 `29/29` 个 Vitest 测试全部通过，含 `8` 个新增 LSP Host 生命周期测试。
+- 关键功能验证通过：initialize/shutdown、deadline/cancel、stderr bounded、crash/restart 边界、kill/reap 与显式环境隔离；未执行 Go server 或 Windows/WSL2 network-off sandbox Gate。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：核对 Windows/WSL2 当前 Go 与 `gopls` 工具链，冻结 pinned `gopls` profile、capability matrix、专用 cache/state root、GOPROXY/GOTOOLCHAIN 约束及 Doctor 投影，然后接入 Go canary Adapter。
+- **为什么先做它**：Host 已经提供协议和生命周期 seam，下一步必须先证明工具链发现、版本/许可/SBOM、workspace sync 与零联网策略可诊断，才能让 Go 结果进入公共 CodeIntel contract。
+- **当前还缺的关键闭环**：真实 `gopls` 初始化与 workspace sync、多 module/build tags 精度、工具链缺失/不匹配、network-off、只读 sandbox、结果/内存/并发上限、跨 Windows/WSL2 的 cancel/crash/soak 与 Doctor/production Gate。
+
+### 14.30 P1-A2 pinned gopls profile 与工具链前置
+
+#### P1-A2 实现结论：pinned gopls profile 与离线工具链约束（2026-08-10）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/code-intel/gopls-profile.ts` 新建**：
+   - 冻结 `gopls-profile/v1` 与 `gopls v0.21.0`，使用无 shell、3 秒 timeout、64 KiB 输出上限的可注入 probe 读取 `gopls version` 和 `go version`；缺失、输出异常或版本漂移均失败关闭。
+   - 生成 workspace 外专用 `GOCACHE/GOMODCACHE/GOPATH/GOTMPDIR/HOME` 布局，仅复制 `SystemRoot/WINDIR` 平台必需项并固定 `PATH` 到配置的 Go binary 目录，不继承其他调用环境。
+   - profile 固定 `GOPROXY=off`、`GOSUMDB=off`、`GOTOOLCHAIN=local`、`GOENV=off`、`GOTELEMETRY=off`、`GOFLAGS=-mod=readonly`、`CGO_ENABLED=0`，并支持受限 build tags；governance 明确 `dependencyRestore=denied`、`sandboxStatus=unverified`、`productionEligible=false`。
+
+2. **`packages/belldandy-skills/src/code-intel/gopls-profile.test.ts` 新建**：
+   - 覆盖精确版本可用、版本不匹配、binary 缺失、显式环境脱敏、workspace 外 state containment、目录准备与 unavailable probe 拒绝。
+
+3. **本机双平台前置探测**：
+   - Windows 只读 probe 返回 `gopls v0.21.0`、`go1.24.2 windows/amd64`，与 pinned profile 匹配；`gopls` binary 的 Go module provenance 为 `golang.org/x/tools/gopls v0.21.0`。
+   - WSL2 `Ubuntu-22.04` 当前没有可执行 `go` 或 `gopls`，保持 `unavailable`；未自动安装、下载或借用 Windows binary。
+
+##### 效果
+
+- Go canary 已有可复算的版本、capability、cache/state 与离线环境合同；相同输入可以在 Doctor、Provider 和双平台 Gate 中复用。
+- 工具链缺失或漂移不会启动语言服务器，也不会在 query 阶段触发 toolchain/module 下载。
+- `environment-deny` 只关闭 Go 自身已知下载入口，尚不等于 OS 级 `network off`；WSL2 工具链与只读 sandbox 未闭合前不能升为 production。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm build:incremental`）。
+- CodeIntel 目录 `35/35` 个 Vitest 测试全部通过，含 `6` 个新增 gopls profile/probe 测试。
+- Windows 实际 probe 为 `available`；WSL2 实际探测为 `unavailable`，符合缺工具链失败关闭预期；未执行真实 gopls query、sandbox 或网络阻断 Gate。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：实现 `system.doctor` 的 Go CodeIntel 投影，复用同一 probe/profile 判定 `inactive/unavailable/incompatible/canary-ready`，再实现 Go Provider Adapter 与真实 Windows canary。
+- **为什么先做它**：WSL2 已真实暴露工具链缺失，必须先让用户和任务启动闭包看到稳定、无敏感信息的 capability 状态，避免 Provider 运行时才以模糊进程错误失败。
+- **当前还缺的关键闭环**：Doctor 接线、gopls server-request/workspace sync、CodeIntel evidence 归一化、真实 Go truth set、OS network-off/只读 sandbox、资源上限、WSL2 pinned toolchain 与双平台 crash/cancel/soak Gate。
+
+### 14.31 P1-A2 Go CodeIntel Doctor 投影
+
+#### P1-A2 实现结论：Go CodeIntel capability Doctor（2026-08-10）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/code-intel/go-code-intel-doctor.ts` 新建**：
+   - 建立独立 Doctor builder，读取 `BELLDANDY_CODE_INTEL_GO_ENABLED`、`BELLDANDY_CODE_INTEL_GOPLS_COMMAND` 与 `BELLDANDY_CODE_INTEL_GO_COMMAND`，复用 pinned `probeGoplsToolchain()`，不复制版本解析或命令执行逻辑。
+   - 固定 `inactive`、`unavailable`、`incompatible`、`canary-ready` 四种状态；启用配置缺失、非绝对命令路径、binary 缺失与版本漂移均失败关闭，只有固定工具链 probe 通过才进入 canary-ready。
+   - 报告只暴露配置布尔状态、固定/检测版本、平台、稳定诊断码与 governance；不返回命令路径、任意环境变量值或底层 runner 错误，且所有状态均保持 `productionEligible=false`。
+
+2. **`packages/belldandy-core/src/server-methods/system-doctor.ts` 与 CLI Doctor 接入**：
+   - `system.doctor` 增加独立 `code_intel_go` performance stage、check 与 `codeIntelGo` payload，不混入 optional dependency item，也不新增 WebChat 顶层面板。
+   - `bdd doctor` 文本检查与 `--json` 输出复用同一报告；`unavailable/incompatible` 映射为 warn，未启用与 canary-ready 保持非阻断。
+
+3. **测试与项目地图更新**：
+   - 新增 6 个纯 builder 测试，覆盖四状态、配置缺失、绝对路径约束、显式最小 probe 环境和敏感路径/异常脱敏。
+   - 新增 Gateway RPC 与 CLI JSON 集成测试，确认 capability 独立可见且配置路径不进入 payload；`docs/project-map.md` 增加 Doctor owner 与边界说明。
+
+4. **效果**：
+   - 用户和任务启动闭包可以在启动 Go Provider 前区分“未启用、工具链缺失、版本不兼容、可进入 canary”，WSL2 缺工具链不再只能表现为运行期进程错误。
+   - Windows 编译产物使用当前固定工具链真实 probe 返回 `canary-ready`：`gopls v0.21.0`、`go1.24.2 windows/amd64`；报告仍明确 sandbox/network-off 未验证，不能据此升为 production。
+   - Doctor 只增加只读 capability 投影，不改变 TS/JS Provider、现有 CodeIntel consumer、依赖恢复策略或 mutation authority。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm build:incremental`）。
+- 95 个定向测试全部通过（CodeIntel `41/41`、CLI Doctor `11/11`、Server Doctor `43/43`；含 8 个新增 Go Doctor builder/RPC/CLI 测试）。
+- Windows 实际 dist probe 为 `canary-ready` 且 `productionEligible=false`；序列化脱敏测试确认未输出配置命令路径、任意环境值或底层异常文本。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：先扩展通用 LSP Host 对 `workspace/configuration`、`workspace/workspaceFolders` 及必要动态注册/进度类 server-initiated request 的受限响应，再实现 Go Provider Adapter 的 workspace sync 与公共 CodeIntel evidence 归一化。
+- **为什么先做它**：当前 Host 只覆盖 client-initiated request；真实 `gopls` 初始化和查询可能主动向 client 请求 workspace/configuration 信息，若直接接 Adapter 会以协议悬挂或隐式默认值形成不稳定 canary。
+- **当前还缺的关键闭环**：server-initiated request、Go Adapter、真实 `go.mod`/`go.work`/build tags/multi-module truth set、OS network-off/只读 sandbox、结果/内存/并发上限、Windows canary 与 WSL2 pinned toolchain、双平台 crash/cancel/soak 和 production promotion Gate。
+
+### 14.32 P1-A2 LSP Host server-request seam
+
+#### P1-A2 实现结论：受 profile 治理的 LSP server-initiated requests（2026-08-10）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/code-intel/lsp-process-host.ts` 扩展**：
+   - 增加 `workspace/workspaceFolders` 固定当前 workspace、`workspace/configuration` profile 配置读取、`client/registerCapability` 白名单注册和 `window/workDoneProgress/create` 显式开关；client capabilities 与 profile 保持一致。
+   - 未知 server request 继续由 JSON-RPC 层返回 `MethodNotFound`；受管请求参数错误或动态注册越权返回稳定 `InvalidParams`，不执行外部文件、命令、网络或 mutation。
+   - diagnostics 增加受管请求处理/拒绝计数与已注册 capability method，profile 配置深拷贝并限制为 JSON 可投影的记录、方法列表和布尔 progress 开关。
+
+2. **`packages/belldandy-skills/src/code-intel/gopls-profile.ts` 与 fake fixture 更新**：
+   - gopls profile 默认提供 `gopls` section、`workspace/didChangeConfiguration` 注册白名单和 work-done progress，保持 workspace 外 cache/state 与 `GOPROXY=off` 约束。
+   - fake LSP server 发起真实 workspace/configuration/workspaceFolders/registration/progress 请求，并验证未知 request 与越权 registration 的拒绝路径。
+
+3. **效果**：
+   - Host 不再因真实 gopls 的初始化/查询请求缺少 client 响应而悬挂，同时不接受任意动态能力或隐式客户端配置。
+   - Windows 临时 Go workspace 真实 `workspace/symbol` smoke 返回 1 个结果；受管 server request `handled=3/rejected=0`，仅注册 `workspace/didChangeConfiguration`，dispose 后 `stopped` 且强杀计数为 0。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm build:incremental`）。
+- CodeIntel 目录 `43/43` 个 Vitest 测试全部通过，含 2 个新增 server-request/registration 测试。
+- Windows pinned `gopls v0.21.0` 真实 Host smoke 通过；未执行 OS network-off、只读 sandbox 或 WSL2 gopls smoke。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：实现 Go Provider Adapter，将 LSP workspace/symbol、definition、references、implementation 结果映射到既有 `CodeIntelProviderResult`，并统一 workspace containment、revision/freshness、bounded results 与稳定错误类别。
+- **为什么先做它**：Host 和 profile 已证明真实 gopls 可启动并完成受管协议交互；下一项必须把结果接入公共 CodeIntel interface，才能用既有 consumer/contract 测试验证 Go 第二后端，而不是继续停留在协议 smoke。
+- **当前还缺的关键闭环**：Adapter 的 Go URI/range/symbol kind 映射、multi-module/build tags truth set、依赖/stdlib external allowlist、cancel/crash/结果内存并发上限、OS network-off/只读 sandbox、WSL2 pinned toolchain 与双平台 canary Gate。
+
+### 14.33 P1-A2 Go Provider Adapter
+
+#### P1-A2 实现结论：Go Provider Adapter 与公共 CodeIntel 契约（2026-08-11）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/code-intel/gopls-provider.ts` 新建**：
+   - 使用固定 canary `GoplsProcessProfile` 装配 LSP Host，将 `workspace/symbol`、definition、references 与 implementation 映射到既有 `CodeIntelProviderResult`，不新增语言专属 consumer 契约。
+   - 统一投影 file URI、zero-based range、SymbolKind、workspace 相对路径与受 allowlist 约束的 external 路径；源文件 revision 使用 SHA-256，非 file URI、越界路径、不可读文件与畸形位置均返回稳定诊断且不暴露原始 URI/进程错误。
+   - 单次最多保留 1000 项并使用 opaque Provider cursor 分页；同 revision 复用单 Host，revision 改变时先回收旧 Host，dispose 与 revision 重启竞态不会再创建替代进程。
+
+2. **`packages/belldandy-skills/src/code-intel/types.ts` 与 `code-intel.ts` 扩展**：
+   - Provider 释放契约兼容同步与异步返回，公共 facade 增加可等待、幂等的 `disposeAsync()`；既有同步 `dispose()` 入口保持兼容。
+   - facade 继续负责 capability 选择、公共游标封装、provenance、结果合同与错误归一化，Go Adapter 未绕开现有边界。
+
+3. **`gopls-provider.test.ts`、`code-intel.test.ts` 与项目地图更新**：
+   - 新增 7 个 Adapter/释放测试，覆盖公共 facade、四操作 payload/evidence、workspace/external containment、分页、revision 重建、畸形结果脱敏及 dispose/restart 竞态。
+   - `docs/project-map.md` 登记 Go Adapter owner，并补充 facade 可等待释放职责。
+
+4. **效果**：
+   - Go canary 已能通过与 TS/JS 相同的 `CodeIntel.query()` 返回 `semantic-live` evidence、provenance、freshness 与分页信息，consumer 不需要识别 LSP 或 gopls 私有结构。
+   - Windows 临时 Go module 的四种查询、revision 重启和异步回收均可观察验证；查询结束后无 gopls 残留进程。
+   - Adapter 仍未接入默认 TS ToolPool，sandbox/network-off、真实多模块 truth set 与双平台 Gate 未闭合，因此保持 canary 且 `productionEligible=false`。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm build:incremental`）。
+- CodeIntel 目录 50 个测试全部通过（含 7 个新增 Adapter/异步释放测试）。
+- Windows pinned `gopls v0.21.0` + `go1.24.2 windows/amd64` 实际 dist smoke 通过：symbols `2`、definition `1`、references `2`、implementation `1`；两个 revision Host 均为 `stopped`，强杀/last failure/残留 `gopls.exe` 均为 0。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：冻结 Go canary truth set 与离线 runner，先覆盖 `go.mod`、`go.work`、build tags 和 multi-module 的四操作期望，再据此收紧 external dependency/stdlib evidence allowlist。
+- **为什么先做它**：当前 Adapter 只在单一临时 module 上证明合同与生命周期；sandbox、资源 soak 和双平台 promotion 必须依赖一组哈希绑定、可重复比较的真实语言语义基线，否则 Gate 只能验证“进程能跑”而不能验证结果正确。
+- **当前还缺的关键闭环**：Go truth set/schema/runner、依赖与 stdlib external allowlist、OS network-off/只读 sandbox、响应字节/内存/并发硬上限、crash/cancel/soak、WSL2 pinned Go/gopls 工具链与双平台 canary promotion Gate。
+
+### 14.34 P1-A2 Go truth set 与 workspace sync
+
+#### P1-A2 实现结论：Go multi-module truth set 与有界 workspace sync（2026-08-11）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/code-intel/lsp-process-host.ts` 与 `gopls-profile.ts` 扩展**：
+   - profile 可声明最多 64 个 workspace folders；Host 对路径做绝对路径、workspace containment、去重校验，并在 initialize 与 `workspace/workspaceFolders` server request 中保持同一投影。
+   - 增加 profile 白名单约束的 client notification seam，目前 Go canary 仅允许 `textDocument/didOpen`；diagnostics 记录 notification 数量，未知 notification 不发送到进程。
+   - Go canary graceful shutdown 窗口固定为 5 秒，仍保留超时强杀与 `forcedTerminationCount` Gate，不把关闭慢误报为正常停止。
+
+2. **`packages/belldandy-skills/src/code-intel/gopls-provider.ts` workspace sync**：
+   - 每个 revision Host 首次查询前扫描声明 folders 下的 `.go` 文件，跳过 symlink、VCS、`vendor` 与 `node_modules`，限制 512 文件、单文件 1 MiB、总计 32 MiB、4096 目录。
+   - 通过受 profile 治理的 `textDocument/didOpen` 有序同步文档，确保 workspace symbol 与跨 module references 不依赖查询顺序；revision 重建会重新同步，dispose 竞态仍失败关闭。
+
+3. **`benchmarks/code-intel/v1/fixtures/go-canary/`、`go-truth-set.json`、Schema 与 `scripts/run-code-intel-go-truth-set.mjs` 新建**：
+   - 固定 `go.work` 下 `app` / `lib` 双 module、`canary` build tag 和 6 个 symbol/definition/reference/implementation case，共 10 个精确期望位置；所有 source 文件哈希绑定。
+   - runner 显式接收 pinned gopls/Go 命令，复核执行前后 fixture hash，使用 workspace 外临时 state，等待公共 facade `disposeAsync()`，输出不可覆盖 report；报告明确 `providerNetworkCalls=not_observable` 与 `osNetworkIsolationVerified=false`。
+   - 新增 4 个 fake-runtime runner 测试，覆盖 manifest/report schema、精度 Gate、重复写保护、参数与重复 case 校验；根脚本新增 `benchmark:code-intel:go-truth-set`。
+
+4. **效果**：
+   - Go Adapter 已在固定 `go.mod` / `go.work` / build tags / multi-module fixture 上通过公共 `CodeIntel.query()` 的四操作精确合同，语义结果不再因首次查询顺序丢失反向依赖。
+   - Windows 实机报告可复算并保留 lifecycle evidence：6/6 case、10/10 位置、precision/recall `1.00/1.00`，Host `stopped`、强杀/失败/状态目录残留均为 0；重复 artifact 写入在启动 gopls 前失败且不产生进程。
+   - Go 仍为 canary，`productionEligible=false`；truth set 只关闭固定 fixture 的语义基线，不等同于双平台或生产 promotion。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm build:incremental`）。
+- CodeIntel 目录 53 个 Vitest 测试，加 Go truth-set runner 4 个测试，共 57 个定向测试全部通过。
+- Windows `benchmark:code-intel:go-truth-set` 实际 dist Gate 通过：`gopls v0.21.0`、`go1.24.2 windows/amd64`、precision/recall `1/1`、Host `1/1 stopped`、`forcedTerminationCount=0`、`failureCount=0`、`stateRootCleaned=true`；重复写入返回 `EEXIST`，之后 `gopls.exe` 进程数为 0。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：在 truth set 已冻结后，先实现 Go evidence 的 external dependency/stdlib allowlist 与 `go.mod`/`go.work` 边界投影，再补结果字节、内存和并发硬上限的可观测 Gate。
+- **为什么先做它**：当前同步只读 workspace 源文件，Adapter 对 gopls 返回的 workspace 外 file URI 仍依赖调用方 allowlist；依赖/stdlib 结果若没有明确 scope 与版本绑定，不能安全交给 consumer 或后续 mutation 校验。
+- **当前还缺的关键闭环**：external dependency/stdlib allowlist、OS network-off/只读 sandbox、结果字节/内存/并发硬上限、crash/cancel/soak、WSL2 pinned Go/gopls 工具链和双平台 canary promotion Gate。
+
+### 14.35 P1-A2 Go external evidence 双层 allowlist
+
+#### P1-A2 实现结论：Go external dependency/stdlib evidence 双层 allowlist（2026-08-11）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/code-intel/gopls-profile.ts` 扩展**：
+   - canary profile 增加独立 `externalEvidenceRoots`，默认拒绝所有 workspace 外 evidence；显式配置必须为绝对、位于 workspace 外的路径，去重后最多保留 32 个 root。
+   - profile allowlist 在 Provider 构造时冻结为运行策略输入，不从单次 query 的调用方授权中推导，防止 request 自行扩大 Go SDK 或 module cache 的可见边界。
+
+2. **`packages/belldandy-skills/src/code-intel/gopls-provider.ts` 收紧 external evidence 投影**：
+   - gopls 返回 workspace 外 file URI 时，必须同时命中 `request.workspace.externalRoots` 与 profile `externalEvidenceRoots`；任一层缺失均丢弃该位置。
+   - request 层拒绝继续使用既有 `external_location_not_allowed`，profile 层新增稳定 `profile_external_location_not_allowed`；两类诊断均不回显实际路径、URI 或进程错误。
+   - 获双层授权的 dependency/stdlib 文件继续标记为 `scope=external`，保留绝对路径并用 SHA-256 document revision 绑定实际读取版本；workspace evidence 行为不变。
+
+3. **`gopls-provider.test.ts` 与 `gopls-profile.test.ts` 扩展**：
+   - 覆盖双层均允许时返回 external evidence、仅 request 允许时 profile 拒绝，以及 workspace 外未授权位置拒绝。
+   - 增加 relative root、workspace 内 root 与超过 32 项配置的失败关闭断言，固定 profile 配置边界。
+
+4. **效果**：
+   - 单次 CodeIntel 请求不能把 gopls 的 workspace 外结果扩展到 Provider 未预先批准的 Go SDK、module cache 或任意宿主路径。
+   - external evidence 只有在部署侧静态授权与调用侧任务授权相交时才进入公共 contract，并由 document revision 提供内容版本绑定。
+   - 该切片不自动发现或放宽本机 `GOROOT/GOMODCACHE`，不执行 dependency restore，Go Provider 仍为 canary 且 `productionEligible=false`。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm build:incremental`）。
+- CodeIntel 与 Go truth-set runner 共 7 个测试文件、58 个测试全部通过，含 1 个新增双层 allowlist 行为测试及扩展的 profile 边界断言。
+- Windows 真实 CLI Gate 继续通过：6/6 case、10/10 位置、precision/recall `1/1`，Host `1/1 stopped`，强杀、失败与 `gopls.exe` 残留均为 0，`stateRootCleaned=true`。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：为 Go Provider 增加响应字节、常驻内存和并发硬上限及可观测 diagnostics/report Gate，再用真实 gopls 执行超限与正常路径回归。
+- **为什么先做它**：external evidence 的权限边界已经闭合，下一项风险是合法但过大的 LSP 响应、workspace 或并发请求耗尽 Gateway 资源；先固定上限才能安全进入 crash/cancel/soak 与 sandbox 验证。
+- **当前还缺的关键闭环**：结果字节/内存/并发硬上限、OS network-off/只读 sandbox、crash/cancel/soak、WSL2 pinned Go/gopls 工具链和双平台 canary promotion Gate。
+
+### 14.36 P1-A2 LSP decoded response 与 concurrency Gate
+
+#### P1-A2 实现结论：Go decoded response 与单并发资源 Gate（2026-08-11）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/code-intel/lsp-process-host.ts` 扩展**：
+   - 增加默认 4 MiB、可由 profile 收紧的 decoded JSON response 上限；initialize 或普通 request 响应超过上限时返回稳定 `response_too_large`，记录 peak/rejection 后立即 kill/reap 当前进程。
+   - diagnostics 增加 response `max/last/peak/rejected` 与 concurrency `max/active/peak/rejected`；Host 固定每次最多 1 个活跃 request/notification，并在额外调用进入 LSP traffic 前返回 `busy`。
+   - 上限约束的是 JSON-RPC 解码后的响应边界，不伪称已经限制底层 stream 暂存或 gopls 进程 RSS。
+
+2. **`packages/belldandy-skills/src/code-intel/gopls-profile.ts`、`gopls-provider.ts` 与 `index.ts` 接入**：
+   - canary profile 固定 `decodedResponseMaxBytes=4 MiB`、`maxConcurrentRequestsPerHost=1`，Adapter 显式传给每个 revision Host，不依赖通用 Host 默认值。
+   - profile 同时投影 `processMemoryHardLimitBytes=null`、`processMemoryStatus=unverified`；未用 `GOMEMLIMIT` 等软限制冒充 OS 级内存硬限制。
+   - package 入口导出固定资源常量，Doctor/runner 或后续 sandbox Adapter 无需复制数值。
+
+3. **Go truth-set runner 与 report Schema 扩展**：
+   - lifecycle 汇总 response/concurrency limit、peak、rejection 和 passed；任一 Host 超限或发生并发拒绝都会使 `lifecycle_gate_failed`，不能只记录计数后继续判通过。
+   - execution 增加闭合的 `processMemory` 投影，当前固定 `hardLimitBytes=null`、`peakBytes=not_observable`、`status=unverified`，保留 promotion 阻塞事实。
+
+4. **效果**：
+   - 合法但过大的 gopls decoded response 不会进入 Adapter 或 consumer，超限进程有确定失败类别和零残留终态。
+   - 同一 Host 的并发压力不会形成无界 pending request；truth-set artifact 可复算实际峰值与拒绝次数。
+   - 当前只关闭 decoded response 与 Host 并发边界；OS 级进程内存、network-off 和只读文件系统仍未完成，Go 继续保持 canary。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm build:incremental`）。
+- CodeIntel 与 Go truth-set runner 共 7 个测试文件、62 个测试全部通过，含 4 个新增 response 超限、并发拒绝、profile 传递与 lifecycle 失败 Gate 测试。
+- Windows 真实 CLI Gate 通过闭合 Schema：4 MiB limit 下 decoded response peak `5,583` bytes、rejected `0`；并发 limit/peak `1/1`、rejected `0`；6/6 case、10/10 位置、Host 强杀/失败/残留均为 0，`stateRootCleaned=true`。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：先形成 Go canary 的 crash/cancel/restart fault runner 与短时资源 soak，并同步评估可复用 OCI sandbox 是否能对 gopls 落实 memory hard limit、`--network none` 和只读 workspace；若本地没有 pinned Linux Go/gopls artifact，保持失败关闭而不在线安装。
+- **为什么先做它**：Host 侧响应与并发边界已有确定行为，下一步需要证明异常终止和重复运行不会泄漏进程/state；同时进程 RSS 只有在 OS/OCI 资源控制层才能形成真正硬限制，不能继续在 Adapter 内做近似补丁。
+- **当前还缺的关键闭环**：真实 gopls crash/cancel/restart 与 soak、OS network-off/只读 sandbox/进程内存硬限制、WSL2 pinned Go/gopls 工具链和双平台 canary promotion Gate。
+
+### 14.37 P1-A2 Go crash/cancel/restart fault Gate 与短时 soak
+
+#### P1-A2 实现结论：Go fault recovery 与短时 soak Gate（2026-08-11）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/code-intel/lsp-process-host.ts` 扩展**：
+   - diagnostics 增加 `processStartCount` 与 `unexpectedExitCount`；非 stopping/stopped 状态下的子进程退出被记录为意外退出。
+   - server crash 后下一次 request 会先释放旧 transport，再创建 fresh process；既有 cancel/timeout 的 kill/reap 与幂等 dispose 行为保持不变。
+
+2. **`scripts/run-code-intel-go-fault-gate.mjs` 与 `benchmarks/code-intel/v1/go-fault-gate-report.schema.json` 新建**：
+   - 复用 pinned Go profile 与固定 truth fixture，执行 crash/restart、活跃 request cancel/restart、5 个独立 Host cycle/15 次 query soak；报告只保存 stable counts/booleans，不保存 PID、命令路径或环境值。
+   - 每个 scenario 都检查 recovery query、process starts/exits、forced termination、response/concurrency rejection 与 residual process；state root 使用 workspace 外临时目录并在报告中显式投影 cleanup。
+   - fault Gate 与正常 precision runner 分离：正常 truth-set 仍要求零意外退出，fault Gate 只接受预期的 crash/cancel 注入和对应终态。
+
+3. **`package.json`、`run-code-intel-go-fault-gate.test.mjs` 与项目地图/README 更新**：
+   - 增加 `benchmark:code-intel:go-fault-gate` 根命令、Schema-valid fake-runtime 测试、失败闭包与不可覆盖 artifact 测试，并登记 fault runner owner。
+
+4. **效果**：
+   - Windows pinned `gopls` 在真实 crash、cancel 和重复启动路径上均能回收旧进程并恢复下一次 query；短 soak 不产生强杀、失败或残留。
+   - fault 证据不把预期的 cancel hard kill 误报为正常 zero-forced lifecycle，也不把内存未观测误报为资源通过。
+   - Go 仍为 canary；WSL2 工具链不可用、OS network-off/只读 sandbox/进程内存硬限制尚未闭合。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm --filter @belldandy/skills build`；完整增量构建在本阶段前序已通过）。
+- fault runner 定向测试 3/3 通过；与 CodeIntel 既有回归合计 8 个测试文件、66 个测试全部通过。
+- Windows 真实 fault artifact Schema-valid：crash `starts=2/unexpected=1/forced=0`、cancel `code=cancelled/starts=2/forced=1`、soak `5/5 stopped`、15 queries、9 process starts，所有 residual=0，`stateRootCleaned=true`；执行后 `gopls.exe` 进程数为 0。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：评估并实现可复用的 OS/OCI sandbox fault harness，先用现有本地 digest 镜像验证 `--network none`、只读根/只读 workspace、memory hard limit 和容器/进程树回收，再决定是否有 pinned Linux Go/gopls artifact 可进入 Go 双平台 Gate。
+- **为什么先做它**：native Host 已经证明协议、权限和 fault recovery；剩余风险属于操作系统资源控制边界，继续在 Node/Adapter 层增加近似指标不能替代真正的网络、文件系统和 RSS 限制。
+- **当前还缺的关键闭环**：本地可审查的 Go/gopls OCI artifact、OS network-off、只读 workspace、进程内存硬限制、WSL2 pinned 工具链和双平台 canary promotion Gate。
+
+### 14.38 P1-A2 Go OCI sandbox control-plane Gate
+
+#### P1-A2 实现结论：Go OCI sandbox 控制面与资源故障 Gate（2026-08-11）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/command-sandbox.ts` 扩展**：
+   - `buildOciSandboxInvocation()` 增加受校验的 `memoryBytes`、`cpus`、`pidsLimit` 与 `tmpfsBytes` 可选限制；默认仍为既有 `1024m/2 CPU/256 PID/64m`，不会改变生产命令路径。
+   - Docker/Podman 参数使用兼容的 MiB 表示，同时保留精确字节约束和 16 MiB/1 MiB 等下限，越界输入在启动前失败关闭。
+
+2. **`scripts/run-code-intel-go-oci-sandbox-gate.mjs` 与 `benchmarks/code-intel/v1/go-oci-sandbox-gate-report.schema.json` 新建**：
+   - 复用现有 OCI config/runtime probe、sandbox lease 和无 Shell invocation，固定 `128 MiB` memory、`1` CPU、`64` PID、`16 MiB` tmpfs，并以 `--pull=never` 绑定镜像 digest。
+   - 真实探针覆盖 outbound `ENETUNREACH`、loopback-only、root/workspace `EROFS`、`/tmp` 写入、`memory.max=134217728`、容器终止/close、lease cleanup 与残留容器计数；报告不保存路径、PID、命令参数或环境值。
+   - `promotion.goToolchainArtifactStatus=unavailable`、`goCanaryEligible=false`、`productionEligible=false` 固定失败关闭；没有 Linux `Go/gopls` artifact 时不会伪造 Go 双平台证据。
+
+3. **`packages/belldandy-skills/src/command-sandbox.test.ts`、`scripts/run-code-intel-go-oci-sandbox-gate.test.mjs`、`package.json`、项目地图与 benchmark README 更新**：
+   - 新增资源参数边界、Schema-valid fake runtime、失败 Gate、不可覆盖 artifact 与 CLI 参数测试，并增加 `benchmark:code-intel:go-oci-sandbox-gate`。
+   - 项目地图登记 sandbox resource-limit owner、OCI harness 和 promotion 边界；README 记录本地 digest smoke 的运行前置和未完成边界。
+
+4. **效果**：
+   - Windows Docker 本地 digest smoke 已证明 network-off、只读 root/workspace、可写 tmpfs、cgroup memory limit 与 container/process-tree 回收均可观测，真实报告 Gate 通过且残留为 0。
+   - OCI 资源参数现在可被后续 LSP/Go harness 复用；默认命令 sandbox 的资源配置与行为保持兼容。
+   - 该证据只关闭 OS/OCI 控制面，不等价于 gopls RSS hard limit 或 Go production promotion。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm build:incremental`）。
+- 新增与相邻回归共 2 个测试文件、15 个测试全部通过；Schema 校验通过。
+- Windows 真实 artifact：`.tmp-codex/go-oci-sandbox-gate-real-20260811-002/report.json`，network `ENETUNREACH`、root/workspace `EROFS`、memory cgroup `128 MiB`、lease `removed`、残留容器 `0`、临时根清理成功。
+- 只读环境盘点未发现 Go/gopls OCI 镜像；`Ubuntu-22.04` WSL2 中 `go`/`gopls` 均不可执行，未拉取镜像、安装工具链或改写任何环境配置。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：先检查是否存在可审查、digest-pinned 且包含 Go/gopls 的本地 Linux/WSL2 OCI artifact；若不存在，保持当前 native Windows canary 与 OCI 控制面证据，不在线拉取或安装工具链。
+- **为什么先做它**：OCI 控制面已通过，但只有把同一 sandbox contract 绑定到真实 gopls 进程并完成双平台 precision/fault/soak，才能证明语言服务的 OS 资源隔离，而不是只证明 Node 探针。
+- **当前还缺的关键闭环**：pinned Linux Go/gopls artifact、gopls RSS hard-limit enforcement、WSL2 工具链、双平台 Go truth/fault promotion，以及把 sandbox admission 接入 Go Provider 启动闭包。
+
+### 14.39 P1-B CommandJob 权威结果 replay
+
+#### P1-B 第二切片实现结论：CommandJob 终止原因与验证 DAG 只读 replay（2026-08-11）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/command-job.ts` 扩展**：
+   - `CommandJobSnapshot` 与持久化记录新增 `terminationReason=cancelled|timed_out`，运行时 timeout、启动 timeout 和取消路径直接写入结构化原因，不再依赖 error 文本推断。
+   - 终止原因随 terminal lifecycle 元数据原子持久化，并在 Gateway 重启后恢复；取消期间的进程树终止或 sandbox cleanup 失败仍保持 `failed`，不会伪装成正常取消。
+   - `command_job` Tool metadata、包导出与 TUI Gateway snapshot 解析同步透传新字段，既有无该字段的记录保持兼容。
+
+2. **`scripts/run-verification-dag.mjs` 与 `verification-dag.schema.json` 扩展**：
+   - 新增只读 command-job terminal snapshot Adapter，确定性映射 `completed/failed/cancelled/lost`，其中 owner `lost` 投影为 `not_run`，保持验证不完整而非伪造测试失败或通过。
+   - 固定 `zero_exit/non_zero_exit/signal/runtime_error/timed_out/cancelled/cancellation_failed/owner_lost` exit taxonomy；超时保留 `timeoutMs/deadlineAt/endedAt/budgetExhausted`，取消保留结构化原因。
+   - replay artifact 仅保留 job ID、终态、exit taxonomy、时间预算和 recovery lifecycle；不解析命令或 error 文本，不保存 command output，CLI 不执行计划命令且继续保持零 Provider/零 mutation。
+
+3. **CommandJob、TUI、Gateway 与 verification DAG 测试更新**：
+   - 新增取消、运行时/启动超时、terminal store 重启恢复、四类 snapshot 映射、取消失败区分、非法/非终态拒绝、Schema 和 CLI 零执行测试。
+   - 使用本地 digest-pinned Node 镜像开启真实 OCI recovery fixture，覆盖 pipe/PTY Gateway crash 后的 `lost` 恢复、容器删除和不可 reattach 边界。
+
+4. **效果**：
+   - 验证 DAG 首次能够消费现有 command job owner 的权威终态，无需创建第二套执行状态机。
+   - timeout、用户取消、取消清理失败、非零退出、signal、runtime error 与 owner lost 不再因相似错误文本混淆。
+   - 当前只关闭通用 command-job lifecycle replay；尚未声称 pnpm/Vitest、`go test` 语义结果、测试影响选择或 Browser Relay artifact 已闭合。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm build:incremental`）。
+- 9 个定向测试文件、82 个测试全部通过，包含 6 个新增 replay/termination 测试和 2 个真实 Docker crash/restart 测试。
+- verification DAG replay artifact 通过封闭 Schema；CLI 级测试证明计划命令未执行，`commandsExecuted=false`、Provider/mutation 均为 0。
+
+#### 后续计划（P1-B 尚未结束）
+
+- **下一步准备做什么**：在同一 command-job replay seam 上增加受版本约束的 pnpm/Vitest 与 `go test` 结构化结果 Adapter，先用固定 fixture 绑定 runner identity、测试 case/count、artifact hash 和失败类别，再接验证节点；不解析任意 stdout/stderr 文本。
+- **为什么先做它**：本切片已闭合通用进程终态，但 `exitCode=0/非零` 仍不能证明测试框架实际执行了预期 case；先绑定 runner 原生结构化报告，才能可靠进入影响 truth set、失败最小化和 Browser Relay。
+- **当前还缺的关键闭环**：pnpm/Vitest 与 `go test` 结构化 evidence binding、测试影响 truth set 一致率 `>=95%`、有界失败最小化、Browser Relay 的 DOM/console/request/screenshot artifact，以及预算/断线/取消资源收敛和双平台重复验证。
+
+### 14.40 P1-B 原生测试报告 evidence
+
+#### P1-B 第三切片实现结论：Vitest 与 Go test 结构化报告 replay（2026-08-11）
+
+##### 已完成内容
+
+1. **`scripts/verification-test-report-adapter.mjs` 新建**：
+   - 输入报告受 4 MiB 上限、相对 artifact path 与 SHA-256 内容绑定约束；报告正文不会进入输出 artifact。
+   - Vitest 只接受本仓固定 `3.2.7` Jest-compatible JSON，交叉核对 suite/test 汇总与 assertion status；Go 只接受显式 Go 1.20+ runner identity 和 `test2json` JSONL，验证 package start/terminal、running test terminal、重复终态和固定 Action 集。
+   - 统一投影 suite/package/test 的 total/passed/failed/skipped/todo、failed-build 数量与 `passed/failed/incomplete`；零实际执行测试映射为 incomplete，不得整体 completed。
+
+2. **`run-verification-dag.mjs` 与 `verification-dag.schema.json` 扩展**：
+   - command-job binding 可选携带 hash-bound `testReport`，报告通过必须对应 `completed/zero_exit`，测试失败必须对应 `failed/non_zero_exit`；超时、取消、signal、owner lost 或相反结论均失败关闭。
+   - attempt 新增封闭 test-report evidence，固定 framework/format/runner/status/reason/groupKind/counts 组合；`execution.replay.testReportCount` 记录消费数量。
+   - `message/failureMessages`、测试标题、文件路径、Go `Output`、package/test 名均不写入 artifact，首次失败只保留稳定分类 hash。
+
+3. **`verification-test-report-adapter.test.mjs` 与 DAG 回归扩展**：
+   - 真实启动本仓 Vitest `3.2.7` JSON reporter，覆盖通过、skip、todo 和无正文投影。
+   - 固定 Go `test2json` fixture 覆盖双 package 交错事件、test pass/skip、failed build、无测试、截断 stream、版本/hash/计数漂移与敏感正文丢弃。
+   - DAG 联动覆盖 Vitest pass、Go test failure、Schema-valid artifact 与报告/进程终态冲突拒绝。
+
+4. **效果**：
+   - `exitCode=0/非零` 不再被单独当作测试语义；只有与原生结构化 runner 报告一致时才形成 test verification evidence。
+   - 必要测试为零、runner 未完整结算、报告被改写或生命周期不一致时均不能得到整体完成。
+   - 当前只消费已生成报告，不负责执行测试命令；没有创建第二套 command job owner，也没有增加 Provider、网络或 mutation authority。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm build:incremental`）。
+- 10 个定向测试文件、90 个测试全部通过，包含 8 个新增 structured-report/DAG 测试、真实 Vitest `3.2.7` reporter 和 2 个真实 Docker crash/restart 测试。
+- JS 语法、JSON Schema 与 `verification:dag --help` 通过；Go 本机工具链不可用，本切片仅以 Go 官方 `test2json` 固定事件合同验证 Adapter，未声称执行真实 `go test`。
+
+#### 后续计划（P1-B 尚未结束）
+
+- **下一步准备做什么**：冻结首版测试影响选择 truth set，覆盖同文件测试、跨文件依赖、共享配置、无映射变更和 Browser 条件，并为 changed-path/显式依赖选择计算 precision/recall 与 `>=95%` 一致率 Gate；证据不足必须扩大到 module/full。
+- **为什么先做它**：执行结果与测试框架语义已闭合，但当前 `affectedPaths` 仍由调用方声明，尚不能证明定向集合不会漏掉已知受影响测试；先量化选择质量才能安全加入失败最小化和 Browser Relay。
+- **当前还缺的关键闭环**：测试影响 truth set `>=95%`、CodeIntel reference/项目依赖证据接入、有界失败重跑与最小化、Browser Relay 的 DOM/console/request/screenshot artifact，以及断线/取消资源收敛和双平台重复验证。
+
+### 14.41 P1-B Impact Truth Set
+
+#### P1-B 第四切片实现结论：验证影响选择 truth set 与一致率 Gate（2026-08-11）
+
+##### 已完成内容
+
+1. **`impact-truth-set.json`、两个 Schema 新建**：
+   - 固定 8 个 changed-path 场景，覆盖 core source/test、shared source、root build config、Go module、Web + Browser、multi-module 与 unknown impact conservative expansion，合计 24 个预期节点。
+   - manifest/report 均为封闭合同，阈值固定为 precision、recall、exact-case-rate 均 `>=0.95`；报告绑定 manifest SHA-256 与 selector 源码 SHA-256。
+
+2. **`scripts/run-verification-impact-truth-set.mjs` 新建并接入 `package.json`**：
+   - 直接复用生产 `selectVerificationNodes()`，逐 case 计算 TP/FP/FN、precision、recall 和 exact-case-rate；任何预期集合或 selection metadata 漂移均保留失败 case，并在 Gate 不达标时失败关闭。
+   - runner 只读取 manifest/selector 并生成报告，不执行 verification command、不调用 Provider/Gateway/模型/网络、不读取凭据、不产生 mutation；报告通过 `wx` 禁止覆盖。
+
+3. **`scripts/run-verification-impact-truth-set.test.mjs` 新建**：
+   - 覆盖 Schema 封闭性、24/24 满分 Gate、漂移失败关闭、不可覆盖 artifact、manifest 歧义拒绝和显式 CLI 参数解析。
+
+4. **效果**：
+   - changed-path 选择从声明式规则进入可重复、可审计的影响基准；未知影响场景验证生产 selector 会扩大到全部命令，避免局部映射掩盖漏选风险。
+   - 选择质量在接入 CodeIntel、失败最小化和 Browser Relay artifact 前具备明确的量化门槛，且不扩大执行权限边界。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm build:incremental`）。
+- 5 个定向测试文件、49 项测试全部通过（含 5 个新增 Impact Truth Set 测试、DAG/CommandJob replay 与结构化测试报告回归）。
+- `corepack pnpm verification:impact-truth-set -- --help` 与脚本直调用 `--help` 通过；真实评测路径保持 `commandsExecuted=false`、Provider/Gateway/模型/网络调用与 mutation 均为 0。
+
+#### 后续计划（P1-B 尚未结束）
+
+- **下一步准备做什么**：把 CodeIntel reference/项目依赖证据接入影响选择，并冻结有界失败最小化的 replay 合同；随后建立 Browser Relay 的 DOM、console、request 和 screenshot hash-bound artifact。
+- **为什么先做它**：当前 truth set 证明了声明式 changed-path selector 的基线一致率，但尚未证明跨文件语义依赖和失败节点缩减不会漏选；先接入只读依赖证据，再定义重跑边界，能保持验证集合可解释且不引入隐式执行。
+- **当前还缺的关键闭环**：CodeIntel/依赖证据与 DAG 选择的兼容合同、有界失败重跑与最小化、Browser Relay 多类 artifact、断线/取消资源收敛及双平台重复验证。
+
+### 14.42 P1-B 影响证据接入
+
+#### P1-B 第五切片实现结论：CodeIntel reference 与项目依赖 evidence binding（2026-08-11）
+
+##### 已完成内容
+
+1. **`benchmarks/verification/v1/impact-evidence.schema.json` 新建**：
+   - 固定 `verification-impact-evidence/v1`、commit/workspace SHA-256 revision binding、`code-intel-reference` 与 `project-dependency` 两类 source、不可覆盖 artifact hash 和每个 changed path 的 complete/partial coverage。
+   - source/coverage 数量、concrete relative path、source 引用与总 impacted path 均有界；CodeIntel/project-dependency 的 kind 与 contractVersion 交叉约束，禁止把不匹配的证据伪装成可消费结果。
+
+2. **`scripts/verification-impact-evidence.mjs` 与 `scripts/run-verification-dag.mjs` 扩展**：
+   - 只读归一化 evidence，要求 coverage path 属于当前 changed paths、source 不可闲置、complete coverage 不能引用 partial source，revision 漂移直接拒绝。
+   - 完整 evidence 将跨文件 impacted paths 加入 selector；partial、未覆盖 changed path、未匹配 impacted path 均触发 `impact-unknown` 全量扩展；无 evidence 的旧请求保持原有 changed-path 行为。
+   - selection artifact 只保存归一化 source/coverage 元数据与 artifact hash，不保存 CodeIntel 测试正文、源码正文、Provider 响应或命令输出；新增 `impact-evidence` selection reason。
+
+3. **`scripts/run-verification-dag.test.mjs` 与 DAG Schema 回归扩展**：
+   - 覆盖 CodeIntel reference 跨文件选择、project-dependency 对未知路径的闭包、partial evidence 保守扩展、revision drift 拒绝、独立 evidence Schema 与 DAG artifact Schema binding。
+
+4. **效果**：
+   - DAG 选择从单一声明式 affectedPaths 扩展为可审计的 revision-bound 语义/项目影响闭包；证据不足时不产生“看似精准”的漏测集合。
+   - verifier 仍保持零命令、零 Provider、零 mutation 边界，CodeIntel 和项目依赖计算继续由各自 owner 负责。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm build:incremental`）。
+- 3 个定向测试文件、39 项测试全部通过（含 4 个新增 impact evidence/DAG 测试）；既有无 evidence DAG 选择回归保持通过。
+- `git diff --check` 通过；证据 Schema 与 DAG Schema 均由项目 JSON Schema 编译器成功加载。
+
+#### 后续计划（P1-B 尚未结束）
+
+- **下一步准备做什么**：冻结有界失败最小化 replay 合同，定义首次失败保留、固定环境可重复性、最大重跑次数和 flaky/partial 终态，并让 DAG 只消费已生成的重跑结果。
+- **为什么先做它**：影响选择现在已有语义/项目证据的保守边界，但失败节点仍只有单次 attempt；先固定重跑与最小化证据，才能避免重试隐藏首次失败或把不确定状态误报为通过。
+- **当前还缺的关键闭环**：失败最小化 replay Schema/runner、Browser Relay DOM/console/request/screenshot artifact、断线/取消资源收敛以及双平台重复验证。
+
+### 14.43 P1-B 有界失败最小化 replay
+
+#### P1-B 第六切片实现结论：首次失败保留与 bounded replay 分类（2026-08-11）
+
+##### 已完成内容
+
+1. **`verification-dag.schema.json` 与 `run-verification-dag.mjs` 扩展**：
+   - `retryPolicy.maxAttempts` 固定为 3（首次执行 + 最多 2 次 replay）；每次 replay 必须携带 `environmentHash`、`inputHash` 和失败 fingerprint，且绑定必须与首次失败一致。
+   - 首次 `failed` attempt 永远保留；重复同 fingerprint 的失败归类 `reproducible_failure`，出现通过归类 `flaky`，出现 skipped/not_run/timed_out/cancelled 归类 `incomplete`，不同 fingerprint 归类 `non_reproducible`；这些分类不把任务改写为通过。
+   - artifact 只保存 attempt 状态、binding hash、failure fingerprint 和 replay 分类，不保存命令、stdout/stderr、异常正文或测试标题。
+
+2. **`run-verification-dag.test.mjs` 回归扩展**：
+   - 覆盖稳定失败三次 attempt、flaky 失败终态、超出 replay 上限和 binding drift 拒绝；Schema 继续拒绝越界字段并接受新的 replay evidence。
+
+3. **效果**：
+   - 失败诊断现在有固定的可重复性边界，首次失败不会被后续重跑覆盖，单次偶然通过不会伪造验证通过。
+   - replay 仍是只读结果消费，不创建第二套 command-job owner，不增加 Provider、网络或 mutation authority。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm build:incremental`）。
+- verification DAG 定向测试 30 项全部通过（含 2 个新增 bounded replay 测试）；Impact Truth Set 与结构化测试报告回归此前已通过。
+- `git diff --check` 通过，verification DAG JSON Schema 可解析并接受新的 replay artifact。
+
+#### 后续计划（P1-B 尚未结束）
+
+- **下一步准备做什么**：接入 Browser Relay 的 DOM、console、request 和 screenshot hash-bound artifact，并固定一次页面生命周期内的 route/viewport/revision 绑定。
+- **为什么先做它**：命令与失败 replay 的终态语义已闭合，P1-B 剩余最大用户可观察风险是浏览器交互证据缺失或断线后误报通过；先冻结多类浏览器 artifact，才能进入资源收敛与跨 viewport 重复验证。
+- **当前还缺的关键闭环**：Browser Relay artifact Schema/只读 adapter、console/request/DOM/screenshot 采集边界、断线/取消后的页面/进程/lease 收敛和双平台重复验证。
+
+### 14.44 P1-B Browser Relay artifact
+
+#### P1-B 第七切片实现结论：Browser 行为证据投影与 DAG 状态绑定（2026-08-11）
+
+##### 已完成内容
+
+1. **`browser-evidence.schema.json` 与 `verification-browser-report-adapter.mjs` 新建**：
+   - 固定 `browser-relay-verification/v1` 输入与 `verification-browser-evidence/v1` 输出合同，报告受 4 MiB 上限、相对 artifact path 和 SHA-256 内容绑定约束；PNG 受 5 MiB 上限、签名、字节数和 SHA-256 约束。
+   - revision、UTC observedAt、route、viewport、page load/final route、DOM before/after hash 与 assertion 数、console error/warning 数、localhost request method/route/status/count、截图 hash/尺寸和 lifecycle 均为封闭字段。
+   - 只投影计数、hash、状态与 artifact 引用，不保留 DOM 正文、console message、request header/body 或 screenshot 正文；未关闭页面/浏览器、pending request 或 orphan resource 均分类为 `incomplete/lifecycle_incomplete`。
+
+2. **`run-verification-dag.mjs` 与 `verification-dag.schema.json` 扩展**：
+   - Browser 原始报告只可绑定 `kind=browser` 节点，并按 DAG revision 投影；revision、runner contract、报告/截图 hash 或封闭字段漂移时直接拒绝。
+   - `passed` evidence 只对应 DAG `passed`，`failed` 只对应 `failed`，`incomplete` 只对应 `not_run/skipped`；console、request、DOM 或 page load 失败不能被改写为整体通过。
+   - attempt 内联封闭 Browser evidence Schema；同时修正 bounded replay attempt 序号 Schema，使 runner 已生成的 attempt 2/3 artifact 可通过同一合同验证。
+
+3. **Browser Adapter 与 DAG 回归测试扩展**：
+   - 覆盖 Schema-valid pass、DOM/console/request/page 分类边界、lifecycle incomplete、PNG/report/revision/contract 漂移和敏感正文丢弃。
+   - DAG 联动覆盖 pass、console/request failure、资源未收敛、evidence/DAG 状态冲突、非 Browser 节点拒绝及 bounded replay artifact Schema 回归。
+
+4. **效果**：
+   - Browser 验证首次可作为 revision-bound、可机读、无正文的独立 evidence 进入验证 DAG，不再只依赖人工描述或命令退出码。
+   - 生命周期未收敛和浏览器可观察失败都有确定终态，不能把缺失证据或资源残留伪装成 completed。
+   - 本切片仅消费已生成的 Browser Relay 报告与 PNG，不启动真实 Chrome/Relay，不声明断线、取消或双平台重复运行已经闭合。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm build:incremental`）。
+- 4 个定向测试文件、49 项测试全部通过（含 8 个新增 Browser Adapter/DAG 测试）；DAG bounded replay、Impact Truth Set 与结构化测试报告回归均通过。
+- Browser 独立 Schema 与 DAG 内联 Schema 均由项目 JSON Schema 编译器成功加载；`git diff --check` 通过，artifact 不含 DOM、console、request 或截图正文。
+
+#### 后续计划（P1-B 尚未结束）
+
+- **下一步准备做什么**：把现有 Browser Relay/extension/Chrome lifecycle 接入本切片冻结的报告合同，以 loopback fixture 覆盖正常完成、Relay 断线、用户取消和 deadline 到期，验证页面、浏览器进程、socket、pending request 与 lease 的确定收敛。
+- **为什么先做它**：evidence consumer 与 DAG 状态边界已经冻结，当前最大缺口转为真实 producer 是否能在异常路径完整结算资源；先关闭生命周期，才能可信地做三次重复运行与跨 viewport/双平台 Gate。
+- **当前还缺的关键闭环**：真实 Browser Relay/Chrome artifact producer、断线/取消/超时后的页面/进程/socket/lease 清理、固定 fixture 的三次重复运行、跨 viewport 失败复算，以及 Windows/WSL2 双平台验证。
+
+### 14.45 P1-B 真实 Relay + Chrome artifact producer
+
+#### P1-B 第八切片实现结论：真实 Relay/Chrome 交互证据与断线清理（2026-08-11）
+
+##### 已完成内容
+
+1. **`packages/belldandy-browser/src/relay.ts` 扩展**：
+   - 新增 `created/starting/running/stopping/stopped` 只读 lifecycle snapshot，统一暴露 HTTP listener、extension socket、CDP client 与 pending request 数量，不包含 credential、命令参数或 CDP 正文。
+   - extension 在 pending CDP 中断线时立即拒绝请求并清空 timer/map；CDP client 收到确定错误，Relay `stop()` 保持幂等并在终态报告全部计数归零。
+
+2. **`run-verification-browser-relay.mjs` 新建并接入根命令**：
+   - 启动真实 loopback HTTP fixture、真实 `RelayServer` 与本机 headless Chrome；验证专用 extension-protocol proxy 将 Chrome CDP 接入 Relay，完成 `GET /fixture.html -> button click -> POST /probe -> DOM verified` 的真实交互。
+   - 固定 `960x640@1` viewport、route、revision/workspace hash、DOM before/after hash、console/page error、localhost request outcome 与 PNG；启用 request interception，非 fixture origin 实际 abort，不把“仅计数”伪装成阻断。
+   - 采集后依序关闭 page、Relay Puppeteer client、protocol proxy、Chrome、Relay 和 HTTP server，复算 pending/orphan；source report、PNG 与 projected evidence 只写入显式 workspace 子目录并使用 `wx` 禁止覆盖。
+   - workspace 默认 hash 覆盖 tracked/untracked 文件且不跟随 symlink 到仓外；artifact 不保存 relay token、DOM/console/request body 或 proxy frame 正文。
+
+3. **`relay.test.ts` 与 `run-verification-browser-relay.test.mjs` 扩展/新建**：
+   - 覆盖 extension 断线时 pending `1 -> 0`、确定 CDP error、重复 stop、生命周期计数归零和参数/路径边界。
+   - 本机存在 Chrome 时运行真实 Relay/CDP/页面交互，校验独立 Browser Schema、报告/截图 SHA-256、PNG 签名、敏感正文丢弃、`wx` 防覆盖与所有资源关闭；无 Chrome 环境仅跳过该真实用例。
+
+4. **效果**：
+   - P1-B 首次产生经真实 Relay 和真实 Chrome 得到的 Browser evidence，不再只有手写 fixture report 或 fake-WebSocket controller benchmark。
+   - 正常交互完成后 page/browser closed、pending request 与 orphan resource 均为 0；extension 断线不会把挂起 CDP 留到 timeout 后才结算。
+   - 本切片的 extension-protocol proxy 仅复现协议转发边界，不冒充真实 MV3 extension/service worker；用户取消、deadline、真实 extension suspend 与 WSL2 多轮仍未闭合。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm build:incremental`）。
+- 8 个定向测试文件、60 项测试全部通过，包含真实 Windows Chrome + Relay artifact 测试、Relay pending 断线清理、extension controller/MV3 suspend 合同、Browser Adapter、DAG、Impact Truth Set 和原生测试报告回归。
+- `verification:browser-relay --help` 通过；真实运行得到 `passed/all_checks_passed`，截图为 `960x640` 且 DOM 显示 `verified`，终态 `pageClosed=true`、`browserClosed=true`、`pendingRequestCount=0`、`orphanResourceCount=0`。
+
+#### 后续计划（P1-B 尚未结束）
+
+- **下一步准备做什么**：把真实 MV3 extension/service worker 接入同一 fixture，增加用户取消与 deadline fault injection，并为 Relay/Chrome/proxy/extension 各 owner 设置有界关闭 deadline；随后在多 viewport 下连续运行三次并准备 WSL2 对等路径。
+- **为什么先做它**：真实 Relay + Chrome 正常路径和单次 extension socket 断线已闭合，但 protocol proxy 没有覆盖 MV3 suspend/debugger detach，当前关闭函数在不响应 peer 上也仍可能等待过久；先完成 fault/timeout owner，才能把重复运行无残留作为可信 Gate。
+- **当前还缺的关键闭环**：真实 MV3 extension artifact producer、取消/deadline/不响应 peer 的有界清理、debugger listener/tab/lease 收敛、三次多 viewport 重复运行与 Windows/WSL2 双平台 evidence。
+
+### 14.46 P1-B 取消与 deadline lifecycle closure
+
+#### P1-B 第九切片实现结论：取消与 deadline lifecycle closure（2026-08-11）
+
+##### 已完成内容
+
+1. **`scripts/run-verification-browser-relay.mjs` 扩展**：
+   - 增加可选 `--session-timeout-ms`，将交互会话 deadline 绑定到页面交互与截图的 `AbortSignal`；连接/单次操作仍沿用 `--timeout-ms`。
+   - CLI 注册 `SIGINT` 到同一外部 `AbortController`，取消后继续执行有界清理，不直接中断 page、browser、proxy、Relay 或 fixture server 的释放流程。
+   - 新增 `serializeVerificationBrowserRelayError`，顶层失败只投影稳定 `reason`、`lifecycle` 与 `diagnostics`，不回显浏览器、页面、请求或错误正文。
+   - 页面已确认关闭后清理迟到的 Puppeteer request 观测项，避免网络事件顺序造成 pending 假阳性；Relay/proxy 的真实 pending 仍按各自 lifecycle snapshot 计数。
+
+2. **`scripts/run-verification-browser-relay.test.mjs` 扩展**：
+   - 增加 session timeout 参数边界、结构化错误脱敏和外部 `AbortSignal` 取消测试。
+   - 在真实 Chrome + Relay fixture 中覆盖 deadline 与外部取消，断言 page、browser、socket、pending request、orphan resource 均收敛到零。
+
+3. **效果**：
+   - Browser Relay producer 现在具备调用方取消、总会话 deadline 与 Ctrl+C 取消的统一终止语义，失败输出可供自动化消费且不会泄漏正文。
+   - deadline/取消不再因迟到网络观察事件被误判为资源未收敛；仍保留真实 Relay/proxy 资源计数作为终态 Gate。
+
+##### 验证结果
+
+- `corepack pnpm build:incremental`：通过。
+- 2 个定向测试文件、10 项测试全部通过（Relay 生命周期 4 项、真实 Browser Relay producer 6 项，含真实 Chrome deadline、外部 AbortSignal 取消与 SIGINT 映射）。
+- `corepack pnpm verification:browser-relay --help`：通过，显示 `--session-timeout-ms`；错误序列化测试确认正文不会进入 CLI 结构化输出。
+
+#### 后续计划（P1-B 尚未结束）
+
+- **下一步准备做什么**：把真实 MV3 extension/service worker 接入同一 artifact producer，并增加 debugger detach、extension suspend、取消与 deadline 的 fault matrix。
+- **为什么先做它**：当前取消/超时只覆盖验证专用 protocol proxy；只有真实 service worker 的 debugger listener、tab、lease 与 socket 生命周期也能收敛，Browser Relay evidence 才具备生产形态的可信边界。
+- **当前还缺的关键闭环**：真实 MV3 extension artifact producer、debugger detach/suspend 的确定收敛、三次多 viewport 重复运行、Windows/WSL2 对等 evidence，以及 producer artifact 到 DAG CLI 的跨进程加载接线。
+
+### 14.47 P1-B 真实 MV3 extension artifact producer
+
+#### P1-B 第十切片实现结论：真实 MV3 service worker 与取消/超时收敛（2026-08-11）
+
+##### 已完成内容
+
+1. **`scripts/run-verification-browser-relay.mjs` 扩展**：
+   - 新增可选 `--extension-path`，只接受 workspace 内目录并解析带 BOM 的 `manifest.json`，要求 `manifest_version=3` 与 background service worker；默认 protocol proxy 路径保持兼容。
+   - MV3 路径优先使用显式 `--chrome-path` / `BELLDANDY_MV3_CHROME_PATH` / Chrome for Testing，再复用本机已存在的 Playwright Chromium；不下载浏览器，也不把品牌版 Google Chrome 误作默认 extension runtime。
+   - 使用 Puppeteer 临时 profile 加载真实 `apps/browser-extension`，通过临时 options page 的 `chrome.storage.local` 写入本轮随机 Relay credential，等待真实 service worker WebSocket 接入后关闭 options page 并恢复 fixture tab；credential、extension ID 与 profile 路径均不进入 artifact。
+   - MV3 cleanup 由原生 source page owner 关闭 tab，真实触发 debugger detach，再依序断开 Relay client、关闭 Chromium、Relay 与 fixture server；内部 diagnostics 仅增加固定 cleanup owner label，不保存异常正文。
+
+2. **`apps/browser-extension/background.js` 修改**：
+   - `Target.closeTarget` 识别 Relay 虚拟 `page-1` 并解析当前 active tab，成功关闭后同步清理 tab/session 双向映射。
+   - attach 时保存 Relay 侧 target ID；debugger detach 同时发送 `Target.detachedFromTarget` 与根级 `Target.targetDestroyed`，随后释放映射，使真实 Chromium target 生命周期可被 Relay client 观察。
+
+3. **`run-verification-browser-relay.test.mjs` 与 extension contract 测试扩展**：
+   - 使用本机既有 Playwright Chromium `140.0.7339.16` 加载真实 unpacked MV3 extension，覆盖正常交互、交互 deadline 与外部 `AbortSignal` 取消。
+   - 三条真实 MV3 路径均验证 page/browser closed、Relay/CDP/pending request/orphan resource 与 cleanup error 为 0；扩展静态合同同时锁定 `page-1` close 与 detach/destroyed 顺序。
+
+4. **效果**：
+   - P1-B artifact producer 不再只由验证专用 proxy 模拟 extension 协议，真实 MV3 service worker、`chrome.storage`、`chrome.debugger`、WebSocket 与 Relay/Puppeteer 已形成同一条可执行链。
+   - 正常、deadline 和用户取消都能触发 debugger detach 并完整释放 tab、session、socket、pending 与浏览器进程，不把资源残留投影成 passed evidence。
+   - 本机品牌版 Google Chrome `151.0.7922.76` 明确拒绝 `--disable-extensions-except`，因此真实 unpacked-extension Gate 使用现有未品牌化 Chromium；该平台差异被显式保留，不以 proxy 成功替代 MV3 结果。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm build:incremental`）。
+- 8 个定向测试文件、68 项测试全部通过，包含真实 MV3 正常/deadline/外部取消、真实 Chrome proxy、Relay 不响应 peer、extension lifecycle、Browser Adapter、DAG、Impact Truth Set 与原生测试报告回归。
+- 真实 MV3 三条路径终态均为 `pageClosed=true`、`browserClosed=true`、`pendingRequestCount=0`、`orphanResourceCount=0`、`cleanupErrorCount=0`；`git diff --check` 通过。
+
+#### 后续计划（P1-B 尚未结束）
+
+- **下一步准备做什么**：增加真实 service-worker suspend/重启与 Relay 断线后的重连 fault injection，并让 producer 在三次重复运行和多个 viewport 下输出可比较 artifact。
+- **为什么先做它**：当前已闭合真实 MV3 正常、deadline、取消与 debugger detach，但 service worker suspend 仍只有装配合同测试；先验证 worker 重建后的唯一 socket/listener/session 所有权，才能把连续重复运行作为可信 Gate。
+- **当前还缺的关键闭环**：真实 service-worker suspend/restart、Relay 断线重连后的 tab/session 归属、三次多 viewport 重复 Gate、Windows/WSL2 对等 evidence，以及 producer artifacts 到 DAG CLI 的跨进程加载接线。
+
+### 14.48 P1-B 真实 MV3 service-worker restart Gate
+
+#### P1-B 第十一切片实现结论：service worker 物理停止、唤醒与唯一连接恢复（2026-08-11）
+
+##### 已完成内容
+
+1. **`packages/belldandy-browser/src/relay.ts` 扩展**：
+   - lifecycle snapshot 新增只增不减的 `extensionConnectionCount`，复用 Relay 已有 extension generation owner，记录本次 Relay 实例实际接受过的 extension 连接数。
+   - 该字段不包含 extension ID、credential、socket 地址或消息正文，可同时区分“DevTools target 替换”与“真实 extension socket 重连”。
+
+2. **`scripts/run-verification-browser-relay.mjs` 扩展**：
+   - 增加内部 `restartMv3ServiceWorker` fault seam；通过页面 CDP session 的 `ServiceWorker.workerVersionUpdated` 取得真实 version ID，再调用 `ServiceWorker.stopWorker` 物理停止 worker。
+   - 固定等待 Relay 观察到 extension 断开，再由临时 options page 写入随机 wake nonce 唤醒 worker；只有 `extensionConnected=true` 且 `extensionConnectionCount` 增长后才允许继续 fixture 交互。
+   - CDP listener、ServiceWorker domain 与 page session 均在正常/异常路径释放；wake nonce 只存在于 Puppeteer 临时 profile，不进入报告或 evidence。
+
+3. **`relay.test.ts` 与 Browser Relay producer 测试扩展**：
+   - Relay 生命周期测试锁定首次连接计数与 stop 后保留的累计计数。
+   - 真实 Chromium + MV3 测试执行 `connected(1) -> stopped/disconnected -> woken/reconnected(2) -> page interaction -> full cleanup`，并要求最终 page/browser/pending/orphan/cleanup error 全部归零。
+
+4. **效果**：
+   - P1-B 首次以真实 service-worker process lifecycle 而非 source contract 或 DevTools target 替换验证 MV3 suspend/restart。
+   - worker 重建后只恢复一个有效 Relay owner，旧 socket 不会被误认成重连，随后真实 CDP 页面交互仍可完成。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm build:incremental`）。
+- 8 个定向测试文件、69 项测试全部通过，新增真实 MV3 worker stop/wake/reconnect 回归；正常、deadline、取消、restart 与既有 DAG/Browser/Relay 回归均通过。
+- restart 路径实际观察 `extensionConnectionCount=2`，最终 `extensionConnected=false`、`cdpClientCount=0`、`pendingRequestCount=0`、`orphanResourceCount=0`、`cleanupErrorCount=0`。
+
+#### 后续计划（P1-B 尚未结束）
+
+- **下一步准备做什么**：注入真实 extension socket/Relay 断线并验证重连后的 tab/session 归属，随后把同一 MV3 producer 在至少三个 viewport 下连续运行三次并比较资源终态与 artifact binding。
+- **为什么先做它**：worker 自身重建已闭合，剩余生命周期风险集中在 Relay 侧断线是否留下旧 generation/session，以及重复运行是否累积 listener、socket 或浏览器进程。
+- **当前还缺的关键闭环**：真实 Relay 断线重连、三次多 viewport 重复 Gate、Windows/WSL2 对等 evidence，以及 producer artifacts 到 DAG CLI 的跨进程加载接线。
+
+### 14.49 P1-B 真实 Relay reconnect fault Gate
+
+#### P1-B 第十二切片实现结论：attach 后 Relay 断线与同 session 恢复（2026-08-11）
+
+##### 已完成内容
+
+1. **`packages/belldandy-browser/src/relay.ts` 扩展**：
+   - 新增 `requestExtensionReconnect()`，仅由 Relay owner 以 WebSocket `1012` 关闭当前 extension socket；无有效 owner 时返回 `false`，不修改 token、CDP client 或 pending 数据。
+   - extension 是否真正重连继续由 `extensionConnectionCount` 复算，不把 close 请求成功当作 reconnect 成功。
+
+2. **`scripts/run-verification-browser-relay.mjs` 扩展**：
+   - 增加内部 `reconnectMv3ExtensionBeforeInteraction` fault seam，在真实 Puppeteer page、debugger tab/session 和 request observer 已建立后请求断线。
+   - 固定先等待 `extensionConnected=false`，再等待连接计数增长且重新 connected；随后复用同一 Puppeteer page/session 完成导航、点击、请求与截图。
+
+3. **Relay 与真实 MV3 测试扩展**：
+   - Relay 单元测试覆盖首连接关闭、replacement 连接与累计连接 `1 -> 2`。
+   - 真实 MV3 回归覆盖 attach 后 socket 断线、控制器退避重连、旧 tab/session 路由继续可用和最终资源全量释放。
+
+4. **效果**：
+   - Relay 侧真实断线不再只由 fake socket/controller 测试证明；生产形态 extension、debugger session 与 Puppeteer client 在 replacement generation 后仍能完成同一交互。
+   - 旧 socket 不会与 replacement 并存，最终 CDP client、pending、orphan 与 cleanup error 全部归零。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm build:incremental`）。
+- Relay reconnect 两项定向回归通过；最终 8 个相关测试文件、72 项测试全部通过。
+- 真实 reconnect 路径观察 `extensionConnectionCount=2`，页面仍得到 `verified`，终态 `pendingRequestCount=0`、`orphanResourceCount=0`、`cleanupErrorCount=0`。
+
+### 14.50 P1-B 三次多 viewport 重复 Gate
+
+#### P1-B 第十三切片实现结论：三 viewport fresh-run 稳定性验证（2026-08-11）
+
+##### 已完成内容
+
+1. **`scripts/run-verification-browser-relay.mjs` 扩展**：
+   - 新增 `--viewport <WIDTHxHEIGHT[@SCALE]>`，沿用 Browser evidence 合同限制 width `320..4096`、height `240..4096`、device scale `1..4`；非法输入在启动浏览器前失败关闭。
+   - 同一规范化 viewport 同时驱动 Puppeteer、source report、evidence 与 screenshot 尺寸投影，默认 `960x640@1` 保持兼容。
+
+2. **`run-verification-browser-relay.test.mjs` 扩展**：
+   - 连续创建三个 fresh Relay/Chromium/MV3 profile，分别运行 `375x667@1`、`768x1024@1`、`1440x900@1`。
+   - 每轮都校验 route/DOM/request/screenshot、viewport binding、唯一 extension 连接和完整资源收敛；三份 PNG SHA-256 必须各不相同。
+
+3. **效果**：
+   - Browser producer 已证明连续三轮和移动/平板/桌面 viewport 不会累积 extension socket、listener、tab/session、CDP client 或 Chrome 进程。
+   - viewport 不再是代码内不可变常量，CLI 可生成与 evidence 精确绑定的受限尺寸 artifact。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm build:incremental`）。
+- 三次真实 MV3 fresh-run 全部为 `passed/all_checks_passed`，三份截图 hash 唯一；最终 8 个相关测试文件、72 项测试全部通过。
+- 每轮均为 `extensionConnectionCount=1`、`pageClosed=true`、`browserClosed=true`、`pendingRequestCount=0`、`orphanResourceCount=0`、`cleanupErrorCount=0`。
+
+#### 后续计划（P1-B 尚未结束）
+
+- **下一步准备做什么**：实现 producer report/PNG/evidence 到 verification DAG CLI 的跨进程 artifact 加载与 hash/revision 绑定，再准备 WSL2 Chromium/extension 对等 Gate。
+- **为什么先做它**：Windows 上真实 MV3 正常、取消、deadline、worker restart、Relay reconnect 和三次多 viewport 已闭合；先把这些可信 artifact 接入 DAG CLI，才能在另一平台复用同一消费链而不回退为进程内对象注入。
+- **当前还缺的关键闭环**：DAG CLI 跨进程加载 Browser artifacts、WSL2 可用 Chromium/extension runtime 与同合同 evidence、跨平台 identity 比较；品牌版 Chrome 的 unpacked-extension 限制保持显式，不属于代码可修复项。
+
+### 14.51 P1-B Browser artifacts 跨进程 DAG hydration
+
+#### P1-B 第十四切片实现结论：Browser artifacts 跨进程 DAG hydration（2026-08-11）
+
+##### 已完成内容
+
+1. **`scripts/verification-browser-artifact-loader.mjs` 新建**：
+   - 只接受 `browserArtifacts.reportPath`、`screenshotPath`、`evidencePath` 三个 workspace-relative 路径，拒绝绝对路径、反斜杠、`.`、`..`、重复文件和 realpath 越界。
+   - report、PNG、evidence 分别按 4 MiB、5 MiB、1 MiB 上限有界读取，读取前后都保留文件大小约束，不把任意大文件交给 JSON 或 Browser Adapter。
+   - 以实际 report/PNG 字节重新调用 Browser Adapter，核对 DAG revision、report/PNG hash 与路径，再要求 producer evidence JSON 与重新投影结果完全一致。
+
+2. **`scripts/run-verification-dag.mjs` 扩展**：
+   - CLI request 新增可选 `browserArtifacts`，只在 hydration 层把磁盘 artifact 转为既有 `browserReport` 输入，`finalizeVerificationDag()` 的进程内 API 与状态兼容规则保持不变。
+   - producer evidence 文件自身通过既有 `attempt.evidence` 保存 workspace-relative path 与 SHA-256，Browser 摘要继续通过 `attempt.browserReport` 输出，不保存 PNG、DOM、日志或请求正文。
+   - 支持把 Browser artifact 结果与非 Browser `commandJobSnapshots` 合并后一次 finalize；仍要求每个选中节点恰有一个结果，CLI 保持零命令执行、零 Provider 调用和零 mutation authority。
+
+3. **`scripts/run-verification-dag.test.mjs` 扩展**：
+   - 新增 Browser-only 与 command-job/Browser 混合 CLI 成功路径，验证输出满足封闭 DAG Schema。
+   - 覆盖父路径、Windows 绝对路径、反斜杠、evidence 超限、revision 漂移、PNG hash 漂移和 producer evidence 漂移的失败关闭。
+
+4. **效果**：
+   - Browser Relay producer 的三个磁盘 artifact 现在可由独立 DAG 进程直接消费，不再依赖测试内存对象注入。
+   - DAG 终态同时绑定 producer evidence 文件 hash 和重新计算的 Browser 摘要，替换、错配或跨 revision 复用都会在写出 DAG artifact 前失败。
+   - 同一 CLI request 可汇合 command-job 与 Browser 两类权威结果，保持既有最小验证选择和封闭输出合同。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm build:incremental`）。
+- 8 个相关测试文件、81 项测试全部通过（含 9 个新增 Browser artifact hydration 测试）。
+- Browser-only 与混合 CLI 输出均通过 `verification-dag/v1` Schema；真实 Chrome/MV3 正常、deadline、取消、worker restart、Relay reconnect 与三 viewport 回归继续通过，资源终态未出现新增残留。
+
+#### 后续计划（P1-B 尚未结束）
+
+- **下一步准备做什么**：核对 WSL2 内现有 Chromium/Chrome for Testing 与 MV3 extension 运行前置，复用同一 producer 生成 report/PNG/evidence，再由 Windows 已闭合的 DAG CLI hydration 合同消费并比较跨平台 identity。
+- **为什么先做它**：Windows producer 到 DAG consumer 已完整闭合，剩余平台风险已收缩为 WSL2 浏览器可用性、extension service-worker 能否加载及路径/进程生命周期差异；先做只读前置检查可避免误触下载或系统安装。
+- **当前还缺的关键闭环**：WSL2 可审查浏览器 runtime、真实 MV3 interaction/lifecycle evidence、producer 与 DAG consumer 的同 revision/hash 终态，以及 Windows/WSL2 runner/contract/viewport/status identity 比较；不包含自动安装浏览器或修改 WSL 系统配置。
+
+### 14.52 P1-B WSL2 MV3 与跨平台 identity Gate
+
+#### P1-B 第十五切片实现结论：WSL2 MV3 与跨平台 identity Gate（2026-08-11）
+
+##### 已完成内容
+
+1. **`scripts/run-verification-browser-relay.mjs` WSL2 实跑**：
+   - 在 `Ubuntu-22.04`/WSL2 上复用 P0.16 已校验的 `Google Chrome for Testing 148.0.7778.97`，可执行文件 SHA-256 仍为 `7f5c687c69c06c2b49f80755087b0575fa67633f359b0cdbe2ee40c33235fc98`。
+   - 只复用既有局部 NSS/NSPR/ALSA runtime 与 Linux `tsx/esbuild` 依赖，不下载浏览器、不安装系统包、不修改 PATH、WSL 或 Docker 配置。
+   - 使用当前源码的临时 ext4 staging 执行真实 MV3 正常、deadline、外部取消、service-worker restart、Relay reconnect 与三 viewport fresh-run；测试后清理 staging 并确认 Linux/Windows Chrome 进程无残留。
+
+2. **`scripts/run-verification-dag.mjs` 跨平台 artifact 消费**：
+   - Windows Chromium `140.0.7339.16` 与 WSL2 Chrome for Testing `148.0.7778.97` 使用同一 commit、workspace hash 和 `960x640@1` viewport 分别生成 report/PNG/evidence。
+   - 两份 producer artifacts 均通过 14.51 新增的 CLI hydration，DAG 均得到唯一 Browser 节点 `passed` 和整体 `completed`。
+   - 跨平台比较确认 evidence schema、runner/contract、revision、route、viewport、status/reason、page、DOM、console、request 与 lifecycle 完全一致；平台渲染产生的 PNG hash 不要求相等，但各自仍与 source report 严格绑定。
+
+3. **效果**：
+   - P1-B 不再只具备 Windows Browser Relay 证据，WSL2 真实 Chromium/MV3 service-worker、debugger、socket、页面交互和关闭生命周期已通过同一合同。
+   - producer 与 DAG consumer 在两端共享同一 revision/hash-bound evidence 语义，跨平台差异不会被误判成合同漂移，也不会放宽单平台 artifact hash 校验。
+   - Docker Desktop Linux Engine 已确认可用，但本 Gate 无需创建容器或拉取镜像，避免把 OCI 可用性误当作浏览器 runtime 证明。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm build:incremental`）。
+- Windows 8 个相关测试文件、81 项测试全部通过；WSL2 Browser Relay producer 12 项测试全部通过。
+- Windows/WSL2 两份 DAG 均为 `completed/passed`；两端 page/browser closed，pending request、orphan resource、cleanup error 均为 0，跨平台合同字段全部一致。
+
+### 14.53 P1-A2 pinned Linux toolchain 与 WSL2 truth/fault Gate
+
+#### P1-A2 第十切片实现结论：pinned Linux toolchain 与 WSL2 truth/fault Gate（2026-08-11）
+
+##### 已完成内容
+
+1. **`/var/tmp/star-sanctuary-p1a2-go1.24.2-linux-20260811-a/` 离线 Go artifact 新建（不入库）**：
+   - 从本机既有 Go 1.24.2 GOROOT 源码构建 `go1.24.2 linux/amd64`，不下载 SDK、不执行系统安装、不修改 WSL2 配置。
+   - `bin/go` SHA-256 为 `34c159668bdf8e1a735cf61cb79301ef62aabaa8864ac1abef09e77071178c6a`，运行版本与冻结 truth set 的 `go1.24.2` 完全一致。
+
+2. **`/var/tmp/star-sanctuary-p1a2-gopls-v0.21.0-linux-20260811-a/` 离线 gopls artifact 新建（不入库）**：
+   - 复用本机 module cache 中 `golang.org/x/tools/gopls@v0.21.0` 源码及依赖，以既有 Linux Go 1.26.5 bootstrap 在 `GOPROXY=off`、`GOSUMDB=off`、`GOTOOLCHAIN=local`、`-mod=readonly` 下构建静态 Linux ELF；gopls 运行时仍显式绑定 Go 1.24.2。
+   - source zip SHA-256 为 `f366328e7b5e9cc5a596201c78ed5d29007f2826e0344ffa1a043d2dbe8286c8`，binary SHA-256 为 `840d64c1f01048656f89e4e449804fad9a4a71376fc1d5fdb30a0adbf98a7397`；`gopls version` 返回 `v0.21.0`，build info 为 `linux/amd64`、`CGO_ENABLED=0`。
+
+3. **`scripts/run-code-intel-go-truth-set.mjs` 与 `scripts/run-code-intel-go-fault-gate.mjs` WSL2 实跑**：
+   - truth set 通过 6/6 case、10/10 精确位置，precision/recall 均为 `1`；decoded response peak 为 `5,554` bytes，并发 peak 为 `1`，response/concurrency rejection 均为 0。
+   - crash/restart、cancel/restart 和 5-cycle/15-query soak 全部通过；所有 Host 最终 stopped，residual process 为 0，state root 清理成功。
+   - 两份 Schema-bound 报告保存在已忽略的 `.tmp-codex`，fixture 前后 hash 未漂移；执行后 WSL2 无 gopls 残留进程。
+
+4. **`benchmarks/code-intel/README.md` 更新**：
+   - 把过期的 WSL2 unavailable 状态更新为双平台 native truth/fault 已通过，并继续明确临时 artifact 不等于可分发安装包。
+   - 保留 OS network-off、只读 sandbox、gopls RSS hard limit、Provider admission 与 production promotion 未完成边界。
+
+5. **效果**：
+   - P1-A2 已具备与 Windows 同版本合同的真实 Linux Go/gopls runtime，不再因 WSL2 工具链缺失阻断双平台语义和故障验证。
+   - Linux artifact 的源码、构建器、二进制与运行时 Go 版本可分别审计，gopls 的 Go 1.25+ 构建前置不会污染冻结的 Go CLI 1.24.2 运行合同。
+   - 当前证据仍只允许 native canary；没有把控制面 memory cgroup 或环境级下载阻断误报为真实 gopls RSS/network sandbox 通过。
+
+##### 验证结果
+
+- TypeScript 编译无错误（复用当前 `corepack pnpm build:incremental` 产物）。
+- 2 个定向测试文件、8 项测试全部通过；WSL2 真实 truth/fault 共 6 个 truth case 与 3 类 fault scenario 全部通过。
+- Linux `go version`、`gopls version`、`go version -m`、source/binary SHA-256、静态 ELF、fixture hash、state cleanup 与零残留进程均已实际复核。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：复用已通过的 OCI invocation/lease 控制面，把本切片的 Linux Go/gopls artifact 和固定 fixture 绑定到真实容器内 LSP 查询，观测 gopls RSS 并验证 memory hard limit、network none、只读 workspace 和容器清理；随后把同一 verified admission 接入 Go Provider Host 创建前的失败关闭入口。
+- **为什么先做它**：native 双平台 precision/fault 已闭合，剩余最大风险不再是工具链可用性，而是 Provider 启动时是否真的受 OS 级资源和权限约束；先证明真实 gopls 进程而不是通用 Node 探针，才能形成可信 admission。
+- **当前还缺的关键闭环**：真实 gopls OCI/RSS evidence、artifact/fixture/hash 与 sandbox lease 绑定、Provider 启动前 admission、Windows/WSL2 promotion comparator，以及 production eligibility/Doctor 的最终投影；不包含自动下载、系统安装或默认启用 Go Provider。
+
+### 14.54 P1-A2 真实 gopls OCI/RSS promotion Gate
+
+#### P1-A2 第十一切片实现结论：真实 gopls OCI/RSS 与 workspace readiness Gate（2026-08-11）
+
+##### 已完成内容
+
+1. **`command-sandbox.ts` 与 `gopls-oci-host.ts` 扩展/新建**：
+   - OCI invocation 支持规范化的 Linux container workspace root、最多 8 个显式 trusted read-only mounts，以及有界 memory/CPU/PID/tmpfs 参数；默认 command sandbox 合同保持不变。
+   - gopls OCI Host 只允许 native Linux 同路径执行，把临时 staging workspace 与 pinned Go/gopls artifact 根分别只读挂载，固定 `128 MiB` memory、`1` CPU、`64` PID、`16 MiB` writable tmpfs、只读 rootfs 与 `network none`。
+   - gopls command 与 Go PATH 必须位于已声明的同路径 toolchain mount；非法、重复、重叠或未声明路径在 lease 创建前失败关闭，OCI runtime 解析为绝对 executable，不放宽通用 LSP Host 的绝对命令约束。
+
+2. **`lsp-process-host.ts` 与 `gopls-provider.ts` 接入 workspace readiness**：
+   - LSP Host 记录 profile-governed work-done progress 的 create/begin/end、active 与 peak 状态，并提供受 deadline/cancellation 约束的等待接口。
+   - gopls OCI Host 在首轮 workspace sync 后发送一个不消费业务结果、仍受 response/concurrency Gate 约束的 `workspace/symbol` readiness 探针，再等待 progress 进入 500 ms 静默窗口；每个 revision 只执行一次。
+   - readiness 前相同 OCI 合同的 5 次真实运行仅 3 次达到 10/10，失败轮次主要缺少跨 module definition/reference；修复后 7 次独立运行全部达到 10/10，未用重试隐藏 selected failure。
+
+3. **`go-oci-promotion-gate-report.schema.json` 与 `run-code-intel-go-oci-promotion-gate.mjs` 新建**：
+   - runner 复制冻结 fixture 到临时 staging，复用公共 `GoplsCodeIntelProvider` 执行 6 个 truth case，并绑定 manifest、fixture、Go/gopls binary 与 18 个 source/dist/runner runtime 文件 SHA-256。
+   - 通过 `docker inspect/top` 记录真实 memory/CPU/PID/network/rootfs/workspace/tmpfs/toolchain mounts 与 gopls RSS；Provider dispose 后验证 lease、container、state 与 staging 零残留。
+   - 报告只在全部 truth、inspect、RSS 与 cleanup Gate 通过时投影 `ociEligible=true`；`goCanaryEligible=false`、`providerAdmissionStatus=not_integrated`、`productionEligible=false` 继续固定失败关闭。
+
+4. **`package.json`、`benchmarks/code-intel/README.md` 与 `docs/project-map.md` 更新**：
+   - 新增 `benchmark:code-intel:go-oci-promotion-gate` 入口、WSL2 运行前置、不可覆盖报告与权限/资源边界说明。
+   - 项目地图登记 same-path trusted mounts、work-done readiness、gopls OCI Host 与真实 promotion runner 的 owner/入口。
+
+5. **效果**：
+   - P1-A2 首次证明真实 gopls 而非通用 Node 探针运行在 digest-pinned、无网络、只读 workspace/toolchain、128 MiB hard limit 的 OCI 容器内，并保持冻结 Go truth 精度。
+   - readiness 修复后的 RSS 峰值范围为 `32,571,392` 到 `128,909,312` bytes，均低于 `134,217,728` bytes hard limit；最高峰值仅剩约 5 MiB 余量，后续扩大 fixture/soak 时仍需重点观察。
+   - 当前切片没有把手工 Gate 结果直接等同于 production admission；默认 Go Provider、Doctor production 投影和跨平台最终 promotion 均未启用。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm --filter @belldandy/skills build`）。
+- 5 个定向测试文件、45 项测试全部通过（含 3 个新增 OCI promotion report/CLI 测试及 work-done 延迟 token/readiness 回归测试）。
+- readiness 修复后 WSL2 真实 OCI run `j-p` 共 7/7 通过，每轮 6/6 case、10/10 位置、precision/recall=`1/1`，container/state/staging 残留均为 0；最终 `p` 报告通过 Schema，SHA-256 为 `0365409a9af07d7eb4303f3525f52596593668c5227a7651471d133b009bcf76`。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：把 verified OCI admission 接入 Go Provider 的 Host 创建闭包，在创建任何 gopls Host 前验证 digest image、Linux artifact identity 与 sandbox contract；admission 失败必须保持 Provider unavailable，禁止回退 native Host，并补 query/notify 失败后的 active Host 失效与立即释放测试。
+- **为什么先做它**：真实 OCI/RSS 证据已经稳定，当前最大缺口是该证据仍由独立 runner 手工装配；只有 production-facing Provider factory 在启动前消费同一 admission，才能防止配置漂移或失败时绕回未隔离 native 进程。
+- **当前还缺的关键闭环**：Provider 启动前 admission/失败后 Host 失效、Windows native 与 WSL2 OCI promotion comparator、`goCanaryEligible`/Doctor 最终投影，以及更大 fixture 下接近 128 MiB 上限的资源余量验证；不包含自动下载、系统安装、默认启用或公开发布。
+
+### 14.55 P1-A2 OCI admission/factory 与故障 Host 生命周期
+
+#### P1-A2 第十二切片实现结论：OCI admission/factory 与故障 Host 失效（2026-08-11）
+
+##### 已完成内容
+
+1. **`gopls-oci-admission.ts` 新建**：
+   - 新增 `gopls-oci-admission/v1`、`admitGoplsOciCanary` 与 `createGoplsOciCanaryProvider`，在 Provider/Host 创建前验证 native Linux、digest-pinned 本地镜像、OCI runtime 可达性、Go/gopls artifact root/command/version/platform/SHA-256 及固定 OCI Host contract。
+   - binary identity 在执行 `version` 探针前完成校验；默认只装配 `createGoplsOciSandboxHost`，admission 失败时 Host factory 调用数为 0，不创建 lease，也不存在 native `LspProcessHost` fallback。
+   - admission 结果保留 sandbox contract、`--pull=never`、固定资源边界和 artifact identity，供 promotion report 与后续 Doctor 投影复用；本切片未接入默认 ToolPool。
+
+2. **`gopls-provider.ts` 故障生命周期修改**：
+   - request、notify 或 readiness 失败后立即清空 `activeHost` 并释放故障 Host；相同 revision 的下一次查询只能创建 fresh Host。
+   - Provider disposal 会等待已经启动的故障 Host cleanup，避免上层 deadline 先返回时瞬间观测到 lease/container 尚未收敛；cleanup 失败仍以聚合错误保留原始失败与释放失败。
+
+3. **`run-code-intel-go-oci-promotion-gate.mjs` 与报告 Schema 接入**：
+   - 真实 runner 改用公共 OCI admission/provider factory，不再手工拼接 Provider Host 闭包；runtime identity 新增 admission source/dist，报告把 `providerAdmissionStatus` 纳入失败关闭 Gate。
+   - 新增 `provider_admission_failed` 失败分类；`goCanaryEligible=false` 与 `productionEligible=false` 继续固定，不因 admission 单项通过提前 promotion。
+   - 项目地图与 benchmark README 已同步新的 owner、失败关闭边界和真实验证现状。
+
+4. **真实接线复核与 Fix Mode 熔断**：
+   - `q/r/s` 三次不可覆盖 WSL2/Docker selected run 均为 `providerAdmissionStatus=passed`，证明本地 digest 镜像、runtime、artifact identity 和固定 Host contract 被真实 factory 消费。
+   - `q` 在 cleanup 零残留下仅返回 `8/10` truth；`r` 的延长 progress 等待实验因第三个 gopls token 不发送 `end` 而超时，报告瞬间记录 `pending/1`，进程收敛后容器实际为 0；`s` 在有界 active grace 实验下 cleanup 零残留但只返回 `6/10`。
+   - 两轮 readiness 实验均未获得通过证据，已从最终源码撤回；连续三轮同证据集仍未闭合后停止试错，保留 `q/r/s` 失败报告，不用重跑隐藏 selected failure。
+
+5. **效果**：
+   - Provider 启动前 admission、失败关闭、无 native fallback 和故障 Host fresh recovery 已形成可复用生产侧边界。
+   - 真实接线同时证明此前 `j-p` 的 7/7 通过不足以说明 readiness 已稳定；当前整体 OCI promotion 仍为失败关闭，不能进入 comparator、Doctor eligibility 或默认启用。
+   - 本切片代码合同已完成，但 P1-A2 交付 Gate 未完成；当前阻塞从“没有 admission”收缩为“gopls 跨 module references readiness 缺少确定终态证据”。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm --filter @belldandy/skills build`）。
+- 5 个定向测试文件、38 项测试全部通过（含 3 个 OCI admission/factory、3 个故障 Host 失效/cleanup 与 1 个 promotion admission 失败关闭新增测试）。
+- 三次真实 WSL2 admission 均通过，`q/s` 的 lease/container/state/staging 均零残留；整体 truth Gate 分别为 `8/10`、`0/10`、`6/10`，因此没有可宣称通过的最终 promotion report。
+- 失败证据保存在 `.tmp-codex/p1a2-wsl-oci-promotion-20260811-{q,r,s}.json`，SHA-256 依次为 `75fc26995289ea88788a8a86242f808dfdb3e77300a9031e7742e4a6ebf5f12f`、`23da2552334a274c5ba70b78035c45f114450e53d0ef15803f2bb3c6440dec78`、`655906e687b724080f8bbf5a731d70949ca8e6b0ed2a54fb0af8bb4b727c28c1`。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：暂停同合同重跑，先为 gopls readiness 增加有界时间线证据，记录 `didOpen`、readiness request、work-done create/begin/end 与首次 references 返回的相对时序；再基于新证据决定使用 gopls 可观察的确定完成信号，或把 readiness 判定下沉到受控 fixture-specific promotion probe。
+- **为什么先做它**：单纯扩大静默窗会漏掉延迟 token，而等待所有 token 又会被不发送 `end` 的后台任务卡死；在没有时间线与 token 语义前继续调参只会重复相同失败，不能形成可维护的生产合同。
+- **当前还缺的关键闭环**：稳定的跨 module reference readiness、与最终源码 identity 绑定的 10/10 OCI report、Windows native/WSL2 OCI comparator、`goCanaryEligible`/Doctor 投影及更大 fixture 的 RSS 余量；不包含自动下载、系统安装、默认启用或公开发布。
+
 ## 实施计划进度表
 
 | 项目 | 优先级 | 状态 | 粗略工作量 | 完成边界 |
 |---|---|---|---:|---|
 | 本轮 SS 能力复核与 9.5 增强规划 | - | 已完成 | - | 已复核当前 scorecard、目标向量 `9.510`、C#/Go 投入收益、现成多语言方案与三款竞品一手资料；竞品未做同环境 benchmark |
 | P0：Benchmark v3 与外部有效性 | P0 | 进行中（P0.1-P0.29 已完成；`cost-containment-v1` rollout=`hold_explicit_opt_in`、默认启用/未授权 Provider canary 均禁止、`taskUplift=not_measured`；candidate v1-v3 均=`do_not_promote`，navigation candidate line 已停止；冻结 aggregate 仍为同 identity `6/144`、历史 2/6 passed，三轮 navigation shadow 累计费用复算为 `0.08318752 RMB`） | 14-22 人日 | A/B/C 三层、至少 4 个固定仓与 144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；当前禁止扩展付费矩阵，不含 candidate v4、竞品代跑和公开排行榜 |
-| P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | a8-a11 aggregate=`blocked`；a11 Windows `semantic-live=4/4`、WSL2 `1/4` 的 3 次失败已归因为旧 Windows-host/UNC transport；ext4 Linux dependency root、native Gateway health/pairing 与 2 个 CodeIntel zero-cost smoke 已通过，candidate patch 仍为 `0/8`，累计费用 `1.32819672 RMB` | 8-12 人日 | 下一步创建 attempt 12 全新零费用 readiness/cohort/pairing/audit，并先恢复 Docker/OCI Gate；未通过 native runtime/source/test/replay/preflight 前不启动 Provider，不含外部 LSP、Go/C# GA、SCIP store 或 P1-A2 |
-| P1-A2：通用 LSP Host 与 Go canary | P1 | 等待 P1-A1 | 6-11 人日 | 通用进程宿主、pinned `gopls`、Doctor/sandbox/kill-reap、真实 Go Gate；通过后升为 production，并作为当前 9.5 必选第二后端 |
+| P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | 已完成；attempt 12 aggregate=`passed`，binary regression/Provider failure=`0/0`、`semantic-live=7/8`、非目标整文件读取 `21 -> 14`；16/16 cell 仍预算耗尽且 candidate task/patch success=`0/8`，累计费用 `1.68214072 RMB` | 8-12 人日 | language-neutral contract、TS/JS production Provider、Inspector、truth set、resource soak、双平台 native runtime 与真实 uplift Gate 已闭合；绝对任务成功问题拆入 P0/P1-B，不含外部 LSP、Go/C# GA 或 SCIP store |
+| P1-A2：通用 LSP Host 与 Go canary | P1 | 进行中（Host、pinned profile、Go Doctor、Go Adapter/truth/fault、双平台 native、OCI control-plane 与真实 gopls OCI/RSS 基线已完成；Provider OCI admission/factory、无 native fallback、故障 Host fresh recovery/cleanup 已完成且 `q/r/s` 真实 admission 均通过；三轮 truth 仅 `8/10`、`0/10`、`6/10`，readiness 重新打开并已触发 Fix Mode 熔断，双平台 comparator 与最终 promotion 尚未开始） | 6-11 人日 | 已完成 admission 与 Provider 生命周期边界；下一步只基于新增 progress/reference 时间线证据修复 readiness，再要求最终源码 identity 的 10/10 OCI report，之后才允许 comparator/Doctor 投影 |
 | P1-A3：C# 条件接入 | 条件 | 延后，等待真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild 执行面、禁止 restore/联网与生命周期；未命中需求 Gate 不进入生产，也不阻断当前 9.5 |
-| P1-B：验证 DAG 与 Browser Relay 闭环 | P1 | 进行中（首切片验证 DAG Schema、changed-path/依赖/Browser 条件选择、四类终态、首次失败与不可覆盖 plan/replay artifact 已完成；16 个定向测试通过，当前保持零命令执行/Provider/mutation） | 10-16 人日 | 下一步接现有 command job 权威结果、预算/取消/exit taxonomy 与 pnpm/Vitest、`go test` 结构化 replay；随后补影响 truth set、失败最小化和 Browser 行为 artifact，不含云浏览器或无条件多 Agent Review |
+| P1-B：验证 DAG 与 Browser Relay 闭环 | P1 | 已完成（规划/影响/终态、command-job/test-report/失败 replay、Impact Truth Set、CodeIntel/project-dependency、Browser evidence consumer、真实 Windows/WSL2 Relay+Chrome/MV3 producer、session deadline/外部 AbortSignal/SIGINT、debugger detach/service-worker restart/Relay reconnect、三次多 viewport、producer artifacts 到 DAG CLI 跨进程 hydration 与跨平台 identity Gate 已闭合；8 场景 24/24 影响节点通过，Windows 相关路径 81 项、WSL2 Browser producer 12 项通过，两端 lifecycle pending/orphan=`0/0`） | 10-16 人日 | 验证 DAG 选择/终态、Browser artifact producer/consumer、故障与双平台 evidence 已闭合；不含自动安装浏览器、云浏览器或无条件多 Agent Review |
 | P1-C：TaskProjection 与 Capability Closure | P1 | 待实施 | 10-15 人日 | 只读跨 owner 投影、exact-binding action、任务启动闭包和旧客户端兼容；不迁移领域真源 |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | 延后，等待 P1-C | 12-20 人日 | 隔离写入、预算、60 分钟 soak、steer/cancel/reattach、fan-in 与 fault matrix；不含自动 merge/release/deploy |
 | P2-B：生态与运行前置收口 | P2 | 延后，等待公共合同稳定 | 8-14 人日 | 两个外部消费者、N-1/N conformance、真实 CI 与 OCI/语言 Doctor；不含公开发布、系统级自动安装或 sandbox 替换 |

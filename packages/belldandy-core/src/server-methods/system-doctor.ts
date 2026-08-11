@@ -34,6 +34,7 @@ import type {
 } from "@belldandy/skills";
 import {
   buildCameraRuntimeDoctorReport,
+  buildGoCodeIntelDoctorReport,
   listToolContractsV2,
   TOOL_SETTINGS_CONTROL_NAME,
 } from "@belldandy/skills";
@@ -929,6 +930,7 @@ export async function handleSystemDoctorMethod(
     return manager?.getEmbeddingCacheDoctorReport();
   });
   const optionalCapabilitiesStage = captureDoctorStage(doctorPerformanceStages, "optional_capabilities", () => buildOptionalCapabilitiesDoctorReport());
+  const codeIntelGoStage = captureDoctorStage(doctorPerformanceStages, "code_intel_go", () => buildGoCodeIntelDoctorReport());
   const cameraRuntimeStage = captureDoctorStage(doctorPerformanceStages, "camera_runtime", () => buildCameraRuntimeDoctorReport({
     context: {
       conversationId: "system.doctor",
@@ -1112,6 +1114,7 @@ export async function handleSystemDoctorMethod(
     memoryDerivedRetrievalResult,
     memoryEmbeddingCacheResult,
     optionalCapabilitiesResult,
+    codeIntelGoResult,
     cameraRuntimeResult,
     extensionMarketplaceResult,
     dreamRuntimeResult,
@@ -1131,6 +1134,7 @@ export async function handleSystemDoctorMethod(
     memoryDerivedRetrievalStage,
     memoryEmbeddingCacheStage,
     optionalCapabilitiesStage,
+    codeIntelGoStage,
     cameraRuntimeStage,
     extensionMarketplaceStage,
     dreamRuntimeStage,
@@ -1151,6 +1155,7 @@ export async function handleSystemDoctorMethod(
   const memoryDerivedRetrieval = unwrapDoctorStageResult(memoryDerivedRetrievalResult);
   const memoryEmbeddingCache = unwrapDoctorStageResult(memoryEmbeddingCacheResult);
   const optionalCapabilities = unwrapDoctorStageResult(optionalCapabilitiesResult);
+  const codeIntelGo = unwrapDoctorStageResult(codeIntelGoResult);
   const cameraRuntime = unwrapDoctorStageResult(cameraRuntimeResult);
   const extensionMarketplace = unwrapDoctorStageResult(extensionMarketplaceResult);
   const dreamRuntime = unwrapDoctorStageResult(dreamRuntimeResult);
@@ -1325,6 +1330,15 @@ export async function handleSystemDoctorMethod(
     name: "Optional Capabilities",
     status: optionalCapabilities.summary.warnCount > 0 ? "warn" : "pass",
     message: optionalCapabilities.summary.headline,
+  });
+  checks.push({
+    id: "code_intel_go",
+    name: "Go CodeIntel",
+    status: codeIntelGo.summary.status === "unavailable"
+      || codeIntelGo.summary.status === "incompatible"
+      ? "warn"
+      : "pass",
+    message: codeIntelGo.summary.headline,
   });
   // ── 动态工作流 WorkflowRuntime 观测 ──
   if (ctx.workflowRuntime) {
@@ -2105,6 +2119,7 @@ export async function handleSystemDoctorMethod(
       ...(memoryEmbeddingCache ? { memoryEmbeddingCache } : {}),
       deploymentBackends,
       optionalCapabilities,
+      codeIntelGo,
       ...(cameraRuntime ? { cameraRuntime } : {}),
       ...(runtimeResilience ? { runtimeResilience } : {}),
       ...(runtimeResilienceDiagnostics ? { runtimeResilienceDiagnostics } : {}),

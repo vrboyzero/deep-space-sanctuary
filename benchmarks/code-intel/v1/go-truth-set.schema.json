@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.local/schemas/code-intel/go-truth-set-v1.schema.json",
+  "title": "Star Sanctuary Go CodeIntel Truth Set v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "frozenAt", "contractVersion", "provider", "thresholds", "workspace", "cases"],
+  "properties": {
+    "schemaVersion": { "const": "code-intel-go-truth-set/v1" },
+    "id": { "type": "string", "minLength": 1 },
+    "frozenAt": { "type": "string", "format": "date-time" },
+    "contractVersion": { "const": "code-intel/v1" },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "goVersion", "buildTags"],
+      "properties": {
+        "id": { "const": "gopls" },
+        "version": { "const": "v0.21.0" },
+        "goVersion": { "const": "go1.24.2" },
+        "buildTags": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9_.]+$" }
+        }
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["precision", "recall"],
+      "properties": {
+        "precision": { "type": "number", "minimum": 0.95, "maximum": 1 },
+        "recall": { "type": "number", "minimum": 0.95, "maximum": 1 }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "revision", "folders", "sourceFiles"],
+      "properties": {
+        "root": { "type": "string", "minLength": 1 },
+        "revision": { "type": "string", "minLength": 1 },
+        "folders": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "sourceFiles": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/sourceFile" }
+        }
+      }
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/case" }
+    }
+  },
+  "$defs": {
+    "sourceFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "occurrence"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "occurrence": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "expectedLocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "path", "anchor"],
+      "properties": {
+        "scope": { "const": "workspace" },
+        "path": { "type": "string", "minLength": 1 },
+        "anchor": { "$ref": "#/$defs/anchor" }
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "operation", "expected"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "operation": { "enum": ["symbols", "definition", "references", "implementation"] },
+        "query": { "type": "string", "minLength": 1 },
+        "location": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "anchor"],
+          "properties": {
+            "path": { "type": "string", "minLength": 1 },
+            "anchor": { "$ref": "#/$defs/anchor" }
+          }
+        },
+        "expected": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/expectedLocation" }
+        }
+      },
+      "oneOf": [
+        { "required": ["query"], "not": { "required": ["location"] } },
+        { "required": ["location"], "not": { "required": ["query"] } }
+      ]
+    }
+  }
+}

@@ -116,6 +116,7 @@ function resultMetadata(snapshot: CommandJobSnapshot, base: JsonObject = {}): Js
     commandJobStatus: snapshot.status,
     commandJobCursor: snapshot.nextCursor,
     ...(snapshot.pid !== undefined ? { commandJobPid: snapshot.pid } : {}),
+    ...(snapshot.terminationReason ? { commandJobTerminationReason: snapshot.terminationReason } : {}),
     ...(snapshot.processTerminationMethod ? { processTerminationMethod: snapshot.processTerminationMethod } : {}),
     ...(snapshot.processCloseObserved !== undefined ? { processCloseObserved: snapshot.processCloseObserved } : {}),
     ...(snapshot.cleanup ?? {}),

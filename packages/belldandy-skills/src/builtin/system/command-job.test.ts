@@ -184,7 +184,12 @@ describe("command_job", () => {
     expect(resize.success).toBe(true);
     expect(jobProcess.resizes).toEqual([{ cols: 120, rows: 36 }]);
     expect(JSON.parse(read.output)).toMatchObject({ output: "prompt> ", nextCursor: 8 });
-    expect(JSON.parse(cancelled.output)).toMatchObject({ status: "cancelled", processCloseObserved: true });
+    expect(JSON.parse(cancelled.output)).toMatchObject({
+      status: "cancelled",
+      terminationReason: "cancelled",
+      processCloseObserved: true,
+    });
+    expect(cancelled.metadata).toMatchObject({ commandJobTerminationReason: "cancelled" });
     expect(jobProcess.terminateCalls).toBe(1);
   });
 

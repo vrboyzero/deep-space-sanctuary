@@ -1,0 +1,116 @@
+{
+  "schemaVersion": "verification-impact-truth-set/v1",
+  "id": "p1-b-verification-impact-v1",
+  "contractVersion": "verification-impact/v1",
+  "thresholds": {
+    "precision": 0.95,
+    "recall": 0.95,
+    "exactCaseRate": 0.95
+  },
+  "verificationCommands": [
+    {
+      "id": "build.shared",
+      "kind": "build",
+      "command": "pnpm build:incremental",
+      "affectedPaths": ["tsconfig.json", "build/**"],
+      "scope": "full"
+    },
+    {
+      "id": "lint.config",
+      "kind": "lint",
+      "command": "pnpm lint",
+      "affectedPaths": ["eslint.config.mjs"],
+      "scope": "full"
+    },
+    {
+      "id": "test.core",
+      "kind": "acceptance",
+      "command": "pnpm vitest run packages/core",
+      "affectedPaths": ["packages/core/**"],
+      "dependsOn": ["build.shared"]
+    },
+    {
+      "id": "test.go",
+      "kind": "acceptance",
+      "command": "go test -json ./packages/go/...",
+      "affectedPaths": ["packages/go/**"],
+      "scope": "module"
+    },
+    {
+      "id": "test.shared",
+      "kind": "acceptance",
+      "command": "pnpm vitest run packages/shared",
+      "affectedPaths": ["packages/shared/**"],
+      "dependsOn": ["build.shared"]
+    },
+    {
+      "id": "test.web",
+      "kind": "acceptance",
+      "command": "pnpm vitest run apps/web",
+      "affectedPaths": ["apps/web/**"],
+      "dependsOn": ["build.shared"]
+    },
+    {
+      "id": "typecheck.core",
+      "kind": "typecheck",
+      "command": "pnpm exec tsc -p packages/core/tsconfig.json --noEmit",
+      "affectedPaths": ["packages/core/**"],
+      "dependsOn": ["build.shared"]
+    }
+  ],
+  "browser": {
+    "required": true,
+    "affectedPaths": ["apps/web/**"],
+    "command": null
+  },
+  "cases": [
+    {
+      "id": "core-source",
+      "changedPaths": ["packages/core/src/feature.ts"],
+      "expectedNodeIds": ["build.shared", "test.core", "typecheck.core"],
+      "expectedSelection": { "scope": "targeted", "expanded": false, "reason": "affected-paths" }
+    },
+    {
+      "id": "core-test",
+      "changedPaths": ["packages/core/src/feature.test.ts"],
+      "expectedNodeIds": ["build.shared", "test.core", "typecheck.core"],
+      "expectedSelection": { "scope": "targeted", "expanded": false, "reason": "affected-paths" }
+    },
+    {
+      "id": "shared-source",
+      "changedPaths": ["packages/shared/src/contracts.ts"],
+      "expectedNodeIds": ["build.shared", "test.shared"],
+      "expectedSelection": { "scope": "targeted", "expanded": false, "reason": "affected-paths" }
+    },
+    {
+      "id": "root-build-config",
+      "changedPaths": ["tsconfig.json"],
+      "expectedNodeIds": ["build.shared"],
+      "expectedSelection": { "scope": "targeted", "expanded": false, "reason": "affected-paths" }
+    },
+    {
+      "id": "go-module",
+      "changedPaths": ["packages/go/service/service.go"],
+      "expectedNodeIds": ["test.go"],
+      "expectedSelection": { "scope": "targeted", "expanded": false, "reason": "affected-paths" }
+    },
+    {
+      "id": "web-browser",
+      "changedPaths": ["apps/web/public/app.js"],
+      "expectedNodeIds": ["browser.relay", "build.shared", "test.web"],
+      "expectedSelection": { "scope": "browser", "expanded": false, "reason": "browser-required" }
+    },
+    {
+      "id": "multi-module",
+      "changedPaths": ["packages/core/src/feature.ts", "packages/go/service/service.go"],
+      "expectedNodeIds": ["build.shared", "test.core", "test.go", "typecheck.core"],
+      "expectedSelection": { "scope": "targeted", "expanded": false, "reason": "affected-paths" }
+    },
+    {
+      "id": "unknown-impact",
+      "changedPaths": ["config/unknown.toml"],
+      "expectedNodeIds": ["build.shared", "lint.config", "test.core", "test.go", "test.shared", "test.web", "typecheck.core"],
+      "expectedSelection": { "scope": "expanded", "expanded": true, "reason": "impact-unknown" }
+    }
+  ]
+}

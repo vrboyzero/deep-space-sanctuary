@@ -1,0 +1,254 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.local/schemas/code-intel/go-oci-promotion-gate-report-v1.schema.json",
+  "title": "Star Sanctuary Go CodeIntel OCI Promotion Gate Report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "generatedAt", "platform", "sourceIdentity", "truthSet", "toolchain", "sandbox", "processMemory", "cleanup", "gate", "promotion", "execution"],
+  "properties": {
+    "schemaVersion": { "const": "code-intel-go-oci-promotion-gate-report/v1" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "platform": { "enum": ["windows-native", "wsl2-linux"] },
+    "sourceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["aggregateSha256", "files"],
+      "properties": {
+        "aggregateSha256": { "$ref": "#/$defs/sha256" },
+        "files": { "type": "array", "minItems": 5, "items": { "$ref": "#/$defs/sourceFile" } }
+      }
+    },
+    "truthSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "manifestSha256", "sourceAggregateSha256", "metrics", "cases", "lifecycle", "passed"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "manifestSha256": { "$ref": "#/$defs/sha256" },
+        "sourceAggregateSha256": { "$ref": "#/$defs/sha256" },
+        "metrics": { "$ref": "#/$defs/metrics" },
+        "cases": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "operation", "status"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "operation": { "enum": ["symbols", "definition", "references", "implementation"] },
+              "status": { "enum": ["passed", "failed", "query_error"] },
+              "expected": { "type": "integer", "minimum": 0 },
+              "returned": { "type": "integer", "minimum": 0 },
+              "truePositive": { "type": "integer", "minimum": 0 },
+              "falsePositive": { "type": "integer", "minimum": 0 },
+              "falseNegative": { "type": "integer", "minimum": 0 },
+              "errorCode": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "lifecycle": { "$ref": "#/$defs/lifecycle" },
+        "passed": { "type": "boolean" }
+      }
+    },
+    "toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["go", "gopls"],
+      "properties": {
+        "go": { "$ref": "#/$defs/tool" },
+        "gopls": { "$ref": "#/$defs/tool" }
+      }
+    },
+    "sandbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["backend", "runtime", "imageDigest", "pullPolicy", "resourceLimits", "inspect"],
+      "properties": {
+        "backend": { "const": "oci" },
+        "runtime": { "enum": ["docker", "podman"] },
+        "imageDigest": { "pattern": "^sha256:[a-f0-9]{64}$" },
+        "pullPolicy": { "const": "never" },
+        "resourceLimits": { "$ref": "#/$defs/resourceLimits" },
+        "inspect": { "$ref": "#/$defs/inspect" }
+      }
+    },
+    "processMemory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hardLimitBytes", "goplsRssPeakBytes", "sampleCount", "status"],
+      "properties": {
+        "hardLimitBytes": { "const": 134217728 },
+        "goplsRssPeakBytes": { "type": "integer", "minimum": 0 },
+        "sampleCount": { "type": "integer", "minimum": 0 },
+        "status": { "enum": ["observed_below_hard_limit", "limit_exceeded", "unverified"] }
+      }
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["leaseCleanupStatus", "cleanupErrorCount", "residualContainerCount", "stateRootCleaned", "stagingRootCleaned"],
+      "properties": {
+        "leaseCleanupStatus": { "enum": ["removed", "not_started", "cleanup_failed"] },
+        "cleanupErrorCount": { "type": "integer", "minimum": 0 },
+        "residualContainerCount": { "type": "integer", "minimum": 0 },
+        "stateRootCleaned": { "type": "boolean" },
+        "stagingRootCleaned": { "type": "boolean" }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "failures"],
+      "properties": {
+        "passed": { "type": "boolean" },
+        "failures": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "provider_admission_failed",
+              "truth_set_failed", "lsp_lifecycle_failed", "container_inspect_failed",
+              "memory_limit_unverified", "cpu_limit_unverified", "pids_limit_unverified",
+              "network_isolation_failed", "root_filesystem_not_readonly",
+              "workspace_not_readonly", "temporary_filesystem_not_writable",
+              "toolchain_mount_not_readonly", "gopls_rss_unobserved",
+              "gopls_rss_limit_exceeded", "lease_cleanup_failed", "cleanup_error_detected",
+              "residual_container_detected", "state_cleanup_failed", "staging_cleanup_failed"
+            ]
+          }
+        }
+      }
+    },
+    "promotion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ociEligible", "goCanaryEligible", "providerAdmissionStatus", "productionEligible"],
+      "properties": {
+        "ociEligible": { "type": "boolean" },
+        "goCanaryEligible": { "const": false },
+        "providerAdmissionStatus": { "enum": ["passed", "failed"] },
+        "productionEligible": { "const": false }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["durationMs", "containerStarts", "providerCalls", "gatewayCalls", "modelCalls", "credentialsRead", "workspaceMutations", "osNetworkIsolationVerified"],
+      "properties": {
+        "durationMs": { "type": "number", "minimum": 0 },
+        "containerStarts": { "const": 1 },
+        "providerCalls": { "type": "integer", "minimum": 1 },
+        "gatewayCalls": { "const": 0 },
+        "modelCalls": { "const": 0 },
+        "credentialsRead": { "const": false },
+        "workspaceMutations": { "const": 0 },
+        "osNetworkIsolationVerified": { "type": "boolean" }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "sourceFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expected", "returned", "truePositive", "falsePositive", "falseNegative", "precision", "recall", "passed"],
+      "properties": {
+        "expected": { "type": "integer", "minimum": 0 },
+        "returned": { "type": "integer", "minimum": 0 },
+        "truePositive": { "type": "integer", "minimum": 0 },
+        "falsePositive": { "type": "integer", "minimum": 0 },
+        "falseNegative": { "type": "integer", "minimum": 0 },
+        "precision": { "type": "number", "minimum": 0, "maximum": 1 },
+        "recall": { "type": "number", "minimum": 0, "maximum": 1 },
+        "passed": { "type": "boolean" }
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hostCount", "stoppedHostCount", "processStartCount", "unexpectedExitCount", "requestCount", "forcedTerminationCount", "failureCount", "passed"],
+      "properties": {
+        "hostCount": { "type": "integer", "minimum": 0 },
+        "stoppedHostCount": { "type": "integer", "minimum": 0 },
+        "processStartCount": { "type": "integer", "minimum": 0 },
+        "unexpectedExitCount": { "type": "integer", "minimum": 0 },
+        "requestCount": { "type": "integer", "minimum": 0 },
+        "forcedTerminationCount": { "type": "integer", "minimum": 0 },
+        "failureCount": { "type": "integer", "minimum": 0 },
+        "passed": { "type": "boolean" },
+        "stderr": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["text", "totalBytes", "truncatedBytes"],
+          "properties": {
+            "text": { "type": "string" },
+            "totalBytes": { "type": "integer", "minimum": 0 },
+            "truncatedBytes": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "workDoneProgress": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["createdCount", "begunCount", "completedCount", "activeCount", "peakActiveCount"],
+          "properties": {
+            "createdCount": { "type": "integer", "minimum": 0 },
+            "begunCount": { "type": "integer", "minimum": 0 },
+            "completedCount": { "type": "integer", "minimum": 0 },
+            "activeCount": { "type": "integer", "minimum": 0 },
+            "peakActiveCount": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "command", "sha256", "artifactRoot"],
+      "properties": {
+        "version": { "type": "string", "minLength": 1 },
+        "platform": { "type": "string", "minLength": 1 },
+        "command": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "artifactRoot": { "type": "string", "minLength": 1 }
+      }
+    },
+    "resourceLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["memoryBytes", "cpus", "pidsLimit", "tmpfsBytes"],
+      "properties": {
+        "memoryBytes": { "const": 134217728 },
+        "cpus": { "const": 1 },
+        "pidsLimit": { "const": 64 },
+        "tmpfsBytes": { "const": 16777216 }
+      }
+    },
+    "inspect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observed", "memoryBytes", "nanoCpus", "pidsLimit", "networkMode", "readOnlyRootFilesystem", "workspaceReadOnly", "temporaryFilesystemWritable", "goArtifactReadOnly", "goplsArtifactReadOnly"],
+      "properties": {
+        "observed": { "type": "boolean" },
+        "memoryBytes": { "type": "integer", "minimum": 0 },
+        "nanoCpus": { "type": "integer", "minimum": 0 },
+        "pidsLimit": { "type": "integer", "minimum": 0 },
+        "networkMode": { "type": "string" },
+        "readOnlyRootFilesystem": { "type": "boolean" },
+        "workspaceReadOnly": { "type": "boolean" },
+        "temporaryFilesystemWritable": { "type": "boolean" },
+        "goArtifactReadOnly": { "type": "boolean" },
+        "goplsArtifactReadOnly": { "type": "boolean" }
+      }
+    }
+  }
+}

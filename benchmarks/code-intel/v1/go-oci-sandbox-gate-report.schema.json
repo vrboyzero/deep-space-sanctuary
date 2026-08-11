@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.local/schemas/code-intel/go-oci-sandbox-gate-report-v1.schema.json",
+  "title": "Star Sanctuary Go CodeIntel OCI Sandbox Gate Report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "generatedAt", "platform", "sourceIdentity", "sandbox", "resourceLimits", "probes", "gate", "promotion", "execution"],
+  "properties": {
+    "schemaVersion": { "const": "code-intel-go-oci-sandbox-gate-report/v1" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "platform": { "enum": ["windows-native", "wsl2-linux"] },
+    "sourceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["aggregateSha256", "files"],
+      "properties": {
+        "aggregateSha256": { "$ref": "#/$defs/sha256" },
+        "files": { "type": "array", "minItems": 3, "items": { "$ref": "#/$defs/sourceFile" } }
+      }
+    },
+    "sandbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["backend", "runtime", "imageDigest", "pullPolicy"],
+      "properties": {
+        "backend": { "const": "oci" },
+        "runtime": { "enum": ["docker", "podman"] },
+        "imageDigest": { "pattern": "^sha256:[a-f0-9]{64}$" },
+        "pullPolicy": { "const": "never" }
+      }
+    },
+    "resourceLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["memoryBytes", "cpus", "pidsLimit", "tmpfsBytes"],
+      "properties": {
+        "memoryBytes": { "const": 134217728 },
+        "cpus": { "const": 1 },
+        "pidsLimit": { "const": 64 },
+        "tmpfsBytes": { "const": 16777216 }
+      }
+    },
+    "probes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rootFilesystem", "workspace", "temporaryFilesystem", "outboundNetwork", "memoryCgroup", "processTree"],
+      "properties": {
+        "rootFilesystem": { "$ref": "#/$defs/readOnlyProbe" },
+        "workspace": { "$ref": "#/$defs/readOnlyProbe" },
+        "temporaryFilesystem": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["writable"],
+          "properties": { "writable": { "type": "boolean" } }
+        },
+        "outboundNetwork": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["blocked", "loopbackOnly", "errorCode"],
+          "properties": {
+            "blocked": { "type": "boolean" },
+            "loopbackOnly": { "type": "boolean" },
+            "errorCode": { "type": "string", "minLength": 1 }
+          }
+        },
+        "memoryCgroup": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["configuredBytes", "observedBytes", "matchesConfiguredLimit"],
+          "properties": {
+            "configuredBytes": { "const": 134217728 },
+            "observedBytes": { "type": "integer", "minimum": 0 },
+            "matchesConfiguredLimit": { "type": "boolean" }
+          }
+        },
+        "processTree": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["containerStarted", "closeObserved", "leaseCleanupStatus", "residualContainerCount"],
+          "properties": {
+            "containerStarted": { "type": "boolean" },
+            "closeObserved": { "type": "boolean" },
+            "leaseCleanupStatus": { "enum": ["removed", "not_started", "cleanup_failed"] },
+            "residualContainerCount": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "failures"],
+      "properties": {
+        "passed": { "type": "boolean" },
+        "failures": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "root_filesystem_not_readonly",
+              "workspace_not_readonly",
+              "temporary_filesystem_not_writable",
+              "network_isolation_failed",
+              "memory_limit_unverified",
+              "process_tree_not_started",
+              "process_tree_close_not_observed",
+              "container_cleanup_failed",
+              "residual_container_detected",
+              "temporary_root_cleanup_failed"
+            ]
+          }
+        }
+      }
+    },
+    "promotion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["goToolchainArtifactStatus", "goCanaryEligible", "productionEligible"],
+      "properties": {
+        "goToolchainArtifactStatus": { "const": "unavailable" },
+        "goCanaryEligible": { "const": false },
+        "productionEligible": { "const": false }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["durationMs", "containerStarts", "networkProbeAttempts", "gatewayCalls", "modelCalls", "providerCalls", "credentialsRead", "workspaceMutations", "osNetworkIsolationVerified", "processMemory", "temporaryRootCleaned"],
+      "properties": {
+        "durationMs": { "type": "number", "minimum": 0 },
+        "containerStarts": { "const": 2 },
+        "networkProbeAttempts": { "const": 1 },
+        "gatewayCalls": { "const": 0 },
+        "modelCalls": { "const": 0 },
+        "providerCalls": { "const": 0 },
+        "credentialsRead": { "const": false },
+        "workspaceMutations": { "const": 0 },
+        "osNetworkIsolationVerified": { "type": "boolean" },
+        "processMemory": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["hardLimitBytes", "status", "goplsRssPeakBytes"],
+          "properties": {
+            "hardLimitBytes": { "const": 134217728 },
+            "status": { "enum": ["cgroup_limit_observed", "unverified"] },
+            "goplsRssPeakBytes": { "const": "not_observable" }
+          }
+        },
+        "temporaryRootCleaned": { "type": "boolean" }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "sourceFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "readOnlyProbe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["readOnly", "writeErrorCode"],
+      "properties": {
+        "readOnly": { "type": "boolean" },
+        "writeErrorCode": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

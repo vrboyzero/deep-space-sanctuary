@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/verification-impact-truth-set-report-v1.json",
+  "title": "Star Sanctuary verification impact truth set report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "generatedAt", "truthSet", "selector", "metrics", "cases", "gate", "execution"],
+  "properties": {
+    "schemaVersion": { "const": "verification-impact-truth-set-report/v1" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "truthSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "manifestPath", "manifestSha256", "contractVersion"],
+      "properties": {
+        "id": { "const": "p1-b-verification-impact-v1" },
+        "manifestPath": { "type": "string", "minLength": 1 },
+        "manifestSha256": { "$ref": "#/$defs/sha256" },
+        "contractVersion": { "const": "verification-impact/v1" }
+      }
+    },
+    "selector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy", "sourcePath", "sourceSha256"],
+      "properties": {
+        "strategy": { "const": "changed-paths-v1" },
+        "sourcePath": { "const": "scripts/run-verification-dag.mjs" },
+        "sourceSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "metrics": { "$ref": "#/$defs/metrics" },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": { "$ref": "#/$defs/caseResult" }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "failures"],
+      "properties": {
+        "passed": { "type": "boolean" },
+        "failures": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "precision_below_threshold",
+              "recall_below_threshold",
+              "exact_case_rate_below_threshold"
+            ]
+          }
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selectionEvaluations", "commandsExecuted", "providerCalls", "gatewayCalls", "modelCalls", "networkCalls", "credentialsRead", "mutationCount"],
+      "properties": {
+        "selectionEvaluations": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "commandsExecuted": { "const": false },
+        "providerCalls": { "const": 0 },
+        "gatewayCalls": { "const": 0 },
+        "modelCalls": { "const": 0 },
+        "networkCalls": { "const": 0 },
+        "credentialsRead": { "const": false },
+        "mutationCount": { "const": 0 }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "nodeIds": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/id" }
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "expanded", "reason"],
+      "properties": {
+        "scope": { "enum": ["targeted", "expanded", "browser"] },
+        "expanded": { "type": "boolean" },
+        "reason": { "enum": ["affected-paths", "scope-unavailable", "impact-unknown", "impact-evidence", "browser-required", "no-nodes"] }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expected", "returned", "truePositive", "falsePositive", "falseNegative", "precision", "recall", "exactCases", "totalCases", "exactCaseRate", "precisionThreshold", "recallThreshold", "exactCaseRateThreshold", "passed"],
+      "properties": {
+        "expected": { "type": "integer", "minimum": 1 },
+        "returned": { "type": "integer", "minimum": 0 },
+        "truePositive": { "type": "integer", "minimum": 0 },
+        "falsePositive": { "type": "integer", "minimum": 0 },
+        "falseNegative": { "type": "integer", "minimum": 0 },
+        "precision": { "type": "number", "minimum": 0, "maximum": 1 },
+        "recall": { "type": "number", "minimum": 0, "maximum": 1 },
+        "exactCases": { "type": "integer", "minimum": 0 },
+        "totalCases": { "type": "integer", "minimum": 1 },
+        "exactCaseRate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "precisionThreshold": { "type": "number", "minimum": 0.95, "maximum": 1 },
+        "recallThreshold": { "type": "number", "minimum": 0.95, "maximum": 1 },
+        "exactCaseRateThreshold": { "type": "number", "minimum": 0.95, "maximum": 1 },
+        "passed": { "type": "boolean" }
+      }
+    },
+    "caseResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "expectedNodeIds", "actualNodeIds", "truePositiveNodeIds", "falsePositiveNodeIds", "falseNegativeNodeIds", "expectedSelection", "actualSelection", "nodeSetExact", "selectionExact"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "status": { "enum": ["passed", "failed"] },
+        "expectedNodeIds": { "$ref": "#/$defs/nodeIds" },
+        "actualNodeIds": { "$ref": "#/$defs/nodeIds" },
+        "truePositiveNodeIds": { "$ref": "#/$defs/nodeIds" },
+        "falsePositiveNodeIds": { "$ref": "#/$defs/nodeIds" },
+        "falseNegativeNodeIds": { "$ref": "#/$defs/nodeIds" },
+        "expectedSelection": { "$ref": "#/$defs/selection" },
+        "actualSelection": { "$ref": "#/$defs/selection" },
+        "nodeSetExact": { "type": "boolean" },
+        "selectionExact": { "type": "boolean" }
+      }
+    }
+  }
+}

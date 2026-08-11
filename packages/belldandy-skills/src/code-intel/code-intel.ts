@@ -35,6 +35,7 @@ interface CursorPayload {
 export class CodeIntel {
   private readonly providers: CodeIntelProvider[];
   private readonly now: () => number;
+  private disposePromise: Promise<void> | undefined;
 
   constructor(options: CodeIntelOptions) {
     this.providers = [...options.providers];
@@ -124,13 +125,20 @@ export class CodeIntel {
   }
 
   dispose(): void {
-    for (const provider of this.providers) {
-      try {
-        provider.dispose?.();
-      } catch {
-        // Disposal is best-effort so one Provider cannot prevent releasing the rest.
-      }
+    void this.disposeAsync();
+  }
+
+  async disposeAsync(): Promise<void> {
+    if (!this.disposePromise) {
+      this.disposePromise = Promise.all(this.providers.map(async (provider) => {
+        try {
+          await provider.dispose?.();
+        } catch {
+          // Disposal is best-effort so one Provider cannot prevent releasing the rest.
+        }
+      })).then(() => undefined);
     }
+    await this.disposePromise;
   }
 
   private selectProvider(

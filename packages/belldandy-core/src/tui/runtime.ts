@@ -854,6 +854,9 @@ function parseCommandJobSnapshot(value: unknown): CommandJobSnapshot | undefined
   const pid = readNonNegativeSafeInteger(value.pid);
   const timeoutMs = readNonNegativeSafeInteger(value.timeoutMs);
   const deadlineAt = readNonNegativeSafeInteger(value.deadlineAt);
+  const terminationReason = value.terminationReason === "cancelled" || value.terminationReason === "timed_out"
+    ? value.terminationReason
+    : undefined;
   const exitCode = typeof value.exitCode === "number" && Number.isSafeInteger(value.exitCode) ? value.exitCode : undefined;
   const signal = typeof value.signal === "string" || typeof value.signal === "number" ? value.signal : undefined;
   const error = readString(value.error);
@@ -863,6 +866,7 @@ function parseCommandJobSnapshot(value: unknown): CommandJobSnapshot | undefined
     ...(pid !== undefined ? { pid } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(deadlineAt !== undefined ? { deadlineAt } : {}),
+    ...(terminationReason ? { terminationReason } : {}),
     ...(exitCode !== undefined ? { exitCode } : {}),
     ...(signal !== undefined ? { signal } : {}),
     ...(error ? { error } : {}),

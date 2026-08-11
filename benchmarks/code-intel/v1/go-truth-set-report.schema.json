@@ -1,0 +1,263 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.local/schemas/code-intel/go-truth-set-report-v1.schema.json",
+  "title": "Star Sanctuary Go CodeIntel Truth Set Report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "generatedAt", "platform", "truthSet", "sourceIdentity", "provider", "governance", "metrics", "cases", "lifecycle", "gate", "execution"],
+  "properties": {
+    "schemaVersion": { "const": "code-intel-go-truth-set-report/v1" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "platform": { "enum": ["windows-native", "wsl2-linux"] },
+    "truthSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "manifestPath", "manifestSha256", "contractVersion", "workspaceRevision"],
+      "properties": {
+        "id": { "const": "p1-a2-go-canary-v1" },
+        "manifestPath": { "type": "string", "minLength": 1 },
+        "manifestSha256": { "$ref": "#/$defs/sha256" },
+        "contractVersion": { "const": "code-intel/v1" },
+        "workspaceRevision": { "const": "p1-a2-go-canary-v1" }
+      }
+    },
+    "sourceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["aggregateSha256", "files", "runtimeFiles"],
+      "properties": {
+        "aggregateSha256": { "$ref": "#/$defs/sha256" },
+        "files": { "type": "array", "minItems": 6, "items": { "$ref": "#/$defs/sourceFile" } },
+        "runtimeFiles": { "type": "array", "minItems": 9, "items": { "$ref": "#/$defs/sourceFile" } }
+      }
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "capability", "buildTags", "toolchain"],
+      "properties": {
+        "id": { "const": "gopls" },
+        "version": { "const": "v0.21.0" },
+        "capability": { "const": "semantic-live" },
+        "buildTags": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "toolchain": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["goVersion", "platform"],
+          "properties": {
+            "goVersion": { "const": "go1.24.2" },
+            "platform": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "governance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capabilities", "dependencyRestore", "networkPolicy", "sandboxStatus", "productionEligible"],
+      "properties": {
+        "capabilities": {
+          "type": "array",
+          "minItems": 4,
+          "uniqueItems": true,
+          "items": { "enum": ["symbols", "definition", "references", "implementation"] }
+        },
+        "dependencyRestore": { "const": "denied" },
+        "networkPolicy": { "const": "environment-deny" },
+        "sandboxStatus": { "const": "unverified" },
+        "productionEligible": { "const": false }
+      }
+    },
+    "metrics": { "$ref": "#/$defs/metrics" },
+    "cases": {
+      "type": "array",
+      "minItems": 6,
+      "items": { "$ref": "#/$defs/caseResult" }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hostCount", "stoppedHostCount", "processStartCount", "unexpectedExitCount", "requestCount", "forcedTerminationCount", "failureCount", "responses", "concurrency", "serverRequests", "passed"],
+      "properties": {
+        "hostCount": { "type": "integer", "minimum": 1 },
+        "stoppedHostCount": { "type": "integer", "minimum": 0 },
+        "processStartCount": { "type": "integer", "minimum": 1 },
+        "unexpectedExitCount": { "type": "integer", "minimum": 0 },
+        "requestCount": { "type": "integer", "minimum": 0 },
+        "forcedTerminationCount": { "type": "integer", "minimum": 0 },
+        "failureCount": { "type": "integer", "minimum": 0 },
+        "responses": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maxBytes", "peakBytes", "rejectedCount", "passed"],
+          "properties": {
+            "maxBytes": { "type": "integer", "minimum": 1 },
+            "peakBytes": { "type": "integer", "minimum": 0 },
+            "rejectedCount": { "type": "integer", "minimum": 0 },
+            "passed": { "type": "boolean" }
+          }
+        },
+        "concurrency": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maxRequestsPerHost", "peakActiveRequests", "rejectedCount", "passed"],
+          "properties": {
+            "maxRequestsPerHost": { "const": 1 },
+            "peakActiveRequests": { "type": "integer", "minimum": 0, "maximum": 1 },
+            "rejectedCount": { "type": "integer", "minimum": 0 },
+            "passed": { "type": "boolean" }
+          }
+        },
+        "serverRequests": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["handledCount", "rejectedCount", "registeredCapabilityMethods"],
+          "properties": {
+            "handledCount": { "type": "integer", "minimum": 0 },
+            "rejectedCount": { "type": "integer", "minimum": 0 },
+            "registeredCapabilityMethods": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "passed": { "type": "boolean" }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "failures"],
+      "properties": {
+        "passed": { "type": "boolean" },
+        "failures": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["accuracy_gate_failed", "lifecycle_gate_failed", "state_cleanup_failed"] }
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["durationMs", "probeCommands", "lspProcesses", "gatewayCalls", "modelCalls", "providerNetworkCalls", "networkPolicy", "osNetworkIsolationVerified", "processMemory", "credentialsRead", "workspaceMutations", "stateRootCleaned"],
+      "properties": {
+        "durationMs": { "type": "number", "minimum": 0 },
+        "probeCommands": { "type": "integer", "minimum": 0 },
+        "lspProcesses": { "type": "integer", "minimum": 1 },
+        "gatewayCalls": { "const": 0 },
+        "modelCalls": { "const": 0 },
+        "providerNetworkCalls": { "const": "not_observable" },
+        "networkPolicy": { "const": "environment-deny" },
+        "osNetworkIsolationVerified": { "const": false },
+        "processMemory": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["hardLimitBytes", "peakBytes", "status"],
+          "properties": {
+            "hardLimitBytes": { "type": "null" },
+            "peakBytes": { "const": "not_observable" },
+            "status": { "const": "unverified" }
+          }
+        },
+        "credentialsRead": { "const": false },
+        "workspaceMutations": { "const": 0 },
+        "stateRootCleaned": { "type": "boolean" }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "sourceFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["line", "column"],
+      "properties": {
+        "line": { "type": "integer", "minimum": 0 },
+        "column": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "path", "range"],
+      "properties": {
+        "scope": { "enum": ["workspace", "external"] },
+        "path": { "type": "string", "minLength": 1 },
+        "range": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["start", "end"],
+          "properties": {
+            "start": { "$ref": "#/$defs/position" },
+            "end": { "$ref": "#/$defs/position" }
+          }
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expected", "returned", "truePositive", "falsePositive", "falseNegative", "precision", "recall", "precisionThreshold", "recallThreshold", "passed"],
+      "properties": {
+        "expected": { "type": "integer", "minimum": 0 },
+        "returned": { "type": "integer", "minimum": 0 },
+        "truePositive": { "type": "integer", "minimum": 0 },
+        "falsePositive": { "type": "integer", "minimum": 0 },
+        "falseNegative": { "type": "integer", "minimum": 0 },
+        "precision": { "type": "number", "minimum": 0, "maximum": 1 },
+        "recall": { "type": "number", "minimum": 0, "maximum": 1 },
+        "precisionThreshold": { "type": "number", "minimum": 0.95, "maximum": 1 },
+        "recallThreshold": { "type": "number", "minimum": 0.95, "maximum": 1 },
+        "passed": { "type": "boolean" }
+      }
+    },
+    "caseResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "operation", "status", "expected", "returned", "truePositive", "falsePositive", "falseNegative", "precision", "recall", "errorCode", "items"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "operation": { "enum": ["symbols", "definition", "references", "implementation"] },
+        "status": { "enum": ["passed", "failed", "query_error"] },
+        "expected": { "type": "integer", "minimum": 0 },
+        "returned": { "type": "integer", "minimum": 0 },
+        "truePositive": { "type": "integer", "minimum": 0 },
+        "falsePositive": { "type": "integer", "minimum": 0 },
+        "falseNegative": { "type": "integer", "minimum": 0 },
+        "precision": { "type": "number", "minimum": 0, "maximum": 1 },
+        "recall": { "type": "number", "minimum": 0, "maximum": 1 },
+        "errorCode": { "type": ["string", "null"] },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["location", "symbolKind", "documentRevision", "matched"],
+            "properties": {
+              "location": { "$ref": "#/$defs/location" },
+              "symbolKind": { "type": "string", "minLength": 1 },
+              "documentRevision": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+              "matched": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

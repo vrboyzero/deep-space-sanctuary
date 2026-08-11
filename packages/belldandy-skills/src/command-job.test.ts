@@ -177,6 +177,7 @@ describe("CommandJobManager", () => {
 
     expect(terminal).toMatchObject({
       status: "cancelled",
+      terminationReason: "cancelled",
       processTerminationMethod: "taskkill",
       processCloseObserved: true,
       cleanup: { commandSandboxLeaseCleanupStatus: "removed" },
@@ -230,6 +231,7 @@ describe("CommandJobManager", () => {
     await vi.waitFor(() => expect(process.terminateCalls).toBe(1));
     expect(manager.get(JOB_ID)).toMatchObject({
       status: "failed",
+      terminationReason: "timed_out",
       error: "Command job timed out after 10ms.",
       processTerminationMethod: "taskkill",
       processCloseObserved: true,
@@ -256,6 +258,7 @@ describe("CommandJobManager", () => {
 
     expect(terminal).toMatchObject({
       status: "failed",
+      terminationReason: "timed_out",
       error: "Command job start failed: Command job startup timed out after 10ms.",
       cleanup: { commandSandboxLeaseCleanupStatus: "removed" },
     });
@@ -363,5 +366,34 @@ describe("CommandJobManager", () => {
         mutationReplay: "forbidden",
       },
     });
+  });
+
+  it("persists cancellation and timeout reasons across Gateway restart recovery", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "belldandy-command-job-reason-restart-"));
+    directories.push(directory);
+    const store = new CommandJobStateStore(directory);
+    const cancelledManager = createManager({ store });
+    await cancelledManager.initialize();
+    await cancelledManager.start({ jobId: JOB_ID, stdinMode: "pipe", process: new FakeJobProcess() });
+    await cancelledManager.cancel(JOB_ID);
+
+    const cancelledRecovery = createManager({ store: new CommandJobStateStore(directory) });
+    await cancelledRecovery.initialize();
+    expect(cancelledRecovery.get(JOB_ID)).toMatchObject({ status: "cancelled", terminationReason: "cancelled" });
+
+    const timeoutId = "22222222-2222-4222-8222-222222222222";
+    const timeoutManager = createManager({ store: new CommandJobStateStore(directory) });
+    await timeoutManager.initialize();
+    await timeoutManager.start({
+      jobId: timeoutId,
+      stdinMode: "pipe",
+      timeoutMs: 10,
+      process: new FakeJobProcess(),
+    });
+    await vi.waitFor(() => expect(timeoutManager.get(timeoutId)).toMatchObject({ terminationReason: "timed_out" }));
+
+    const timeoutRecovery = createManager({ store: new CommandJobStateStore(directory) });
+    await timeoutRecovery.initialize();
+    expect(timeoutRecovery.get(timeoutId)).toMatchObject({ status: "failed", terminationReason: "timed_out" });
   });
 });

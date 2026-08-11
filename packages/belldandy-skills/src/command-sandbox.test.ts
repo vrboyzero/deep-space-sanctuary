@@ -186,6 +186,65 @@ describe("buildOciSandboxInvocation", () => {
     expect(invocation.args).not.toContain("--volume");
   });
 
+  it("can preserve a trusted absolute workspace path inside a Linux container", () => {
+    const workspaceRoot = path.join(process.cwd(), ".tmp-command-sandbox-same-path-root");
+    const cwd = path.join(workspaceRoot, "fixtures", "go-canary");
+    const containerWorkspaceRoot = "/var/tmp/star-sanctuary-go-sandbox";
+    const invocation = buildOciSandboxInvocation({
+      config: ociConfig,
+      workspaceRoot,
+      containerWorkspaceRoot,
+      cwd,
+      lease: sandboxLease,
+      plan: {
+        executable: "/var/tmp/star-sanctuary-go-sandbox/toolchain/gopls",
+        argv: ["serve"],
+        env: {},
+        network: "none",
+        writeScope: "workspace-readonly",
+        stdinMode: "pipe",
+      },
+    });
+
+    expect(invocation.args.find((value) => value.startsWith("type=bind,"))).toBe(
+      `type=bind,src=${path.resolve(workspaceRoot)},dst=${containerWorkspaceRoot},readonly`,
+    );
+    expect(invocation.args).toEqual(expect.arrayContaining([
+      "--workdir",
+      `${containerWorkspaceRoot}/fixtures/go-canary`,
+    ]));
+  });
+
+  it("mounts pinned toolchain artifacts through explicit read-only binds", () => {
+    const workspaceRoot = path.join(process.cwd(), ".tmp-command-sandbox-toolchain-workspace");
+    const goRoot = path.join(process.cwd(), ".tmp-command-sandbox-go");
+    const goplsRoot = path.join(process.cwd(), ".tmp-command-sandbox-gopls");
+    const invocation = buildOciSandboxInvocation({
+      config: ociConfig,
+      workspaceRoot,
+      cwd: workspaceRoot,
+      lease: sandboxLease,
+      trustedReadOnlyMounts: [
+        { source: goRoot, target: "/opt/star-sanctuary/go" },
+        { source: goplsRoot, target: "/opt/star-sanctuary/gopls" },
+      ],
+      plan: {
+        executable: "/opt/star-sanctuary/gopls/bin/gopls",
+        argv: ["serve"],
+        env: {},
+        network: "none",
+        writeScope: "workspace-readonly",
+        stdinMode: "pipe",
+      },
+    });
+
+    expect(invocation.args.filter((value) => value.startsWith("type=bind,"))).toEqual([
+      `type=bind,src=${path.resolve(workspaceRoot)},dst=/workspace,readonly`,
+      `type=bind,src=${path.resolve(goRoot)},dst=/opt/star-sanctuary/go,readonly`,
+      `type=bind,src=${path.resolve(goplsRoot)},dst=/opt/star-sanctuary/gopls,readonly`,
+    ]);
+  });
+
   it("opens stdin only for a sandbox job and allocates a TTY only when explicitly requested", () => {
     const workspaceRoot = path.join(process.cwd(), ".tmp-command-sandbox-pty-workspace");
     const pipeInvocation = buildOciSandboxInvocation({
@@ -220,6 +279,57 @@ describe("buildOciSandboxInvocation", () => {
     expect(pipeInvocation.args).toContain("--interactive");
     expect(pipeInvocation.args).not.toContain("--tty");
     expect(ptyInvocation.args).toEqual(expect.arrayContaining(["--interactive", "--tty"]));
+  });
+
+  it("accepts explicit bounded resource limits without changing the mount or network contract", () => {
+    const workspaceRoot = path.join(process.cwd(), ".tmp-command-sandbox-resource-workspace");
+    const invocation = buildOciSandboxInvocation({
+      config: ociConfig,
+      workspaceRoot,
+      cwd: workspaceRoot,
+      lease: sandboxLease,
+      resourceLimits: {
+        memoryBytes: 128 * 1024 * 1024,
+        cpus: 1,
+        pidsLimit: 64,
+        tmpfsBytes: 16 * 1024 * 1024,
+      },
+      plan: {
+        executable: "node",
+        argv: ["--version"],
+        env: {},
+        network: "none",
+        writeScope: "workspace-readonly",
+        stdinMode: "closed",
+      },
+    });
+
+    expect(invocation.args).toEqual(expect.arrayContaining([
+      "--pids-limit", "64",
+      "--memory", "128m",
+      "--cpus", "1",
+      "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=16m",
+      "--network", "none",
+      "--read-only",
+    ]));
+  });
+
+  it("rejects resource limits outside the bounded OCI contract", () => {
+    expect(() => buildOciSandboxInvocation({
+      config: ociConfig,
+      workspaceRoot: process.cwd(),
+      cwd: process.cwd(),
+      lease: sandboxLease,
+      resourceLimits: { memoryBytes: 8 * 1024 * 1024 },
+      plan: {
+        executable: "node",
+        argv: ["--version"],
+        env: {},
+        network: "none",
+        writeScope: "workspace-readonly",
+        stdinMode: "closed",
+      },
+    })).toThrow(/memory limit/u);
   });
 
   it("writes command environment values outside argv and removes the temporary file", async () => {

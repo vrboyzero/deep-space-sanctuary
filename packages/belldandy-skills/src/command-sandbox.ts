@@ -46,6 +46,18 @@ export type OciSandboxInvocation = {
   cwd: string;
 };
 
+export type OciSandboxResourceLimits = {
+  memoryBytes?: number;
+  cpus?: number;
+  pidsLimit?: number;
+  tmpfsBytes?: number;
+};
+
+export type OciSandboxReadOnlyMount = {
+  source: string;
+  target: string;
+};
+
 /** Stable, generated identifiers owned by one sandbox execution lease. */
 export type OciSandboxLeaseBinding = {
   leaseId: string;
@@ -234,15 +246,66 @@ function assertOciSandboxLeaseBinding(value: OciSandboxLeaseBinding): void {
   }
 }
 
-function resolveContainerCwd(workspaceRoot: string, cwd: string): string {
+function resolveContainerMountTarget(value: string, label: string): string {
+  if (value.length > 4_096
+    || !path.posix.isAbsolute(value)
+    || value === "/"
+    || value.includes("\u0000")
+    || value.includes(",")
+    || value.includes("\\")
+    || path.posix.normalize(value) !== value) {
+    throw new Error(`${label} must be a normalized absolute POSIX path.`);
+  }
+  return value;
+}
+
+function resolveContainerWorkspaceRoot(value: string | undefined): string {
+  return resolveContainerMountTarget(
+    value ?? "/workspace",
+    "Sandbox container workspace root",
+  );
+}
+
+function resolveTrustedReadOnlyMounts(
+  mounts: OciSandboxReadOnlyMount[] | undefined,
+  containerWorkspaceRoot: string,
+): OciSandboxReadOnlyMount[] {
+  if (!mounts) return [];
+  if (mounts.length > 8) {
+    throw new Error("Sandbox trusted read-only mounts exceed the supported limit.");
+  }
+  const sources = new Set<string>();
+  const targets = new Set<string>([containerWorkspaceRoot]);
+  return mounts.map((mount) => {
+    const source = path.resolve(mount.source);
+    assertMountPath(source, "Sandbox trusted read-only mount source");
+    const target = resolveContainerMountTarget(
+      mount.target,
+      "Sandbox trusted read-only mount target",
+    );
+    const sourceKey = process.platform === "win32" ? source.toLowerCase() : source;
+    if (sources.has(sourceKey) || targets.has(target)) {
+      throw new Error("Sandbox trusted read-only mounts must use unique sources and targets.");
+    }
+    sources.add(sourceKey);
+    targets.add(target);
+    return { source, target };
+  });
+}
+
+function resolveContainerCwd(
+  workspaceRoot: string,
+  cwd: string,
+  containerWorkspaceRoot: string,
+): string {
   const normalizedRoot = path.resolve(workspaceRoot);
   const normalizedCwd = path.resolve(cwd);
   const relative = path.relative(normalizedRoot, normalizedCwd);
-  if (relative === "") return "/workspace";
+  if (relative === "") return containerWorkspaceRoot;
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     throw new Error("Sandbox cwd escapes the selected workspace root.");
   }
-  return path.posix.join("/workspace", ...relative.split(path.sep));
+  return path.posix.join(containerWorkspaceRoot, ...relative.split(path.sep));
 }
 
 /**
@@ -252,19 +315,28 @@ function resolveContainerCwd(workspaceRoot: string, cwd: string): string {
 export function buildOciSandboxInvocation(input: {
   config: OciCommandSandboxConfig;
   workspaceRoot: string;
+  containerWorkspaceRoot?: string;
   cwd: string;
   plan: CommandPlan;
   lease: OciSandboxLeaseBinding;
   environmentFile?: string;
+  resourceLimits?: OciSandboxResourceLimits;
+  trustedReadOnlyMounts?: OciSandboxReadOnlyMount[];
 }): OciSandboxInvocation {
   const workspaceRoot = path.resolve(input.workspaceRoot);
   assertMountPath(workspaceRoot, "Sandbox workspace root");
+  const containerWorkspaceRoot = resolveContainerWorkspaceRoot(input.containerWorkspaceRoot);
+  const trustedReadOnlyMounts = resolveTrustedReadOnlyMounts(
+    input.trustedReadOnlyMounts,
+    containerWorkspaceRoot,
+  );
   assertOciSandboxLeaseBinding(input.lease);
+  const resourceLimits = resolveOciSandboxResourceLimits(input.resourceLimits);
   const containerUser = resolveCurrentOciSandboxContainerUser();
   const mount = [
     "type=bind",
     `src=${workspaceRoot}`,
-    "dst=/workspace",
+    `dst=${containerWorkspaceRoot}`,
     ...(input.plan.writeScope === "workspace-readonly" ? ["readonly"] : []),
   ].join(",");
 
@@ -288,17 +360,26 @@ export function buildOciSandboxInvocation(input: {
     "--security-opt",
     "no-new-privileges",
     "--pids-limit",
-    "256",
+    String(resourceLimits.pidsLimit),
     "--memory",
-    "1024m",
+    formatDockerBytes(resourceLimits.memoryBytes),
     "--cpus",
-    "2",
+    String(resourceLimits.cpus),
     "--tmpfs",
-    "/tmp:rw,nosuid,nodev,noexec,size=64m",
+    `/tmp:rw,nosuid,nodev,noexec,size=${formatDockerBytes(resourceLimits.tmpfsBytes)}`,
     "--mount",
     mount,
+    ...trustedReadOnlyMounts.flatMap((trustedMount) => [
+      "--mount",
+      [
+        "type=bind",
+        `src=${trustedMount.source}`,
+        `dst=${trustedMount.target}`,
+        "readonly",
+      ].join(","),
+    ]),
     "--workdir",
-    resolveContainerCwd(workspaceRoot, input.cwd),
+    resolveContainerCwd(workspaceRoot, input.cwd, containerWorkspaceRoot),
     // Keep Unix bind-mount writes scoped to the identity that owns the selected workspace.
     ...(containerUser ? ["--user", containerUser] : []),
     ...(input.environmentFile ? ["--env-file", input.environmentFile] : []),
@@ -313,6 +394,40 @@ export function buildOciSandboxInvocation(input: {
     args,
     cwd: workspaceRoot,
   };
+}
+
+function resolveOciSandboxResourceLimits(
+  input: OciSandboxResourceLimits | undefined,
+): Required<OciSandboxResourceLimits> {
+  const limits = {
+    memoryBytes: input?.memoryBytes ?? 1024 * 1024 * 1024,
+    cpus: input?.cpus ?? 2,
+    pidsLimit: input?.pidsLimit ?? 256,
+    tmpfsBytes: input?.tmpfsBytes ?? 64 * 1024 * 1024,
+  };
+  const mebibyte = 1024 * 1024;
+  if (!Number.isSafeInteger(limits.memoryBytes)
+    || limits.memoryBytes < 16 * mebibyte
+    || !Number.isInteger(limits.memoryBytes / mebibyte)) {
+    throw new Error("Sandbox memory limit must be a safe integer in whole MiB of at least 16 MiB.");
+  }
+  if (!Number.isFinite(limits.cpus) || limits.cpus <= 0 || limits.cpus > 64) {
+    throw new Error("Sandbox CPU limit must be greater than 0 and at most 64.");
+  }
+  if (!Number.isSafeInteger(limits.pidsLimit) || limits.pidsLimit < 1 || limits.pidsLimit > 32768) {
+    throw new Error("Sandbox PID limit must be an integer between 1 and 32768.");
+  }
+  if (!Number.isSafeInteger(limits.tmpfsBytes)
+    || limits.tmpfsBytes < mebibyte
+    || !Number.isInteger(limits.tmpfsBytes / mebibyte)) {
+    throw new Error("Sandbox tmpfs limit must be a safe integer in whole MiB of at least 1 MiB.");
+  }
+  return limits;
+}
+
+function formatDockerBytes(bytes: number): string {
+  const mebibyte = 1024 * 1024;
+  return `${bytes / mebibyte}m`;
 }
 
 /**

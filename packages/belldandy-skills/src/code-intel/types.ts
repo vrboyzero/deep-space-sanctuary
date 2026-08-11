@@ -107,7 +107,7 @@ export interface CodeIntelProvider {
     request: CodeIntelProviderRequest,
     context: CodeIntelProviderContext,
   ): Promise<CodeIntelProviderResult>;
-  dispose?(): void;
+  dispose?(): void | Promise<void>;
 }
 
 export interface CodeIntelQueryResult {

@@ -16,6 +16,82 @@ wsl.exe --distribution Ubuntu-22.04 --cd /mnt/e/project/star-sanctuary --exec no
 
 该基准只证明固定小型 TS/JS fixture 的语义准确性与平台一致性，不代表大型真实仓 Agent uplift、Context Inspector、consumer capability closure、资源 soak 或 P1-A1 已完成。
 
+## P1-A2 Go Provider Adapter truth set
+
+`v1/go-truth-set.json` 固定 `gopls v0.21.0`、`go1.24.2`、`canary` build tag，以及一个 `go.work` 下的 `app` / `lib` 双 module fixture。6 个 case 覆盖 workspace symbol、跨 module definition/reference、build-tagged definition 和 interface implementation，共 10 个精确位置；precision/recall 阈值均为 `0.95`，每个 case 都必须没有假阳性、假阴性或 query error。
+
+runner 在 query 前通过 profile 白名单发送有界 `textDocument/didOpen`，把 workspace 外 cache/state 写入临时目录并在 `disposeAsync()` 后清理；运行前后复核 fixture hash，报告还记录 Host stopped、强杀、失败、server request、state cleanup 与 governance。lifecycle 额外验证 decoded JSON response 的 4 MiB 上限/实际峰值/拒绝次数，以及单 Host 并发 limit/peak/拒绝次数；任一资源边界失败都会阻断 lifecycle Gate。`providerNetworkCalls` 保持 `not_observable`，`osNetworkIsolationVerified=false`、`processMemory.status=unverified` 是明确的未完成 Gate，不能把 `GOPROXY=off` 当作 OS 级断网，也不能把 decoded response 上限当作 gopls RSS 硬限制。
+
+运行前先构建 `@belldandy/skills`，并显式指定本机工具路径；输出目录必须全新，runner 不覆盖已有报告：
+
+```powershell
+corepack pnpm --filter @belldandy/skills build
+corepack pnpm benchmark:code-intel:go-truth-set --platform windows-native --manifest benchmarks/code-intel/v1/go-truth-set.json --output <fresh-artifact-root>/windows-native/go-report.json --gopls-command C:\Users\admin\go\bin\gopls.exe --go-command "D:\Program Files\Go\bin\go.exe"
+wsl.exe --distribution Ubuntu-22.04 --cd /mnt/e/project/star-sanctuary --exec node scripts/run-code-intel-go-truth-set.mjs --platform wsl2-linux --manifest benchmarks/code-intel/v1/go-truth-set.json --output <fresh-artifact-root>/wsl2-linux/go-report.json --gopls-command <absolute-wsl2-gopls> --go-command <absolute-wsl2-go>
+```
+
+Windows 与 WSL2 当前 pinned canary 均已通过 6/6 case、10/10 精确位置的 precision/recall Gate；WSL2 真实 report 的 decoded response peak 为 `5,554` bytes、并发 peak 为 `1`，两类 rejection 均为 `0`。WSL2 使用从既有本地源码/cache 离线构建的 `go1.24.2 linux/amd64` 与 `gopls v0.21.0` 临时 artifact，不构成可分发安装包。该 truth set 只证明固定 Go fixture 的语义、decoded response/并发边界与进程生命周期，不代表真实大仓 uplift、OS network-off、只读 sandbox、进程内存硬限制、资源 soak 或 production promotion。
+
+## P1-A2 Go crash/cancel/restart fault Gate
+
+`go-fault-gate-report.schema.json` 与 `scripts/run-code-intel-go-fault-gate.mjs` 复用 pinned `gopls` profile/truth fixture，独立验证 server crash 后 fresh process recovery、活跃 request cancellation 后 recovery，以及 5 个独立 Host cycle 的 15 次短 soak。报告只保存 stable scenario counts/booleans，包含 residual process、state cleanup、decoded response rejection 和 concurrency rejection，不保存 PID、命令路径或环境值；预期 cancel 的 `forcedTerminationCount=1` 不与正常 truth-set 的 zero-forced Gate 混用。
+
+运行前先构建 `@belldandy/skills`，并使用全新输出目录：
+
+```powershell
+corepack pnpm --filter @belldandy/skills build
+corepack pnpm benchmark:code-intel:go-fault-gate --platform windows-native --manifest benchmarks/code-intel/v1/go-truth-set.json --output <fresh-artifact-root>/windows-native/go-fault-report.json --gopls-command C:\Users\admin\go\bin\gopls.exe --go-command "D:\Program Files\Go\bin\go.exe"
+```
+
+当前 Windows 与 WSL2 fault Gate 均已通过；两端 crash/restart、cancel/restart 与 5-cycle/15-query soak 均为确定终态且残留进程为 0。OS network-off、只读 sandbox 与进程内存硬限制仍为未完成 Gate。
+
+## P1-A2 Go OCI sandbox control-plane Gate
+
+`v1/go-oci-sandbox-gate-report.schema.json` 与 `scripts/run-code-intel-go-oci-sandbox-gate.mjs` 是独立的 OCI fault harness。它复用生产 `command-sandbox` 与 lease owner，在本地已存在的 digest 镜像中以 `--pull=never` 启动两个短生命周期容器，固定 `128 MiB` memory、`1` CPU、`64` PID 和 `16 MiB` `/tmp`，验证：
+
+- `--network none` 的 loopback-only 与真实 outbound connection 失败；
+- 只读 rootfs、只读 workspace bind mount 和可写 tmpfs；
+- `/sys/fs/cgroup/memory.max` 与配置值一致；
+- 容器终止后 Docker lease、process tree 和临时根均收敛为零残留。
+
+运行前必须显式配置已运行的本地 OCI daemon 和预加载 digest 镜像；脚本不会启动 daemon、拉取镜像、安装 Go/gopls 或访问 Gateway/模型/Provider：
+
+```powershell
+$env:BELLDANDY_COMMAND_SANDBOX_BACKEND = "oci"
+$env:BELLDANDY_COMMAND_SANDBOX_OCI_RUNTIME = "docker"
+$env:BELLDANDY_COMMAND_SANDBOX_OCI_IMAGE = "node:22-bullseye@sha256:<local-digest>"
+corepack pnpm benchmark:code-intel:go-oci-sandbox-gate --platform windows-native --output <fresh-artifact-root>/windows-native/go-oci-sandbox-report.json
+```
+
+该 Gate 只证明 OCI 控制面和资源配置可观测；pinned Linux Go/gopls artifact 与 WSL2 native truth/fault 已闭合，但 `gopls` RSS hard limit、真实 gopls OCI 执行、Provider sandbox admission 和双平台 Go promotion 仍未闭合，现有控制面报告继续固定 `goCanaryEligible=false` 与 `productionEligible=false`。运行 artifact 不提交到仓库。
+
+## P1-A2 Go OCI promotion Gate
+
+`v1/go-oci-promotion-gate-report.schema.json` 与 `scripts/run-code-intel-go-oci-promotion-gate.mjs` 把 pinned Linux Go/gopls artifact、冻结 truth fixture 与真实 OCI Host 绑定到同一份不可覆盖报告。runner 先通过 `createGoplsOciCanaryProvider` 验证 native Linux、digest-pinned 本地镜像、OCI runtime、artifact 路径/版本/SHA-256 与固定 sandbox contract；失败时不会创建 Host/lease，也不会回退 native LSP。通过 admission 后，runner 将 fixture 复制到临时 staging，以同绝对路径只读挂载 workspace，并把显式声明的 Go/gopls artifact 根按同路径只读挂载；容器固定 `128 MiB` memory、`1` CPU、`64` PID、`16 MiB` writable tmpfs、只读 rootfs 与 `network none`。
+
+Host 在首轮 workspace document sync 后发送一个不消费业务结果的有界 `workspace/symbol` readiness 探针，并等待 profile-governed work-done progress 进入 500 ms 静默窗口，再执行冻结的 6 个业务查询。报告通过 `docker inspect/top` 记录真实配置和 gopls RSS 峰值，并在 Provider dispose 后验证 lease、容器、state 与 staging 全部清理。
+
+该 runner 只能在 native WSL2/Linux 进程中运行，要求 Docker daemon 已运行、digest 镜像和两个 artifact 已存在；不会启动 daemon、拉取镜像、联网下载、安装工具链、访问 Gateway/模型或写真实 workspace：
+
+```powershell
+$env:BELLDANDY_COMMAND_SANDBOX_BACKEND = "oci"
+$env:BELLDANDY_COMMAND_SANDBOX_OCI_RUNTIME = "docker"
+$env:BELLDANDY_COMMAND_SANDBOX_OCI_IMAGE = "node:22-bullseye@sha256:<local-digest>"
+wsl.exe --distribution Ubuntu-22.04 --cd /mnt/e/project/star-sanctuary --exec env `
+  BELLDANDY_COMMAND_SANDBOX_BACKEND=oci `
+  BELLDANDY_COMMAND_SANDBOX_OCI_RUNTIME=docker `
+  BELLDANDY_COMMAND_SANDBOX_OCI_IMAGE=$env:BELLDANDY_COMMAND_SANDBOX_OCI_IMAGE `
+  node scripts/run-code-intel-go-oci-promotion-gate.mjs `
+  --platform wsl2-linux `
+  --output <fresh-report.json> `
+  --gopls-command <absolute-wsl2-gopls> `
+  --go-command <absolute-wsl2-go> `
+  --gopls-artifact-root <absolute-wsl2-gopls-root> `
+  --go-artifact-root <absolute-wsl2-go-root>
+```
+
+历史 readiness 修复后的 `j-p` 7 次独立运行均通过 6/6 case、10/10 位置，RSS 峰值范围为 `32,571,392` 到 `128,909,312` bytes。Provider factory 接线后的 `q/r/s` 三次 selected run 均得到 `providerAdmissionStatus=passed`，但 truth 分别只返回 `8/10`、`0/10`、`6/10`；其中 `r` 用于验证的延长等待实验因 gopls progress token 不发送 `end` 而超时，实验代码已撤回，容器也在进程收敛后为零残留。该证据说明 500 ms progress 静默窗口尚不足以稳定证明跨 module references ready，因此当前整体 promotion Gate 继续失败关闭，禁止用重跑覆盖 selected failure。`goCanaryEligible=false`、`productionEligible=false` 保持不变；双平台 comparator 与 Doctor 最终投影不得在 readiness 闭环前推进。
+
 ## P1-A1 真实 Agent uplift Gate
 
 `v1/agent-uplift-gate.json` 在 consumer 实现前冻结真实 Agent 对照口径，并由 `agent-uplift-gate.schema.json` 约束。cohort 固定为 v3 的 `real-ts.api-migration`、`real-ts.cross-package-refactor`、`real-js.bug-fix`、`real-js.failed-test-fix`，Windows/WSL2 各进行一次 baseline/candidate paired run，共 8 对；candidate 相对冻结 baseline 唯一允许的差异是向原 profile 的 `toolAllow` 追加 `code_intel`。

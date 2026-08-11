@@ -248,7 +248,7 @@ async function handleCdpCommand(method, params, sessionId) {
         await chrome.debugger.attach({ tabId }, "1.3");
         const newSessionId = `session-${tabId}-${Date.now()}`;
 
-        tabs.set(tabId, { sessionId: newSessionId, targetId: String(tabId), state: "attached" });
+        tabs.set(tabId, { sessionId: newSessionId, targetId: targetIdStr, state: "attached" });
         tabBySession.set(newSessionId, tabId);
 
         // Required by Puppeteer to confirm attachment
@@ -272,11 +272,21 @@ async function handleCdpCommand(method, params, sessionId) {
     // special case: Target.closeTarget
     if (method === "Target.closeTarget") {
         const targetIdStr = params?.targetId;
-        const tabId = parseInt(targetIdStr, 10);
-        if (tabId) {
-            await chrome.tabs.remove(tabId);
-            return { success: true };
+        let closeTabId;
+        if (targetIdStr === "page-1") {
+            const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+            closeTabId = active?.id;
+        } else if (typeof targetIdStr === "string" && /^\d+$/.test(targetIdStr)) {
+            closeTabId = Number.parseInt(targetIdStr, 10);
         }
+        if (!Number.isSafeInteger(closeTabId) || closeTabId <= 0) {
+            throw new Error(`Invalid targetId: ${targetIdStr}`);
+        }
+        const closeTabInfo = tabs.get(closeTabId);
+        await chrome.tabs.remove(closeTabId);
+        tabs.delete(closeTabId);
+        if (closeTabInfo) tabBySession.delete(closeTabInfo.sessionId);
+        return { success: true };
     }
 
     // 2. 确保已 Attach
@@ -326,7 +336,11 @@ function onDebuggerDetach(source, reason) {
     const tabId = source.tabId;
     const tabInfo = tabs.get(tabId);
     if (tabInfo) {
-        sendEventToRelay("Target.detachedFromTarget", { sessionId: tabInfo.sessionId }, tabInfo.sessionId);
+        sendEventToRelay("Target.detachedFromTarget", {
+            sessionId: tabInfo.sessionId,
+            targetId: tabInfo.targetId
+        }, tabInfo.sessionId);
+        sendEventToRelay("Target.targetDestroyed", { targetId: tabInfo.targetId });
         tabs.delete(tabId);
         tabBySession.delete(tabInfo.sessionId);
     }

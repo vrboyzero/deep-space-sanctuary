@@ -18,6 +18,7 @@ export const DEFAULT_COMMAND_JOB_TIMEOUT_MS = 300_000;
 
 export type CommandJobStatus = "running" | "completed" | "cancelled" | "failed" | "lost";
 type PersistedCommandJobStatus = "starting" | CommandJobStatus;
+export type CommandJobTerminationReason = "cancelled" | "timed_out";
 
 export type CommandJobRecovery = {
   lifecycle: "starting" | "active" | "settled" | "lost";
@@ -56,6 +57,7 @@ export type PersistedCommandJob = {
   supportsResize: boolean;
   timeoutMs?: number;
   deadlineAt?: number;
+  terminationReason?: CommandJobTerminationReason;
   error?: string;
   persistedSandbox?: {
     runtime: "docker" | "podman";
@@ -74,6 +76,7 @@ export type CommandJobSnapshot = {
   supportsResize: boolean;
   timeoutMs?: number;
   deadlineAt?: number;
+  terminationReason?: CommandJobTerminationReason;
   oldestCursor: number;
   nextCursor: number;
   exitCode?: number;
@@ -141,6 +144,7 @@ type CommandJob = {
   signal?: string | number;
   error?: string;
   termination?: ProcessTerminationResult;
+  terminationReason?: CommandJobTerminationReason;
   finalization?: Promise<CommandJobSnapshot>;
   cancellation?: Promise<CommandJobSnapshot>;
 };
@@ -175,6 +179,17 @@ function isPersistedSandbox(value: unknown): value is NonNullable<PersistedComma
     && OCI_CONTAINER_NAME_PATTERN.test(sandbox.containerName);
 }
 
+function isCommandJobTerminationReason(value: unknown): value is CommandJobTerminationReason {
+  return value === "cancelled" || value === "timed_out";
+}
+
+class CommandJobStartupTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Command job startup timed out after ${timeoutMs}ms.`);
+    this.name = "CommandJobStartupTimeoutError";
+  }
+}
+
 function parsePersistedCommandJob(value: unknown): PersistedCommandJob | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
@@ -206,6 +221,7 @@ function parsePersistedCommandJob(value: unknown): PersistedCommandJob | undefin
     ...(Number.isSafeInteger(record.deadlineAt) && (record.deadlineAt as number) > 0
       ? { deadlineAt: record.deadlineAt as number }
       : {}),
+    ...(isCommandJobTerminationReason(record.terminationReason) ? { terminationReason: record.terminationReason } : {}),
     ...(typeof record.error === "string" && record.error.length <= 512 ? { error: record.error } : {}),
     ...(persistedSandbox ? { persistedSandbox } : {}),
   };
@@ -468,6 +484,7 @@ export class CommandJobManager {
       }
       const terminal = await this.finalize(job, {
         status: "failed",
+        ...(error instanceof CommandJobStartupTimeoutError ? { terminationReason: "timed_out" } : {}),
         error: `Command job start failed: ${message}`,
       });
       job.startup?.resolve();
@@ -554,7 +571,7 @@ export class CommandJobManager {
       };
       timeout = setTimeout(() => {
         timedOut = true;
-        reject(new Error(`Command job startup timed out after ${timeoutMs}ms.`));
+        reject(new CommandJobStartupTimeoutError(timeoutMs));
       }, timeoutMs);
       void Promise.resolve()
         .then(startProcess)
@@ -619,6 +636,7 @@ export class CommandJobManager {
         supportsResize: record.supportsResize,
         ...(record.timeoutMs !== undefined ? { timeoutMs: record.timeoutMs } : {}),
         ...(record.deadlineAt !== undefined ? { deadlineAt: record.deadlineAt } : {}),
+        ...(record.terminationReason ? { terminationReason: record.terminationReason } : {}),
         output: new CommandJobOutputBuffer(this.maxOutputBytes),
         outputAvailable: false,
         ...(record.error ? { error: record.error } : {}),
@@ -632,6 +650,7 @@ export class CommandJobManager {
     status: Exclude<CommandJobStatus, "running" | "lost">;
     exitCode?: number;
     signal?: string | number;
+    terminationReason?: CommandJobTerminationReason;
     error?: string;
   }): Promise<CommandJobSnapshot> {
     if (job.finalization) return await job.finalization;
@@ -645,6 +664,7 @@ export class CommandJobManager {
       job.endedAt = job.updatedAt;
       if (outcome.exitCode !== undefined) job.exitCode = outcome.exitCode;
       if (outcome.signal !== undefined) job.signal = outcome.signal;
+      if (outcome.terminationReason !== undefined) job.terminationReason = outcome.terminationReason;
       if (outcome.error) job.error = outcome.error;
       try {
         job.cleanupResult = await job.cleanup?.();
@@ -676,6 +696,7 @@ export class CommandJobManager {
     if (!job.process) {
       return await this.finalize(job, {
         status: "failed",
+        terminationReason: intent === "timeout" ? "timed_out" : "cancelled",
         error: "Command job has no running process to cancel.",
       });
     }
@@ -685,6 +706,7 @@ export class CommandJobManager {
     } catch {
       return await this.finalize(job, {
         status: "failed",
+        terminationReason: intent === "timeout" ? "timed_out" : "cancelled",
         error: "Command job process-tree termination failed.",
       });
     }
@@ -692,6 +714,7 @@ export class CommandJobManager {
     const timedOut = intent === "timeout";
     return await this.finalize(job, {
       status: !timedOut && termination.closeObserved ? "cancelled" : "failed",
+      terminationReason: timedOut ? "timed_out" : "cancelled",
       error: timedOut
         ? `Command job timed out after ${job.timeoutMs ?? DEFAULT_COMMAND_JOB_TIMEOUT_MS}ms.`
         : termination.closeObserved ? undefined : "Command job process tree did not close after cancellation.",
@@ -728,6 +751,7 @@ export class CommandJobManager {
       supportsResize: job.supportsResize,
       ...(job.timeoutMs !== undefined ? { timeoutMs: job.timeoutMs } : {}),
       ...(job.deadlineAt !== undefined ? { deadlineAt: job.deadlineAt } : {}),
+      ...(job.terminationReason ? { terminationReason: job.terminationReason } : {}),
       oldestCursor: job.output.oldestCursor,
       nextCursor: job.output.nextCursor,
       ...(job.exitCode !== undefined ? { exitCode: job.exitCode } : {}),
@@ -757,6 +781,7 @@ export class CommandJobManager {
       supportsResize: job.supportsResize,
       ...(job.timeoutMs !== undefined ? { timeoutMs: job.timeoutMs } : {}),
       ...(job.deadlineAt !== undefined ? { deadlineAt: job.deadlineAt } : {}),
+      ...(job.terminationReason ? { terminationReason: job.terminationReason } : {}),
       ...(job.error ? { error: job.error } : {}),
       ...(job.persistedSandbox ? { persistedSandbox: job.persistedSandbox } : {}),
     });

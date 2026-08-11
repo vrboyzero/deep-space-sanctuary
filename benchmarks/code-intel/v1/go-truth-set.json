@@ -1,0 +1,156 @@
+{
+  "schemaVersion": "code-intel-go-truth-set/v1",
+  "id": "p1-a2-go-canary-v1",
+  "frozenAt": "2026-08-10T16:18:28.804Z",
+  "contractVersion": "code-intel/v1",
+  "provider": {
+    "id": "gopls",
+    "version": "v0.21.0",
+    "goVersion": "go1.24.2",
+    "buildTags": ["canary"]
+  },
+  "thresholds": {
+    "precision": 0.95,
+    "recall": 0.95
+  },
+  "workspace": {
+    "root": "fixtures/go-canary",
+    "revision": "p1-a2-go-canary-v1",
+    "folders": ["app", "lib"],
+    "sourceFiles": [
+      {
+        "path": "app/go.mod",
+        "sha256": "9c2836f6be51df775610b690750b9ee85c5ca13c6fba2ddad8c8879ba261a9d0"
+      },
+      {
+        "path": "app/main.go",
+        "sha256": "1e53104dd84cbe987d5c0801ed79b6bc0feb49f96430e5e35198c1e0e7b50c23"
+      },
+      {
+        "path": "go.work",
+        "sha256": "4922f120a791049b57d32530835c9a462751829b783f590ac0e3ba1717119485"
+      },
+      {
+        "path": "lib/go.mod",
+        "sha256": "3dcc972db8bf5fa457d979d104888ffb4cc60baa5257984349a355c6deb5a18d"
+      },
+      {
+        "path": "lib/service/api.go",
+        "sha256": "3a66a922c9cce505cbcc9d3fd020b03737f60254270c7ef0b7c2dbab743e1278"
+      },
+      {
+        "path": "lib/service/tagged_canary.go",
+        "sha256": "e58b6d8b01a164496e8d87a35ebd7b28cf91255ea874db3bb82cec3554c7453e"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "symbols.build-tagged-feature",
+      "operation": "symbols",
+      "query": "TaggedFeature",
+      "expected": [
+        {
+          "scope": "workspace",
+          "path": "lib/service/tagged_canary.go",
+          "anchor": { "text": "TaggedFeature", "occurrence": 1 }
+        }
+      ]
+    },
+    {
+      "id": "definition.cross-module-build-message",
+      "operation": "definition",
+      "location": {
+        "path": "app/main.go",
+        "anchor": { "text": "BuildMessage", "occurrence": 1 }
+      },
+      "expected": [
+        {
+          "scope": "workspace",
+          "path": "lib/service/api.go",
+          "anchor": { "text": "BuildMessage", "occurrence": 1 }
+        }
+      ]
+    },
+    {
+      "id": "definition.build-tagged-feature",
+      "operation": "definition",
+      "location": {
+        "path": "app/main.go",
+        "anchor": { "text": "TaggedFeature", "occurrence": 1 }
+      },
+      "expected": [
+        {
+          "scope": "workspace",
+          "path": "lib/service/tagged_canary.go",
+          "anchor": { "text": "TaggedFeature", "occurrence": 1 }
+        }
+      ]
+    },
+    {
+      "id": "references.cross-module-build-message",
+      "operation": "references",
+      "location": {
+        "path": "lib/service/api.go",
+        "anchor": { "text": "BuildMessage", "occurrence": 1 }
+      },
+      "expected": [
+        {
+          "scope": "workspace",
+          "path": "lib/service/api.go",
+          "anchor": { "text": "BuildMessage", "occurrence": 1 }
+        },
+        {
+          "scope": "workspace",
+          "path": "lib/service/api.go",
+          "anchor": { "text": "BuildMessage", "occurrence": 2 }
+        },
+        {
+          "scope": "workspace",
+          "path": "lib/service/tagged_canary.go",
+          "anchor": { "text": "BuildMessage", "occurrence": 1 }
+        },
+        {
+          "scope": "workspace",
+          "path": "app/main.go",
+          "anchor": { "text": "BuildMessage", "occurrence": 1 }
+        }
+      ]
+    },
+    {
+      "id": "references.go-work-interface",
+      "operation": "references",
+      "location": {
+        "path": "lib/service/api.go",
+        "anchor": { "text": "Speaker", "occurrence": 1 }
+      },
+      "expected": [
+        {
+          "scope": "workspace",
+          "path": "lib/service/api.go",
+          "anchor": { "text": "Speaker", "occurrence": 1 }
+        },
+        {
+          "scope": "workspace",
+          "path": "app/main.go",
+          "anchor": { "text": "Speaker", "occurrence": 1 }
+        }
+      ]
+    },
+    {
+      "id": "implementation.go-work-interface-method",
+      "operation": "implementation",
+      "location": {
+        "path": "lib/service/api.go",
+        "anchor": { "text": "Speak", "occurrence": 1 }
+      },
+      "expected": [
+        {
+          "scope": "workspace",
+          "path": "lib/service/api.go",
+          "anchor": { "text": "Speak", "occurrence": 2 }
+        }
+      ]
+    }
+  ]
+}

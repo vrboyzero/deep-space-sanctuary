@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.local/schemas/code-intel/go-fault-gate-report-v1.schema.json",
+  "title": "Star Sanctuary Go CodeIntel Fault Gate Report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "generatedAt", "platform", "truthSet", "sourceIdentity", "provider", "resourceLimits", "scenarios", "gate", "execution"],
+  "properties": {
+    "schemaVersion": { "const": "code-intel-go-fault-gate-report/v1" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "platform": { "enum": ["windows-native", "wsl2-linux"] },
+    "truthSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "manifestPath", "manifestSha256", "workspaceRevision"],
+      "properties": {
+        "id": { "const": "p1-a2-go-canary-v1" },
+        "manifestPath": { "type": "string", "minLength": 1 },
+        "manifestSha256": { "$ref": "#/$defs/sha256" },
+        "workspaceRevision": { "const": "p1-a2-go-canary-v1" }
+      }
+    },
+    "sourceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["aggregateSha256", "files", "runtimeFiles"],
+      "properties": {
+        "aggregateSha256": { "$ref": "#/$defs/sha256" },
+        "files": { "type": "array", "minItems": 6, "items": { "$ref": "#/$defs/sourceFile" } },
+        "runtimeFiles": { "type": "array", "minItems": 5, "items": { "$ref": "#/$defs/sourceFile" } }
+      }
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "goVersion", "platform"],
+      "properties": {
+        "id": { "const": "gopls" },
+        "version": { "const": "v0.21.0" },
+        "goVersion": { "const": "go1.24.2" },
+        "platform": { "type": "string", "minLength": 1 }
+      }
+    },
+    "resourceLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decodedResponseMaxBytes", "maxConcurrentRequestsPerHost", "processMemoryHardLimitBytes", "processMemoryStatus"],
+      "properties": {
+        "decodedResponseMaxBytes": { "const": 4194304 },
+        "maxConcurrentRequestsPerHost": { "const": 1 },
+        "processMemoryHardLimitBytes": { "type": "null" },
+        "processMemoryStatus": { "const": "unverified" }
+      }
+    },
+    "scenarios": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["crashRestart", "cancellation", "soak"],
+      "properties": {
+        "crashRestart": { "$ref": "#/$defs/restartScenario" },
+        "cancellation": { "$ref": "#/$defs/cancellationScenario" },
+        "soak": { "$ref": "#/$defs/soakScenario" }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "failures"],
+      "properties": {
+        "passed": { "type": "boolean" },
+        "failures": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "crash_restart_gate_failed",
+              "cancellation_gate_failed",
+              "soak_gate_failed",
+              "state_cleanup_failed"
+            ]
+          }
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["durationMs", "probeCommands", "lspProcesses", "gatewayCalls", "modelCalls", "providerNetworkCalls", "networkPolicy", "osNetworkIsolationVerified", "processMemory", "credentialsRead", "workspaceMutations", "stateRootCleaned"],
+      "properties": {
+        "durationMs": { "type": "number", "minimum": 0 },
+        "probeCommands": { "type": "integer", "minimum": 0 },
+        "lspProcesses": { "type": "integer", "minimum": 1 },
+        "gatewayCalls": { "const": 0 },
+        "modelCalls": { "const": 0 },
+        "providerNetworkCalls": { "const": "not_observable" },
+        "networkPolicy": { "const": "environment-deny" },
+        "osNetworkIsolationVerified": { "const": false },
+        "processMemory": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["hardLimitBytes", "peakBytes", "status"],
+          "properties": {
+            "hardLimitBytes": { "type": "null" },
+            "peakBytes": { "const": "not_observable" },
+            "status": { "const": "unverified" }
+          }
+        },
+        "credentialsRead": { "const": false },
+        "workspaceMutations": { "const": 0 },
+        "stateRootCleaned": { "type": "boolean" }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "sourceFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "restartScenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "recoveryQuerySucceeded", "processStartCount", "unexpectedExitCount", "forcedTerminationCount", "responseRejectedCount", "concurrencyRejectedCount", "residualProcessCount"],
+      "properties": {
+        "passed": { "type": "boolean" },
+        "recoveryQuerySucceeded": { "type": "boolean" },
+        "processStartCount": { "type": "integer", "minimum": 0 },
+        "unexpectedExitCount": { "type": "integer", "minimum": 0 },
+        "forcedTerminationCount": { "type": "integer", "minimum": 0 },
+        "responseRejectedCount": { "type": "integer", "minimum": 0 },
+        "concurrencyRejectedCount": { "type": "integer", "minimum": 0 },
+        "residualProcessCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "cancellationScenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "cancellationCode", "recoveryQuerySucceeded", "processStartCount", "unexpectedExitCount", "forcedTerminationCount", "responseRejectedCount", "concurrencyRejectedCount", "residualProcessCount"],
+      "properties": {
+        "passed": { "type": "boolean" },
+        "cancellationCode": { "type": "string", "minLength": 1 },
+        "recoveryQuerySucceeded": { "type": "boolean" },
+        "processStartCount": { "type": "integer", "minimum": 0 },
+        "unexpectedExitCount": { "type": "integer", "minimum": 0 },
+        "forcedTerminationCount": { "type": "integer", "minimum": 0 },
+        "responseRejectedCount": { "type": "integer", "minimum": 0 },
+        "concurrencyRejectedCount": { "type": "integer", "minimum": 0 },
+        "residualProcessCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "soakScenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "cycles", "queryCount", "hostCount", "stoppedHostCount", "processStartCount", "unexpectedExitCount", "forcedTerminationCount", "failureCount", "responsePeakBytes", "responseRejectedCount", "concurrencyRejectedCount", "residualProcessCount"],
+      "properties": {
+        "passed": { "type": "boolean" },
+        "cycles": { "const": 5 },
+        "queryCount": { "type": "integer", "minimum": 0, "maximum": 15 },
+        "hostCount": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "stoppedHostCount": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "processStartCount": { "type": "integer", "minimum": 0 },
+        "unexpectedExitCount": { "type": "integer", "minimum": 0 },
+        "forcedTerminationCount": { "type": "integer", "minimum": 0 },
+        "failureCount": { "type": "integer", "minimum": 0 },
+        "responsePeakBytes": { "type": "integer", "minimum": 0 },
+        "responseRejectedCount": { "type": "integer", "minimum": 0 },
+        "concurrencyRejectedCount": { "type": "integer", "minimum": 0 },
+        "residualProcessCount": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}
