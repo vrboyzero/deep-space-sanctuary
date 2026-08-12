@@ -136,6 +136,10 @@ export type CodingRunErrorCode =
   | "interrupted"
   | "output_schema_invalid"
   | "gateway_unavailable"
+  | "invalid_limit"
+  | "cursor_stale"
+  | "cursor_future"
+  | "cursor_out_of_range"
   | "internal";
 
 export type CodingRunSubscriptionErrorCode = CodingRunErrorCode | "cursor_expired";

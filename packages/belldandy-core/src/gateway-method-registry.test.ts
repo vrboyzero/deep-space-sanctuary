@@ -111,6 +111,10 @@ describe("GatewayMethodRegistry", () => {
       requiresPairing: true,
       risk: "read",
     });
+    expect(inventory.find((item) => item.method === "task.projection.list")).toMatchObject({
+      requiresPairing: true,
+      risk: "read",
+    });
     expect(inventory.find((item) => item.method === "coding.run.follow_up.status")).toMatchObject({
       requiresPairing: true,
       risk: "read",

@@ -83,6 +83,17 @@ export type WorkflowRuntimeCodingRunView = {
   };
 };
 
+export type WorkflowActiveCodingRunView = {
+  source: "workflow";
+  status: "running";
+  recovery: { operation: "workflow.resume" };
+  binding: CodingContextBinding;
+  evidence: {
+    runtimeStatus: "running" | "stopping";
+    startedAtMs: number;
+  };
+};
+
 export type RuntimeLostCodingRunView = {
   source: "conversation" | "workflow";
   status: "interrupted";
@@ -124,6 +135,7 @@ export type CodingRunSourceView =
   | GoalCodingRunView
   | WorkflowJournalCodingRunView
   | WorkflowRuntimeCodingRunView
+  | WorkflowActiveCodingRunView
   | RuntimeLostCodingRunView
   | SubtaskCodingRunView;
 
@@ -155,7 +167,7 @@ type ConversationCodingRunViewInput = {
     stopRequestedAt?: number;
     stoppedAt?: number;
     stopReason?: string;
-    stop: (reason?: string) => boolean | Promise<boolean>;
+    stop?: (reason?: string) => boolean | Promise<boolean>;
   };
 };
 
@@ -350,6 +362,30 @@ export function createWorkflowRuntimeCodingRunView(
       totalTokens: toCount(input.status.stats.totalTokens),
       cacheHits: toCount(input.status.stats.cacheHits),
       hasError: Boolean(firstIdentifier(input.status.error)),
+    },
+  };
+}
+
+/** 公共 Workflow capability 的最小 active-run 投影，不假定内部 stats 存在。 */
+export function createWorkflowActiveCodingRunView(input: {
+  workflowRunId: string;
+  journalId: string;
+  status: "running" | "stopping";
+  startedAtMs: number;
+}): WorkflowActiveCodingRunView {
+  const workflowRunId = requireIdentifier(input.workflowRunId, "Workflow runtime run id");
+  const journalId = requireIdentifier(input.journalId, "Workflow Journal id");
+  return {
+    source: "workflow",
+    status: "running",
+    recovery: { operation: "workflow.resume" },
+    binding: {
+      agentRunId: workflowRunId,
+      workflow: { journalId, workflowRunId },
+    },
+    evidence: {
+      runtimeStatus: input.status,
+      startedAtMs: toTimestamp(input.startedAtMs),
     },
   };
 }

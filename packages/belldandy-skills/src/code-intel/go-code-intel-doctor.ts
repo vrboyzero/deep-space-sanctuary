@@ -6,6 +6,10 @@ import {
   type GoplsCommandRunner,
   type GoplsProbeDiagnostic,
 } from "./gopls-profile.js";
+import {
+  projectGoCanaryEligibility,
+  type GoCanaryEligibilityProjection,
+} from "./go-code-intel-eligibility.js";
 import type { CodeIntelOperation } from "./types.js";
 
 export type GoCodeIntelDoctorStatus =
@@ -24,6 +28,7 @@ export interface GoCodeIntelDoctorReport {
     status: GoCodeIntelDoctorStatus;
     active: boolean;
     canaryReady: boolean;
+    goCanaryEligible: boolean;
     productionEligible: false;
     headline: string;
   };
@@ -42,14 +47,17 @@ export interface GoCodeIntelDoctorReport {
     dependencyRestore: "denied";
     networkPolicy: "environment-deny";
     sandboxStatus: "unverified";
+    goCanaryEligible: boolean;
     productionEligible: false;
   };
+  eligibility: GoCanaryEligibilityProjection;
   diagnostics: GoCodeIntelDoctorDiagnostic[];
 }
 
 export interface BuildGoCodeIntelDoctorReportOptions {
   environment?: Record<string, string | undefined>;
   runCommand?: GoplsCommandRunner;
+  comparatorReport?: unknown;
 }
 
 const CAPABILITIES = [
@@ -85,6 +93,7 @@ export async function buildGoCodeIntelDoctorReport(
       active: false,
       configuration,
       diagnostics: [],
+      eligibility: projectGoCanaryEligibility(options.comparatorReport),
     });
   }
 
@@ -97,6 +106,7 @@ export async function buildGoCodeIntelDoctorReport(
         code: "configuration_missing",
         message: "Go CodeIntel is enabled, but required executable configuration is missing.",
       }],
+      eligibility: projectGoCanaryEligibility(options.comparatorReport),
     });
   }
 
@@ -109,6 +119,7 @@ export async function buildGoCodeIntelDoctorReport(
         code: "command_path_invalid",
         message: "Configured Go CodeIntel executables must use absolute paths.",
       }],
+      eligibility: projectGoCanaryEligibility(options.comparatorReport),
     });
   }
 
@@ -132,6 +143,7 @@ export async function buildGoCodeIntelDoctorReport(
       ...(probe.go.platform ? { platform: probe.go.platform } : {}),
     },
     diagnostics: probe.diagnostics,
+    eligibility: projectGoCanaryEligibility(options.comparatorReport),
   });
 }
 
@@ -141,12 +153,14 @@ function buildReport(input: {
   configuration: GoCodeIntelDoctorReport["configuration"];
   toolchain?: Omit<GoCodeIntelDoctorReport["toolchain"], "pinnedGoplsVersion">;
   diagnostics: GoCodeIntelDoctorDiagnostic[];
+  eligibility: GoCanaryEligibilityProjection;
 }): GoCodeIntelDoctorReport {
   return {
     summary: {
       status: input.status,
       active: input.active,
       canaryReady: input.status === "canary-ready",
+      goCanaryEligible: input.eligibility.goCanaryEligible,
       productionEligible: false,
       headline: buildHeadline(input.status),
     },
@@ -158,7 +172,9 @@ function buildReport(input: {
     governance: {
       ...BASE_GOVERNANCE,
       capabilities: [...BASE_GOVERNANCE.capabilities],
+      goCanaryEligible: input.eligibility.goCanaryEligible,
     },
+    eligibility: input.eligibility,
     diagnostics: input.diagnostics.map((diagnostic) => ({ ...diagnostic })),
   };
 }

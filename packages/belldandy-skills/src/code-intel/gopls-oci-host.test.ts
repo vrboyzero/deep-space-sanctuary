@@ -17,17 +17,30 @@ import {
 describe("createGoplsOciSandboxHost", () => {
   it("admits one same-path OCI Host and releases every owned resource", async () => {
     const events: string[] = [];
+    const timelineMarkers: string[] = [];
+    const requests: Array<{ method: string; params?: unknown }> = [];
+    let progressWaitCount = 0;
     const sandboxRoot = "/var/tmp/star-sanctuary-go-sandbox";
     const workspaceRoot = `${sandboxRoot}/workspace`;
     const goArtifactRoot = "/var/tmp/star-sanctuary-go1.24.2-linux";
     const goplsArtifactRoot = "/var/tmp/star-sanctuary-gopls-v0.21.0-linux";
     const profile = createProfile(goArtifactRoot, goplsArtifactRoot, workspaceRoot);
+    const readinessDefinition = [{
+      uri: `file://${workspaceRoot}/lib/service/api.go`,
+      range: {
+        start: { line: 8, character: 5 },
+        end: { line: 8, character: 17 },
+      },
+    }];
     let invocationInput: Parameters<NonNullable<GoplsOciSandboxHostDependencies["buildInvocation"]>>[0] | undefined;
     let lspOptions: LspProcessHostOptions | undefined;
     const delegatedHost: GoplsCodeIntelHost & { getDiagnostics(): LspProcessHostDiagnostics } = {
-      async request<Result>(): Promise<Result> {
+      async request<Result>(request): Promise<Result> {
         events.push("request");
-        return [] as Result;
+        requests.push({ method: request.method, params: request.params });
+        return (request.method === "textDocument/definition"
+          ? readinessDefinition
+          : []) as Result;
       },
       async notify(): Promise<void> {
         events.push("notify");
@@ -38,7 +51,15 @@ describe("createGoplsOciSandboxHost", () => {
       getDiagnostics(): LspProcessHostDiagnostics {
         return createLspDiagnosticsFixture();
       },
-      async waitForWorkDoneProgress(): Promise<void> {},
+      async waitForWorkDoneProgress(): Promise<void> {
+        progressWaitCount += 1;
+        if (progressWaitCount === 1) {
+          throw Object.assign(new Error("progress slice elapsed"), { code: "timeout" });
+        }
+      },
+      recordTimelineMarker(kind: "readiness_started" | "readiness_completed" | "readiness_failed"): void {
+        timelineMarkers.push(kind);
+      },
     };
     const lease = createLease(events);
 
@@ -129,11 +150,14 @@ describe("createGoplsOciSandboxHost", () => {
 
     await host.notify({ method: "textDocument/didOpen", deadlineAtMs: Date.now() + 1_000 });
     await host.request({ method: "workspace/symbol", deadlineAtMs: Date.now() + 1_000 });
+    await host.waitForWorkspaceReady(Date.now() + 1_000);
     await host.dispose();
 
     expect(events).toEqual([
       "runtime-started",
       "notify",
+      "request",
+      "request",
       "request",
       "host-dispose",
       "lease-release",
@@ -147,7 +171,258 @@ describe("createGoplsOciSandboxHost", () => {
       cleanupErrorCount: 0,
       resourceLimits: GOPLS_OCI_SANDBOX_RESOURCE_LIMITS,
     });
+    expect(timelineMarkers).toEqual(["readiness_started", "readiness_completed"]);
+    expect(progressWaitCount).toBe(1);
+    expect(requests).toEqual([
+      { method: "workspace/symbol", params: undefined },
+      { method: "workspace/symbol", params: { query: "BuildMessage" } },
+      {
+        method: "textDocument/definition",
+        params: {
+          textDocument: { uri: `file://${workspaceRoot}/app/main.go` },
+          position: { line: 7, character: 13 },
+        },
+      },
+    ]);
     expect(host.getLspDiagnostics()).toMatchObject({ state: "stopped", requestCount: 1 });
+  });
+
+  it("fails readiness after bounded cross-module definition probes stay empty", async () => {
+    const events: string[] = [];
+    const timelineMarkers: string[] = [];
+    const sandboxRoot = "/var/tmp/star-sanctuary-go-sandbox";
+    const workspaceRoot = `${sandboxRoot}/workspace`;
+    const goArtifactRoot = "/var/tmp/star-sanctuary-go1.24.2-linux";
+    const goplsArtifactRoot = "/var/tmp/star-sanctuary-gopls-v0.21.0-linux";
+    let definitionRequestCount = 0;
+    const delegatedHost: GoplsCodeIntelHost & { getDiagnostics(): LspProcessHostDiagnostics } = {
+      async request<Result>(request): Promise<Result> {
+        if (request.method === "textDocument/definition") definitionRequestCount += 1;
+        return [] as Result;
+      },
+      async notify(): Promise<void> {},
+      async dispose(): Promise<void> {
+        events.push("host-dispose");
+      },
+      getDiagnostics: createLspDiagnosticsFixture,
+      async waitForWorkDoneProgress(): Promise<void> {},
+      recordTimelineMarker(kind: "readiness_started" | "readiness_completed" | "readiness_failed"): void {
+        timelineMarkers.push(kind);
+      },
+    };
+    const host = await createGoplsOciSandboxHost({
+      config: {
+        backend: "oci",
+        runtime: "docker",
+        image: `node:22-bullseye@sha256:${"a".repeat(64)}`,
+      },
+      profile: createProfile(goArtifactRoot, goplsArtifactRoot, workspaceRoot),
+      sandboxRoot,
+      workspaceRoot,
+      toolchainReadOnlyMounts: [
+        { source: goArtifactRoot, target: goArtifactRoot },
+        { source: goplsArtifactRoot, target: goplsArtifactRoot },
+      ],
+      responseMaxBytes: 4 * 1024 * 1024,
+      shutdownTimeoutMs: 5_000,
+    }, {
+      platform: "linux",
+      createLease: async () => createLease(events),
+      createEnvironmentFile: async () => ({
+        path: "/tmp/private-gopls-environment",
+        cleanup: async () => {
+          events.push("environment-cleanup");
+        },
+      }),
+      buildInvocation: () => ({
+        executable: "docker",
+        args: ["run", "sandboxed-gopls"],
+        cwd: sandboxRoot,
+      }),
+      createHost: () => delegatedHost,
+      buildRuntimeEnvironment: () => ({ PATH: "/usr/bin" }),
+      resolveRuntimeExecutable: () => "/usr/bin/docker",
+    });
+
+    await expect(host.waitForWorkspaceReady(Date.now() + 1_000)).rejects.toThrow(
+      /cross-module definition readiness/i,
+    );
+    expect(definitionRequestCount).toBe(8);
+    expect(timelineMarkers).toEqual(["readiness_started", "readiness_failed"]);
+    await host.dispose();
+    expect(host.getSandboxDiagnostics()).toMatchObject({
+      leaseCleanupStatus: "removed",
+      cleanupErrorCount: 0,
+    });
+  });
+
+  it("accepts a single Location definition result from gopls", async () => {
+    const timelineMarkers: string[] = [];
+    const sandboxRoot = "/var/tmp/star-sanctuary-go-sandbox";
+    const workspaceRoot = `${sandboxRoot}/workspace`;
+    const delegatedHost: GoplsCodeIntelHost & { getDiagnostics(): LspProcessHostDiagnostics } = {
+      async request<Result>(request): Promise<Result> {
+        if (request.method === "textDocument/definition") {
+          return { uri: `file://${workspaceRoot}/lib/service/api.go` } as Result;
+        }
+        return [] as Result;
+      },
+      async notify(): Promise<void> {},
+      async dispose(): Promise<void> {},
+      getDiagnostics: createLspDiagnosticsFixture,
+      async waitForWorkDoneProgress(): Promise<void> {},
+      recordTimelineMarker(kind: "readiness_started" | "readiness_completed" | "readiness_failed"): void {
+        timelineMarkers.push(kind);
+      },
+    };
+    const host = await createGoplsOciSandboxHost({
+      config: {
+        backend: "oci",
+        runtime: "docker",
+        image: `node:22-bullseye@sha256:${"a".repeat(64)}`,
+      },
+      profile: createProfile("/var/tmp/go", "/var/tmp/gopls", workspaceRoot),
+      sandboxRoot,
+      workspaceRoot,
+      toolchainReadOnlyMounts: [
+        { source: "/var/tmp/go", target: "/var/tmp/go" },
+        { source: "/var/tmp/gopls", target: "/var/tmp/gopls" },
+      ],
+      responseMaxBytes: 4 * 1024 * 1024,
+      shutdownTimeoutMs: 5_000,
+    }, createHostDependencies(delegatedHost));
+
+    await expect(host.waitForWorkspaceReady(Date.now() + 1_000)).resolves.toBeUndefined();
+    expect(timelineMarkers).toEqual(["readiness_started", "readiness_completed"]);
+    await host.dispose();
+  });
+
+  it("waits for an active progress token before probing definition again", async () => {
+    const timelineMarkers: string[] = [];
+    let progressWaitCount = 0;
+    const sandboxRoot = "/var/tmp/star-sanctuary-go-sandbox";
+    const workspaceRoot = `${sandboxRoot}/workspace`;
+    const delegatedHost: GoplsCodeIntelHost & { getDiagnostics(): LspProcessHostDiagnostics } = {
+      async request<Result>(request): Promise<Result> {
+        if (request.method === "textDocument/definition") return [] as Result;
+        return [] as Result;
+      },
+      async notify(): Promise<void> {},
+      async dispose(): Promise<void> {},
+      getDiagnostics: () => createLspDiagnosticsFixture(progressWaitCount === 0 ? 0 : 1),
+      async waitForWorkDoneProgress(): Promise<void> {
+        progressWaitCount += 1;
+        if (progressWaitCount === 1) throw Object.assign(new Error("slice elapsed"), { code: "timeout" });
+        throw Object.assign(new Error("active token did not close"), { code: "timeout" });
+      },
+      recordTimelineMarker(kind: "readiness_started" | "readiness_completed" | "readiness_failed"): void {
+        timelineMarkers.push(kind);
+      },
+    };
+    const host = await createGoplsOciSandboxHost({
+      config: { backend: "oci", runtime: "docker", image: `node:22-bullseye@sha256:${"a".repeat(64)}` },
+      profile: createProfile("/var/tmp/go", "/var/tmp/gopls", workspaceRoot),
+      sandboxRoot,
+      workspaceRoot,
+      toolchainReadOnlyMounts: [
+        { source: "/var/tmp/go", target: "/var/tmp/go" },
+        { source: "/var/tmp/gopls", target: "/var/tmp/gopls" },
+      ],
+      responseMaxBytes: 4 * 1024 * 1024,
+      shutdownTimeoutMs: 5_000,
+    }, createHostDependencies(delegatedHost));
+
+    await expect(host.waitForWorkspaceReady(Date.now() + 50)).rejects.toMatchObject({ code: "timeout" });
+    expect(progressWaitCount).toBe(2);
+    expect(timelineMarkers).toEqual(["readiness_started", "readiness_failed"]);
+    await host.dispose();
+  });
+
+  it("waits when a token begins during the bounded probe slice", async () => {
+    const timelineMarkers: string[] = [];
+    let progressWaitCount = 0;
+    const sandboxRoot = "/var/tmp/star-sanctuary-go-sandbox";
+    const workspaceRoot = `${sandboxRoot}/workspace`;
+    const delegatedHost: GoplsCodeIntelHost & { getDiagnostics(): LspProcessHostDiagnostics } = {
+      async request<Result>(request): Promise<Result> {
+        if (request.method === "textDocument/definition") {
+          return { uri: `file://${workspaceRoot}/lib/service/api.go` } as Result;
+        }
+        return [] as Result;
+      },
+      async notify(): Promise<void> {},
+      async dispose(): Promise<void> {},
+      getDiagnostics: () => createLspDiagnosticsFixture(progressWaitCount === 1 ? 1 : 0),
+      async waitForWorkDoneProgress(): Promise<void> {
+        progressWaitCount += 1;
+        if (progressWaitCount === 1) throw Object.assign(new Error("slice elapsed"), { code: "timeout" });
+      },
+      recordTimelineMarker(kind: "readiness_started" | "readiness_completed" | "readiness_failed"): void {
+        timelineMarkers.push(kind);
+      },
+    };
+    const host = await createGoplsOciSandboxHost({
+      config: { backend: "oci", runtime: "docker", image: `node:22-bullseye@sha256:${"a".repeat(64)}` },
+      profile: createProfile("/var/tmp/go", "/var/tmp/gopls", workspaceRoot),
+      sandboxRoot,
+      workspaceRoot,
+      toolchainReadOnlyMounts: [
+        { source: "/var/tmp/go", target: "/var/tmp/go" },
+        { source: "/var/tmp/gopls", target: "/var/tmp/gopls" },
+      ],
+      responseMaxBytes: 4 * 1024 * 1024,
+      shutdownTimeoutMs: 5_000,
+    }, createHostDependencies(delegatedHost));
+
+    await expect(host.waitForWorkspaceReady(Date.now() + 1_000)).resolves.toBeUndefined();
+    expect(progressWaitCount).toBe(2);
+    expect(timelineMarkers).toEqual(["readiness_started", "readiness_completed"]);
+    await host.dispose();
+  });
+
+  it("does not complete readiness while a progress token is already active", async () => {
+    const timelineMarkers: string[] = [];
+    const sandboxRoot = "/var/tmp/star-sanctuary-go-sandbox";
+    const workspaceRoot = `${sandboxRoot}/workspace`;
+    const goArtifactRoot = "/var/tmp/star-sanctuary-go1.24.2-linux";
+    const goplsArtifactRoot = "/var/tmp/star-sanctuary-gopls-v0.21.0-linux";
+    const delegatedHost: GoplsCodeIntelHost & { getDiagnostics(): LspProcessHostDiagnostics } = {
+      async request<Result>(request): Promise<Result> {
+        if (request.method === "textDocument/definition") {
+          return [{ uri: `file://${workspaceRoot}/lib/service/api.go` }] as Result;
+        }
+        return [] as Result;
+      },
+      async notify(): Promise<void> {},
+      async dispose(): Promise<void> {},
+      getDiagnostics: () => createLspDiagnosticsFixture(1),
+      async waitForWorkDoneProgress(): Promise<void> {
+        throw Object.assign(new Error("progress did not close"), { code: "timeout" });
+      },
+      recordTimelineMarker(kind: "readiness_started" | "readiness_completed" | "readiness_failed"): void {
+        timelineMarkers.push(kind);
+      },
+    };
+    const host = await createGoplsOciSandboxHost({
+      config: {
+        backend: "oci",
+        runtime: "docker",
+        image: `node:22-bullseye@sha256:${"a".repeat(64)}`,
+      },
+      profile: createProfile(goArtifactRoot, goplsArtifactRoot, workspaceRoot),
+      sandboxRoot,
+      workspaceRoot,
+      toolchainReadOnlyMounts: [
+        { source: goArtifactRoot, target: goArtifactRoot },
+        { source: goplsArtifactRoot, target: goplsArtifactRoot },
+      ],
+      responseMaxBytes: 4 * 1024 * 1024,
+      shutdownTimeoutMs: 5_000,
+    }, createHostDependencies(delegatedHost));
+
+    await expect(host.waitForWorkspaceReady(Date.now() + 50)).rejects.toMatchObject({ code: "timeout" });
+    expect(timelineMarkers).toEqual(["readiness_started", "readiness_failed"]);
+    await host.dispose();
   });
 
   it("fails closed before acquiring resources outside native Linux same-path execution", async () => {
@@ -202,7 +477,7 @@ describe("createGoplsOciSandboxHost", () => {
   });
 });
 
-function createLspDiagnosticsFixture(): LspProcessHostDiagnostics {
+function createLspDiagnosticsFixture(activeProgressCount = 0): LspProcessHostDiagnostics {
   return {
     state: "stopped",
     serverId: "gopls",
@@ -220,9 +495,10 @@ function createLspDiagnosticsFixture(): LspProcessHostDiagnostics {
       createdCount: 0,
       begunCount: 0,
       completedCount: 0,
-      activeCount: 0,
-      peakActiveCount: 0,
+      activeCount: activeProgressCount,
+      peakActiveCount: activeProgressCount,
     },
+    timeline: { events: [], truncated: false },
   };
 }
 
@@ -303,5 +579,26 @@ function createLeaseFixture(): OciSandboxLease {
     metadata() {
       return {};
     },
+  };
+}
+
+function createHostDependencies(
+  delegatedHost: GoplsCodeIntelHost & { getDiagnostics(): LspProcessHostDiagnostics },
+): GoplsOciSandboxHostDependencies {
+  return {
+    platform: "linux",
+    createLease: async () => createLeaseFixture(),
+    createEnvironmentFile: async () => ({
+      path: "/tmp/private-gopls-environment",
+      cleanup: async () => {},
+    }),
+    buildInvocation: () => ({
+      executable: "docker",
+      args: ["run", "sandboxed-gopls"],
+      cwd: "/var/tmp/star-sanctuary-go-sandbox",
+    }),
+    createHost: () => delegatedHost,
+    buildRuntimeEnvironment: () => ({ PATH: "/usr/bin" }),
+    resolveRuntimeExecutable: () => "/usr/bin/docker",
   };
 }

@@ -6,6 +6,12 @@ export type {
   InMemoryCodeIntelResponse,
 } from "./in-memory-provider.js";
 export { buildGoCodeIntelDoctorReport } from "./go-code-intel-doctor.js";
+export { projectGoCanaryEligibility } from "./go-code-intel-eligibility.js";
+export type {
+  GoCanaryEligibilityDiagnosticCode,
+  GoCanaryEligibilityProjection,
+  GoCanaryEligibilityStatus,
+} from "./go-code-intel-eligibility.js";
 export type {
   BuildGoCodeIntelDoctorReportOptions,
   GoCodeIntelDoctorDiagnostic,
@@ -69,6 +75,9 @@ export { LspProcessHost, LspProcessHostError } from "./lsp-process-host.js";
 export type {
   LspProcessHostDiagnostics,
   LspProcessHostErrorCode,
+  LspProcessHostTimelineEvent,
+  LspProcessHostTimelineEventKind,
+  LspProcessHostReadinessTimelineSummary,
   LspProcessNotification,
   LspProcessHostOptions,
   LspProcessHostState,
@@ -76,6 +85,7 @@ export type {
   LspServerRequestPolicy,
   LspServerProcessProfile,
 } from "./lsp-process-host.js";
+export { summarizeLspReadinessTimeline } from "./lsp-process-host.js";
 export { TypeScriptLanguageServiceProvider } from "./typescript-provider.js";
 export type {
   TypeScriptLanguageServiceProviderOptions,

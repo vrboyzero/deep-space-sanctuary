@@ -83,6 +83,7 @@ describe("Go CodeIntel truth set", () => {
         rejectedCount: 0,
         passed: true,
       },
+      timeline: { events: [], truncated: false },
       passed: true,
     });
     expect(report.gate).toEqual({ passed: true, failures: [] });
@@ -242,6 +243,7 @@ async function createPassingRuntime({ fixtureRoot, manifest }) {
         rejectedCount: 0,
         registeredCapabilityMethods: [],
       },
+      timeline: { events: [], truncated: false },
     }],
     async cleanup() {},
   };

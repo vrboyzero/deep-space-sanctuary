@@ -12,6 +12,7 @@ import {
   createGoplsOciSandboxHost,
   createGoplsProcessProfile,
   probeGoplsToolchain,
+  summarizeLspReadinessTimeline,
 } from "../packages/belldandy-skills/dist/code-intel/index.js";
 import {
   buildSandboxRuntimeEnvironment,
@@ -208,14 +209,14 @@ async function runRealPromotionGate(input) {
     throw new Error("Go truth set fixture root escapes OCI staging.");
   }
 
-  let monitor;
+  const monitors = [];
   let monitorSnapshot;
   let stateRootCleaned = false;
   let stagingRootCleaned = false;
   let hosts = [];
-  let runtimeTarget;
   let hostCreationError;
   let providerAdmissionStatus = "failed";
+  let providerCalls = 0;
   let result;
   try {
     await fs.mkdir(path.dirname(stagedFixtureRoot), { recursive: true });
@@ -272,8 +273,8 @@ async function runRealPromotionGate(input) {
               throw error;
             }
             hosts.push(host);
-            runtimeTarget = host.getRuntimeTarget();
-            monitor = startContainerMonitor({
+            const runtimeTarget = host.getRuntimeTarget();
+            const monitor = startContainerMonitor({
               ...runtimeTarget,
               workspaceRoot: stagingRoot,
               goArtifactRoot: input.goArtifactRoot,
@@ -281,13 +282,20 @@ async function runRealPromotionGate(input) {
               goplsCommand: input.goplsCommand,
               runRuntimeCommand: input.runRuntimeCommand,
             });
+            monitors.push({ monitor, runtimeTarget });
             return host;
           },
         });
         providerAdmissionStatus = created.admission.status;
         const provider = created.provider;
+        const codeIntel = createFailFastCodeIntel(
+          new CodeIntel({ providers: [provider] }),
+          () => {
+            providerCalls += 1;
+          },
+        );
         return {
-          codeIntel: new CodeIntel({ providers: [provider] }),
+          codeIntel,
           provider: provider.profile,
           toolchain: {
             goVersion: profile.toolchain.goVersion,
@@ -305,10 +313,11 @@ async function runRealPromotionGate(input) {
         };
       },
     });
-    if (!monitor || !runtimeTarget || hosts.length !== 1) {
+    if (monitors.length !== 1 || hosts.length !== 1) {
       const reason = hostCreationError instanceof Error ? ` ${hostCreationError.message}` : "";
       throw new Error(`gopls OCI truth set did not create exactly one monitored Host.${reason}`);
     }
+    const [{ monitor, runtimeTarget }] = monitors;
     monitorSnapshot = await monitor.stop();
     const sandboxDiagnostics = hosts[0].getSandboxDiagnostics();
     const residualContainerCount = await countNamedContainers(
@@ -356,11 +365,11 @@ async function runRealPromotionGate(input) {
       },
       execution: {
         containerStarts: hosts.filter((host) => host.getSandboxDiagnostics().runtimeStarted).length,
-        providerCalls: truthReport.cases.length,
+        providerCalls,
       },
     };
   } finally {
-    if (monitor && !monitorSnapshot) await monitor.stop().catch(() => undefined);
+    await stopContainerMonitors(monitors);
     await fs.rm(stagingRoot, { recursive: true, force: true });
     stagingRootCleaned = !(await pathExists(stagingRoot));
   }
@@ -411,13 +420,15 @@ function summarizeTruthReport(report, diagnostics) {
           truncatedBytes: diagnostics.stderr.truncatedBytes,
         },
         workDoneProgress: structuredClone(diagnostics.workDoneProgress),
+        timeline: structuredClone(diagnostics.timeline),
+        readinessTimeline: summarizeLspReadinessTimeline(diagnostics.timeline),
       } : {}),
     },
     passed: report.gate.passed,
   };
 }
 
-function startContainerMonitor(input) {
+export function startContainerMonitor(input) {
   let stopRequested = false;
   const snapshot = {
     inspect: emptyInspectEvidence(),
@@ -431,6 +442,7 @@ function startContainerMonitor(input) {
           input,
           ["inspect", "--type", "container", input.containerName],
         );
+        if (inspectResult.exitCode === null) break;
         if (inspectResult.exitCode === 0) {
           snapshot.inspect = parseInspectEvidence(inspectResult.stdout, input);
         }
@@ -440,6 +452,7 @@ function startContainerMonitor(input) {
           input,
           ["top", input.containerName, "-eo", "pid,rss,comm,args"],
         );
+        if (topResult.exitCode === null) break;
         if (topResult.exitCode === 0) {
           const rssValues = parseGoplsRssBytes(topResult.stdout, input.goplsCommand);
           if (rssValues.length > 0) {
@@ -459,6 +472,26 @@ function startContainerMonitor(input) {
       stopRequested = true;
       await operation;
       return structuredClone(snapshot);
+    },
+  };
+}
+
+export async function stopContainerMonitors(monitors) {
+  await Promise.allSettled(monitors.map(({ monitor }) => monitor.stop()));
+}
+
+export function createFailFastCodeIntel(codeIntel, onProviderCall = () => {}) {
+  let failure;
+  return {
+    async query(request) {
+      if (failure) return structuredClone(failure);
+      onProviderCall();
+      const outcome = await codeIntel.query(request);
+      if (!outcome.ok) failure = structuredClone(outcome);
+      return outcome;
+    },
+    async disposeAsync() {
+      await codeIntel.disposeAsync();
     },
   };
 }
@@ -520,7 +553,7 @@ async function countNamedContainers(runtime, containerName, runRuntimeCommand) {
   return result.stdout.split(/\r?\n/u).filter((value) => value.trim()).length;
 }
 
-function defaultRunRuntimeCommand(executable, args) {
+export function defaultRunRuntimeCommand(executable, args, timeoutMs = RUNTIME_COMMAND_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, args, {
       shell: false,
@@ -530,6 +563,7 @@ function defaultRunRuntimeCommand(executable, args) {
     });
     let stdout = "";
     let stderr = "";
+    let settled = false;
     const append = (value, chunk) => (
       value + chunk.toString("utf8")
     ).slice(-MAX_RUNTIME_OUTPUT_CHARS);
@@ -539,14 +573,30 @@ function defaultRunRuntimeCommand(executable, args) {
     child.stderr.on("data", (chunk) => {
       stderr = append(stderr, chunk);
     });
-    const timer = setTimeout(() => child.kill("SIGKILL"), RUNTIME_COMMAND_TIMEOUT_MS);
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // The runtime child may already have exited while the control plane is hung.
+      }
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      child.unref();
+      finish({ exitCode: null, stdout, stderr });
+    }, timeoutMs);
     child.once("error", (error) => {
+      if (settled) return;
       clearTimeout(timer);
       reject(error);
     });
     child.once("close", (exitCode) => {
-      clearTimeout(timer);
-      resolve({ exitCode, stdout, stderr });
+      finish({ exitCode, stdout, stderr });
     });
   });
 }

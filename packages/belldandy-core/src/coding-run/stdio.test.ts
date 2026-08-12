@@ -6,6 +6,21 @@ import {
   createCodingRunNdjsonServer,
 } from "./stdio.js";
 
+function createProjection() {
+  const capabilities = Object.fromEntries([
+    "tools", "languageToolchain", "sandbox", "approvalChannel", "worktree", "journal", "trace", "verifier", "mcp", "plugin", "skill",
+  ].map((name) => [name, { required: false, state: "available" }]));
+  return {
+    schemaVersion: "task-projection/v1",
+    taskId: "task-1",
+    status: "running",
+    owner: { source: "conversation", binding: { agentRunId: "run-1", conversationId: "conversation-1" } },
+    evidence: { observedAtMs: 1, reasonCategory: "running", reasonCode: "owner_running" },
+    allowedActions: ["observe", "cancel"],
+    capabilityClosure: { schemaVersion: "task-capability-closure/v1", evaluatedAtMs: 1, status: "satisfied", capabilities },
+  };
+}
+
 function createEvent(): AgentRunEvent {
   return {
     version: CODING_RUN_PROTOCOL_VERSION,
@@ -338,6 +353,58 @@ describe("coding-run NDJSON stdio transport", () => {
     await expect(pending).resolves.toEqual({
       ok: true,
       result: { revisionId: "run-1", canRestore: true },
+    });
+  });
+
+  it("routes and correlates a bounded TaskProjection page", async () => {
+    const output: string[] = [];
+    const handleProjection = vi.fn(async (projection) => ({
+      epoch: "epoch-1",
+      revision: 2,
+      totalCount: 1,
+      items: [createProjection()],
+      ...(projection.cursor ? {} : { nextCursor: undefined }),
+    }));
+    const server = createCodingRunNdjsonServer({
+      write: (line) => { output.push(line); },
+      handleControl: async () => undefined,
+      handleProjection,
+    });
+    await server.consume(`${JSON.stringify({
+      version: CODING_RUN_PROTOCOL_VERSION,
+      type: "projection.request",
+      id: "projection-1",
+      projection: { limit: 10 },
+    })}\n`);
+    expect(handleProjection).toHaveBeenCalledWith({ limit: 10 });
+    expect(JSON.parse(output[0])).toMatchObject({ type: "projection.response", id: "projection-1", ok: true });
+
+    const written: string[] = [];
+    const client = new CodingRunNdjsonClient({ write: (line) => { written.push(line); }, createRequestId: () => "projection-client-1" });
+    const pending = client.projection({ limit: 1 });
+    expect(JSON.parse(written[0])).toMatchObject({ type: "projection.request", id: "projection-client-1", projection: { limit: 1 } });
+    client.consume(`${JSON.stringify({
+      version: CODING_RUN_PROTOCOL_VERSION,
+      type: "projection.response",
+      id: "projection-client-1",
+      ok: true,
+      result: { epoch: "epoch-1", revision: 2, totalCount: 1, items: [createProjection()] },
+    })}\n`);
+    await expect(pending).resolves.toMatchObject({ ok: true, result: { epoch: "epoch-1", revision: 2 } });
+  });
+
+  it("fails malformed TaskProjection requests closed with a correlated response", async () => {
+    const output: string[] = [];
+    const handleProjection = vi.fn();
+    const server = createCodingRunNdjsonServer({ write: (line) => { output.push(line); }, handleControl: async () => undefined, handleProjection });
+    await server.consume(`${JSON.stringify({ version: CODING_RUN_PROTOCOL_VERSION, type: "projection.request", id: "projection-invalid", projection: { prompt: "no" } })}\n`);
+    expect(handleProjection).not.toHaveBeenCalled();
+    expect(JSON.parse(output[0])).toEqual({
+      version: CODING_RUN_PROTOCOL_VERSION,
+      type: "projection.response",
+      id: "projection-invalid",
+      ok: false,
+      error: { code: "invalid_request", message: "Invalid task projection request." },
     });
   });
 });

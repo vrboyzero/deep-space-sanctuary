@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   LspProcessHost,
   LspProcessHostError,
+  summarizeLspReadinessTimeline,
   type LspProcessHostOptions,
 } from "./lsp-process-host.js";
 
@@ -150,6 +151,38 @@ describe("LspProcessHost", () => {
     });
   });
 
+  it("does not wait forever for a late progress token and records its timeline", async () => {
+    const host = await createHost({
+      profile: {
+        id: "fake-lsp",
+        version: "1.0.0",
+        command: process.execPath,
+        args: [fixturePath],
+        environment: minimumPlatformEnvironment(),
+        serverRequests: { workDoneProgress: true },
+      },
+    });
+
+    await host.request({
+      method: "test/start-work-done-progress",
+      params: { startDelayMs: 650, delayMs: 10 },
+      deadlineAtMs: Date.now() + 3_000,
+    });
+    const waitStartedAt = Date.now();
+    await host.waitForWorkDoneProgress(Date.now() + 3_000);
+    const waitDuration = Date.now() - waitStartedAt;
+    expect(waitDuration).toBeGreaterThanOrEqual(450);
+    expect(waitDuration).toBeLessThan(650);
+
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    const events = host.getDiagnostics().timeline.events;
+    const waitCompleted = events.find((event) => event.kind === "work_done_wait_completed");
+    const lateCreate = events.find((event) => event.kind === "work_done_progress_created");
+    expect(waitCompleted).toBeDefined();
+    expect(lateCreate).toBeDefined();
+    expect(lateCreate?.sequence).toBeGreaterThan(waitCompleted?.sequence ?? 0);
+  });
+
   it("initializes and serves only the profile-declared workspace folders", async () => {
     const workspaceRoot = await mkdtemp(path.join(tmpdir(), "ss-lsp-host-folders-"));
     tempDirs.push(workspaceRoot);
@@ -208,6 +241,98 @@ describe("LspProcessHost", () => {
       deadlineAtMs: Date.now() + 3_000,
     })).rejects.toEqual(expect.objectContaining<LspProcessHostError>({ code: "invalid_request" }));
     expect(host.getDiagnostics()).toMatchObject({ notificationCount: 1 });
+  });
+
+  it("records a bounded, redacted readiness timeline with response counts", async () => {
+    const host = await createHost({
+      profile: {
+        id: "fake-lsp",
+        version: "1.0.0",
+        command: process.execPath,
+        args: [fixturePath],
+        environment: minimumPlatformEnvironment(),
+        clientNotificationMethods: ["textDocument/didOpen"],
+        serverRequests: { workDoneProgress: true },
+      },
+    });
+
+    await host.notify({
+      method: "textDocument/didOpen",
+      params: { textDocument: { uri: "file:///workspace/main.go", languageId: "go", version: 1, text: "package main\n" } },
+      deadlineAtMs: Date.now() + 3_000,
+    });
+    await expect(host.request<string[]>({
+      method: "test/open-documents",
+      deadlineAtMs: Date.now() + 3_000,
+    })).resolves.toEqual(["file:///workspace/main.go"]);
+    await host.request({
+      method: "test/start-work-done-progress",
+      params: { startDelayMs: 10, delayMs: 20 },
+      deadlineAtMs: Date.now() + 3_000,
+    });
+    await host.waitForWorkDoneProgress(Date.now() + 3_000);
+
+    const timeline = host.getDiagnostics().timeline;
+    expect(timeline.truncated).toBe(false);
+    expect(timeline.events.map((event) => event.kind)).toEqual(expect.arrayContaining([
+      "notification_started",
+      "notification_sent",
+      "request_completed",
+      "work_done_progress_created",
+      "work_done_progress_begin",
+      "work_done_progress_end",
+      "work_done_wait_started",
+      "work_done_wait_completed",
+    ]));
+    const didOpen = timeline.events.find((event) => (
+      event.kind === "notification_sent" && event.method === "textDocument/didOpen"
+    ));
+    const firstQuery = timeline.events.find((event) => (
+      event.kind === "request_completed" && event.method === "test/open-documents"
+    ));
+    expect(didOpen?.sequence).toBeLessThan(firstQuery?.sequence ?? 0);
+    expect(firstQuery?.resultCount).toBe(1);
+    expect(JSON.stringify(timeline)).not.toContain("main.go\n");
+    expect(timeline.events.every((event) => Object.keys(event).every((key) => (
+      ["sequence", "atMs", "kind", "method", "resultCount", "errorCode", "activeProgressCount"].includes(key)
+    )))).toBe(true);
+    expect(timeline.events.every((event, index, events) => (
+      index === 0
+      || (event.sequence > events[index - 1].sequence && event.atMs >= events[index - 1].atMs)
+    ))).toBe(true);
+  });
+
+  it("summarizes readiness timing without treating late progress as a failure", () => {
+    expect(summarizeLspReadinessTimeline({
+      events: [
+        { sequence: 1, atMs: 1, kind: "notification_started", method: "textDocument/didOpen" },
+        { sequence: 2, atMs: 2, kind: "notification_sent", method: "textDocument/didOpen" },
+        { sequence: 3, atMs: 3, kind: "readiness_started" },
+        { sequence: 4, atMs: 4, kind: "work_done_progress_created", activeProgressCount: 0 },
+        { sequence: 5, atMs: 5, kind: "work_done_progress_begin", activeProgressCount: 1 },
+        { sequence: 6, atMs: 6, kind: "work_done_progress_end", activeProgressCount: 0 },
+        { sequence: 7, atMs: 7, kind: "readiness_completed" },
+        { sequence: 8, atMs: 8, kind: "request_started", method: "textDocument/references", activeProgressCount: 0 },
+        { sequence: 9, atMs: 9, kind: "request_completed", method: "textDocument/references", resultCount: 4 },
+        { sequence: 10, atMs: 10, kind: "work_done_progress_created", activeProgressCount: 0 },
+      ],
+      truncated: false,
+    })).toEqual({
+      firstDidOpenStartedSequence: 1,
+      firstDidOpenSentSequence: 2,
+      readinessStartedSequence: 3,
+      readinessCompletedSequence: 7,
+      firstProgressCreatedSequence: 4,
+      firstProgressCompletedSequence: 6,
+      firstReferencesStartedSequence: 8,
+      firstReferencesCompletedSequence: 9,
+      firstReferencesActiveProgressCount: 0,
+      lateProgressCreatedCount: 1,
+      referencesAfterReadiness: true,
+      didOpenBeforeReadiness: true,
+      progressClosedBeforeFirstReferences: true,
+      readinessDurationMs: 4,
+    });
   });
 
   it("rejects dynamic capability registration outside the profile allowlist", async () => {

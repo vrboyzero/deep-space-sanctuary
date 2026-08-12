@@ -141,6 +141,99 @@ describe("coding run stdio process bridge", () => {
     }]);
   });
 
+  it("maps a read-only TaskProjection request to the injected Gateway bridge", async () => {
+    const output: string[] = [];
+    const requests: unknown[] = [];
+    const exitCode = await runCodingRunStdio({
+      stateDir: "state-dir",
+      input: chunks([`${JSON.stringify({
+        version: CODING_RUN_PROTOCOL_VERSION,
+        type: "projection.request",
+        id: "projection-1",
+        projection: { limit: 10, cursor: { epoch: "epoch-1", revision: 2, offset: 1 } },
+      })}\n`]),
+      writeStdout: (line) => { output.push(line); },
+      writeStderr: () => undefined,
+      invokeGatewayProjection: async (projection) => {
+        requests.push(projection);
+        return { ok: true, payload: { epoch: "epoch-1", revision: 2, totalCount: 1, items: [] } };
+      },
+    });
+    expect(exitCode).toBe(0);
+    expect(requests).toEqual([{ limit: 10, cursor: { epoch: "epoch-1", revision: 2, offset: 1 } }]);
+    expect(output.map((line) => JSON.parse(line))).toEqual([{
+      version: CODING_RUN_PROTOCOL_VERSION,
+      type: "projection.response",
+      id: "projection-1",
+      ok: true,
+      result: { epoch: "epoch-1", revision: 2, totalCount: 1, items: [] },
+    }]);
+  });
+
+  it("fails a real stdio projection cursor closed after Gateway restart", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-coding-run-stdio-projection-restart-"));
+    let firstGateway = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+    });
+    const firstPort = firstGateway.port;
+    try {
+      const firstOutput: string[] = [];
+      await withEnv({ BELLDANDY_HOST: "127.0.0.1", BELLDANDY_PORT: String(firstPort), BELLDANDY_AUTH_MODE: "none" }, async () => {
+        const result = await runCodingRunStdio({
+          stateDir,
+          input: chunks([`${JSON.stringify({
+            version: CODING_RUN_PROTOCOL_VERSION,
+            type: "projection.request",
+            id: "projection-before-restart",
+            projection: { limit: 10 },
+          })}\n`]),
+          writeStdout: (line) => { firstOutput.push(line); },
+          writeStderr: () => undefined,
+        });
+        expect(result).toBe(0);
+      });
+      const firstFrame = JSON.parse(firstOutput[0]) as { result?: { epoch?: string; revision?: number } };
+      const oldCursor = { epoch: firstFrame.result?.epoch, revision: firstFrame.result?.revision, offset: 0 };
+      expect(typeof oldCursor.epoch).toBe("string");
+      expect(Number.isSafeInteger(oldCursor.revision)).toBe(true);
+
+      await firstGateway.close();
+      firstGateway = await startGatewayServer({
+        port: 0,
+        auth: { mode: "none" },
+        webRoot: resolveWebRoot(),
+        stateDir,
+      });
+      const secondOutput: string[] = [];
+      await withEnv({ BELLDANDY_HOST: "127.0.0.1", BELLDANDY_PORT: String(firstGateway.port), BELLDANDY_AUTH_MODE: "none" }, async () => {
+        const result = await runCodingRunStdio({
+          stateDir,
+          input: chunks([`${JSON.stringify({
+            version: CODING_RUN_PROTOCOL_VERSION,
+            type: "projection.request",
+            id: "projection-after-restart",
+            projection: { cursor: oldCursor },
+          })}\n`]),
+          writeStdout: (line) => { secondOutput.push(line); },
+          writeStderr: () => undefined,
+        });
+        expect(result).toBe(0);
+      });
+      expect(JSON.parse(secondOutput[0])).toMatchObject({
+        type: "projection.response",
+        id: "projection-after-restart",
+        ok: false,
+        error: { code: "cursor_stale" },
+      });
+    } finally {
+      await firstGateway.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 15_000);
+
   it("starts a real Gateway Conversation then subscribes to its streamed events through stdio", async () => {
     const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-coding-run-stdio-conversation-"));
     const agent: BelldandyAgent = {

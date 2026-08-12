@@ -4,6 +4,7 @@ import {
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -26,6 +27,7 @@ const DEFAULT_RESPONSE_MAX_BYTES = 4 * 1024 * 1024;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 1_000;
 const EXIT_REAP_TIMEOUT_MS = 2_000;
 const WORK_DONE_PROGRESS_QUIET_MS = 500;
+const MAX_TIMELINE_EVENTS = 128;
 
 export type LspProcessHostState = "idle" | "starting" | "running" | "stopping" | "stopped" | "failed";
 
@@ -40,6 +42,115 @@ export type LspProcessHostErrorCode =
   | "request_failed"
   | "response_too_large"
   | "server_crashed";
+
+export type LspProcessHostTimelineEventKind =
+  | "request_started"
+  | "request_completed"
+  | "request_failed"
+  | "notification_started"
+  | "notification_sent"
+  | "notification_failed"
+  | "work_done_progress_created"
+  | "work_done_progress_begin"
+  | "work_done_progress_end"
+  | "work_done_wait_started"
+  | "work_done_wait_completed"
+  | "readiness_started"
+  | "readiness_completed"
+  | "readiness_failed";
+
+export interface LspProcessHostTimelineEvent {
+  sequence: number;
+  atMs: number;
+  kind: LspProcessHostTimelineEventKind;
+  method?: string;
+  resultCount?: number;
+  errorCode?: LspProcessHostErrorCode;
+  activeProgressCount?: number;
+}
+
+export interface LspProcessHostReadinessTimelineSummary {
+  firstDidOpenStartedSequence: number | null;
+  firstDidOpenSentSequence: number | null;
+  readinessStartedSequence: number | null;
+  readinessCompletedSequence: number | null;
+  firstProgressCreatedSequence: number | null;
+  firstProgressCompletedSequence: number | null;
+  firstReferencesStartedSequence: number | null;
+  firstReferencesCompletedSequence: number | null;
+  firstReferencesActiveProgressCount: number | null;
+  lateProgressCreatedCount: number;
+  referencesAfterReadiness: boolean | null;
+  didOpenBeforeReadiness: boolean | null;
+  progressClosedBeforeFirstReferences: boolean | null;
+  readinessDurationMs: number | null;
+}
+
+export function summarizeLspReadinessTimeline(
+  timeline: LspProcessHostDiagnostics["timeline"],
+): LspProcessHostReadinessTimelineSummary {
+  const events = timeline.events;
+  const firstDidOpenStartedSequence = events.find(
+    (event) => event.kind === "notification_started" && event.method === "textDocument/didOpen",
+  )?.sequence ?? null;
+  const firstDidOpenSentSequence = events.find(
+    (event) => event.kind === "notification_sent" && event.method === "textDocument/didOpen",
+  )?.sequence ?? null;
+  const readinessStartedSequence = events.find((event) => event.kind === "readiness_started")?.sequence ?? null;
+  const readinessCompletedSequence = events.find((event) => event.kind === "readiness_completed")?.sequence ?? null;
+  const firstProgressCreatedSequence = events.find(
+    (event) => event.kind === "work_done_progress_created",
+  )?.sequence ?? null;
+  const firstProgressCompletedSequence = events.find(
+    (event) => event.kind === "work_done_progress_end",
+  )?.sequence ?? null;
+  const firstReferencesStartedEvent = events.find(
+    (event) => event.kind === "request_started" && event.method === "textDocument/references",
+  );
+  const firstReferencesStartedSequence = events.find(
+    (event) => event.kind === "request_started" && event.method === "textDocument/references",
+  )?.sequence ?? null;
+  const firstReferencesCompletedSequence = events.find(
+    (event) => event.kind === "request_completed" && event.method === "textDocument/references",
+  )?.sequence ?? null;
+  const lateProgressCreatedCount = readinessCompletedSequence === null
+    ? 0
+    : events.filter((event) => (
+      event.kind === "work_done_progress_created"
+      && event.sequence > readinessCompletedSequence
+    )).length;
+  return {
+    firstDidOpenStartedSequence,
+    firstDidOpenSentSequence,
+    readinessStartedSequence,
+    readinessCompletedSequence,
+    firstProgressCreatedSequence,
+    firstProgressCompletedSequence,
+    firstReferencesStartedSequence,
+    firstReferencesCompletedSequence,
+    firstReferencesActiveProgressCount: firstReferencesStartedEvent?.activeProgressCount ?? null,
+    lateProgressCreatedCount,
+    referencesAfterReadiness: readinessCompletedSequence === null
+      || firstReferencesStartedSequence === null
+      ? null
+      : firstReferencesStartedSequence > readinessCompletedSequence,
+    didOpenBeforeReadiness: firstDidOpenSentSequence === null || readinessStartedSequence === null
+      ? null
+      : firstDidOpenSentSequence < readinessStartedSequence,
+    progressClosedBeforeFirstReferences: firstReferencesStartedSequence === null
+      ? null
+      : firstProgressCompletedSequence === null
+        ? false
+        : firstProgressCompletedSequence < firstReferencesStartedSequence,
+    readinessDurationMs: readinessStartedSequence === null || readinessCompletedSequence === null
+      ? null
+      : (() => {
+        const started = events.find((event) => event.sequence === readinessStartedSequence);
+        const completed = events.find((event) => event.sequence === readinessCompletedSequence);
+        return started && completed ? Math.max(0, completed.atMs - started.atMs) : null;
+      })(),
+  };
+}
 
 export interface LspServerProcessProfile {
   id: string;
@@ -124,6 +235,10 @@ export interface LspProcessHostDiagnostics {
     activeCount: number;
     peakActiveCount: number;
   };
+  timeline: {
+    events: LspProcessHostTimelineEvent[];
+    truncated: boolean;
+  };
 }
 
 export class LspProcessHostError extends Error {
@@ -176,6 +291,10 @@ export class LspProcessHost {
   private workDoneProgressBegunCount = 0;
   private workDoneProgressCompletedCount = 0;
   private peakActiveWorkDoneProgressCount = 0;
+  private readonly timelineStartedAtMs = performance.now();
+  private timelineSequence = 0;
+  private readonly timelineEvents: LspProcessHostTimelineEvent[] = [];
+  private timelineTruncated = false;
   private lastFailure: LspProcessHostDiagnostics["lastFailure"];
   private lastExit: LspProcessHostDiagnostics["lastExit"];
 
@@ -223,10 +342,29 @@ export class LspProcessHost {
 
     this.activeRequest = true;
     this.peakActiveRequestCount = 1;
+    this.recordTimelineEvent({
+      kind: "request_started",
+      method: request.method,
+      activeProgressCount: this.activeWorkDoneProgressTokens.size,
+    });
     try {
       await this.ensureRunning(request.deadlineAtMs, request.signal);
       this.requestCount += 1;
-      return await this.sendRequest<Result>(request);
+      const result = await this.sendRequest<Result>(request);
+      this.recordTimelineEvent({
+        kind: "request_completed",
+        method: request.method,
+        ...resultCount(result),
+      });
+      return result;
+    } catch (error) {
+      const failure = toHostError(error, "request_failed", "LSP request failed.");
+      this.recordTimelineEvent({
+        kind: "request_failed",
+        method: request.method,
+        errorCode: failure.code,
+      });
+      throw failure;
     } finally {
       this.activeRequest = false;
     }
@@ -253,6 +391,7 @@ export class LspProcessHost {
 
     this.activeRequest = true;
     this.peakActiveRequestCount = 1;
+    this.recordTimelineEvent({ kind: "notification_started", method: notification.method });
     try {
       await this.ensureRunning(notification.deadlineAtMs, notification.signal);
       if (notification.signal?.aborted) {
@@ -267,9 +406,15 @@ export class LspProcessHost {
       }
       await connection.sendNotification(notification.method, notification.params ?? null);
       this.notificationCount += 1;
+      this.recordTimelineEvent({ kind: "notification_sent", method: notification.method });
     } catch (error) {
       const failure = toHostError(error, "request_failed", "LSP client notification failed.");
       this.recordFailure(failure);
+      this.recordTimelineEvent({
+        kind: "notification_failed",
+        method: notification.method,
+        errorCode: failure.code,
+      });
       if (failure.code === "timeout"
         || failure.code === "cancelled"
         || failure.code === "server_crashed") {
@@ -317,6 +462,10 @@ export class LspProcessHost {
         activeCount: this.activeWorkDoneProgressTokens.size,
         peakActiveCount: this.peakActiveWorkDoneProgressCount,
       },
+      timeline: {
+        events: this.timelineEvents.map((event) => ({ ...event })),
+        truncated: this.timelineTruncated,
+      },
       ...(this.lastFailure === undefined ? {} : { lastFailure: { ...this.lastFailure } }),
       ...(this.lastExit === undefined ? {} : { lastExit: { ...this.lastExit } }),
     };
@@ -324,6 +473,7 @@ export class LspProcessHost {
 
   async waitForWorkDoneProgress(deadlineAtMs: number, signal?: AbortSignal): Promise<void> {
     if (!this.profile.serverRequests?.workDoneProgress) return;
+    this.recordTimelineEvent({ kind: "work_done_wait_started" });
     while (true) {
       if (this.disposed) {
         throw new LspProcessHostError("disposed", "LSP process host has been disposed.");
@@ -340,8 +490,18 @@ export class LspProcessHost {
       );
       if (!changed
         && this.outstandingWorkDoneProgressTokens.size === 0
-        && this.workDoneProgressCreatedCount === createdCount) return;
+        && this.workDoneProgressCreatedCount === createdCount) {
+        this.recordTimelineEvent({ kind: "work_done_wait_completed" });
+        return;
+      }
     }
+  }
+
+  recordTimelineMarker(
+    kind: Extract<LspProcessHostTimelineEventKind, "readiness_started" | "readiness_completed" | "readiness_failed">,
+    errorCode?: LspProcessHostErrorCode,
+  ): void {
+    this.recordTimelineEvent({ kind, ...(errorCode === undefined ? {} : { errorCode }) });
   }
 
   async dispose(): Promise<void> {
@@ -421,6 +581,11 @@ export class LspProcessHost {
         workspaceFolders: this.projectWorkspaceFolders(),
         trace: "off",
       };
+      this.recordTimelineEvent({
+        kind: "request_started",
+        method: InitializeRequest.method,
+        activeProgressCount: this.activeWorkDoneProgressTokens.size,
+      });
       await this.sendProtocolRequest(
         InitializeRequest.method,
         initializeParams,
@@ -428,11 +593,21 @@ export class LspProcessHost {
         signal,
         "initialize_failed",
       );
+      this.recordTimelineEvent({
+        kind: "request_completed",
+        method: InitializeRequest.method,
+      });
       connection.sendNotification(InitializedNotification.type, {});
+      this.recordTimelineEvent({ kind: "notification_sent", method: InitializedNotification.method });
       this.state = "running";
     } catch (error) {
       const failure = toHostError(error, "initialize_failed", "LSP server failed to initialize.");
       this.recordFailure(failure);
+      this.recordTimelineEvent({
+        kind: "request_failed",
+        method: InitializeRequest.method,
+        errorCode: failure.code,
+      });
       await this.stopImmediately();
       throw failure;
     }
@@ -548,6 +723,10 @@ export class LspProcessHost {
     }
     this.outstandingWorkDoneProgressTokens.add(token);
     this.workDoneProgressCreatedCount += 1;
+    this.recordTimelineEvent({
+      kind: "work_done_progress_created",
+      activeProgressCount: this.activeWorkDoneProgressTokens.size,
+    });
     this.handledServerRequestCount += 1;
     this.resolveWorkDoneProgressWaiters();
     return null;
@@ -565,6 +744,10 @@ export class LspProcessHost {
       if (!this.activeWorkDoneProgressTokens.has(token)) {
         this.activeWorkDoneProgressTokens.add(token);
         this.workDoneProgressBegunCount += 1;
+        this.recordTimelineEvent({
+          kind: "work_done_progress_begin",
+          activeProgressCount: this.activeWorkDoneProgressTokens.size,
+        });
         this.peakActiveWorkDoneProgressCount = Math.max(
           this.peakActiveWorkDoneProgressCount,
           this.activeWorkDoneProgressTokens.size,
@@ -576,6 +759,10 @@ export class LspProcessHost {
     this.activeWorkDoneProgressTokens.delete(token);
     this.outstandingWorkDoneProgressTokens.delete(token);
     this.workDoneProgressCompletedCount += 1;
+    this.recordTimelineEvent({
+      kind: "work_done_progress_end",
+      activeProgressCount: this.activeWorkDoneProgressTokens.size,
+    });
     if (this.outstandingWorkDoneProgressTokens.size === 0) {
       this.resolveWorkDoneProgressWaiters();
     }
@@ -812,6 +999,19 @@ export class LspProcessHost {
       );
     }
   }
+
+  private recordTimelineEvent(event: Omit<LspProcessHostTimelineEvent, "sequence" | "atMs">): void {
+    const entry: LspProcessHostTimelineEvent = {
+      sequence: ++this.timelineSequence,
+      atMs: Math.max(0, Math.round(performance.now() - this.timelineStartedAtMs)),
+      ...event,
+    };
+    if (this.timelineEvents.length >= MAX_TIMELINE_EVENTS) {
+      this.timelineEvents.shift();
+      this.timelineTruncated = true;
+    }
+    this.timelineEvents.push(entry);
+  }
 }
 
 class BoundedStderrBuffer {
@@ -924,6 +1124,14 @@ function isServerRequestPolicy(value: unknown): value is LspServerRequestPolicy 
 
 function workDoneProgressTokenKey(token: string | number): string {
   return `${typeof token}:${String(token)}`;
+}
+
+function resultCount(result: unknown): { resultCount?: number } {
+  if (Array.isArray(result)) return { resultCount: result.length };
+  if (isObjectRecord(result) && Array.isArray(result.items)) {
+    return { resultCount: result.items.length };
+  }
+  return {};
 }
 
 function resolveConfigurationSection(

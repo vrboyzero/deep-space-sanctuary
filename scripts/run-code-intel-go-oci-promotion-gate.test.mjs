@@ -7,8 +7,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { compileOutputSchema } from "../packages/belldandy-core/src/cli/shared/output-schema.ts";
 import {
   buildCodeIntelGoOciPromotionGateReport,
+  createFailFastCodeIntel,
+  defaultRunRuntimeCommand,
   parseCodeIntelGoOciPromotionGateCliArguments,
   runCodeIntelGoOciPromotionGate,
+  startContainerMonitor,
+  stopContainerMonitors,
 } from "./run-code-intel-go-oci-promotion-gate.mjs";
 
 const workspaceRoot = path.resolve(".");
@@ -25,6 +29,77 @@ afterEach(async () => {
 });
 
 describe("Go CodeIntel OCI promotion Gate", () => {
+  it("settles a hung runtime monitor command at its bounded timeout", async () => {
+    const startedAt = Date.now();
+    const result = await defaultRunRuntimeCommand(
+      process.execPath,
+      ["-e", "setInterval(() => {}, 1000)"],
+      50,
+    );
+
+    expect(result.exitCode).toBeNull();
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+  });
+
+  it("stops polling after one runtime monitor command times out", async () => {
+    let runtimeCalls = 0;
+    const monitor = startContainerMonitor({
+      runtime: "docker",
+      containerName: "belldandy-command-timeout",
+      workspaceRoot: "/var/tmp/workspace",
+      goArtifactRoot: "/var/tmp/go",
+      goplsArtifactRoot: "/var/tmp/gopls",
+      goplsCommand: "/var/tmp/gopls/bin/gopls",
+      runRuntimeCommand: async () => {
+        runtimeCalls += 1;
+        return { exitCode: null, stdout: "", stderr: "timeout" };
+      },
+    });
+
+    await expect(monitor.stop()).resolves.toMatchObject({
+      inspect: { observed: false },
+      sampleCount: 0,
+    });
+    expect(runtimeCalls).toBe(1);
+  });
+
+  it("settles every owned Host monitor even when one stop fails", async () => {
+    const stopped = [];
+    await expect(stopContainerMonitors([
+      { monitor: { async stop() { stopped.push("first"); } } },
+      { monitor: { async stop() { stopped.push("second"); throw new Error("failed"); } } },
+      { monitor: { async stop() { stopped.push("third"); } } },
+    ])).resolves.toBeUndefined();
+    expect(stopped).toEqual(["first", "second", "third"]);
+  });
+
+  it("does not call the Provider again after the first truth query failure", async () => {
+    let providerCalls = 0;
+    let disposed = false;
+    const failure = {
+      ok: false,
+      error: { code: "provider_failure", message: "failed", retryable: true },
+    };
+    const codeIntel = createFailFastCodeIntel({
+      async query() {
+        providerCalls += 1;
+        return failure;
+      },
+      async disposeAsync() {
+        disposed = true;
+      },
+    });
+
+    const first = await codeIntel.query({ operation: "symbols" });
+    const second = await codeIntel.query({ operation: "definition" });
+    expect(first).toEqual(failure);
+    expect(second).toEqual(failure);
+    expect(second).not.toBe(first);
+    expect(providerCalls).toBe(1);
+    await codeIntel.disposeAsync();
+    expect(disposed).toBe(true);
+  });
+
   it("publishes schema-valid OCI truth, RSS, and cleanup evidence without production promotion", async () => {
     const schema = JSON.parse(await fs.readFile(reportSchemaPath, "utf8"));
     const report = await buildCodeIntelGoOciPromotionGateReport({
@@ -154,6 +229,14 @@ function passingRuntimeResult() {
         forcedTerminationCount: 0,
         failureCount: 0,
         passed: true,
+        timeline: {
+          events: [
+            { sequence: 1, atMs: 0, kind: "notification_sent", method: "textDocument/didOpen" },
+            { sequence: 2, atMs: 1, kind: "request_completed", method: "workspace/symbol", resultCount: 0 },
+            { sequence: 3, atMs: 2, kind: "request_completed", method: "textDocument/references", resultCount: 2 },
+          ],
+          truncated: false,
+        },
       },
       passed: true,
     },

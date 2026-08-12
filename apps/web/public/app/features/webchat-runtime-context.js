@@ -1,5 +1,7 @@
 const DEFAULT_AGENT_ID = "default";
 
+import { createWebChatTaskProjectionAdapter } from "./task-projection-webchat.js";
+
 function fallbackTranslate(key, _params, fallback) {
   if (typeof fallback === "string") return fallback;
   return typeof key === "string" ? key : "";
@@ -21,6 +23,9 @@ export function createDefaultWebChatRuntimeAdapter({
       isConnected: typeof isConnected === "function"
         ? () => Boolean(isConnected())
         : () => false,
+    }),
+    taskProjections: createWebChatTaskProjectionAdapter({
+      request: typeof sendReq === "function" ? (...args) => sendReq(...args) : undefined,
     }),
     navigation: Object.freeze({
       switchMode: typeof switchMode === "function"
@@ -57,6 +62,9 @@ function normalizeRuntimeAdapter(adapter) {
     gateway: {
       request: bindAdapterMethod(adapter?.gateway, "request", defaults.gateway.request),
       isConnected: bindAdapterMethod(adapter?.gateway, "isConnected", defaults.gateway.isConnected),
+    },
+    taskProjections: {
+      list: bindAdapterMethod(adapter?.taskProjections, "list", defaults.taskProjections.list),
     },
     navigation: {
       switchMode: bindAdapterMethod(adapter?.navigation, "switchMode", defaults.navigation.switchMode),
@@ -96,6 +104,11 @@ export function createWebChatRuntimeContext({ adapter } = {}) {
     switchMode: (...args) => disposed
       ? false
       : currentAdapter.navigation.switchMode(...args),
+  });
+  const taskProjections = Object.freeze({
+    list: (...args) => disposed
+      ? Promise.resolve(null)
+      : currentAdapter.taskProjections.list(...args),
   });
   const locale = Object.freeze({
     t: (...args) => disposed
@@ -141,6 +154,7 @@ export function createWebChatRuntimeContext({ adapter } = {}) {
 
   return Object.freeze({
     gateway,
+    taskProjections,
     navigation,
     locale,
     notice,

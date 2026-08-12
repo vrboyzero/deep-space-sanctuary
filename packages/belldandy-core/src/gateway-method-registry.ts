@@ -220,6 +220,7 @@ const GATEWAY_METHOD_NAMES = [
   "workspace.remote_delivery.audit.list",
   "extension.runtime.revoke",
   "coding.run.status",
+  "task.projection.list",
   "coding.run.follow_up.status",
   "coding.run.steer.status",
   "coding.run.permission.list",

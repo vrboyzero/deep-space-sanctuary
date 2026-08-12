@@ -168,6 +168,15 @@ class CodingRunStdioClient {
     }, "Belldandy coding-run Conversation request timed out.");
   }
 
+  async listTaskProjections(input = {}) {
+    const projection = normalizeProjectionRequest(input);
+    return this.sendRequest("projection", {
+      version: PROTOCOL_VERSION,
+      type: "projection.request",
+      projection,
+    }, "Belldandy task projection request timed out.");
+  }
+
   async sendControl(control) {
     return this.sendRequest("control", {
       version: PROTOCOL_VERSION,
@@ -255,10 +264,13 @@ class CodingRunStdioClient {
       ? "control"
       : frame.type === "subscription.response"
         ? "subscription"
-        : frame.type === "conversation.response"
+      : frame.type === "conversation.response"
           ? "conversation"
+          : frame.type === "projection.response"
+            ? "projection"
           : undefined;
-    if (!responseKind || typeof frame.id !== "string" || typeof frame.ok !== "boolean") {
+    if (!responseKind || typeof frame.id !== "string" || typeof frame.ok !== "boolean"
+      || (responseKind === "projection" && frame.ok === true && frame.result !== undefined && !isProjectionPage(frame.result))) {
       this.notifyProtocolError("invalid_frame", "Invalid coding run NDJSON frame.");
       return;
     }
@@ -381,6 +393,55 @@ function normalizeConversationIdentifier(value) {
   const normalized = normalizeOptionalString(value);
   if (!normalized || normalized.length > MAX_CONVERSATION_IDENTIFIER_CHARS) return undefined;
   return normalized;
+}
+
+function normalizeProjectionRequest(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("Task projection request must be an object.");
+  }
+  const keys = Object.keys(input);
+  if (keys.some((key) => key !== "limit" && key !== "cursor")) {
+    throw new Error("Task projection request contains unsupported fields.");
+  }
+  const projection = {};
+  if (input.limit !== undefined) {
+    if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 100) {
+      throw new Error("limit must be an integer between 1 and 100.");
+    }
+    projection.limit = input.limit;
+  }
+  if (input.cursor !== undefined) {
+    if (!isProjectionCursor(input.cursor)) {
+      throw new Error("cursor must contain epoch, revision, and offset.");
+    }
+    projection.cursor = { ...input.cursor, epoch: input.cursor.epoch.trim() };
+  }
+  return projection;
+}
+
+function isProjectionCursor(value) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    && Object.keys(value).every((key) => ["epoch", "revision", "offset"].includes(key))
+    && typeof value.epoch === "string" && normalizeOptionalString(value.epoch)
+    && Number.isSafeInteger(value.revision) && value.revision >= 0
+    && Number.isSafeInteger(value.offset) && value.offset >= 0;
+}
+
+function isProjectionPage(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)
+    || Object.keys(value).some((key) => !["epoch", "revision", "totalCount", "items", "nextCursor"].includes(key))
+    || typeof value.epoch !== "string" || !normalizeOptionalString(value.epoch)
+    || !Number.isSafeInteger(value.revision) || value.revision < 0
+    || !Number.isSafeInteger(value.totalCount) || value.totalCount < 0
+    || !Array.isArray(value.items) || value.items.length > 100) return false;
+  if (value.nextCursor !== undefined) {
+    if (!isProjectionCursor(value.nextCursor)
+      || value.nextCursor.epoch.trim() !== value.epoch.trim()
+      || value.nextCursor.revision !== value.revision
+      || value.nextCursor.offset <= 0
+      || value.nextCursor.offset >= value.totalCount) return false;
+  }
+  return true;
 }
 
 function isAgentRunEvent(value) {

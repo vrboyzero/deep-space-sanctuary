@@ -11,6 +11,7 @@ import {
   LspProcessHost,
   createGoplsProcessProfile,
   probeGoplsToolchain,
+  summarizeLspReadinessTimeline,
 } from "../packages/belldandy-skills/dist/code-intel/index.js";
 
 export const CODE_INTEL_GO_TRUTH_SET_REPORT_VERSION = "code-intel-go-truth-set-report/v1";
@@ -472,6 +473,10 @@ function summarizeLifecycle(diagnostics) {
     failureCount,
     responses: responseGate,
     concurrency: concurrencyGate,
+    ...(diagnostics[0]?.timeline ? {
+      timeline: structuredClone(diagnostics[0].timeline),
+      readinessTimeline: summarizeLspReadinessTimeline(diagnostics[0].timeline),
+    } : {}),
     serverRequests: {
       handledCount: diagnostics.reduce((sum, item) => sum + item.serverRequests.handledCount, 0),
       rejectedCount: diagnostics.reduce((sum, item) => sum + item.serverRequests.rejectedCount, 0),

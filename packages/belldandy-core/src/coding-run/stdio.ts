@@ -14,6 +14,11 @@ import {
   type CodingRunSubscriptionErrorCode,
   type RunControl,
 } from "./contracts.js";
+import type {
+  TaskProjectionCollectionCursor,
+  TaskProjectionCollectionPage,
+} from "./task-projection-collection.js";
+import { isTaskProjectionV1 } from "./task-projection.js";
 
 const DEFAULT_MAX_FRAME_BYTES = 1024 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
@@ -40,6 +45,15 @@ export type CodingRunArtifactRequest = {
 
 export type CodingRunArtifactResponse =
   | { ok: true; result?: unknown }
+  | { ok: false; error: { code: CodingRunErrorCode; message: string } };
+
+export type CodingRunProjectionRequest = {
+  limit?: number;
+  cursor?: TaskProjectionCollectionCursor;
+};
+
+export type CodingRunProjectionResponse =
+  | { ok: true; result?: TaskProjectionCollectionPage }
   | { ok: false; error: { code: CodingRunErrorCode; message: string } };
 
 export type CodingRunControlResponse =
@@ -127,11 +141,18 @@ type PendingArtifactRequest = PendingRequestLifecycle & {
   reject: (error: Error) => void;
 };
 
+type PendingProjectionRequest = PendingRequestLifecycle & {
+  kind: "projection";
+  resolve: (result: CodingRunProjectionResponse) => void;
+  reject: (error: Error) => void;
+};
+
 type PendingRequest =
   | PendingControlRequest
   | PendingSubscriptionRequest
   | PendingConversationRequest
-  | PendingArtifactRequest;
+  | PendingArtifactRequest
+  | PendingProjectionRequest;
 
 export type CodingRunNdjsonClientOptions = {
   write: (line: string) => void | Promise<void>;
@@ -187,6 +208,11 @@ export type CodingRunClientArtifactInput = {
   workspaceId?: string;
 };
 
+export type CodingRunClientProjectionInput = {
+  limit?: number;
+  cursor?: TaskProjectionCollectionCursor;
+};
+
 /**
  * 传输与业务运行时解耦的双向 NDJSON server。调用方注入来源控制器，避免 stdio 反向拥有 Goal/Workflow/Subtask。
  */
@@ -196,6 +222,7 @@ export function createCodingRunNdjsonServer(input: {
   handleConversation?: (conversation: CodingRunConversationRequest) => unknown | Promise<unknown>;
   handleSubscription?: (subscription: CodingRunSubscription) => unknown | Promise<unknown>;
   handleArtifact?: (artifact: CodingRunArtifactRequest) => unknown | Promise<unknown>;
+  handleProjection?: (projection: CodingRunProjectionRequest) => unknown | Promise<unknown>;
   maxFrameBytes?: number;
 }): {
   consume: (chunk: string) => Promise<void>;
@@ -291,6 +318,25 @@ export function createCodingRunNdjsonServer(input: {
           }
           continue;
         }
+        if (isProjectionRequest(parsed)) {
+          try {
+            if (!input.handleProjection) {
+              throw new CodingRunControlError("not_found", "Task projections are unavailable.");
+            }
+            const result = await input.handleProjection(parsed.projection);
+            await write({
+              version: CODING_RUN_PROTOCOL_VERSION,
+              type: "projection.response",
+              id: parsed.id,
+              ok: true,
+              ...(result === undefined ? {} : { result: sanitizeCodingRunData(result) }),
+            });
+          } catch (error) {
+            const code = error instanceof CodingRunControlError ? error.code : "internal";
+            await write(projectionFailure(parsed.id, code, toSafeCodingRunErrorMessage(error)));
+          }
+          continue;
+        }
         {
           if (requestId) {
             if (parsed?.type === "conversation.request") {
@@ -299,6 +345,8 @@ export function createCodingRunNdjsonServer(input: {
               await write(subscriptionFailure(requestId, "invalid_request", "Invalid coding run subscription request."));
             } else if (parsed?.type === "artifact.request") {
               await write(artifactFailure(requestId, "invalid_request", "Invalid coding run artifact request."));
+            } else if (parsed?.type === "projection.request") {
+              await write(projectionFailure(requestId, "invalid_request", "Invalid task projection request."));
             } else {
               await write(controlFailure(requestId, "invalid_request", "Invalid coding run control request."));
             }
@@ -450,6 +498,34 @@ export class CodingRunNdjsonClient {
     return response;
   }
 
+  projection(
+    projection: CodingRunProjectionRequest,
+    options?: CodingRunClientRequestOptions,
+  ): Promise<CodingRunProjectionResponse> {
+    if (this.closed) return Promise.reject(clientClosedError());
+    if (options?.signal?.aborted) return Promise.reject(requestAbortedError());
+    if (!isCodingRunProjectionRequest(projection)) {
+      return Promise.resolve({
+        ok: false,
+        error: { code: "invalid_request", message: "Invalid task projection request." },
+      });
+    }
+    const id = this.createUniqueRequestId();
+    const response = new Promise<CodingRunProjectionResponse>((resolve, reject) => {
+      this.pending.set(id, { kind: "projection", resolve, reject });
+    });
+    this.configurePending(id, options);
+    if (this.pending.has(id)) {
+      this.writeRequest(id, {
+        version: CODING_RUN_PROTOCOL_VERSION,
+        type: "projection.request",
+        id,
+        projection,
+      });
+    }
+    return response;
+  }
+
   consume(chunk: string): void {
     if (this.closed) return;
     for (const item of this.decoder.consume(chunk)) {
@@ -496,6 +572,15 @@ export class CodingRunNdjsonClient {
       if (isArtifactResponseFrame(frame)) {
         const pending = this.pending.get(frame.id);
         if (!pending || pending.kind !== "artifact") continue;
+        this.takePending(frame.id);
+        pending.resolve(frame.ok
+          ? { ok: true, ...(hasOwn(frame, "result") ? { result: frame.result } : {}) }
+          : { ok: false, error: { code: frame.error.code, message: toSafeCodingRunErrorMessage(frame.error.message) } });
+        continue;
+      }
+      if (isProjectionResponseFrame(frame)) {
+        const pending = this.pending.get(frame.id);
+        if (!pending || pending.kind !== "projection") continue;
         this.takePending(frame.id);
         pending.resolve(frame.ok
           ? { ok: true, ...(hasOwn(frame, "result") ? { result: frame.result } : {}) }
@@ -647,6 +732,16 @@ export class CodingRunClient {
     }, this.resolveRequestOptions(options)));
   }
 
+  listTaskProjections(
+    input: CodingRunClientProjectionInput = {},
+    options?: CodingRunClientRequestOptions,
+  ): Promise<TaskProjectionCollectionPage | undefined> {
+    return this.unwrap(this.transport.projection({
+      ...(input.limit === undefined ? {} : { limit: input.limit }),
+      ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+    }, this.resolveRequestOptions(options))) as Promise<TaskProjectionCollectionPage | undefined>;
+  }
+
   consume(chunk: string): void {
     this.transport.consume(chunk);
   }
@@ -661,6 +756,7 @@ export class CodingRunClient {
       | CodingRunControlResponse
       | CodingRunSubscriptionResponse
       | CodingRunArtifactResponse
+      | CodingRunProjectionResponse
     >,
   ): Promise<unknown> {
     const result = await response;
@@ -762,6 +858,16 @@ function artifactFailure(id: string, code: CodingRunErrorCode, message: string):
   };
 }
 
+function projectionFailure(id: string, code: CodingRunErrorCode, message: string): Record<string, unknown> {
+  return {
+    version: CODING_RUN_PROTOCOL_VERSION,
+    type: "projection.response",
+    id,
+    ok: false,
+    error: { code, message: toSafeCodingRunErrorMessage(message) },
+  };
+}
+
 function isControlRequest(value: Record<string, unknown> | undefined): value is {
   version: typeof CODING_RUN_PROTOCOL_VERSION;
   type: "control.request";
@@ -816,6 +922,20 @@ function isArtifactRequest(value: Record<string, unknown> | undefined): value is
     && value.type === "artifact.request"
     && isNonEmptyString(value.id)
     && isCodingRunArtifactRequest(value.artifact);
+}
+
+function isProjectionRequest(value: Record<string, unknown> | undefined): value is {
+  version: typeof CODING_RUN_PROTOCOL_VERSION;
+  type: "projection.request";
+  id: string;
+  projection: CodingRunProjectionRequest;
+} {
+  if (!value) return false;
+  return hasOnlyKeys(value, ["version", "type", "id", "projection"])
+    && value.version === CODING_RUN_PROTOCOL_VERSION
+    && value.type === "projection.request"
+    && isNonEmptyString(value.id)
+    && isCodingRunProjectionRequest(value.projection);
 }
 
 function isControlResponseFrame(value: Record<string, unknown> | undefined): value is ControlResponseFrame {
@@ -892,6 +1012,22 @@ type ArtifactResponseFrame =
       error: { code: CodingRunErrorCode; message: string };
     };
 
+type ProjectionResponseFrame =
+  | {
+      version: typeof CODING_RUN_PROTOCOL_VERSION;
+      type: "projection.response";
+      id: string;
+      ok: true;
+      result?: TaskProjectionCollectionPage;
+    }
+  | {
+      version: typeof CODING_RUN_PROTOCOL_VERSION;
+      type: "projection.response";
+      id: string;
+      ok: false;
+      error: { code: CodingRunErrorCode; message: string };
+    };
+
 function isSubscriptionResponseFrame(value: Record<string, unknown> | undefined): value is SubscriptionResponseFrame {
   if (!value || value.version !== CODING_RUN_PROTOCOL_VERSION || value.type !== "subscription.response" || !isNonEmptyString(value.id)) {
     return false;
@@ -917,6 +1053,19 @@ function isArtifactResponseFrame(value: Record<string, unknown> | undefined): va
     return false;
   }
   if (value.ok === true) return hasOnlyKeys(value, ["version", "type", "id", "ok", "result"]);
+  return value.ok === false
+    && hasOnlyKeys(value, ["version", "type", "id", "ok", "error"])
+    && isControlError(value.error);
+}
+
+function isProjectionResponseFrame(value: Record<string, unknown> | undefined): value is ProjectionResponseFrame {
+  if (!value || value.version !== CODING_RUN_PROTOCOL_VERSION || value.type !== "projection.response" || !isNonEmptyString(value.id)) {
+    return false;
+  }
+  if (value.ok === true) {
+  return hasOnlyKeys(value, ["version", "type", "id", "ok", "result"])
+      && (value.result === undefined || isTaskProjectionCollectionPage(value.result));
+  }
   return value.ok === false
     && hasOnlyKeys(value, ["version", "type", "id", "ok", "error"])
     && isControlError(value.error);
@@ -997,6 +1146,10 @@ function isCodingRunErrorCode(value: unknown): value is CodingRunErrorCode {
     || value === "interrupted"
     || value === "output_schema_invalid"
     || value === "gateway_unavailable"
+    || value === "invalid_limit"
+    || value === "cursor_stale"
+    || value === "cursor_future"
+    || value === "cursor_out_of_range"
     || value === "internal";
 }
 
@@ -1011,6 +1164,45 @@ function isCodingRunArtifactRequest(value: unknown): value is CodingRunArtifactR
   if (!isRecord(value) || !hasOnlyKeys(value, ["revisionId", "workspaceId"])) return false;
   if (!isConversationIdentifier(value.revisionId)) return false;
   return value.workspaceId === undefined || isConversationIdentifier(value.workspaceId);
+}
+
+function isCodingRunProjectionRequest(value: unknown): value is CodingRunProjectionRequest {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["limit", "cursor"])) return false;
+  const limit = value.limit;
+  if (limit !== undefined
+    && (!Number.isSafeInteger(limit) || (limit as number) < 1 || (limit as number) > 100)) return false;
+  if (value.cursor === undefined) return true;
+  const cursor = value.cursor;
+  if (!isRecord(cursor) || !hasOnlyKeys(cursor, ["epoch", "revision", "offset"])) return false;
+  const revision = cursor.revision;
+  const offset = cursor.offset;
+  return isNonEmptyString(cursor.epoch)
+    && Number.isSafeInteger(revision) && (revision as number) >= 0
+    && Number.isSafeInteger(offset) && (offset as number) >= 0;
+}
+
+function isTaskProjectionCollectionPage(value: unknown): value is TaskProjectionCollectionPage {
+  if (!isRecord(value)
+    || !hasOnlyKeys(value, ["revision", "epoch", "totalCount", "items", "nextCursor"])
+    || !isNonEmptyString(value.epoch)
+    || !Array.isArray(value.items)
+    || value.items.length > 100) return false;
+  const revision = value.revision;
+  const totalCount = value.totalCount;
+  if (!Number.isSafeInteger(revision) || (revision as number) < 0
+    || !Number.isSafeInteger(totalCount) || (totalCount as number) < 0) return false;
+  if (value.items.some((item) => !isTaskProjectionV1(item))) return false;
+  if (value.nextCursor !== undefined) {
+    const nextCursor = value.nextCursor;
+    if (!isRecord(nextCursor) || !hasOnlyKeys(nextCursor, ["epoch", "revision", "offset"])) return false;
+    const nextOffset = nextCursor.offset;
+    if (nextCursor.epoch !== value.epoch
+      || nextCursor.revision !== revision
+      || !Number.isSafeInteger(nextOffset)
+      || (nextOffset as number) <= 0
+      || (nextOffset as number) >= (totalCount as number)) return false;
+  }
+  return true;
 }
 
 function isSafeConversationText(value: unknown): value is string {

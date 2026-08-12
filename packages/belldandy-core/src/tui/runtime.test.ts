@@ -307,6 +307,93 @@ describe("CodingTuiRuntime", () => {
     }));
   });
 
+  it("reads a bounded TaskProjection page without creating a local task state owner", async () => {
+    const projection = {
+      schemaVersion: "task-projection/v1" as const,
+      taskId: "task-1",
+      status: "running" as const,
+      owner: {
+        source: "conversation" as const,
+        binding: { conversationId: "conversation-1", agentRunId: "run-1" },
+      },
+      evidence: { observedAtMs: 10, reasonCategory: "running" as const, reasonCode: "owner_running" },
+      allowedActions: ["observe", "cancel"] as const,
+      capabilityClosure: {
+        schemaVersion: "task-capability-closure/v1" as const,
+        evaluatedAtMs: 10,
+        status: "satisfied" as const,
+        capabilities: Object.fromEntries([
+          "tools", "languageToolchain", "sandbox", "approvalChannel", "worktree", "journal",
+          "trace", "verifier", "mcp", "plugin", "skill",
+        ].map((name) => [name, { required: false, state: "available" as const }])) as Record<string, { required: false; state: "available" }>,
+      },
+    };
+    const invokeGateway = vi.fn(async (input: {
+      method: string;
+      params?: Record<string, unknown>;
+      parsePayload: (payload: Record<string, unknown>) => unknown;
+    }) => ({
+      ok: true as const,
+      payload: input.parsePayload({
+        epoch: "gateway-1",
+        revision: 4,
+        totalCount: 2,
+        items: [projection],
+        nextCursor: { epoch: "gateway-1", revision: 4, offset: 1 },
+      }),
+      paired: true,
+      wsUrl: "ws://127.0.0.1:28889",
+    }));
+    const runtime = new CodingTuiRuntime({
+      stateDir: "E:\\state",
+      cwd: "E:\\workspace",
+      client: createClient(),
+      invokeGateway,
+    });
+
+    const page = await runtime.listTaskProjections({
+      limit: 1,
+      cursor: { epoch: "gateway-1", revision: 4, offset: 0 },
+    });
+
+    expect(page).toMatchObject({
+      epoch: "gateway-1",
+      revision: 4,
+      totalCount: 2,
+      items: [expect.objectContaining({ taskId: "task-1", status: "running" })],
+      nextCursor: { epoch: "gateway-1", revision: 4, offset: 1 },
+    });
+    expect(invokeGateway).toHaveBeenCalledWith(expect.objectContaining({
+      method: "task.projection.list",
+      params: { limit: 1, cursor: { epoch: "gateway-1", revision: 4, offset: 0 } },
+    }));
+    expect(JSON.stringify(page)).not.toMatch(/prompt|toolArgs|content/);
+  });
+
+  it("fails closed when a TaskProjection page contains prompt content", async () => {
+    const invokeGateway = vi.fn(async (input: {
+      parsePayload: (payload: Record<string, unknown>) => unknown;
+    }) => ({
+      ok: true as const,
+      payload: input.parsePayload({
+        epoch: "gateway-1",
+        revision: 1,
+        totalCount: 1,
+        items: [{ taskId: "task-1", prompt: "secret" }],
+      }),
+      paired: true,
+      wsUrl: "ws://127.0.0.1:28889",
+    }));
+    const runtime = new CodingTuiRuntime({
+      stateDir: "E:\\state",
+      cwd: "E:\\workspace",
+      client: createClient(),
+      invokeGateway,
+    });
+
+    await expect(runtime.listTaskProjections()).rejects.toThrow("invalid TaskProjection");
+  });
+
   it("lists a bounded safe workspace target projection and switches only after exact revalidation", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-tui-worktree-switch-"));
     temporaryDirectories.push(root);

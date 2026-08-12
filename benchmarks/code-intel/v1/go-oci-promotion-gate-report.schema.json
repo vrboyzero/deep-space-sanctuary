@@ -207,6 +207,62 @@
             "activeCount": { "type": "integer", "minimum": 0 },
             "peakActiveCount": { "type": "integer", "minimum": 0 }
           }
+        },
+        "timeline": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["events", "truncated"],
+          "properties": {
+            "events": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["sequence", "atMs", "kind"],
+                "properties": {
+                  "sequence": { "type": "integer", "minimum": 1 },
+                  "atMs": { "type": "integer", "minimum": 0 },
+                  "kind": {
+                    "enum": [
+                      "request_started", "request_completed", "request_failed",
+                      "notification_started", "notification_sent", "notification_failed",
+                      "work_done_progress_created", "work_done_progress_begin",
+                      "work_done_progress_end", "work_done_wait_started",
+                      "work_done_wait_completed", "readiness_started",
+                      "readiness_completed", "readiness_failed"
+                    ]
+                  },
+                  "method": { "type": "string", "minLength": 1 },
+                  "resultCount": { "type": "integer", "minimum": 0 },
+                  "errorCode": { "type": "string", "minLength": 1 },
+                  "activeProgressCount": { "type": "integer", "minimum": 0 }
+                }
+              }
+            },
+            "truncated": { "type": "boolean" }
+          }
+        },
+        "readinessTimeline": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["readinessStartedSequence", "readinessCompletedSequence", "firstReferencesStartedSequence", "firstReferencesCompletedSequence", "lateProgressCreatedCount", "referencesAfterReadiness"],
+          "properties": {
+            "firstDidOpenStartedSequence": { "type": ["integer", "null"], "minimum": 1 },
+            "firstDidOpenSentSequence": { "type": ["integer", "null"], "minimum": 1 },
+            "readinessStartedSequence": { "type": ["integer", "null"], "minimum": 1 },
+            "readinessCompletedSequence": { "type": ["integer", "null"], "minimum": 1 },
+            "firstProgressCreatedSequence": { "type": ["integer", "null"], "minimum": 1 },
+            "firstProgressCompletedSequence": { "type": ["integer", "null"], "minimum": 1 },
+            "firstReferencesStartedSequence": { "type": ["integer", "null"], "minimum": 1 },
+            "firstReferencesCompletedSequence": { "type": ["integer", "null"], "minimum": 1 },
+            "firstReferencesActiveProgressCount": { "type": ["integer", "null"], "minimum": 0 },
+            "lateProgressCreatedCount": { "type": "integer", "minimum": 0 },
+            "referencesAfterReadiness": { "type": ["boolean", "null"] },
+            "didOpenBeforeReadiness": { "type": ["boolean", "null"] },
+            "progressClosedBeforeFirstReferences": { "type": ["boolean", "null"] },
+            "readinessDurationMs": { "type": ["integer", "null"], "minimum": 0 }
+          }
         }
       }
     },

@@ -46,6 +46,15 @@ export type ConversationRunRuntimeSnapshot = {
   stopRequestedCount: number;
 };
 
+export type ConversationRunListItem = {
+  conversationId: string;
+  runId: string;
+  agentId?: string;
+  startedAt: number;
+  state: "running" | "stop_requested";
+  stopRequestedAt?: number;
+};
+
 type ConversationRunRecoveryStore = Pick<
   CodingRunRecoveryMarkerStore,
   "markActive" | "markSettled" | "lookup"
@@ -509,6 +518,29 @@ export class ConversationRunRegistry {
       }
     }
     return { activeCount, stopRequestedCount };
+  }
+
+  /** 仅返回活跃 run 的无回调安全视图，供只读跨 owner 投影使用。 */
+  listActiveRuns(): ConversationRunListItem[] {
+    const items: ConversationRunListItem[] = [];
+    for (const scoped of this.handles.values()) {
+      for (const handle of scoped.values()) {
+        if (handle.state !== "running" && handle.state !== "stop_requested") continue;
+        items.push({
+          conversationId: handle.conversationId,
+          runId: handle.runId,
+          ...(handle.agentId ? { agentId: handle.agentId } : {}),
+          startedAt: handle.startedAt,
+          state: handle.state,
+          ...(handle.stopRequestedAt !== undefined ? { stopRequestedAt: handle.stopRequestedAt } : {}),
+        });
+      }
+    }
+    return items.sort((left, right) =>
+      left.startedAt - right.startedAt
+      || left.conversationId.localeCompare(right.conversationId)
+      || left.runId.localeCompare(right.runId),
+    );
   }
 
   private selectLatestHandle(

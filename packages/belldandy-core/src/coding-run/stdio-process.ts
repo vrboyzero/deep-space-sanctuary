@@ -14,7 +14,9 @@ import {
   createCodingRunNdjsonServer,
   type CodingRunArtifactRequest,
   type CodingRunConversationRequest,
+  type CodingRunProjectionRequest,
 } from "./stdio.js";
+import { parseTaskProjectionCollectionPage } from "./task-projection-consumer.js";
 import { invokeGatewayMethod } from "../cli/shared/gateway-rpc.js";
 
 export type GatewayControlInvocationResult =
@@ -33,6 +35,10 @@ export type GatewayArtifactInvocationResult =
   | { ok: true; payload: unknown }
   | { ok: false; error: { code: CodingRunErrorCode; message: string } };
 
+export type GatewayProjectionInvocationResult =
+  | { ok: true; payload: unknown }
+  | { ok: false; error: { code: CodingRunErrorCode; message: string } };
+
 export type CodingRunStdioOptions = {
   stateDir: string;
   conversationFrom?: "vscode" | "tui";
@@ -48,6 +54,10 @@ export type CodingRunStdioOptions = {
     artifact: CodingRunArtifactRequest,
     stateDir: string,
   ) => Promise<GatewayArtifactInvocationResult>;
+  invokeGatewayProjection?: (
+    projection: CodingRunProjectionRequest,
+    stateDir: string,
+  ) => Promise<GatewayProjectionInvocationResult>;
   invokeGatewaySubscription?: (input: {
     subscription: CodingRunSubscription;
     stateDir: string;
@@ -65,6 +75,7 @@ export async function runCodingRunStdio(input: CodingRunStdioOptions): Promise<n
     invokeGatewayCodingRunConversation(conversation, stateDir, input.conversationFrom ?? "vscode")
   ));
   const invokeGatewayArtifact = input.invokeGatewayArtifact ?? invokeGatewayCodingRunArtifact;
+  const invokeGatewayProjection = input.invokeGatewayProjection ?? invokeGatewayCodingRunProjection;
   const gatewaySubscriptionSession = new GatewayCodingRunSubscriptionSession(input.stateDir);
   const invokeGatewaySubscription = input.invokeGatewaySubscription ?? (async ({ subscription, onEvent, onInterrupted }) => {
     const result = await gatewaySubscriptionSession.subscribe({ subscription, onEvent, onInterrupted });
@@ -91,6 +102,13 @@ export async function runCodingRunStdio(input: CodingRunStdioOptions): Promise<n
     },
     handleArtifact: async (artifact) => {
       const result = await invokeGatewayArtifact(artifact, input.stateDir);
+      if (!result.ok) {
+        throw new CodingRunControlError(result.error.code, result.error.message);
+      }
+      return result.payload;
+    },
+    handleProjection: async (projection) => {
+      const result = await invokeGatewayProjection(projection, input.stateDir);
       if (!result.ok) {
         throw new CodingRunControlError(result.error.code, result.error.message);
       }
@@ -233,6 +251,31 @@ export async function invokeGatewayCodingRunArtifact(
   };
 }
 
+export async function invokeGatewayCodingRunProjection(
+  projection: CodingRunProjectionRequest,
+  stateDir: string,
+): Promise<GatewayProjectionInvocationResult> {
+  const response = await invokeGatewayMethod({
+    stateDir,
+    method: "task.projection.list",
+    params: {
+      ...(projection.limit === undefined ? {} : { limit: projection.limit }),
+      ...(projection.cursor === undefined ? {} : { cursor: projection.cursor }),
+    },
+    requestIdPrefix: "bdd-coding-run-projection",
+    clientName: "bdd coding-run projection",
+    parsePayload: parseTaskProjectionCollectionPage,
+  });
+  if (response.ok) return { ok: true, payload: response.payload };
+  return {
+    ok: false,
+    error: {
+      code: resolveGatewayErrorCode(response.errorCode, response.error),
+      message: toSafeCodingRunErrorMessage(response.error),
+    },
+  };
+}
+
 export function resolveGatewayErrorCode(errorCode: string | undefined, message: string): CodingRunErrorCode {
   if (isCodingRunErrorCode(errorCode)) return errorCode;
   if (/pairing|permission|denied/i.test(message)) return "permission_required";
@@ -253,5 +296,9 @@ function isCodingRunErrorCode(value: unknown): value is CodingRunErrorCode {
     || value === "interrupted"
     || value === "output_schema_invalid"
     || value === "gateway_unavailable"
+    || value === "invalid_limit"
+    || value === "cursor_stale"
+    || value === "cursor_future"
+    || value === "cursor_out_of_range"
     || value === "internal";
 }

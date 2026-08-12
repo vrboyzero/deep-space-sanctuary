@@ -168,6 +168,7 @@ import { handleWorkspaceWorktreeMethod } from "./server-methods/workspace-worktr
 import { handleRemoteDeliveryMethod } from "./server-methods/remote-delivery.js";
 import { handleExtensionRuntimeMethod } from "./server-methods/extension-runtime.js";
 import { handleCodingRunMethod } from "./server-methods/coding-run.js";
+import { handleTaskProjectionMethod } from "./server-methods/task-projection.js";
 import { handleCommandJobMethod } from "./server-methods/command-job.js";
 import { handleCodingRunSubscriptionMethod } from "./server-methods/coding-run-subscription.js";
 import { createCodingRunGatewayEventBroker, type CodingRunGatewayEventBroker } from "./coding-run/gateway-event-broker.js";
@@ -176,6 +177,7 @@ import {
   type CodingRunReconciliationJournalOwner,
 } from "./coding-run/reconciliation-journal.js";
 import type { PendingToolPermissionRuntime } from "./coding-run/pending-tool-permission-runtime.js";
+import { TaskProjectionCollectionRuntime } from "./coding-run/task-projection-collection-runtime.js";
 import { handleWorkflowMethod } from "./server-methods/workflow.js";
 import { buildChannelSecurityDoctorReport } from "./channel-security-doctor.js";
 import {
@@ -262,6 +264,8 @@ export type GatewayServerOptions = {
   codingRunEventBroker?: CodingRunGatewayEventBroker;
   /** Conversation tool side effect 的脱敏 append-only journal。 */
   codingRunReconciliationJournal?: CodingRunReconciliationJournalOwner;
+  /** 只读 TaskProjection collection revision/cursor owner。 */
+  taskProjectionCollectionRuntime?: TaskProjectionCollectionRuntime;
   /** confirm 工具调用的 worker-scoped pending permission 真源。 */
   pendingToolPermissionRuntime?: PendingToolPermissionRuntime;
   topLevelConversationLifecycle?: TopLevelConversationLifecycle;
@@ -948,6 +952,8 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
   const codingRunEventBroker = opts.codingRunEventBroker ?? createCodingRunGatewayEventBroker({
     reconciliationJournal: codingRunReconciliationJournal,
   });
+  const taskProjectionCollectionRuntime = opts.taskProjectionCollectionRuntime
+    ?? new TaskProjectionCollectionRuntime();
   const topLevelConversationLifecycle = opts.topLevelConversationLifecycle
     ?? new TopLevelConversationLifecycle(opts.topLevelConversationLifecycleOptions);
   const memoryUsageAccounting = opts.memoryUsageAccounting ?? new MemoryRuntimeUsageAccounting({
@@ -1422,6 +1428,7 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     conversationRunRegistry,
     codingRunEventBroker,
     codingRunReconciliationJournal,
+    taskProjectionCollectionRuntime,
     pendingToolPermissionRuntime: opts.pendingToolPermissionRuntime,
     topLevelConversationLifecycle,
     durableExtractionRuntime,
@@ -2416,6 +2423,17 @@ async function handleReq(
         stopSubTask: ctx.stopSubTask,
         workflowRuntime: ctx.workflowRuntime,
         pendingToolPermissionRuntime: ctx.pendingToolPermissionRuntime,
+      });
+    }
+
+    case "task.projection.list": {
+      return handleTaskProjectionMethod(req, {
+        collectionRuntime: ctx.taskProjectionCollectionRuntime,
+        conversationRunRegistry: ctx.conversationRunRegistry,
+        goalManager: ctx.goalManager,
+        subTaskRuntimeStore: ctx.subTaskRuntimeStore,
+        workflowRuntime: ctx.workflowRuntime,
+        userWorktreeRuntime: ctx.userWorktreeRuntime,
       });
     }
 

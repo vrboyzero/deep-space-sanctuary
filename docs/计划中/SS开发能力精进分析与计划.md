@@ -2685,6 +2685,1291 @@ P1-A1 的 language-neutral contract/fake、官方 TypeScript Language Service li
 - **为什么先做它**：单纯扩大静默窗会漏掉延迟 token，而等待所有 token 又会被不发送 `end` 的后台任务卡死；在没有时间线与 token 语义前继续调参只会重复相同失败，不能形成可维护的生产合同。
 - **当前还缺的关键闭环**：稳定的跨 module reference readiness、与最终源码 identity 绑定的 10/10 OCI report、Windows native/WSL2 OCI comparator、`goCanaryEligible`/Doctor 投影及更大 fixture 的 RSS 余量；不包含自动下载、系统安装、默认启用或公开发布。
 
+### 14.56 P1-A2 readiness 时间线证据合同
+
+#### P1-A2 第十三切片实现结论：gopls readiness 有界时间线证据（2026-08-12）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/code-intel/lsp-process-host.ts` 扩展**：
+   - 新增最多 128 条的 bounded protocol timeline，记录相对毫秒、单调序号、请求/通知方法、数组或 `items` 结果数量、稳定错误码与 progress active 数量。
+   - 覆盖 initialize、`textDocument/didOpen`、readiness `workspace/symbol`、业务请求完成/失败、`window/workDoneProgress/create`、`$/progress` begin/end 与有界等待开始/完成事件。
+   - 时间线不保存 progress token 原值、URI、源码正文、symbol 名称或 Provider 内部错误正文；超出上限只保留最新窗口并显式标记 `truncated`。
+
+2. **`scripts/run-code-intel-go-oci-promotion-gate.mjs` 与 `benchmarks/code-intel/v1/go-oci-promotion-gate-report.schema.json` 接入**：
+   - promotion lifecycle evidence 投影同一份 redacted timeline，Schema 固定事件枚举、128 条上限和字段边界，保持报告不可覆盖与 hash-bound source identity。
+   - 通过 fake runtime fixture 验证既有 passed/failure-closed 语义不变；未改变 readiness 判定、OCI 资源限制、admission 或 promotion eligibility。
+
+3. **测试、导出与地图同步**：
+   - `lsp-process-host.test.ts` 新增事件顺序、返回计数、脱敏和有界窗口回归；`gopls-oci-host.test.ts` fixture 补齐新诊断字段；CodeIntel index 导出时间线类型。
+   - `docs/project-map.md` 登记时间线 owner 与其仅用于 readiness/promotion evidence 的边界。
+
+4. **效果**：
+   - 后续真实 OCI 运行可以区分 `didOpen → readiness request → progress token → 首次 references` 的实际先后，而不再仅依赖最终计数。
+   - 证据不会扩大 workspace、模型、Provider 或 mutation 暴露面；`q/r/s` 历史失败 artifact 保持不变。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm --filter @belldandy/skills build`）。
+- 2 个定向测试文件、21 项测试全部通过（含 1 个新增 bounded/redacted timeline 回归和 4 个 promotion report/schema 测试）。
+- promotion report fixture 仍通过 Schema，OCI readiness/`goCanaryEligible`/`productionEligible` 结论未被提前放宽。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：使用当前最终源码 identity 在 WSL2/OCI 执行一次新的不可覆盖 promotion 诊断 run，读取 timeline 中 `didOpen`、readiness `workspace/symbol`、progress create/begin/end、wait completion 与每个 truth case 请求/返回计数；将失败按上述四个时序假设分类。
+- **为什么先做它**：时间线合同已通过单测和构建，只有真实 gopls 的相对时序才能判断是延迟 token、永不结束 token、symbol 探针不足还是同步屏障缺失；继续调静默窗前必须先获得该证据。
+- **当前还缺的关键闭环**：新源码 identity 绑定的真实 timeline report、稳定跨 module reference readiness、10/10 OCI Gate、Windows native/WSL2 comparator、`goCanaryEligible`/Doctor 投影及 RSS 余量复核；不包含自动下载、系统安装、默认启用或公开发布。
+
+### 14.57 P1-A2 readiness 时间线诊断
+
+#### P1-A2 第十四切片实现结论：native 时序诊断与 late progress 证据（2026-08-12）
+
+##### 已完成内容
+
+1. **native WSL2 truth timeline 运行**：
+   - 使用最终源码/实际 `dist`、固定 `go1.24.2` 与 `gopls v0.21.0`，在不启动 Docker、不访问网络、不写真实 workspace 的条件下执行一次全新报告。
+   - 报告：`.tmp-codex/p1a2-wsl-truth-timeline-20260812-a.json`；SHA-256：`3f8777bab05ba8fdee7b7a5e1edc5e7c71626464f37a9315465de5e01f029501`。
+
+2. **时序事实**：
+   - 固定 truth 通过 `10/10`，precision/recall=`1/1`，Host 生命周期和资源 Gate 均通过。
+   - `workspace/symbol` 在约 `133ms` 开始；progress token 在约 `133ms`、`152ms` 创建并 begin，在约 `260ms`、`600ms` end；symbol 响应约 `657ms` 返回 1 项。
+   - 首次 references 约 `674ms`、`682ms` 返回完整 `4`、`2` 项。
+   - 另一个 progress token 约 `1658ms` 才创建，晚于全部 6 个业务查询；因此“等待所有 token end”不是可靠 readiness 条件。
+
+3. **回归测试与验证**：
+   - fake LSP 新增 late progress 测试：有界静默等待在延迟 token 前安全返回，延迟 token 仍被时间线记录；该测试与原 Host 回归共 `18/18` 通过。
+   - truth/promotion/Host 三个定向测试文件共 `26/26` 通过；`corepack pnpm --filter @belldandy/skills build` 通过。
+
+4. **基础设施边界**：
+   - Windows Docker Desktop Linux Engine 不可用；WSL2 Ubuntu-22.04 没有 Docker CLI/WSL integration，故新的 OCI timeline-bound promotion run 未执行。
+   - 该阻塞只归类为 infrastructure unavailable，不修改或覆盖 `q/r/s` 失败 artifact，也不把 native truth 误报为 OCI/RSS/promotion 通过。
+
+5. **效果**：
+   - 已排除“必须等待全部 progress token 结束”的 readiness 方案；尚未排除 late token 与跨 module reference 建索引之间的因果关系，也未证明 `workspace/symbol` 是充分稳定信号。
+   - readiness 生产判定、`goCanaryEligible`、Doctor 投影和 comparator 继续失败关闭。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm --filter @belldandy/skills build`）。
+- 3 个定向测试文件、26 项测试全部通过；native WSL2 truth `10/10`，时间线未截断，Host/进程/fixture 清理通过。
+- OCI promotion 未执行，原因是本机 Docker daemon/WSL integration 不可用；无 OCI 通过结论。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：先在 fake/受控 Host seam 增加 `waitForWorkspaceReady` 的显式 readiness-start/readiness-complete 事件，并将 timeline 与首次 references 结果绑定；随后在 OCI daemon 恢复后只执行一次新的 timeline-bound promotion run。
+- **为什么先做它**：当前 native timeline 证明了 late token，但 native Provider 没有 OCI readiness wrapper，不能直接推断 `waitForWorkDoneProgress` 返回点；必须让 readiness 边界在证据中可见，再做真实 OCI 诊断。
+- **当前还缺的关键闭环**：显式 readiness 时序与真实 OCI timeline report、跨 module reference 稳定信号、10/10 OCI Gate、Windows native/WSL2 comparator、`goCanaryEligible`/Doctor 投影及 RSS 余量复核；不包含自动下载、系统安装、默认启用或公开发布。
+
+### 14.58 P1-A2 readiness wrapper 时序标记
+
+#### P1-A2 第十五切片实现结论：OCI readiness 边界显式时间线（2026-08-12）
+
+##### 已完成内容
+
+1. **`lsp-process-host.ts` readiness marker 扩展**：
+   - 新增 `readiness_started`、`readiness_completed`、`readiness_failed` 三类有界 timeline 事件，仍只保留相对时间、稳定错误码等安全元数据。
+   - marker 为显式 Host seam，供 OCI Host wrapper 记录 readiness 探针边界，不改变通用 LSP request 或 progress 判定。
+
+2. **`gopls-oci-host.ts` 接入**：
+   - `waitForWorkspaceReady` 在 `workspace/symbol` readiness probe 与 `waitForWorkDoneProgress` 前后写入 start/completed；失败路径写入 failed 并保留原错误。
+   - 该 marker 只在 OCI readiness wrapper 路径产生；native truth timeline 没有 marker 时属于运行路径差异，不判定为缺失。
+
+3. **报告合同与回归验证**：
+   - OCI/native truth timeline Schema 更新事件枚举；fake OCI Host 测试锁定 marker 顺序和 readiness 探针额外 request。
+   - 5 个定向测试文件、42 项测试全部通过；`corepack pnpm --filter @belldandy/skills build` 通过。
+
+4. **效果**：
+   - 后续真实 OCI report 可直接判断首次 references 是否发生在 readiness completed 之后，并区分 probe response、progress quiet wait 与业务 query。
+   - 未放宽 `ociEligible`、`goCanaryEligible` 或 `productionEligible`，也未改变 500ms 静默窗口合同。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm --filter @belldandy/skills build`）。
+- 5 个定向测试文件、42 项测试全部通过；fake OCI readiness marker 顺序、Schema fixture 与 Host cleanup 均通过。
+- 真实 OCI run 尚未执行，当前仍受 Docker daemon/WSL integration unavailable 阻塞。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：重新探测 Windows Docker Desktop Linux Engine 与 WSL2 Docker integration；只有 daemon、digest image、pinned artifact 和全新 output root 均可用时，执行一次 timeline-bound OCI promotion run，并按四个 ranked hypothesis 归因。
+- **为什么先做它**：readiness 证据链已经足够细，继续本地调参没有新增信息；真实 gopls OCI 才能证明同路径挂载、进程资源和 wrapper 时序是否与 native truth 一致。
+- **当前还缺的关键闭环**：真实 OCI timeline report、稳定跨 module reference readiness、10/10 OCI Gate、Windows native/WSL2 comparator、`goCanaryEligible`/Doctor 投影及 RSS 余量复核；不包含自动下载、系统安装、默认启用或公开发布。
+
+### 14.59 P1-A2 timeline 事件语义修正
+
+#### P1-A2 第十六切片实现结论：通知入口与协议发送时序分离（2026-08-12）
+
+##### 已完成内容
+
+1. **`lsp-process-host.ts` 事件语义修正**：
+   - 将通知入口从复用的 `request_started` 改为独立 `notification_started`，保留 `notification_sent` 作为真正调用 `sendNotification` 后的协议发送证据。
+   - 这样首个 `didOpen` 的调用排队不会被误读为早于 initialize；timeline 可以同时表达入口排队和协议实际发送。
+
+2. **Schema/测试同步**：
+   - OCI/native truth report Schema 加入 `notification_started` 枚举。
+   - Host/OCI/promotion/truth 定向测试与 fake fixture 同步，保持 redaction、128 条上限、结果计数和 readiness marker 合同不变。
+
+3. **native WSL2 复核**：
+   - 全新报告：`.tmp-codex/p1a2-wsl-truth-timeline-20260812-c.json`；固定 Go/gopls、10/10 accuracy、lifecycle/cleanup Gate 均通过。
+   - 可观察顺序：`initialize` 完成、`initialized` 发送后才有首个 `didOpen` 的 `notification_sent`；readiness 相关 `workspace/symbol` progress 在约 `128ms/147ms` 创建、约 `252ms/583ms` 结束，业务 references 约 `662ms/669ms` 返回完整 `4/2`；约 `1645ms` 仍有 late progress 创建。
+
+4. **效果**：
+   - 时序报告不再混淆调用入口和协议发送，能够直接回答 `didOpen` 是否已真正送达、progress 是否在业务查询前结束，以及 reference 返回时是否仍有 active progress。
+   - 仍不把 native truth 当作 OCI/RSS/promotion 证据；`goCanaryEligible=false`、`productionEligible=false` 保持失败关闭。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm --filter @belldandy/skills build`）。
+- 5 个定向测试文件、42 项测试全部通过；native WSL2 timeline 未截断，固定 truth `10/10`，进程/fixture 清理通过。
+- Docker Windows/WSL2 前置仍不可用，真实 OCI timeline run 未执行。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：在 OCI daemon 恢复后执行一次新的 timeline-bound promotion run；若报告达到 10/10，再基于同一 report 开始 RSS/cleanup/comparator 复核；若失败，则只按 timeline 中 readiness completed 与首次 references 的相对位置选择一个修复变量。
+- **为什么先做它**：当前代码和 native 证据已经能区分四类时序假设，继续修改 Host 会破坏诊断变量控制；真实 OCI 是下一条必要证据。
+- **当前还缺的关键闭环**：OCI daemon/image 前置、真实 OCI timeline 与稳定跨 module reference readiness、10/10 promotion、双平台 comparator、Doctor eligibility 和 RSS 余量；不包含自动下载、系统安装、默认启用或公开发布。
+
+### 14.60 P1-A2 timeline 单调时钟与切片收口
+
+#### P1-A2 第十七切片实现结论：单调时间线证据收口（2026-08-12）
+
+##### 已完成内容
+
+1. **`lsp-process-host.ts` 证据质量修正**：
+   - timeline 相对时间改用 Node `performance.now()`，不受系统墙钟校正影响；事件序号和 `atMs` 形成可检查的非递减顺序。
+   - 保持 128 条有界窗口、redaction、notification 入口/发送分离、readiness marker 和稳定错误码合同不变。
+
+2. **回归与阶段收口**：
+   - 新增序号/单调时间断言，CodeIntel 全目录 8 个测试文件、70 项测试全部通过。
+   - `corepack pnpm --filter @belldandy/skills build` 通过；`git diff --check` 通过；无残留 `[DEBUG-*]` 调试标记。
+   - native timeline evidence 已有 `a/b/c/d` 四份全新报告，均保持固定 truth `10/10`；最终 `d` 报告用于验证单调时钟和通知事件语义修正，SHA-256 为 `7924c2b391963237384aede0bc1c9d2db96e6fc0e8c21fde4944da7654cd3a1c`。
+
+3. **阶段效果与边界**：
+   - gopls readiness 当前已具备可审计的 `didOpen → readiness probe → progress → readiness marker → references` 证据面，能够在 OCI run 中区分四类时序假设。
+   - 本切片不宣称 readiness 已修复，不修改 500ms 规则，不启用 Go Provider，不推进 comparator/Doctor/production eligibility。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm --filter @belldandy/skills build`）。
+- CodeIntel 目录 8 个测试文件、70 项测试全部通过；native WSL2 truth timeline `10/10`、无截断、进程和 fixture 清理通过。
+- Windows Docker daemon 与 WSL2 Docker integration 仍不可用，真实 OCI timeline-bound promotion 尚未执行；该项保留为 infrastructure prerequisite，不伪造通过。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：等待/确认 OCI daemon、digest image 和 WSL2 integration 恢复；恢复后只执行一次全新 timeline-bound OCI promotion run，并将报告 hash、readiness marker 与 references 返回计数绑定到最终源码 identity。
+- **为什么先做它**：代码和 native 诊断证据已足够，下一条信息必须来自真实 gopls OCI 进程；在同一环境阻塞未变化前继续修改只会降低证据可比性。
+- **当前还缺的关键闭环**：真实 OCI 运行与 10/10 readiness、RSS/cleanup Gate、双平台 comparator、`goCanaryEligible`/Doctor 最终投影；不包含自动下载、系统安装、默认启用或公开发布。
+
+### 14.61 P1-A2 readiness 时序离线归因投影
+
+#### P1-A2 第十八切片实现结论：readiness timeline 摘要与报告归因（2026-08-12）
+
+##### 已完成内容
+
+1. **`summarizeLspReadinessTimeline` 新增**：
+   - 从 bounded timeline 计算 readiness start/complete、首次 references start/complete、readiness 后 late progress 数量和 references-after-readiness 布尔结果。
+   - 纯函数不参与 Gate，不读取正文，不改变 Provider/Host 行为；缺少 OCI marker 时返回 `null`/`0`，明确区分 native 与 OCI 路径。
+
+2. **报告与文档接线**：
+   - Go native truth 与 OCI promotion lifecycle 各自投影 `readinessTimeline`，Schema 固定字段和 null 语义。
+   - `benchmarks/code-intel/README.md`、`docs/project-map.md` 同步归因字段与安全边界。
+
+3. **验证结果**：
+   - `corepack pnpm --filter @belldandy/skills build` 通过。
+   - 3 个定向测试文件、28 项测试全部通过；其中新增纯函数归因测试验证 late progress 不被误判为 Gate 失败。
+   - 之前 CodeIntel 全目录回归仍为 8 个测试文件、70/70 通过；promotion/truth report 测试 9/9 通过。
+
+4. **效果与边界**：
+   - OCI daemon 恢复后，runner 可直接输出稳定的 readiness 时序分类，不需要人工从 128 条事件中解释。
+   - 当前没有执行 OCI run，因此不宣称 readiness 修复或 Go promotion；`goCanaryEligible=false`、`productionEligible=false` 保持失败关闭。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：在 OCI daemon、digest image 和 WSL2 integration 恢复后执行唯一一次 timeline-bound promotion；读取 `readinessTimeline`，若 `referencesAfterReadiness=false` 或 readiness marker 缺失则按失败关闭处理，不自动扩大等待窗。
+- **为什么先做它**：离线归因和 native evidence 已闭合，剩余信息只能来自真实 OCI 同路径 gopls；继续本地改动会改变对照变量。
+- **当前还缺的关键闭环**：真实 OCI 10/10 readiness、RSS/cleanup Gate、双平台 comparator、`goCanaryEligible`/Doctor 最终投影；不包含自动下载、系统安装、默认启用或公开发布。
+
+### 14.62 P1-A2 OCI 前置恢复检查
+
+#### P1-A2 第十九切片实现结论：OCI daemon 与固定产物前置复核（2026-08-12）
+
+##### 已完成内容
+
+1. **Windows/WSL2 运行前置检查**：
+   - Windows Docker client `29.1.3` 可执行，但 `desktop-linux` context 无法连接 `dockerDesktopLinuxEngine` named pipe，daemon 不存在或未运行。
+   - `Ubuntu-22.04` 与 `docker-desktop` WSL 发行版均为 `Stopped`；Ubuntu 中虽可见 Docker Desktop 客户端路径，但明确返回未启用 WSL integration。
+   - 当前 PowerShell 环境未设置 OCI image、runtime 或 Go/gopls 命令变量，不能构造合法 promotion 命令。
+
+2. **固定 Go/gopls 产物复核**：
+   - 既有 `/var/tmp/star-sanctuary-p1a2-go1.24.2-linux-20260811-a/bin/go` 与 `/var/tmp/star-sanctuary-p1a2-gopls-v0.21.0-linux-20260811-a/bin/gopls` 均存在且可执行，版本分别为 `go1.24.2 linux/amd64` 与 `gopls v0.21.0`。
+   - 两个 artifact SHA-256 分别为 `34c159668bdf8e1a735cf61cb79301ef62aabaa8864ac1abef09e77071178c6a` 与 `840d64c1f01048656f89e4e449804fad9a4a71376fc1d5fdb30a0adbf98a7397`；artifact 前置已满足，但没有 Docker image/runtime 就不能形成 OCI admission。
+   - 历史 `q/r/s` selected report 使用的本地镜像 digest 为 `sha256:62f550497561d6285e10abd952730db89c905be990237eaf8744137929c72844`；本轮因 daemon 不可达，尚未能通过 `docker image inspect` 重新枚举该 digest。
+   - 未安装、下载、启动 Docker，未拉取镜像，未执行 promotion runner，未创建新的 OCI report，也未覆盖历史 `q/r/s` 失败 artifact。
+
+3. **回归验证**：
+   - `packages/belldandy-skills/src/code-intel` 定向 Vitest 8 个测试文件、71 项测试全部通过。
+   - timeline、readiness marker、late progress 归因和 failure-closed Doctor/Provider 合同保持通过。
+
+4. **效果与边界**：
+   - 本轮将阻塞收敛为 OCI daemon/WSL integration 与 digest image 可枚举性；Go/gopls artifact 前置已满足，native WSL2 `10/10` truth 仍仅作诊断证据。
+   - `goCanaryEligible=false`、`productionEligible=false` 保持失败关闭，未推进 comparator、Doctor eligibility 或默认启用。
+
+##### 验证结果
+
+- TypeScript/CodeIntel 定向构建与测试合同未回归；Vitest `8/71` 通过。
+- Docker daemon、WSL integration、digest image 与 Go/gopls artifact 尚未形成可执行 OCI admission；真实 timeline-bound promotion 未执行。
+- 未验证风险：Docker Desktop/WSL 状态可能由外部环境恢复；恢复后必须重新核对 image digest、artifact SHA-256 和源码 identity，不能复用本轮失败前置结论。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：等待外部恢复 Docker Desktop Linux Engine、Ubuntu-22.04 WSL integration 及可核验的 digest-pinned image/Go/gopls artifact；恢复后只执行一次全新的 timeline-bound OCI promotion run。
+- **为什么先做它**：代码与 native timeline 证据已经固定，下一条有效信息只能来自真实 OCI 同路径进程；在前置未恢复时继续修改或重跑不会增加可比证据。
+- **当前还缺的关键闭环**：OCI daemon/WSL integration、digest image 可枚举与 admission、`readinessTimeline` 与首次 references 的 10/10 绑定、RSS/cleanup Gate、双平台 comparator、`goCanaryEligible`/Doctor 最终投影；不包含自动安装、在线下载、默认启用或公开发布。
+
+### 14.63 P1-A2 readiness 跨 module probe 修复
+
+#### P1-A2 第二十切片实现结论：跨 module readiness 查询变量（2026-08-12）
+
+##### 已完成内容
+
+1. **`gopls-oci-host.ts` readiness probe 调整**：
+   - 将 OCI canary readiness 的 `workspace/symbol` 查询从不会命中冻结 fixture 的内部哨兵改为真实跨 module 符号 `BuildMessage`。
+   - 保持通用 LSP Host、500ms progress 静默窗口、业务查询顺序、OCI 资源限制和失败关闭边界不变；该变量只用于 Go OCI canary readiness。
+
+2. **`gopls-oci-host.test.ts` 回归锁定**：
+   - 记录 readiness 请求参数，断言 Host 仍先执行外部调用方请求，再执行带 `{ query: "BuildMessage" }` 的 readiness probe，并保留 marker 顺序与资源清理断言。
+
+3. **验证与中止边界**：
+   - `corepack pnpm --filter @belldandy/skills build` 通过。
+   - OCI Host/Provider/LSP timeline 3 个定向测试文件、34 项测试全部通过。
+   - 新的 `20260812-b` OCI run 在 Docker 状态再次不可达后被用户要求停止，以退出码 `143` 结束；未生成报告，未覆盖 `20260812-a` 或历史 `q/r/s` artifact。Docker 中仅观察到一个 `Exited (143)` 的 runner 容器，WSL 无残留 gopls/runner 进程。
+
+4. **效果与边界**：
+   - `20260812-a` 已证明 readiness marker 完成序号早于首次 references，排除“references 早于 readiness”假设，但仍为 `6/10`；本切片针对的是 readiness probe 语义不足，不宣称已修复 OCI truth。
+   - `goCanaryEligible=false`、`productionEligible=false` 保持失败关闭，未推进 comparator、Doctor eligibility 或默认启用。
+
+##### 验证结果
+
+- TypeScript 编译无错误；定向测试 `3/34` 通过。
+- 新 readiness 变量尚无完整 OCI report 证据；`20260812-b` 因用户中止未完成，不能计为通过或失败 truth 结果。
+- 已保留 `20260812-a` 报告：truth `6/10`、admission passed、RSS `127,762,432` bytes、cleanup 与残留 Gate 通过，SHA-256 为 `1ab3546f8f15fb823c241130657fb162994446060eea7489f19e36f8c34ef118`。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：等待用户明确恢复后，先重新确认 Docker daemon、WSL integration 和 digest image，再只执行一次新的不可覆盖 OCI promotion，读取 `readinessTimeline` 与 6 个 truth case；若仍非 10/10，停止继续调参并转入受控 fixture-specific readiness 设计评审。
+- **为什么先做它**：本次代码变量已有单测，但真实验证被中止；在没有新报告前继续改动会丢失单变量可比性。
+- **当前还缺的关键闭环**：该变量的 OCI 10/10 report、RSS/cleanup 余量复核、双平台 comparator、`goCanaryEligible`/Doctor 最终投影；不包含自动安装、在线下载、默认启用或公开发布。
+
+### 14.64 P1-A2 跨 module readiness OCI 验证
+
+#### P1-A2 第二十一切片实现结论：`BuildMessage` readiness promotion（2026-08-12）
+
+##### 已完成内容
+
+1. **Docker/WSL2 前置恢复与中止资源清理**：
+   - Windows 与 Ubuntu-22.04 均重新连接 Docker Desktop Linux Engine `29.1.3`，本地 digest `sha256:62f550497561d6285e10abd952730db89c905be990237eaf8744137929c72844` 可枚举。
+   - 精确删除上次用户中止留下的唯一 `Exited (143)` 容器；该容器不含持久数据，镜像、固定 artifact 和历史报告未受影响。
+   - 固定 artifact 仍为 `go1.24.2 linux/amd64` 与 `gopls v0.21.0`，未下载、安装或拉取任何内容。
+
+2. **`p1a2-wsl-oci-promotion-20260812-c.json` 真实运行**：
+   - 新 `BuildMessage` readiness probe 返回 1 项，readiness 在序号 `21` 完成；首次 references 在序号 `28 -> 29` 返回完整 4 项，第二次 references 返回完整 2 项。
+   - 6 个 truth case、10 个精确位置全部通过，precision/recall=`1/1`；Provider OCI admission passed，整体 Gate passed。
+   - readiness 后仍有 1 个 late progress token 创建，证明通过结果不依赖等待所有 token `end`，500ms 静默窗口保持不变。
+
+3. **资源与身份验证**：
+   - gopls RSS 峰值 `124,932,096 < 134,217,728` bytes，45 个采样点；仍只有约 8.9 MiB 余量，不能据此放宽大 fixture 资源 Gate。
+   - lease cleanup=`removed`，container/state/staging 残留均为 0；运行后 Docker 无 `belldandy-command` 容器，WSL 无 gopls 残留进程。
+   - 报告 SHA-256 为 `7d3aa6c73f75dc8ad079295cf77ec78b294f72979e354c6873f150b978a536f3`，source aggregate 为 `3f49e3492de27942287b7a20eef0f5ba8a69d1a6cf65977ed0f802f289007621`。
+
+4. **文档同步与效果**：
+   - `benchmarks/code-intel/README.md` 明确 Go canary 使用冻结跨 module `BuildMessage` probe，以及该 probe 不消费业务结果的边界。
+   - 当前已获得与最终修复源码 identity 绑定的 OCI 10/10 evidence；`goCanaryEligible=false`、`productionEligible=false` 仍保持失败关闭，未提前跳过 comparator 或 Doctor 投影。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm --filter @belldandy/skills build`）。
+- OCI Host/Provider/LSP timeline 3 个定向测试文件、34 项测试全部通过。
+- 真实 OCI promotion：truth `10/10`、admission/RSS/inspect/cleanup Gate 全部通过，报告不可覆盖且资源零残留。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：生成当前源码/dist identity 的全新 Windows native truth report，并实现只读 Windows native / WSL2 OCI comparator，失败关闭校验 manifest、fixture、toolchain、truth、lifecycle 与共享 runtime identity。
+- **为什么先做它**：OCI readiness 已用单一变量闭合，下一项计划 Gate 是证明 Windows native 与 WSL2 OCI 的语义合同一致；只有 comparator 通过后才有资格投影 `goCanaryEligible`。
+- **当前还缺的关键闭环**：双平台 comparator artifact、`goCanaryEligible`/Doctor eligibility 投影及接近 128 MiB RSS 上限的风险保留；不包含默认启用、自动安装、公开发布或更大 fixture promotion。
+
+### 14.65 P1-A2 Windows native comparator 输入
+
+#### P1-A2 第二十二切片实现结论：当前 identity Windows truth（2026-08-12）
+
+##### 已完成内容
+
+1. **Windows pinned toolchain 复核**：
+   - `C:\Users\admin\go\bin\gopls.exe` 返回 `gopls v0.21.0`，SHA-256 为 `b90ef9588bb5d316eed588c01e2782dad268921568a826dba27f64ab100614d0`。
+   - `D:\Program Files\Go\bin\go.exe` 返回 `go1.24.2 windows/amd64`，SHA-256 为 `01cda0ba94efa133f57e4794fc950927176a52338eb9b384eed29c5a1683dbe7`。
+
+2. **`p1a2-windows-truth-comparator-20260812-a.json` 生成**：
+   - 复用冻结 manifest/fixture 与当前 source/dist，6 个 case、10 个精确位置全部通过，precision/recall=`1/1`。
+   - Host/lifecycle、4 MiB response、单 Host 并发与 state cleanup Gate 全部通过；response peak 为 `5,583` bytes，运行后无 `gopls.exe` 残留。
+   - 报告 SHA-256 为 `1db876342a715280f128d191d38a58a05326f9b7b338f9f57cc667faebf679de`，manifest 与 fixture aggregate 分别为 `3f38b9f4...c7b9c45`、`7968ecd9...61b2c1ed`。
+
+3. **效果与边界**：
+   - comparator 现在具备当前 Windows native 与 WSL2 OCI 两份不可覆盖输入，不需要复用过期的历史 native evidence。
+   - Windows report 不证明 OCI network/read-only/RSS，WSL2 OCI report 不替代 Windows native lifecycle；两端仍需通过显式 comparator 才能投影 canary eligibility。
+
+##### 验证结果
+
+- Windows native truth `10/10`，precision/recall=`1/1`，lifecycle/response/concurrency/state cleanup 全部通过。
+- 运行期间 Gateway/model/Provider/network/host mutation 均未调用，固定 fixture 未变化，gopls 进程残留为 0。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：实现封闭 Go canary comparator Schema/runner/测试，读取上述 Windows native 与 `20260812-c` WSL2 OCI 报告，并校验报告 hash、manifest/fixture、toolchain version、case truth、lifecycle、shared runtime identity、OCI admission/RSS/cleanup。
+- **为什么先做它**：两份真实输入已具备，先用只读 comparator 固定跨平台闭合条件，避免在 Doctor 中重复或弱化 eligibility 判定。
+- **当前还缺的关键闭环**：Schema-valid comparator artifact、通过后的共享 eligibility owner、Doctor 投影与 RSS 风险保留；不包含默认启用、公开发布或更大 fixture promotion。
+
+### 14.66 P1-A2 双平台 comparator artifact
+
+#### P1-A2 第二十三切片实现结论：Windows native / WSL2 OCI comparator（2026-08-13）
+
+##### 已完成内容
+
+1. **`benchmarks/code-intel/v1/go-canary-comparator-report.schema.json` 新建**：
+   - 固定双平台输入 SHA-256、manifest/fixture identity、9 个 shared runtime 文件、Go/gopls 版本与平台、6 个 case/10 个位置摘要。
+   - 固定 Windows lifecycle/response/concurrency/state cleanup 与 OCI admission/inspect/RSS/cleanup/readiness 证据；failure code 枚举封闭，禁止命令、源码、token、URI 和 timeline 正文。
+
+2. **`scripts/run-code-intel-go-canary-comparator.mjs` 与测试接入**：
+   - 分别校验 Windows truth 与 OCI promotion 原报告 Schema，比较可跨平台相等的 identity 和 truth，独立复核平台特有 Gate。
+   - `wx` 单次写入；输入读取、输出摘要与异常均不回显路径或内部正文；CLI 新增 `benchmark:code-intel:go-canary-comparator`。
+   - 测试先行覆盖通过、复合漂移失败关闭、输入 Schema 拒绝、不可覆盖写入与 CLI 参数边界。
+
+3. **真实 artifact**：
+   - 输入 Windows truth SHA-256=`1db876342a715280f128d191d38a58a05326f9b7b338f9f57cc667faebf679de`，WSL2 OCI SHA-256=`7d3aa6c73f75dc8ad079295cf77ec78b294f72979e354c6873f150b978a536f3`。
+   - `.tmp-codex/p1a2-go-canary-comparator-20260813-b.json` Gate=`passed`，comparator=`passed`，6 case/10 position、9/9 shared runtime、Windows lifecycle 与 OCI admission/inspect/RSS/cleanup/readiness 全通过。
+   - artifact SHA-256=`599e616216a1d00bd843d2831abef40fdee6bc7c8aaa6d958bf051a4134bc6d7`；旧的 `20260813-a` 空 artifact 保留为不可覆盖故障证据，未覆盖或删除。
+
+4. **效果**：
+   - 双平台 comparator 现在有唯一、可复算、失败关闭的证据 owner；native truth 不再被误当 OCI sandbox 证据，OCI RSS 余量仍显式保留。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`corepack pnpm --filter @belldandy/skills build`）。
+- Comparator/truth/OCI runner 3 个文件、13 项测试全部通过；Go eligibility/Doctor、CLI/system.doctor 4 个文件、64 项测试全部通过。
+- 真实 comparator artifact 可解析、Schema-valid、SHA-256 已记录；Docker `belldandy-command` 容器与 WSL gopls/runner 残留均为 0。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：把单一 eligibility projection owner 接入 Doctor 报告，并以显式 comparator artifact 注入验证 `goCanaryEligible` 的 proven/unverified 两态；保持默认 CLI/Gateway 不自动读取临时 artifact。
+- **为什么先做它**：comparator 通过只证明双平台证据一致，不能让 Doctor 重复实现或弱化 Gate；单一 owner 可避免工具链可用被误投影成生产资格。
+- **当前还缺的关键闭环**：Doctor 中的 comparator projection 回归与 P1-C TaskProjection/capability closure；不包含默认启用、自动安装、公开发布或更大 fixture promotion。
+
+### 14.67 P1-A2 eligibility / Doctor projection
+
+#### P1-A2 第二十四切片实现结论：`goCanaryEligible` 单一 owner（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/code-intel/go-code-intel-eligibility.ts` 新建**：
+   - 只接受版本、identity、truth、Windows lifecycle、OCI admission/inspect/RSS/cleanup/readiness 和 governance 全部通过的 comparator projection。
+   - 缺失、Schema/version 无效、Gate 失败或证据不完整分别投影稳定 diagnostic code；`productionEligible` 永久为 `false`。
+
+2. **`go-code-intel-doctor.ts` / `index.ts` 接入**：
+   - Doctor 新增 `eligibility`、`summary.goCanaryEligible`、`governance.goCanaryEligible`；`canary-ready` 仍只表示 pinned toolchain 可探测。
+   - comparator 通过时可显式得到 `status=proven` 与 `goCanaryEligible=true`；默认无注入时为 `unverified/comparator_missing`，不启动 Provider、不读取临时 artifact。
+
+3. **效果**：
+   - Go canary promotion 只由一个 owner 决定，避免 comparator、Doctor、Provider 各自复制资格逻辑；生产资格和默认启用边界未放宽。
+
+##### 验证结果
+
+- TypeScript 编译无错误。
+- eligibility/Doctor 2 个 skills 文件、10 项测试通过；CLI/system.doctor 回归 64 项通过。
+- 既有 comparator/truth/OCI runner 回归 13 项通过，真实 comparator artifact 仍保持 `passed`。
+
+#### 后续计划（P1-C 尚未开始）
+
+- **下一步准备做什么**：进入 P1-C TaskProjection 与 Capability Closure，先检索现有 capability/task projection owner，定义只读 Go eligibility 绑定到任务启动闭包的最小接口。
+- **为什么先做它**：P1-A2 的语言能力证据和资格投影已经分层闭合，下一处系统性风险是跨 owner 状态被任务启动重复解释；应先固定 projection contract，再考虑任何 Provider consumer。
+- **当前还缺的关键闭环**：P1-C 的只读跨 owner projection、exact-binding action、任务启动闭包和旧客户端兼容；Go Provider 仍不默认启用。
+
+### 14.68 P1-C 只读 TaskProjection 合同与最小 adapter
+
+#### P1-C 第一切片实现结论：TaskProjection v1 与 capability closure（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/coding-run/task-projection.ts` 新建**：
+   - 新增 additive、versioned `task-projection/v1` 与 `task-capability-closure/v1` 合同。
+   - 固定十类任务状态，保留 `needs_input`、`verifying` 与 `uncertain`，并把既有 `awaiting_review` 映射为 `needs_input`。
+   - 每个投影携带 `owner.source`、完整 `CodingContextBinding`、观察时间、稳定 reason category/code、允许动作和任务级能力闭包。
+   - 能力闭包覆盖 tools、language/toolchain、sandbox、approval channel、worktree、journal、trace、verifier、MCP、Plugin、Skill；required capability 非 available 时 fail-closed 为 `blocked`。
+   - `createTaskProjectionSet` 对同一 task 的多份 authoritative evidence 做只读合并；冲突统一为 `uncertain`，只允许 `observe`，不会用迟到状态复活终态。
+   - 运行时校验拒绝 prompt、tool args、文件正文、路径、回调和非法 binding；不创建第二套领域状态真源。
+
+2. **`packages/belldandy-core/src/coding-run/task-projection.test.ts` 新建**：
+   - 测试正常状态归一化、exact binding 与脱敏。
+   - 测试 required capability 缺失的失败关闭。
+   - 测试多 owner evidence 冲突的 `uncertain` 投影与终态不可复活。
+   - 测试 malformed/content-bearing projection 拒绝。
+
+3. **`packages/belldandy-core/src/index.ts` additive 导出**：
+   - 暴露 TaskProjection 工厂、校验器、版本常量和类型，供后续 TUI、Headless、WebChat、VS Code consumer 复用同一合同。
+
+4. **效果**：
+   - 任务状态与 capability closure 有了单一只读公共合同，客户端不需要理解各 owner 的内部状态，也不能自行推断终态或执行 mutation。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/core build`。
+- `task-projection.test.ts` 1 个文件、4 项测试全部通过。
+- `git diff --check` 无错误；未启动 Provider、未读取临时 artifact、未修改领域状态或外部资源。
+
+#### 后续计划（P1-C 尚未结束）
+
+- **下一步准备做什么**：补充 TaskProjection 的 source collection adapter，把现有 Conversation/Goal/Workflow/Subtask 视图按统一 taskId 聚合，并定义 command job、worktree、journal、validation evidence 的 additive 输入接口；随后增加 exact-binding action envelope 的只读校验。
+- **为什么先做它**：当前切片已经冻结合同，但还没有跨 owner 的真实 collection 入口；先让 collection 只消费 authoritative adapter，才能验证相同事件序列在不同客户端得到一致终态。
+- **当前还缺的关键闭环**：command job/worktree/journal/validation 的 evidence 接入、cursor/backpressure 与 Gateway restart/迟到缓存兼容、TUI/Headless/WebChat/VS Code conformance；不包含迁移领域真源、默认 Go Provider 或远端写入。
+
+### 14.69 P1-C supporting evidence 与 exact-binding action envelope
+
+#### P1-C 第二切片实现结论：跨 owner evidence 摘要与 action envelope（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/coding-run/task-projection.ts` 扩展**：
+   - 新增无正文 `TaskProjectionSupportingEvidence`，仅允许 command job、worktree、journal、validation 的稳定状态、时间和 required 标记。
+   - validation `queued/running/incomplete` 将实现完成投影为 `verifying`；validation failure 显式为 `failed`，不被实现终态覆盖。
+   - journal/worktree uncertain、missing、conflicted 与 command job lost 分别投影为 `uncertain` 或 `interrupted`，保持失败关闭。
+   - 同 task 的 owner binding 漂移投影 `uncertain/owner_binding_drift`，不允许迟到 evidence 复活终态。
+   - 新增 `task-projection-actions/v1` action envelope 工厂与校验器；它只携带 `requestId`、`taskId`、action 和 exact binding，不执行 mutation、不携带 prompt/tool args/路径/正文。
+
+2. **测试与公共出口**：
+   - `task-projection.test.ts` 增加 validation 未完成、journal uncertain、command lost、binding drift 和 action envelope 拒绝测试。
+   - `packages/belldandy-core/src/index.ts` additive 导出三个版本合同、工厂、校验器和 supporting evidence 类型。
+   - `docs/project-map.md` 更新 `coding-run` 区域职责，明确 TaskProjection 是只读合同 owner。
+
+3. **效果**：
+   - “实现完成”与“验证完成”不再混为一个终态；控制动作必须回到原 owner 做二次 binding 校验，投影层没有 mutation 权限。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/core build`。
+- coding-run 3 个定向测试文件、25 项测试全部通过。
+- `git diff --check` 无错误；Docker `29.1.3` 可用且无本轮残留容器。
+
+#### 后续计划（P1-C 尚未结束）
+
+- **下一步准备做什么**：实现只读 collection adapter 的首个 Core 入口，接入现有 `coding.run.status` 查询、recovery marker、command job list、worktree status、workflow journal 与 validation report 的稳定摘要；先提供 cursor/revision 与 stale evidence 拒绝，不接 UI 写路径。
+- **为什么先做它**：合同已经能表达跨 owner evidence，但尚无单一 collection 入口；下一步必须证明 Gateway restart、旧 cursor、owner 重绑和迟到缓存不会造成状态漂移。
+- **当前还缺的关键闭环**：真实 collection 的 owner 查询编排、cursor/backpressure、旧客户端兼容矩阵及 TUI/Headless/WebChat/VS Code conformance；P1-C 仍未完成，不启动 P2-A 并行写任务。
+
+### 14.70 P1-C revision-bound collection snapshot
+
+#### P1-C 第三切片实现结论：只读 collection 与 stale cursor Gate（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/coding-run/task-projection-collection.ts` 新建**：
+   - 从同一 collection revision 的 authoritative inputs 创建不持久化、按 taskId 确定排序的只读快照。
+   - 默认只接受与 collection revision 相同的 source evidence；旧 source 与 future source 均在生成快照前失败关闭。
+   - 新增 `{revision, offset}` cursor 与固定分页，默认 50、最大 100；stale、future、越界 cursor 和非法 limit 均整页拒绝，不发送部分数据。
+   - collection 只调用 `createTaskProjectionSet`，不读取 prompt/正文、不写 owner、不保存第二套 TaskStore。
+
+2. **`task-projection-collection.test.ts` 与合同收紧**：
+   - 新增确定性排序、bounded page、next cursor、stale/future/out-of-range cursor 和 source revision 漂移测试。
+   - 修复 Goal-level binding 可选 `nodeId` 被误判为必需的问题，并补充嵌套 Goal/Workflow/Subtask 与 WorkspaceCheckpoint 严格字段校验。
+   - `isTaskProjectionV1` 现在要求 `allowedActions` 与状态的固定动作集完全一致，不能通过伪造额外 action 绕过 owner 复核。
+
+3. **公共导出与地图同步**：
+   - `packages/belldandy-core/src/index.ts` additive 导出 collection 版本、限制、工厂、reader 与类型。
+   - `docs/project-map.md` 记录 collection 的 revision/cursor/backpressure 职责和不持久化边界。
+
+4. **效果**：
+   - 旧 cursor、旧 source evidence 与 future evidence 都不能以部分数据复活任务状态；客户端可按统一有界页读取同一快照。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/core build`。
+- coding-run 4 个定向测试文件、28 项测试全部通过。
+- 首次 collection 测试暴露的 Goal 可选 `nodeId` 校验问题已修复并回归通过；`git diff --check` 无错误。
+
+#### 后续计划（P1-C 尚未结束）
+
+- **下一步准备做什么**：在 Gateway 增加 pairing-protected 的只读 TaskProjection collection 查询，装配现有 authoritative owner readers，并保持旧 `coding.run.status`、stdio/MCP/TUI 行为不变；随后为 Headless 添加 additive consumer。
+- **为什么先做它**：纯合同和快照 Gate 已闭合，下一项真实风险是 Gateway owner 编排和 restart 后 revision 分配；必须先证明 RPC 返回的就是同一 collection，而不是客户端各自拼装。
+- **当前还缺的关键闭环**：Gateway collection revision owner、真实 command job/worktree/journal/validation reader、Headless/TUI/WebChat/VS Code conformance 和故障矩阵；不包含 UI 重构、领域迁移或 P2-A Supervisor。
+
+### 14.71 P1-C Core owner collection
+
+#### P1-C 第四切片实现结论：Gateway 前的 owner-safe collection（2026-08-13）
+
+##### 已完成内容
+
+1. **`conversation-run-registry.ts` / `conversation-run-registry.test.ts`**：
+   - 新增 `listActiveRuns()` 安全视图，仅返回 Conversation/run ID、agent ID、状态和时间，不暴露 stop callback、stop reason 或私有 owner。
+
+2. **`source-adapters.ts`**：
+   - 新增 `WorkflowActiveCodingRunView`，只依赖公共 Workflow capability 已承诺的 run ID、journal ID、status 和 startedAt，不强制内部 stats。
+   - 保留原详细 Workflow runtime adapter 的 stats/diagnostic 合同不变。
+
+3. **`task-projection-collector.ts` / 测试**：
+   - 只读聚合 Conversation、Goal、Workflow active runs、Subtask；缺少真实 `lastRunId/sessionId/workflowRunId` 的记录直接排除，不发明 binding。
+   - worktree 只按 exact `conversationId + runId` 关联，重复 owner 变为 blocked evidence；路径、repo、retention reason 不进入投影。
+   - 未注入 capability resolver 时显式生成 `unknown/not_evaluated` closure，不把“未评估”伪装成 available。
+   - 任一可选 owner 读取失败只返回已成功读取的 sources，不编造失败任务或正文。
+
+4. **`task-projection-collection-runtime.ts` / 测试**：
+   - 新增进程内只读 snapshot runtime；同一 owner evidence fingerprint 不递增 revision，证据变化才递增。
+   - cursor 绑定 `epoch + revision + offset`，Gateway 重启/不同 epoch 的 cursor 统一 stale；快照不持久化、不写领域 owner。
+
+5. **效果与边界**：
+   - 真实 Gateway 接线前已证明 owner-safe enumeration、revision 稳定性和跨重启 cursor 失败关闭。
+   - command job 尚未接入，因为当前 `CommandJobSnapshot` 没有可信 `agentRunId`/task binding；本轮不按 jobId 猜测任务归属。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/core build`。
+- collector/collection-runtime/source-adapter 3 个测试文件、29 项相关测试通过（含 Conversation registry 全量回归）。
+- 读取失败、旧 binding、跨 epoch cursor 均失败关闭；未执行 mutation、Provider 或 Docker 任务。
+
+#### 后续计划（P1-C 尚未结束）
+
+- **下一步准备做什么**：新增 pairing-protected `task.projection.list` Gateway RPC，装配 collection runtime 与 owner collector，支持 bounded `limit`、epoch/revision cursor 和稳定 error code；先只读，不接 UI action dispatch。
+- **为什么先做它**：collection 的合同和 owner 读取边界已具备，下一处风险是 RPC 认证、请求参数、Gateway restart 和旧客户端兼容；必须先固定协议入口再接 Headless/TUI。
+- **当前还缺的关键闭环**：RPC 真实双平台/重启集成、command job/validation/journal evidence 的可信 binding、TUI/Headless/WebChat/VS Code conformance；不包含领域真源迁移或 mutation action 执行。
+
+### 14.72 P1-C Gateway RPC 入口
+
+#### P1-C 第五切片实现结论：`task.projection.list` Gateway RPC（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/server-methods/task-projection.ts` 新建并接线**：
+   - 新增 pairing-protected 的 `task.projection.list` 只读 RPC，统一调用 owner-safe collector 与进程内 collection runtime。
+   - 参数仅接受 bounded `limit`（1-100）和 `{epoch, revision, offset}` cursor；非法字段、stale/future/越界 cursor 均返回稳定错误，不返回部分数据。
+   - RPC 只返回脱敏 TaskProjection collection page，不执行 action envelope、不写入领域 owner、不读取 prompt/正文。
+
+2. **`server.ts` / `server-websocket-dispatch.ts` / `gateway-method-registry.ts` / `index.ts`**：
+   - 装配并透传 `TaskProjectionCollectionRuntime`，Gateway 重启自动生成新 epoch，使旧 cursor 失败关闭。
+   - 将 `task.projection.list` 注册为 pairing-required/read 方法，并修复其误落入 `handleCodingRunMethod` 的重复分支。
+   - additive 导出 collection、runtime、collector 与 source adapter 合同，供后续 Headless/TUI 等 consumer 复用。
+
+3. **测试与效果**：
+   - registry 回归断言该方法保持 pairing-required/read；RPC 回归覆盖 bounded page、owner 读取失败隔离、非法参数和 stale cursor。
+   - 现有 `coding.run.*`、stdio/MCP/TUI 方法路径保持原分发，不引入 mutation 或 Provider 启动。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/core build`。
+- 7 个 Core 定向测试文件、35 项测试全部通过（含 TaskProjection、collection、runtime、collector、Conversation registry、RPC、Gateway method registry）。
+- `git diff --check` 无错误；Docker Server `29.1.3` 可用，`belldandy-command` 残留容器为 0。
+
+#### 后续计划（P1-C 尚未结束）
+
+- **下一步准备做什么**：为 Headless/TUI 增加 additive TaskProjection consumer conformance，先复用同一 RPC page/cursor，再覆盖 Gateway restart、旧 cursor、owner binding 漂移和 `uncertain`/`verifying`/`blocked` 终态显示；同时评估 command job、journal、validation 是否具备可信 exact binding。
+- **为什么先做它**：RPC 已固定认证与分页边界，下一处风险是不同客户端自行拼装状态或误把 supporting evidence 当终态；先做 consumer conformance 能证明公共合同在现有入口上保持一致。
+- **当前还缺的关键闭环**：Headless/TUI/WebChat/VS Code conformance、真实 command job/validation/journal evidence binding 与双平台 Gateway/restart 集成；不包含领域真源迁移、UI mutation、Provider 默认启用或远端写入。
+
+### 14.73 P1-C TUI additive consumer
+
+#### P1-C 第六切片实现结论：TUI TaskProjection 只读 consumer（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/tui/runtime.ts` 扩展**：
+   - 新增 `CodingTuiRuntime.listTaskProjections()`，只复用已有 `invokeGateway` 调用 `task.projection.list`。
+   - 保留 `{epoch, revision, offset}` cursor 与 1-100 bounded limit，不在 TUI 创建任务状态真源。
+   - 严格校验 collection page、next cursor 和每项 `task-projection/v1`；带 prompt/tool args/正文的伪投影失败关闭。
+
+2. **`packages/belldandy-core/src/tui/runtime.test.ts`**：
+   - 覆盖 bounded page/cursor 转发、page identity 保留、敏感字段拒绝和 Gateway parse failure。
+
+3. **效果**：
+   - TUI 可消费与 Gateway 同一只读 TaskProjection 合同，客户端不再需要按 Conversation/Goal/Workflow/Subtask 自行拼装任务状态；现有 TUI state、action 和 mutation 流程保持不变。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/core build`。
+- TUI runtime/state/app 3 个测试文件、50 项测试全部通过。
+- `git diff --check` 无错误；未执行 mutation、Provider、Docker job 或远端写入。
+
+#### 后续计划（P1-C 尚未结束）
+
+- **下一步准备做什么**：为 Headless CLI 增加同一 TaskProjection collection 的 JSON-only additive 查询入口，并提取与 TUI 共用的 page parser/conformance；优先覆盖 Gateway restart 后 cursor 失效和 `uncertain`/`verifying`/`blocked` 的保真输出。
+- **为什么先做它**：TUI 已证明交互 consumer 不需要第二套状态机，Headless 是另一个低风险、可脚本化的 consumer，可用 JSON contract 验证跨客户端一致性。
+- **当前还缺的关键闭环**：Headless CLI 入口、WebChat/VS Code conformance 与真实 command job/validation/journal exact binding；不包含状态迁移、UI mutation、Provider 默认启用或远端写入。
+
+### 14.74 P1-C Headless additive consumer
+
+#### P1-C 第七切片实现结论：Headless TaskProjection JSON consumer（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/coding-run/task-projection-consumer.ts` 新建**：
+   - 提供 Headless/TUI 共用的 collection page/cursor 严格解析器。
+   - 逐项校验 `task-projection/v1`，拒绝 prompt、tool args、正文和非法 cursor；不缓存任务状态、不执行 mutation。
+
+2. **`packages/belldandy-core/src/cli/commands/agent/task-projections.ts` / `agent.ts`**：
+   - 新增 `bdd agent task-projections` JSON-only additive 查询入口。
+   - 仅接受 bounded `--limit` 与 JSON `{epoch,revision,offset}` cursor，复用 pairing-protected `task.projection.list`，Gateway 失败映射既有 CLI exit code。
+
+3. **效果**：
+   - Headless 与 TUI 消费同一 parser、分页和终态合同，不自行拼装 Conversation/Goal/Workflow/Subtask 状态。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/core build`。
+- Headless、TUI、CLI registry、Gateway registry 4 个定向测试文件、33 项测试全部通过。
+- `git diff --check` 无错误；未执行 mutation、Provider、Docker job 或远端写入。
+
+#### 后续计划（P1-C 尚未结束）
+
+- **下一步准备做什么**：补充 parser 跨 consumer conformance 与 Gateway restart/旧 cursor 集成证据；随后评估 WebChat/VS Code 是否只需复用 JSON page，或需要额外的稳定展示 adapter。
+- **为什么先做它**：Headless 与 TUI 已共享解析器，下一风险是同一 page 在重启、迟到 evidence、`uncertain`/`verifying`/`blocked` 状态下的跨入口一致性。
+- **当前还缺的关键闭环**：WebChat/VS Code conformance、Gateway 双平台/restart 集成、真实 command job/validation/journal exact binding 和任务启动闭包；不包含领域迁移、UI mutation、Provider 默认启用或远端写入。
+
+### 14.75 P1-C restart cursor evidence
+
+#### P1-C 第八切片实现结论：Gateway restart epoch 失败关闭证据（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/server-methods/task-projection.test.ts`**：
+   - 新增 handler-level restart 回归：旧 runtime 的 `{epoch, revision, offset}` cursor 交给新 epoch runtime 时返回 `cursor_stale`，不返回部分数据。
+
+2. **效果**：
+   - RPC 层与 collection runtime 层共同证明 Gateway restart 不会复用旧 collection cursor；Headless/TUI 收到稳定 stale error 后必须重新获取第一页。
+
+##### 验证结果
+
+- `task-projection` handler、shared consumer、Headless command 3 个测试文件、7 项测试通过。
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/core build`；`git diff --check` 无错误。
+- 未启动真实 Provider、未执行 mutation、未进行 Docker job 或远端写入。
+
+#### 后续计划（P1-C 尚未结束）
+
+- **下一步准备做什么**：进入 WebChat/VS Code additive conformance 评估，优先确认两者是否已有可复用的 Gateway RPC/stdio page adapter；真实 Gateway 双平台子进程 restart 集成列为后续验证项。
+- **为什么先做它**：当前协议、runtime、TUI、Headless 与 handler-level restart 语义已闭合，下一风险是已有外部 consumer 继续自行拼装旧状态；先做 consumer inventory 能控制兼容范围。
+- **当前还缺的关键闭环**：WebChat/VS Code conformance、真实双平台 Gateway/restart evidence、command job/validation/journal exact binding 与任务启动闭包；不包含领域迁移、UI mutation、Provider 默认启用或远端写入。
+
+### 14.76 P1-C VS Code additive stdio consumer
+
+#### P1-C 第九切片实现结论：VS Code TaskProjection 只读 stdio consumer（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/coding-run/stdio.ts` 扩展**：
+   - 新增 `projection.request` / `projection.response` v1 帧、严格 request/response 守卫、bounded `limit` 与 `{epoch, revision, offset}` cursor 校验。
+   - 新增 `CodingRunClient.listTaskProjections()`，只读返回同一 `TaskProjectionCollectionPage`，并保留 `invalid_limit`、`cursor_stale`、`cursor_future`、`cursor_out_of_range` 稳定错误码。
+
+2. **`packages/belldandy-core/src/coding-run/stdio-process.ts` 接入**：
+   - 新增 `invokeGatewayCodingRunProjection()`，通过 pairing-protected `task.projection.list` 调用 Gateway。
+   - 复用 `parseTaskProjectionCollectionPage`，不新增 prompt、tool args、action 或 mutation 路径。
+
+3. **`apps/vscode-extension/src/stdio-client.cjs` 与测试**：
+   - 新增 `listTaskProjections({limit, cursor})` additive API；拒绝非法字段、非法 cursor 和超界 limit，响应按 request id 与 `projection` kind 关联。
+   - 新增 Core stdio/process 与 VS Code client 回归，覆盖合法 page、非法 request、结构化 cursor 失败和 response correlation。
+
+4. **效果**：
+   - VS Code 可读取与 TUI/Headless 相同的 revision-bound TaskProjection page，不自行拼装 Conversation/Goal/Workflow/Subtask 状态。
+   - Gateway restart 后旧 cursor 继续失败关闭；当前不新增 VS Code UI 命令，避免把只读合同误接成第二套状态机。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/core build`。
+- stdio、stdio-process、VS Code client 3 个定向测试文件、30 项测试全部通过。
+- `git diff --check` 无错误；Docker Server `29.1.3` 可用，未启动 Provider、未执行 mutation 或远端写入。
+
+#### 后续计划（P1-C 尚未结束）
+
+- **下一步准备做什么**：评估 WebChat 是否需要独立的只读 projection adapter；若需要，复用同一 page parser 与 Gateway RPC，不复制旧 `subtask.*`/`workflow.status` owner。随后补真实 Gateway 双平台子进程 restart 集成，最后检查 command job、validation、journal 是否具备可信 exact binding。
+- **为什么先做它**：VS Code stdio seam 已闭合，下一风险是 WebChat/外部 consumer 继续拼装旧状态，以及 process-level restart 证据尚未覆盖；先做 adapter inventory 能控制兼容范围，再补高成本跨进程验证。
+- **当前还缺的关键闭环**：WebChat conformance、真实双平台 Gateway/restart evidence、command job/validation/journal exact binding 与任务启动闭包；不包含领域迁移、UI mutation、Provider 默认启用或远端写入。
+
+### 14.77 P1-C WebChat additive consumer seam
+
+#### P1-C 第十切片实现结论：WebChat TaskProjection 只读 adapter（2026-08-13）
+
+##### 已完成内容
+
+1. **`apps/web/public/app/features/task-projection-webchat.js` 新建**：
+   - 新增 `createWebChatTaskProjectionAdapter()`，只通过现有 `gateway.request()` 调用 `task.projection.list`。
+   - 复用 TaskProjection v1、capability closure、supporting evidence、revision/cursor 的严格字段和状态校验；非法请求在发送前失败，非法 page/cursor 在进入 consumer 前失败。
+   - 不持有任务缓存、不执行 action envelope、不读取 prompt/正文、不改变既有 owner 查询。
+
+2. **`webchat-runtime-context.js` 与测试扩展**：
+   - runtime context 新增 `taskProjections.list()` additive 能力，保持 adapter replace/dispose 和旧五类 capability 行为不变。
+   - 新增合法 page 与非法字段回归，证明请求仍由统一 WebSocket request lifecycle 发送，旧 consumer 不受影响。
+
+3. **效果与边界**：
+   - WebChat 已具备与 TUI、Headless、VS Code 相同的只读 page 接入点，但本轮不把现有任务面板迁移到 projection，避免 UI 同时维护两套状态来源。
+
+##### 验证结果
+
+- WebChat runtime/lifecycle 2 个定向测试文件、9 项测试全部通过。
+- `corepack pnpm run build:web-assets` 成功生成 48 个 manifest entries；`node --check apps/web/public/app/features/task-projection-webchat.js` 通过。
+- 未启动 Provider、未执行 mutation、未进行远端写入。
+
+#### 后续计划（P1-C 尚未结束）
+
+- **下一步准备做什么**：先补真实 Gateway 双平台子进程 restart 集成，验证 stdio/JSON page consumer 在跨进程重启后只接受新 epoch；随后检查 command job、validation、journal 是否具备可信 exact binding，再决定是否迁移任一 WebChat 任务面板。
+- **为什么先做它**：四类 consumer seam 已统一，剩余最大不确定性是 process-level restart 与 supporting evidence binding；先验证生命周期边界能避免 UI 迁移建立在不稳定 cursor 语义上。
+- **当前还缺的关键闭环**：真实双平台 Gateway/restart evidence、command job/validation/journal exact binding 与任务启动闭包；WebChat UI 迁移、领域迁移、UI mutation、Provider 默认启用和远端写入明确不在本切片范围。
+
+### 14.78 P1-C process-level restart evidence
+
+#### P1-C 第十一切片实现结论：stdio projection 的真实 Gateway restart 失败关闭（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/coding-run/stdio-process.test.ts`**：
+   - 启动真实 Gateway，通过真实 `runCodingRunStdio` / WebSocket RPC 获取第一页的 `{epoch, revision}`。
+   - 关闭并重新启动 Gateway，将旧 cursor 重新经 stdio 发送；新 runtime 返回 `projection.response` 的 `cursor_stale`，不返回部分 page。
+
+2. **效果**：
+   - handler/runtime 级与真实 process-level 两层证据均闭合了 Gateway restart 的 cursor 失败关闭语义。
+   - 本测试覆盖 Windows 当前 Node 进程路径；未宣称 WSL2/OCI 双平台等价，双平台子进程矩阵继续延期。
+
+##### 验证结果
+
+- `stdio-process.test.ts` 12 项测试全部通过（含新增真实 Gateway restart projection case）。
+- TypeScript 编译无错误；未启动 Provider、未执行 mutation、未进行远端写入。
+
+#### 后续计划（P1-C 尚未结束）
+
+- **下一步准备做什么**：为 command job、validation、journal 做 exact binding 可行性审计；只有存在可信 `agentRunId/taskId` 关联时才纳入 supporting evidence，否则记录为 `defer`。随后根据审计结果决定是否进入 WebChat UI 的真实 projection 展示。
+- **为什么先做它**：restart/cursor 生命周期已具备双层证据，当前最大风险变成 supporting evidence 误绑定；先审计 owner binding 能避免把 jobId、journalId 或缓存时间戳误当任务身份。
+- **当前还缺的关键闭环**：WSL2/OCI 双平台 process restart matrix、可信 command job/validation/journal exact binding 与任务启动闭包；不包含领域迁移、UI mutation、Provider 默认启用或远端写入。
+
+#### P1-C supporting evidence binding 审计结论（2026-08-13）
+
+- `packages/belldandy-skills/src/command-job.ts` 的 `CommandJobSnapshot` 只有 `jobId` 与进程生命周期字段，没有可信 `agentRunId`/`taskId`；不能按 jobId 猜测 TaskProjection owner，结论为 `defer`。
+- `scripts/run-verification-dag.mjs` 的 validation/test report 以 DAG node 与 artifact hash 绑定，当前没有统一 `agentRunId/taskId` 投影入口；在建立 exact binding 前不纳入 supporting evidence，结论为 `defer`。
+- `packages/belldandy-core/src/coding-run/reconciliation-journal.ts` 已支持 Conversation `conversationId + agentRunId` 及 delegation `taskId + sessionId` 的 exact binding，但不是 command job/validation 的通用 owner；继续复用现有边界，不扩展猜测关联。
+- **后续计划**：保持上述三类 evidence `defer`，优先完成 WSL2/OCI 双平台 process restart matrix；只有新增 authoritative binding 后才重新评估 supporting evidence 接入和 WebChat UI 迁移。
+
+### 14.79 P1-A2 gopls readiness bounded timeline evidence
+
+#### P1-A2 第十三切片实现结论：didOpen、progress token 与首次 references 有界时序证据（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/code-intel/lsp-process-host.ts` 扩展**：
+   - readiness 摘要新增首个 `textDocument/didOpen` started/sent 序号、首个 work-done progress token created/end 序号、首次 `textDocument/references` started/completed 序号及该请求开始时 active token 数。
+   - 新增 `didOpenBeforeReadiness`、`progressClosedBeforeFirstReferences`、`referencesAfterReadiness` 与单调相对 `readinessDurationMs`；timeline 仍最多保留 128 条，不保存 URI、源码或 token 原值。
+
+2. **`scripts/run-code-intel-go-canary-comparator.mjs` 与报告 Schema**：
+   - comparator 只在 didOpen 先完成、progress token 在首次 references 前闭合、首次 references 开始时无 active token、readiness duration 位于 `0..30,000 ms` 有界查询窗口内时通过。
+   - `go-truth-set-report` 与 `go-oci-promotion-gate-report` v1 Schema 将新字段作为兼容扩展；旧 report 仍可读取，但缺少新证据会由 comparator 失败关闭，不会被当作通过证据。
+
+3. **`packages/belldandy-skills/src/code-intel/lsp-process-host.test.ts` 与 comparator 回归**：
+   - 先加入红灯时序断言，再实现摘要字段；新增 token 未闭合、readiness 超过 30 秒的失败关闭场景。
+   - 保持 `productionEligible=false`、不启动 Provider、不修改默认 profile、不覆盖历史 artifact。
+
+4. **效果**：
+   - readiness 证据从“首次 references 在 marker 后”提升为可审计的 didOpen → progress token → readiness → 首次 references 时序链。
+   - late progress 仍被记录但不要求所有 token 永远结束；只有首次 references 前的 token 闭合和有界耗时才进入双平台 comparator Gate。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/skills build`。
+- CodeIntel、Go truth、OCI promotion、Go comparator 定向测试 12 个文件、89 项全部通过。
+- `node --check`（3 个 Go runner）、`git diff --check` 均通过。
+- Docker Server `29.1.3`、WSL2 `/bin/true` 探针可用；Windows pinned `go1.24.2`/`gopls v0.21.0` 真实 truth report 写入 `tmp/p1-a2-readiness-20260813-r1/windows-native/go-truth-report-r2.json`，6/6 case、10/10 位置通过；该 report 观察到 `didOpen sent=5`、首个 progress `created=9/end=15`、首次 references `started=22/completed=23`、开始时 active token=`0`，但 native Host 没有 OCI readiness marker，`readinessStarted/Completed=null`。本轮未成功探测到 WSL2 发行版内 `go/gopls` 绝对路径，未生成新的真实 OCI report，未覆盖历史 selected failure。
+
+#### 后续计划（P1-A2 尚未因本切片重新闭合）
+
+- **下一步准备做什么**：在 WSL2 中提供已审计的 pinned `go1.24.2`/`gopls v0.21.0` artifact 绝对路径后，使用全新 artifact 根重跑一次 native truth 与 OCI promotion；随后用新报告运行 comparator，确认新 readiness 字段在真实 timeline 中满足 Gate。
+- **为什么先做它**：当前实现和模拟/合同测试已证明字段、上界和失败关闭行为，但旧真实 artifact 缺少新字段，不能替代最终双平台时序证据；先补真实输入才能判断 progress token 与首次 references 的实际稳定性。
+- **当前还缺的关键闭环**：一份新的 WSL2/OCI Schema-valid report、OCI Host 的 readiness marker 与 didOpen/progress/reference 时序在真实 gopls 上通过、双平台 comparator 重新闭合；Windows native report 只能作为单平台时序辅助证据，不能替代 OCI readiness。此前 `goCanaryEligible` 与 `productionEligible` 必须保持 `false`，不推进默认 Provider 或 P1-C 后续 UI 迁移。
+
+### 14.80 P1-A2 WSL2 pinned artifact provisioning 与 OCI 阻塞复核
+
+#### P1-A2 第十四切片实现结论：Linux Go/gopls 固定 artifact（2026-08-13）
+
+##### 已完成内容
+
+1. **`E:\ss-toolchains` 外部 artifact 新建**：
+   - 从 Go 官方归档下载并按官方 SHA-256 `68097bd680839cbc9d464a0edce4f7c333975e27a90246890e9f1078c7e702ad` 校验 `go1.24.2.linux-amd64.tar.gz`，固定运行时命令为 `/mnt/e/ss-toolchains/go1.24.2-linux-amd64/bin/go`。
+   - `gopls v0.21.0` 的模块合同要求 `go >= 1.25`，因此使用仅存在于 `/tmp` 的官方校验 Go `1.25.12` bootstrap 构建；最终运行时 Go 仍固定为 `go1.24.2 linux/amd64`，bootstrap 与 module cache 已清理。
+   - 首次构建发现 gopls 依赖 `GLIBC_2.34`，不能保证兼容固定 Bullseye 镜像；随后以 `CGO_ENABLED=0` 重建为 x86-64 静态 ELF，固定命令为 `/mnt/e/ss-toolchains/gopls-v0.21.0-linux-amd64/bin/gopls`。
+
+2. **WSL2 OCI promotion 尝试与失败收敛**：
+   - `@belldandy/skills` 当前源码重新编译通过后，以全新且不可覆盖的 `tmp/p1-a2-readiness-20260813-r2/wsl2-linux/go-oci-report.json` 目标启动真实 promotion；未使用 Windows `.exe`、未覆盖历史 report。
+   - 运行在 300 秒外层预算内未返回且没有生成 report；Windows 与 WSL2 两侧的 `docker version`/`docker ps` 短探针随后均超时，Docker 日志显示 API 停留在 `container top`，同时出现日志轮转 `Access is denied`。
+   - 已终止本轮遗留的 gate Node 与只读 docker CLI，WSL2 中未发现本轮 staging、lease 或 gate Node 残留；由于 daemon 控制面仍无响应，容器零残留目前无法验证，不将本轮计为 OCI evidence。
+
+3. **效果**：
+   - WSL2 已具备版本、架构、路径和哈希均可审计的 Linux artifact，且 Go/gopls root 可按同绝对路径只读挂载到 OCI Host。
+   - 修正了动态 glibc 依赖这一潜在 Bullseye 启动失败点，下一次 promotion 不再依赖宿主 Ubuntu 的 glibc 版本。
+   - OCI readiness、RSS、cleanup 与 comparator 仍失败关闭；`goCanaryEligible=false`、`productionEligible=false` 保持不变。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/skills build`。
+- 本环节未修改运行时代码且未新增测试；未重复执行测试矩阵，最近一次相关回归仍为上一环节 12 个文件、89 项通过。
+- Go：`go version go1.24.2 linux/amd64`，可执行文件 SHA-256=`34c159668bdf8e1a735cf61cb79301ef62aabaa8864ac1abef09e77071178c6a`。
+- gopls：`golang.org/x/tools/gopls v0.21.0`，静态 x86-64 ELF，SHA-256=`831717e61d90c6757990855e743c6155fc8b12eae5f8f82b450d431e43e6c57e`。
+- Docker digest 镜像在运行前曾成功 inspect；promotion 运行后 Docker API 无响应，未生成 Schema-valid OCI report，容器零残留无法验证。
+
+#### 后续计划（P1-A2 尚未因本切片重新闭合）
+
+- **下一步准备做什么**：先由开发人员恢复 Docker Desktop Linux Engine/WSL integration，使 Windows 与 WSL2 的 `docker version`、`docker ps -a` 在 10 秒内返回；随后核对并清理本轮可能遗留的 `belldandy-command-*` 容器，再使用新的不可覆盖 output root 执行唯一一次 OCI promotion。
+- **为什么先做它**：pinned artifact 前置已经闭合，当前证据把阻塞定位到 Docker 控制面；在 daemon 不可观测时继续重跑只会产生孤立进程，无法新增 readiness 证据或证明 cleanup。
+- **当前还缺的关键闭环**：Docker API 恢复与容器零残留确认、一份新的 Schema-valid WSL2/OCI report、真实 didOpen/progress/readiness/references 时序 10/10、RSS/cleanup Gate、双平台 comparator；不包含自动重启 Docker、默认启用 Provider、公开发布或修改 eligibility。
+
+### 14.81 P1-A2 WSL2 静态 artifact native truth 复核
+
+#### P1-A2 第十五切片实现结论：固定 Linux artifact native truth（2026-08-13）
+
+##### 已完成内容
+
+1. **`tmp/p1-a2-readiness-20260813-r3/wsl2-linux/go-truth-report.json` 新建**：
+   - 使用固定 `/mnt/e/ss-toolchains/go1.24.2-linux-amd64/bin/go` 与静态 `/mnt/e/ss-toolchains/gopls-v0.21.0-linux-amd64/bin/gopls`，未使用 Windows `.exe`，输出路径为全新不可覆盖根。
+   - 复用冻结 `benchmarks/code-intel/v1/go-truth-set.json`，不修改 fixture、manifest 或历史 artifact。
+
+2. **Native lifecycle/readiness 证据**：
+   - 6/6 truth case、10/10 精确位置通过，precision=`1`、recall=`1`，decoded response peak=`5,477` bytes，并发 peak=`1`，forced termination=`0`、unexpected exit=`0`、state cleanup 通过。
+   - 首个 didOpen started/sent=`1/5`，首个 progress created/end=`11/15`，首次 references started/completed=`22/23`，首次 references 开始时 active progress=`0`，`progressClosedBeforeFirstReferences=true`。
+   - native Host 没有 OCI readiness marker，因此 `readinessStartedSequence`、`readinessCompletedSequence`、`readinessDurationMs` 与 `referencesAfterReadiness` 保持 `null`；该结果不作为 OCI readiness 或双平台 promotion 证据。
+
+3. **效果**：
+   - 已证明新提供的 Linux artifact 能在 WSL2 native 环境稳定完成固定 Go truth set，artifact 版本/架构问题不再是当前 native 阻塞点。
+   - didOpen → progress → 首次 references 的可审计顺序在 WSL2 native 上成立；OCI 专属 readiness、RSS/inspect/cleanup 和 comparator 仍保持失败关闭。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/skills build`。
+- WSL2 native Go truth report Gate 通过：6/6 case、10/10 position、precision/recall=`1/1`。
+- 本切片未修改运行时代码，未新增测试；Docker promotion 未重复启动，避免在控制面失联时制造残留。
+
+#### 后续计划（P1-A2 尚未因本切片重新闭合）
+
+- **下一步准备做什么**：等待 Docker Desktop Linux Engine/WSL integration 恢复后，先在 Windows 与 WSL2 各执行 10 秒 `docker version`、`docker ps -a` 和 digest image inspect；通过后核对 `belldandy-command-*` 零残留，再执行唯一一次全新的 OCI promotion。
+- **为什么先做它**：native truth 已证明 artifact 和 gopls 语义链可用，剩余未知量集中在 OCI 控制面、同路径只读挂载、资源观测和 readiness marker；继续跑 native 不会新增这些证据。
+- **当前还缺的关键闭环**：Docker API 恢复、OCI report 的 readiness marker 与 10/10 truth、RSS/cleanup Gate、双平台 comparator 及最终 eligibility 投影；不包含自动重启 Docker、默认启用 Provider、公开发布或修改 eligibility。
+
+#### 本轮阻塞说明（2026-08-13）
+
+- Docker Windows CLI 与 Ubuntu-22.04 WSL2 CLI 的 `docker version`、`docker ps -a` 均未在 10 秒边界内返回；本轮未再次启动 OCI 容器，也未重启 Docker Desktop。
+- 由于重启 Docker Desktop 可能中断用户当前容器，按 HITL 规则暂不代为执行。人工恢复后只需先验证两侧命令在 10 秒内返回，再继续唯一一次不可覆盖 OCI promotion。
+
+### 14.82 P1-A2 Docker 恢复后 OCI readiness 失败归因
+
+#### P1-A2 第十六切片实现结论：真实 OCI late progress 与跨 module 未就绪证据（2026-08-13）
+
+##### 已完成内容
+
+1. **`tmp/p1-a2-readiness-20260813-r4/wsl2-linux/go-oci-report.json` 新建**：
+   - Docker Desktop 重启后，Windows/WSL2 Docker Server `29.1.3`、digest image inspect、固定 artifact 版本与 `belldandy-command-*` 零残留预检均通过。
+   - 以全新不可覆盖路径执行唯一一次真实 OCI promotion，report SHA-256=`8db21fcffdcf9117c3a3fe9e19daaa5455ced38cd1f53d7d4cb7ad846543f676`。
+
+2. **真实 readiness/truth 归因**：
+   - Provider admission、inspect/RSS/cleanup 均通过；gopls RSS peak=`30,507,008` bytes、sample=`225`，lease/container/state/staging 全部零残留。
+   - readiness 在 sequence `10 -> 21`、duration=`3,066ms`；首批 progress 在 sequence `12/14` 创建并于 `16/17` 闭合，但 sequence `25` 又创建 late progress。
+   - 首次 references 在 sequence `30 -> 31`，虽发生在 readiness completed 之后，但开始时 active progress=`1`；两次 definition 返回 `0/1`，两组 references 只返回 `3/4`、`1/2`，整体 truth=`6/10`、recall=`0.6`。
+
+3. **效果**：
+   - 排除 artifact 版本/架构、Provider admission、容器资源限制与 cleanup 作为本次失败主因。
+   - 证明单独的 `workspace/symbol("BuildMessage") + 500ms quiet` 仍可能早于跨 module definition/reference 就绪；在相同变量上直接重跑没有新增价值。
+   - Gate 正确保持 `ociEligible=false`、`goCanaryEligible=false`、`productionEligible=false`。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/skills build`。
+- 真实 OCI report Schema 可读、timeline 未截断，资源与 cleanup Gate 通过；truth Gate 因 `6/10` 失败关闭。
+- 运行后 `docker ps -a --filter name=^/belldandy-command-` 为空，WSL2 staging/lease/gate Node 均无残留。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：实现一个仅属于 Go OCI canary 的 fixture-specific readiness semantic probe，直接验证已 didOpen 文档中的跨 module `BuildMessage` definition 已返回目标，再进入冻结业务 truth；先写 wrapper 单元测试锁定“空 definition 不得完成 readiness”。
+- **为什么先做它**：r4 已显示 readiness marker 后仍有 late progress 且 definition 为 0；扩大静默窗口无法直接证明跨 module 语义可用，而 definition probe 与失败的真实能力一一对应。
+- **当前还缺的关键闭环**：新的 readiness 变量及测试、唯一一次新 OCI promotion 10/10、RSS/cleanup Gate、双平台 comparator 与 eligibility 投影；不包含通用 Host 重构、无限轮询、默认启用或公开发布。
+
+### 14.83 P1-A2 跨 module definition readiness semantic probe
+
+#### P1-A2 第十七切片实现结论：有界跨 module definition readiness（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/code-intel/gopls-oci-host.ts` 修改**：
+   - 保留 `workspace/symbol("BuildMessage")` 预热，并新增仅属于冻结 Go OCI canary 的 `textDocument/definition` readiness probe。
+   - 探针固定使用已 didOpen 的 `app/main.go:8:14` 零基位置，只接受目标 URI 精确指向 `lib/service/api.go`；非空但错误目标不能完成 readiness。
+   - 最多执行 8 次，每次复用原 30 秒总 deadline 并先等待 work-done progress 静默；目标出现后再等待一次静默才记录 `readiness_completed`，连续空结果则抛出稳定错误并记录 `readiness_failed`。
+
+2. **`packages/belldandy-skills/src/code-intel/gopls-oci-host.test.ts` 扩展**：
+   - 成功场景断言 workspace symbol 后必须发送固定 definition request，且只有跨 module 目标返回后 marker 才能完成。
+   - 新增连续 8 次空 definition 的失败关闭场景，验证有界次数、`readiness_started -> readiness_failed` 和 lease/environment/artifact cleanup。
+
+3. **效果**：
+   - readiness 从“某个 workspace symbol 已返回”提升为“冻结 fixture 所需的跨 module definition 已真实可用”，直接对应 r4 的 definition/reference 缺失。
+   - 不扩大通用 LSP Host、不引入无限轮询、不修改 500ms quiet 常量、不启用默认 Provider；失败仍在原查询 30 秒预算内关闭。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/skills build`。
+- 7 个相关测试文件、53 项测试全部通过，含新增有界空 definition 失败场景。
+- `node --check`（OCI promotion/comparator）与定向 `git diff --check` 通过。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：在 Docker 已恢复且零残留的前提下，以全新 r5 output root 执行唯一一次真实 OCI promotion；若 10/10 且 readiness/RSS/cleanup 通过，再生成与同源码 identity Windows native report 配对的 comparator。
+- **为什么先做它**：实现和假 Host 已证明新变量的合同与失败边界，但只有真实 gopls OCI 能验证 definition probe 是否真正挡住 late progress 导致的跨 module 未就绪。
+- **当前还缺的关键闭环**：r5 真实 OCI 10/10、readiness 时序 active token=0、RSS/cleanup Gate、同源码 Windows native report、双平台 comparator 与 eligibility 投影；不包含默认启用或公开发布。
+
+### 14.84 P1-A2 OCI monitor 有界清理修复
+
+#### P1-A2 第十八切片实现结论：Docker monitor timeout 失败收敛（2026-08-13）
+
+##### 已完成内容
+
+1. **`scripts/run-code-intel-go-oci-promotion-gate.mjs` 修复**：
+   - `defaultRunRuntimeCommand` 在 5 秒控制面预算到期时立即返回 `exitCode=null`，同时终止并解除 runtime child 的 stdout/stderr，避免 Docker proxy 不发 `close` 时 `monitor.stop()` 无限等待。
+   - 保留正常 `close`/`error` 路径和输出上限；该修复只改变挂起 CLI 的失败收敛，不放宽 OCI Gate 或清理标准。
+
+2. **`scripts/run-code-intel-go-oci-promotion-gate.test.mjs` 扩展**：
+   - 新增不会主动退出的 runtime child 回归，验证 50ms 测试预算内返回 `exitCode=null`。
+   - 既有 Schema、admission、RSS/cleanup、写入一次和 Provider failure-closed 测试保持通过。
+
+3. **效果**：
+   - r5 暴露的“容器已退出但 Docker top proxy 卡住导致 report 不落盘”已有明确失败终态，不再依赖外层 300 秒强杀。
+   - 不自动重启 Docker、不吞掉真实 cleanup failure；挂起命令仍进入 Gate failure/inspect unverified 路径。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/skills build`。
+- 2 个测试文件、8 项测试全部通过，含新增 bounded runtime timeout 回归。
+- `node --check scripts/run-code-intel-go-oci-promotion-gate.mjs` 与定向 `git diff --check` 通过。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：以全新 r6 output root 执行最后一次真实 OCI promotion，读取 definition readiness、首次 references active token、RSS 和 cleanup；若 report 通过，再绑定同源码 Windows native report 运行 comparator。
+- **为什么先做它**：r5 未产生 report 的原因已在 runner 层修复；r6 才能把新 semantic probe 的业务结果与完整 OCI 资源证据一起观察。
+- **当前还缺的关键闭环**：r6 OCI 10/10、readiness/RSS/cleanup、双平台 comparator 与 eligibility 投影；若 r6 仍非 10/10，将停止相同证据集重试并转入受控 gopls fixture/版本评审，不扩大等待窗。
+
+### 14.85 P1-A2 r7 readiness late progress 归因与 token 收敛
+
+#### P1-A2 第十九切片实现结论：readiness 完成前必须关闭 progress token（2026-08-13）
+
+##### 已完成内容
+
+1. **`tmp/p1-a2-readiness-20260813-r7/wsl2-linux/go-oci-report.json` 归因**：
+   - r7 truth=`10/10`、OCI Gate=`passed`，但 timeline 在 sequence `24-25` 创建并开始一个 progress token，sequence `26` 即记录 `readiness_completed`；首次 references sequence `33` 开始时 active progress=`1`。
+   - 该 token 并非 references 产生，而是 definition 成功后的最终 500ms progress slice 超时被 canary probe 当作可继续，导致 readiness marker 早于 token end；原 comparator 对 `firstReferencesActiveProgressCount===0` 的要求因此仍不能满足。
+
+2. **`packages/belldandy-skills/src/code-intel/gopls-oci-host.ts` 修改**：
+   - 保留 definition probe 的 500ms 有界重试；仅将 probe 成功后的最终等待改为使用原始总 deadline 等待 work-done token 真正闭合。
+   - token 未闭合时 readiness 以 timeout 失败关闭，不扩大通用 LSP Host quiet 窗口、不引入无限轮询、不改变默认 Provider eligibility。
+
+3. **`packages/belldandy-skills/src/code-intel/gopls-oci-host.test.ts` 扩展**：
+   - 新增 active progress token 未闭合时不得记录 `readiness_completed` 的失败关闭回归。
+   - 既有跨 module definition 空结果 8 次有界失败和资源 cleanup 断言保持有效。
+
+##### 效果
+
+- readiness marker 的含义从“definition 已返回”收敛为“definition 已返回且当前 progress token 已闭合”；首次 references 的时序证据可以直接对应 comparator 的 active token=0 约束。
+- 该修复只影响 Go OCI canary fixture-specific wrapper，通用 LSP Host、native truth 与生产 eligibility 均未被放宽。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/skills build`。
+- 相关回归通过：`gopls-oci-host.test.ts` `4/4`，合并 `lsp-process-host.test.ts` 共 `22/22`。
+- r7 原始 OCI Gate 仍保留为历史证据，不将其 active progress=`1` 的 timeline 作为 comparator 通过证据。
+
+#### 后续计划（P1-A2 尚未结束）
+
+- **下一步准备做什么**：在 Docker Server `29.1.3` 已恢复、digest image 可用和 `belldandy-command-*` 零残留预检通过后，以全新 `tmp/p1-a2-readiness-20260813-r8/wsl2-linux/go-oci-report.json` 执行一次真实 OCI promotion；随后以相同源码 identity 生成新的 Windows native truth 并运行只读 comparator。
+- **为什么先做它**：本轮已把 r7 的 active token 归因到明确的 final progress wait 竞态，只有新 OCI 运行才能验证 token 归零是否真正发生在 readiness marker 和首次 references 之前。
+- **当前还缺的关键闭环**：r8 OCI 10/10、`firstReferencesActiveProgressCount=0`、RSS/cleanup、当前源码 Windows native report、双平台 comparator 与 Doctor eligibility projection；在这些闭环完成前继续保持 `goCanaryEligible=false`、`productionEligible=false`。
+
+#### 本轮验证结果（2026-08-13）
+
+- 已在 Docker Server `29.1.3`、digest 镜像和零残留预检通过后启动 r8；首次启动因 WSL 子进程未继承 OCI 配置变量而在配置解析阶段失败，未启动容器。
+- 补充显式 `BELLDANDY_COMMAND_SANDBOX_BACKEND=oci`、Docker runtime 和固定 digest 后再次启动；命令超过 240 秒未生成 report。只读审计确认 r5 历史 gate 与 r8 gate 曾同时挂在 Docker `top` proxy，随后已仅终止这两个本任务 gate 及其 `docker top` 子进程；未终止 Docker Desktop proxy、Gateway 或其他 Node 进程。
+- 清理后 r5/r8 gate PID 已消失，但 WSL2 Docker proxy 仍不能在 10 秒内完成 `docker ps`；r8 没有 Schema-valid report，因此不计 OCI truth、readiness、RSS、cleanup 或 comparator 证据。
+
+#### 后续计划（P1-A2 仍未结束）
+
+- **下一步准备做什么**：由开发人员恢复 Docker Desktop 的 WSL2 Linux Engine/API（确认 WSL2 内 `docker version`、`docker ps -a`、digest inspect 均在 10 秒内返回），再以全新不可覆盖目录执行一次 r8 之后的 OCI promotion；不复用无 report 的 r8 目录。
+- **为什么先做它**：当前业务修复和单测已经证明“active token 未闭合不得完成 readiness”；缺的是可观测 Docker 控制面，继续运行不能区分 gopls token timeout 与 monitor proxy hang，也不能形成 cleanup 证据。
+- **当前还缺的关键闭环**：一份新 OCI Schema-valid report（truth 10/10、`firstReferencesActiveProgressCount=0`、RSS/cleanup）、当前源码 Windows native report、双平台 comparator 和 Doctor eligibility；在此之前 `goCanaryEligible=false`、`productionEligible=false` 保持不变。
+
+### 14.86 P1-A2 当前源码 Windows truth 与 comparator 失败投影
+
+#### P1-A2 第二十切片实现结论：Windows native 配对证据与失败关闭 eligibility（2026-08-13）
+
+##### 已完成内容
+
+1. **`tmp/p1-a2-readiness-20260813-r8/windows-native/go-truth-report.json` 新建**：
+   - 使用当前源码 identity、Windows `gopls v0.21.0` 与 `go1.24.2 windows/amd64`，输出到全新不可覆盖路径。
+   - 6/6 case、10/10 position 通过，precision/recall=`1/1`；lifecycle、response、concurrency 和 state cleanup Gate 全部通过。
+   - didOpen sent=`5`、首个 progress created/end=`9/15`、首次 references started/completed=`22/23`，首次 references active progress=`0`；native Host 无 OCI readiness marker，符合预期边界。
+
+2. **`tmp/p1-a2-readiness-20260813-r8/comparator-r7-diagnostic.json` 新建**：
+   - 以新的 Windows native report 和历史 r7 OCI report执行只读诊断 comparator；truth set、manifest、fixture、工具链版本、6 个 case、10 个 position 和 9 个 shared runtime 文件均匹配。
+   - 唯一失败为 `oci_readiness_timeline_failed`，对应 r7 首次 references active progress=`1`；Gate 正确为 `passed=false`，不把 r7 重新标记为有效配对证据。
+
+3. **Doctor/eligibility 投影复核**：
+   - `projectGoCanaryEligibility` 对失败 comparator 返回 `status=unverified`、`diagnosticCode=comparator_gate_failed`、`goCanaryEligible=false`、`productionEligible=false`。
+   - 未修改默认 Provider、环境配置、公开发布或生产 eligibility。
+
+##### 效果
+
+- 当前源码 Windows native 侧已独立闭合，Docker 恢复后只需生成新的 OCI report 并重新运行 comparator，不再需要重跑 Windows 工具链基线。
+- r7 的业务 truth/资源 Gate 与 readiness 时序失败被清晰分离；eligibility 仍由单一 comparator 投影 owner 失败关闭。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/skills build`。
+- Windows native truth：6/6 case、10/10 position、precision/recall=`1/1`，Gate=`passed`。
+- Doctor/eligibility/comparator 3 个测试文件、16 项测试全部通过；另有 OCI Host/LSP Host 22 项相关回归通过。
+- `node --check`（OCI promotion/comparator）和定向 `git diff --check` 通过。
+
+#### 后续计划（P1-A2 仍未结束）
+
+- **下一步准备做什么**：恢复 Docker Desktop Linux Engine/WSL integration 后，以新 r9 目录运行唯一一次修复后 OCI promotion；若 Schema-valid report 满足 truth 10/10、active progress=0、RSS/cleanup，再与本切片 Windows report运行正式 comparator 和 Doctor proven projection。
+- **为什么先做它**：Windows identity、truth 和失败投影都已闭合，唯一未验证变量是修复后真实 OCI readiness token 是否在首次 references 前归零；只有正常 Docker 控制面能提供该证据。
+- **当前还缺的关键闭环**：Windows/WSL2 Docker API 10 秒内可达、新 OCI report、正式 comparator `passed=true` 与 `goCanaryEligible=true`；`productionEligible` 仍按合同保持 `false`，不包含默认启用或公开发布。
+
+### 14.87 P1-A2 多 Host monitor 失败收敛
+
+#### P1-A2 第二十一切片实现结论：OCI monitor 全量所有权与 timeout 自停（2026-08-13）
+
+##### 已完成内容
+
+1. **r8 Docker proxy 挂起进一步归因**：
+   - readiness timeout 后 Provider 会对后续 truth case 创建新的失败 Host；每个 Host 均启动独立 container monitor。
+   - 原 runner 只保留最后一个 `monitor/runtimeTarget` 引用，前序 monitor 被覆盖后仍持续轮询；r8 残留审计中的 5 个不同 `belldandy-command-*` `docker top` 与该路径一致。
+
+2. **`scripts/run-code-intel-go-oci-promotion-gate.mjs` 修复**：
+   - runner 改为持有全部 `{ monitor, runtimeTarget }`，`finally` 对所有已创建 Host monitor 执行 `Promise.allSettled` 清理，不再只停止最后一个。
+   - 任一 monitor 的 `inspect`/`top` 命令返回 bounded timeout（`exitCode=null`）后立即停止该 monitor 的后续轮询，避免每 5 秒继续创建新的 Docker proxy child。
+   - OCI truth 首次 query 失败后复用同一个结构化失败结果填充剩余 case，不再调用 Provider 或重建 Host；成功路径仍逐 case 执行 6 次真实 Provider query。
+   - 正常成功路径仍要求恰好一个 Host/monitor，OCI truth、RSS、inspect、cleanup 和 eligibility Gate 均未放宽。
+
+3. **`scripts/run-code-intel-go-oci-promotion-gate.test.mjs` 扩展**：
+   - 新增 runtime monitor 首次 timeout 后只调用一次、不再轮询的回归。
+   - 新增多个 owned monitor 即使其中一个 stop 失败，其余 monitor 仍全部结算的回归。
+   - 新增首次 truth query 失败后 Provider 调用次数固定为 1、后续 query 复用失败且 dispose 仍执行的回归。
+
+##### 效果
+
+- readiness 或 Docker 控制面失败不再因 Host 重建而线性累积 `docker top` 代理进程；runner 对所有已创建 monitor 具有明确所有权。
+- Docker API 恢复后的下一次真实 promotion 即使失败，也应在既有 timeout 边界内收敛，而不是依赖外层 240 秒强杀。
+
+##### 验证结果
+
+- `scripts/run-code-intel-go-oci-promotion-gate.test.mjs` 8 项测试全部通过，含 monitor 所有权/timeout 与 truth fail-fast 回归。
+- readiness、LSP Host、Doctor/eligibility、OCI runner 和 comparator 共 6 个测试文件、47 项测试全部通过。
+- `node --check scripts/run-code-intel-go-oci-promotion-gate.mjs` 通过。
+- 本切片未再次调用已失联的 Docker API，未生成或覆盖任何 OCI report。
+
+#### 后续计划（P1-A2 仍未结束）
+
+- **下一步准备做什么**：先恢复 Docker Desktop Linux Engine/WSL API，再以全新 r9 目录执行修复后唯一一次真实 OCI promotion，并核对 gate Node、所有 monitor child、容器、lease/state/staging 零残留。
+- **为什么先做它**：readiness marker 与 runner cleanup 两个已知代码缺陷都已修复并有回归；当前唯一无法由假 runtime 证明的是 Docker 容器中的真实 gopls progress token 是否在总 deadline 内闭合。
+- **当前还缺的关键闭环**：Docker 双侧 10 秒健康探针、新 OCI truth/readiness/RSS/cleanup report、正式 comparator 与 proven canary eligibility；不包含自动重启 Docker、生产启用或公开发布。
+
+### 14.88 P1-A2 r9 有界失败与 post-semantic progress 归因
+
+#### P1-A2 第二十二切片实现结论：单 Host 失败收敛与第三 progress token 边界（2026-08-13）
+
+##### 已完成内容
+
+1. **`tmp/p1-a2-readiness-20260813-r9/wsl2-linux/go-oci-report.json` 新建**：
+   - Docker Windows/WSL2 Server `29.1.3`、digest image、零容器/进程残留预检通过后，以全新不可覆盖 r9 路径执行真实 promotion。
+   - 新 runner 在 `35.5s` 内有界结束并生成 Schema-valid 失败 report；只创建 1 个 Host、执行 1 次真实 Provider query，未再重建 5 个失败 Host。
+   - lease/container/state/staging cleanup 全部通过，residual container=`0`；RSS peak=`123,404,288` bytes、sample=`656`，低于 `134,217,728` bytes hard limit。
+
+2. **readiness timeline 归因**：
+   - didOpen sent=`5`，首批 progress 在 sequence `12/14` 创建并于 `16/17` 闭合；workspace symbol sequence `18` 返回 1 个结果。
+   - 跨 module definition 在 sequence `21 -> 22`、约 `6.831s` 返回正确目标，开始时 active progress=`0`；第三个 token 直到 sequence `24/25`、约 `7.314s` 才 create/begin。
+   - 最终全量 progress wait 将这个 post-semantic token 等到 30 秒 query deadline，readiness sequence `26` 以 cancelled 失败；truth fail-fast 将 6 个 case 全部投影为 timeout，Gate 因 `truth_set_failed` 关闭。
+
+3. **边界对照**：
+   - 新 Windows native truth 同样在业务 references/implementation 完成后出现一个未在 Host 关闭前 end 的 progress token；因此“等待未来 500ms 内出现的任意 token全部结束”不是可靠的语义 readiness 条件。
+   - r9 证明 definition 目标已可用且当下 active progress=0，剩余问题是 final wait 捕获了随后启动的后台 progress，而非 semantic probe 仍为空。
+
+##### 效果
+
+- monitor 全量清理和 truth fail-fast 已被真实 Docker 故障路径验证，r8 的多 Host/proxy 累积问题没有复现。
+- readiness 的下一处最小修复已收敛为“definition 成功后仅等待当下已经 active 的 token”，不再用 quiet window 捕获尚未开始的后台任务；首次 references 是否 active=0 继续由原 comparator 硬 Gate 验证。
+
+##### 验证结果
+
+- r9 真实 OCI lifecycle、inspect、RSS 与 cleanup 可观测，Host/容器/临时目录均无残留。
+- r9 truth=`0/10`、Gate=`failed`，未运行正式 comparator，`goCanaryEligible=false`、`productionEligible=false` 保持不变。
+- report SHA-256=`0a24f2bbaac95f571911ae60ce770db53d3836f7070e1bb65a3a20f240462d69`。
+
+#### 后续计划（P1-A2 仍未结束）
+
+- **下一步准备做什么**：调整 canary readiness final wait：definition 成功后读取当前 progress active count，仅当其大于 0 时使用原总 deadline 等待；当前为 0 时立即记录 readiness complete。先用单元测试锁定“已有 active token 必须等待、未来 token 不参与 readiness”，再以新 r10 路径执行唯一一次 OCI promotion。
+- **为什么先做它**：r9 已证明 semantic definition 在第三 token 创建前约 483ms 可用；继续等待该未来后台 token只会耗尽 30 秒，而直接移除所有 progress 约束又会放宽已有 active token 的边界。
+- **当前还缺的关键闭环**：最小 conditional final wait 与测试、r10 truth 10/10、首次 references active progress=0、RSS/cleanup、正式 comparator 和 proven canary eligibility；不包含扩大 deadline、提高内存限制、默认启用或生产发布。
+
+### 14.89 P1-A2 conditional final progress wait
+
+#### P1-A2 第二十三切片实现结论：仅等待 definition 返回时已 active 的 token（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/code-intel/gopls-oci-host.ts` 修改**：
+   - 跨 module definition readiness 成功后读取 Host 当前 `workDoneProgress.activeCount`。
+   - 仅当 definition 返回瞬间已有 active token 时，才使用原 30 秒总 deadline 等待其闭合；当前 active=0 时立即记录 `readiness_completed`，不再启动会捕获未来后台 token 的 quiet window。
+   - definition 前的 500ms progress slice、最多 8 次 semantic probe、错误目标拒绝和失败关闭保持不变。
+
+2. **`packages/belldandy-skills/src/code-intel/gopls-oci-host.test.ts` 扩展**：
+   - 成功场景明确断言 active=0 时只执行 definition 前的一次 progress slice，definition 后不追加 quiet wait。
+   - active=1 场景仍必须进入 final wait；token 未闭合时保持 `readiness_started -> readiness_failed`，不得记录完成。
+
+3. **效果**：
+   - readiness 只对已经存在的前台 progress 建立等待义务，不把 definition 已可用后才启动、且可能贯穿 Host 生命周期的 gopls 后台 token误判为语义未就绪。
+   - 首次 references 是否在 active progress=0 时启动仍由原 timeline/comparator 硬 Gate 验证，没有移除时序验收或扩大资源/deadline。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/skills build`。
+- OCI Host、通用 LSP Host 与 promotion runner 3 个测试文件、31 项测试全部通过。
+- 未修改 Provider eligibility、truth fixture、工具链版本、OCI 资源限制或 comparator 规则。
+
+#### 后续计划（P1-A2 仍未结束）
+
+- **下一步准备做什么**：在 Docker 双侧健康与零残留复核后，以全新 r10 路径执行唯一一次真实 promotion；若 truth/readiness/RSS/cleanup 通过，立即与 r8 Windows native report运行正式 comparator。
+- **为什么先做它**：r9 已提供 definition 返回时 active=0、未来 token 约 483ms 后才出现的直接证据；conditional wait 单测只能锁合同，真实 gopls 才能证明首次 references 是否能在该窗口内开始且保持 active=0。
+- **当前还缺的关键闭环**：r10 truth 10/10、readiness completed、首次 references active progress=0、RSS/cleanup、正式 comparator 与 Doctor proven eligibility；在此之前 `goCanaryEligible=false`、`productionEligible=false`。
+
+### 14.90 P1-A2 r10 definition 返回形状归因
+
+#### P1-A2 第二十四切片实现结论：兼容单 Location definition 响应（2026-08-13）
+
+##### 已完成内容
+
+1. **`tmp/p1-a2-readiness-20260813-r10/wsl2-linux/go-oci-report.json` 归因**：
+   - Docker/monitor/cleanup 全部正常，Host=`1`、Provider call=`1`、RSS peak=`31,195,136` bytes、residual container=`0`。
+   - readiness 首次 definition request sequence `21` 在 active progress=`0` 时发出；其 response sequence `24` 没有 `resultCount`，随后 probe 继续重试 8 次并失败。
+   - 对照 r9 的同类 response 也没有 `resultCount`；结合 LSP 合同，gopls 返回的是单个 `Location` 对象，而非数组。原 `hasDefinitionTarget` 只接受数组，导致正确语义结果被误判为空。
+
+2. **`packages/belldandy-skills/src/code-intel/gopls-oci-host.ts` 修改**：
+   - readiness definition target matcher 现在接受单个 `Location`、`Location[]` 两种合法响应形状；仍要求 URI 精确指向 `lib/service/api.go`。
+   - conditional final progress wait、8 次有界 probe、错误目标失败关闭保持不变。
+
+3. **`packages/belldandy-skills/src/code-intel/gopls-oci-host.test.ts` 扩展**：
+   - 新增单个 `Location` definition response 成功回归。
+   - 既有数组成功、连续 8 次空结果失败、active token 未闭合失败均保留。
+
+##### 效果
+
+- readiness probe 不再因 LSP 合法返回形状差异丢失跨 module semantic readiness；不会放宽目标 URI、workspace 路径或 progress 时序约束。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/skills build`。
+- `gopls-oci-host.test.ts` 与 `lsp-process-host.test.ts` 共 `24/24` 测试通过。
+- r10 report 保留为失败证据，不覆盖、不重新标记为通过。
+
+#### 后续计划（P1-A2 仍未结束）
+
+- **下一步准备做什么**：Docker 双侧健康复核后，以全新 r11 路径执行唯一一次修复后 OCI promotion；若 definition/readiness 通过，检查首次 references active progress、truth、RSS、cleanup，再运行正式 comparator。
+- **为什么先做它**：r10 已把当前失败收敛为单一响应形状 bug，单测证明修复边界；真实 gopls OCI 才能确认后续 reference/implementation truth 是否恢复到 10/10。
+- **当前还缺的关键闭环**：r11 readiness completed、truth 10/10、首次 references active progress=0、RSS/cleanup、正式 comparator 和 Doctor proven eligibility。
+
+### 14.91 P1-A2 definition probe 与 progress 竞态收敛
+
+#### P1-A2 第二十五切片实现结论：probe 前 active token 先闭合（2026-08-13）
+
+##### 已完成内容
+
+1. **r11 timeline 归因**：
+   - 单 Location matcher 已在 dist 中生效，但 r11 仍在 sequence `22/23` 创建并开始 progress 后，于 sequence `24` 完成 definition；后续每次 probe 都在 active progress=`1` 下立即发 definition，最终 8 次耗尽并失败。
+   - 这表明竞态发生在 definition 请求期间：请求开始时 active=0，服务端处理期间创建 token，响应返回时 token 尚未闭合；仅在 final wait 检查 active 不足以约束下一次 probe。
+
+2. **`packages/belldandy-skills/src/code-intel/gopls-oci-host.ts` 修改**：
+   - 每次 definition probe 前先读取当前 active progress；若已有 token，使用总 deadline 等待其闭合后再发下一次 definition。
+   - 仅当当前无 active token 时才执行 500ms bounded slice；保留单/数组 Location、最多 8 次、目标 URI 精确匹配和 failure-closed。
+
+3. **`packages/belldandy-skills/src/code-intel/gopls-oci-host.test.ts` 扩展**：
+   - 新增“首次 definition 后 token active 时，必须先等待 token、不得立即发下一次 definition”的回归。
+   - active token 未闭合仍失败关闭；单 Location 成功和既有数组/空结果场景保持有效。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/skills build`。
+- `gopls-oci-host.test.ts` 与 `lsp-process-host.test.ts` 共 `25/25` 测试通过。
+- r11 report 保留为失败证据，不覆盖、不重新标记为通过。
+
+#### 后续计划（P1-A2 仍未结束）
+
+- **下一步准备做什么**：Docker 双侧健康后以全新 r12 目录执行唯一一次 OCI promotion，检查 definition 成功后的 progress 收敛、readiness marker、首次 references active count 和 10/10 truth。
+- **为什么先做它**：r11 已排除响应 shape 问题并精确定位 probe 间竞态；只有真实 gopls 能验证等待 active token 后是否返回正确 definition 并继续业务 queries。
+- **当前还缺的关键闭环**：r12 OCI truth/readiness/RSS/cleanup、正式 comparator、Doctor proven eligibility；不包含扩大 deadline、资源限制、默认 Provider 或生产发布。
+
+### 14.92 P1-A2 slice 内 progress token 竞态归因
+
+#### P1-A2 第二十六切片实现结论：slice 结束后二次 active 检查（2026-08-13）
+
+##### 已完成内容
+
+1. **`tmp/p1-a2-readiness-20260813-r12/wsl2-linux/go-oci-report.json` 归因**：
+   - r12 在约 `12s` 内结束；workspace symbol 通过，definition request sequence `21` 开始后 sequence `22/23` 才创建并 begin progress，sequence `24` 以 `request_failed` 结束。
+   - Host `failureCount=1`、unexpectedExit=`0`、cleanup/RSS/容器均通过，说明失败发生在 progress slice 超时后立即发送 definition 的协议竞态，而非 Docker 或进程崩溃。
+
+2. **`packages/belldandy-skills/src/code-intel/gopls-oci-host.ts` 修改**：
+   - 500ms progress slice 结束后再次读取 `activeCount`；若 token 在 slice 内刚 begin，则先用总 deadline 等待其闭合，再发送 definition probe。
+   - 保留 probe 前 active token 直接等待、conditional final wait、单/数组 Location、8 次上限和 failure-closed。
+
+3. **`packages/belldandy-skills/src/code-intel/gopls-oci-host.test.ts` 扩展**：
+   - 新增 token 在 bounded slice 内 begin 时必须二次等待、待其闭合后才允许 definition 成功的回归。
+   - 修正测试 fixture，使第二次 wait 模拟真实 token end；已有 active、单 Location、数组、空结果失败场景保持有效。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/skills build`。
+- `gopls-oci-host.test.ts` 与 `lsp-process-host.test.ts` 共 `26/26` 测试通过。
+- r12 report 保留为失败证据，不覆盖、不重新标记为通过。
+
+#### 后续计划（P1-A2 仍未结束）
+
+- **下一步准备做什么**：Docker 双侧健康复核后，以全新 r13 目录运行唯一一次 OCI promotion；重点观察 definition request 前后 progress 是否闭合、readiness completed、references active=0 和 truth 10/10。
+- **为什么先做它**：r12 已证明错误发生在 slice 内 token begin 与 definition request 的竞态，代码侧已有精确二次检查和回归；只需一轮真实 gopls 验证。
+- **当前还缺的关键闭环**：r13 OCI readiness/truth/RSS/cleanup、正式 comparator 与 Doctor proven eligibility。
+
+### 14.93 P1-A2 Go canary 双平台闭合
+
+#### P1-A2 第二十七切片实现结论：gopls readiness 双平台证据闭合（2026-08-13）
+
+##### 已完成内容
+
+1. **`tmp/p1-a2-readiness-20260813-r13/wsl2-linux/go-oci-report.json` 新建**：
+   - 使用固定 `go1.24.2 linux/amd64`、静态 `gopls v0.21.0`、digest `node:22-bullseye@sha256:62f550...` 与当前源码 identity 执行真实 OCI promotion。
+   - truth `10/10`，precision/recall=`1/1`；Provider admission、OCI inspect、RSS、lease/container/state/staging cleanup 全部通过。
+   - readiness timeline：didOpen sent=`5`；readiness started=`10`；跨 module definition completed=`22`；readiness completed=`23`；首次 references started/completed=`30/31`；首次 references active progress=`0`；`referencesAfterReadiness=true`、`progressClosedBeforeFirstReferences=true`。
+
+2. **`tmp/p1-a2-readiness-20260813-r13/comparator.json` 新建**：
+   - 与当前源码 Windows native report 进行只读配对；truth set、manifest、fixture aggregate、Go/gopls 版本、平台和 9 个 shared runtime 文件全部匹配。
+   - Windows native 与 WSL2 OCI 证据均通过，comparator `gate.passed=true`、`failures=[]`、`governance.comparatorPassed=true`。
+
+3. **eligibility/治理投影**：
+   - `projectGoCanaryEligibility(comparator)` 返回 `status=proven`、`goCanaryEligible=true`、`productionEligible=false`。
+   - Go canary 仅获得已证明的候选资格；默认 Provider、生产资格、自动安装、公开发布和 Gateway/model 调用仍保持关闭。
+
+##### 效果
+
+- 已用有界 timeline 证据厘清 `didOpen -> progress token -> workspace/symbol -> cross-module definition -> readiness_completed -> 首次 references` 的时序，并验证首次 references 前 active progress 为 0。
+- WSL2 OCI 与 Windows native 在同一 truth/fixture/runtime identity 下闭合，Docker monitor、Host cleanup、RSS 和 failure-closed 路径均有实际证据。
+- P1-A2 的 Go canary readiness、双平台真实运行、只读 comparator 和单一 eligibility owner 达到完成边界；不代表 Go Provider 已进入生产默认路径。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/skills build`。
+- 最终相关回归 5 个测试文件、31 项测试全部通过；此前 Host/LSP 回归、runner monitor/fail-fast 回归和 comparator/Doctor 回归均通过。
+- r13 OCI report SHA-256=`132fd80e0a916101d6974f6cee2f322b7af175a7a83a55658d512c69a958133e`。
+- comparator SHA-256=`47dce1ed06fd6162ae8f857a7f343152561a9732f4c341ba6f585437316f5dbd`。
+- Docker 双侧 Server=`29.1.3`；运行后 `belldandy-command-*`、gate/monitor 进程和临时 staging/state 均无残留。
+
+#### 后续计划（P1-A2 已闭合）
+
+- **下一步准备做什么**：按进度表转入其他已排定但未完成的计划项；Go canary 保持 proven candidate projection，后续若要生产化需另行定义 rollout、观察窗口和生产 Gate。
+- **为什么先做它**：P1-A2 的目标证据已经闭合，继续在同一 Go fixture 上重跑不会增加外部有效性；剩余工作属于发布治理或其他计划阶段。
+- **当前还缺的关键闭环**：Go 生产启用所需的独立 rollout/观察窗口与真实项目泛化证据仍未纳入本阶段；不影响本阶段 canary completion，也不允许修改 `productionEligible=false`。
+
 ## 实施计划进度表
 
 | 项目 | 优先级 | 状态 | 粗略工作量 | 完成边界 |
@@ -2692,10 +3977,10 @@ P1-A1 的 language-neutral contract/fake、官方 TypeScript Language Service li
 | 本轮 SS 能力复核与 9.5 增强规划 | - | 已完成 | - | 已复核当前 scorecard、目标向量 `9.510`、C#/Go 投入收益、现成多语言方案与三款竞品一手资料；竞品未做同环境 benchmark |
 | P0：Benchmark v3 与外部有效性 | P0 | 进行中（P0.1-P0.29 已完成；`cost-containment-v1` rollout=`hold_explicit_opt_in`、默认启用/未授权 Provider canary 均禁止、`taskUplift=not_measured`；candidate v1-v3 均=`do_not_promote`，navigation candidate line 已停止；冻结 aggregate 仍为同 identity `6/144`、历史 2/6 passed，三轮 navigation shadow 累计费用复算为 `0.08318752 RMB`） | 14-22 人日 | A/B/C 三层、至少 4 个固定仓与 144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；当前禁止扩展付费矩阵，不含 candidate v4、竞品代跑和公开排行榜 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | 已完成；attempt 12 aggregate=`passed`，binary regression/Provider failure=`0/0`、`semantic-live=7/8`、非目标整文件读取 `21 -> 14`；16/16 cell 仍预算耗尽且 candidate task/patch success=`0/8`，累计费用 `1.68214072 RMB` | 8-12 人日 | language-neutral contract、TS/JS production Provider、Inspector、truth set、resource soak、双平台 native runtime 与真实 uplift Gate 已闭合；绝对任务成功问题拆入 P0/P1-B，不含外部 LSP、Go/C# GA 或 SCIP store |
-| P1-A2：通用 LSP Host 与 Go canary | P1 | 进行中（Host、pinned profile、Go Doctor、Go Adapter/truth/fault、双平台 native、OCI control-plane 与真实 gopls OCI/RSS 基线已完成；Provider OCI admission/factory、无 native fallback、故障 Host fresh recovery/cleanup 已完成且 `q/r/s` 真实 admission 均通过；三轮 truth 仅 `8/10`、`0/10`、`6/10`，readiness 重新打开并已触发 Fix Mode 熔断，双平台 comparator 与最终 promotion 尚未开始） | 6-11 人日 | 已完成 admission 与 Provider 生命周期边界；下一步只基于新增 progress/reference 时间线证据修复 readiness，再要求最终源码 identity 的 10/10 OCI report，之后才允许 comparator/Doctor 投影 |
+| P1-A2：通用 LSP Host 与 Go canary | P1 | 已完成（Host、pinned profile、Go Doctor、Go Adapter/truth/fault、双平台 native、OCI control-plane、Provider OCI admission/factory、无 native fallback、故障 Host recovery/cleanup、bounded timeline、progress 竞态收敛、单/数组 definition 响应兼容、truth fail-fast、多 Host monitor 全量清理、r13 OCI truth、双平台 comparator 与 proven eligibility 已闭合；`goCanaryEligible=true`、`productionEligible=false`） | 6-11 人日 | 已完成双平台真实 identity/truth/lifecycle/OCI evidence、只读 comparator、单一 eligibility owner 与 Doctor projection；明确不包含 Go 生产默认启用、自动安装、公开发布、扩大 fixture 或 rollout 观察窗口 |
 | P1-A3：C# 条件接入 | 条件 | 延后，等待真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild 执行面、禁止 restore/联网与生命周期；未命中需求 Gate 不进入生产，也不阻断当前 9.5 |
 | P1-B：验证 DAG 与 Browser Relay 闭环 | P1 | 已完成（规划/影响/终态、command-job/test-report/失败 replay、Impact Truth Set、CodeIntel/project-dependency、Browser evidence consumer、真实 Windows/WSL2 Relay+Chrome/MV3 producer、session deadline/外部 AbortSignal/SIGINT、debugger detach/service-worker restart/Relay reconnect、三次多 viewport、producer artifacts 到 DAG CLI 跨进程 hydration 与跨平台 identity Gate 已闭合；8 场景 24/24 影响节点通过，Windows 相关路径 81 项、WSL2 Browser producer 12 项通过，两端 lifecycle pending/orphan=`0/0`） | 10-16 人日 | 验证 DAG 选择/终态、Browser artifact producer/consumer、故障与双平台 evidence 已闭合；不含自动安装浏览器、云浏览器或无条件多 Agent Review |
-| P1-C：TaskProjection 与 Capability Closure | P1 | 待实施 | 10-15 人日 | 只读跨 owner 投影、exact-binding action、任务启动闭包和旧客户端兼容；不迁移领域真源 |
+| P1-C：TaskProjection 与 Capability Closure | P1 | 进行中（前十一切片：v1 合同、能力闭包、supporting evidence、exact-binding action envelope、revision-bound collection/cursor、owner-safe collector、pairing-protected Gateway RPC、TUI/Headless additive consumer、handler/process-level restart cursor Gate、VS Code stdio consumer 与 WebChat additive adapter 已完成；双平台 restart、可信 supporting evidence binding 与任务启动闭包待完成） | 10-15 人日 | 只读跨 owner 投影、exact-binding action、任务启动闭包和旧客户端兼容；不迁移领域真源 |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | 延后，等待 P1-C | 12-20 人日 | 隔离写入、预算、60 分钟 soak、steer/cancel/reattach、fan-in 与 fault matrix；不含自动 merge/release/deploy |
 | P2-B：生态与运行前置收口 | P2 | 延后，等待公共合同稳定 | 8-14 人日 | 两个外部消费者、N-1/N conformance、真实 CI 与 OCI/语言 Doctor；不含公开发布、系统级自动安装或 sandbox 替换 |
 | P2-C：9.5 稳定化与最终复核 | P2 | 延后，等待 P0-P2-B | 5-8 人日 + 观察窗口 | 两个连续候选版本均原始 `>=9.500`、目标维度和全部硬 Gate 通过；不含竞品联合 benchmark 或生产写入 |

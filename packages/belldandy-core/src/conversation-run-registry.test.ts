@@ -4,6 +4,40 @@ import { ConversationRunRegistry } from "./conversation-run-registry.js";
 import { ConversationSteerMailbox } from "./coding-run/conversation-steer-mailbox.js";
 
 describe("ConversationRunRegistry runtime snapshot", () => {
+  it("lists active runs without exposing stop callbacks or reasons", () => {
+    const registry = new ConversationRunRegistry();
+    registry.register({
+      conversationId: "conversation-b",
+      runId: "run-b",
+      agentId: "coder",
+      startedAt: 20,
+      state: "stop_requested",
+      stopRequestedAt: 25,
+      stopReason: "private reason",
+      stop: vi.fn(() => true),
+    });
+    registry.register({
+      conversationId: "conversation-a",
+      runId: "run-a",
+      startedAt: 10,
+      state: "running",
+      stop: vi.fn(() => true),
+    });
+
+    expect(registry.listActiveRuns()).toEqual([
+      { conversationId: "conversation-a", runId: "run-a", startedAt: 10, state: "running" },
+      {
+        conversationId: "conversation-b",
+        runId: "run-b",
+        agentId: "coder",
+        startedAt: 20,
+        state: "stop_requested",
+        stopRequestedAt: 25,
+      },
+    ]);
+    expect(JSON.stringify(registry.listActiveRuns())).not.toMatch(/private reason|stopReason|stop\"/);
+  });
+
   it("persists a recovery marker before exposing a durable run and settles it explicitly", async () => {
     const recoveryStore = {
       markActive: vi.fn(async () => undefined),

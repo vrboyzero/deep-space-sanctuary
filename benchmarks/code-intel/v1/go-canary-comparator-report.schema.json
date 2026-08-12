@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.local/schemas/code-intel/go-canary-comparator-report-v1.schema.json",
+  "title": "Star Sanctuary Go CodeIntel Canary Comparator Report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "generatedAt", "inputs", "identity", "toolchain", "truth", "evidence", "gate", "governance", "execution"],
+  "properties": {
+    "schemaVersion": { "const": "code-intel-go-canary-comparator-report/v1" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["windowsNative", "wsl2Oci"],
+      "properties": {
+        "windowsNative": { "$ref": "#/$defs/input" },
+        "wsl2Oci": { "$ref": "#/$defs/input" }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["truthSetId", "manifestSha256", "fixtureAggregateSha256", "matchedSharedRuntimeFileCount"],
+      "properties": {
+        "truthSetId": { "const": "p1-a2-go-canary-v1" },
+        "manifestSha256": { "$ref": "#/$defs/sha256" },
+        "fixtureAggregateSha256": { "$ref": "#/$defs/sha256" },
+        "matchedSharedRuntimeFileCount": { "const": 9 }
+      }
+    },
+    "toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["goVersion", "goplsVersion", "windowsPlatform", "ociPlatform"],
+      "properties": {
+        "goVersion": { "const": "go1.24.2" },
+        "goplsVersion": { "const": "v0.21.0" },
+        "windowsPlatform": { "const": "windows/amd64" },
+        "ociPlatform": { "const": "linux/amd64" }
+      }
+    },
+    "truth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["caseCount", "positionCount", "matched"],
+      "properties": {
+        "caseCount": { "const": 6 },
+        "positionCount": { "const": 10 },
+        "matched": { "type": "boolean" }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["windowsNative", "wsl2Oci"],
+      "properties": {
+        "windowsNative": { "$ref": "#/$defs/windowsEvidence" },
+        "wsl2Oci": { "$ref": "#/$defs/ociEvidence" }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "failures"],
+      "properties": {
+        "passed": { "type": "boolean" },
+        "failures": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": [
+            "platform_pair_mismatch", "truth_set_id_mismatch", "manifest_identity_mismatch",
+            "fixture_identity_mismatch", "toolchain_version_mismatch", "toolchain_platform_mismatch",
+            "shared_runtime_identity_mismatch", "truth_case_mismatch", "windows_truth_gate_failed",
+            "oci_truth_gate_failed",
+            "windows_lifecycle_gate_failed", "windows_response_gate_failed", "windows_concurrency_gate_failed",
+            "windows_state_cleanup_failed", "oci_provider_admission_failed", "oci_truth_or_lifecycle_gate_failed",
+            "oci_inspect_failed", "oci_rss_failed", "oci_cleanup_failed", "oci_readiness_timeline_failed"
+          ] }
+        }
+      }
+    },
+    "governance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["comparatorPassed", "productionEligible"],
+      "properties": {
+        "comparatorPassed": { "type": "boolean" },
+        "productionEligible": { "const": false }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "gatewayCalls", "modelCalls", "providerCalls", "containerStarts", "networkCalls", "credentialsRead", "workspaceMutations"],
+      "properties": {
+        "mode": { "const": "read-only" },
+        "gatewayCalls": { "const": 0 },
+        "modelCalls": { "const": 0 },
+        "providerCalls": { "const": 0 },
+        "containerStarts": { "const": 0 },
+        "networkCalls": { "const": 0 },
+        "credentialsRead": { "const": false },
+        "workspaceMutations": { "const": 0 }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reportSha256"],
+      "properties": { "reportSha256": { "$ref": "#/$defs/sha256" } }
+    },
+    "windowsEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gatePassed", "lifecyclePassed", "responsePassed", "concurrencyPassed", "stateCleanupPassed"],
+      "properties": {
+        "gatePassed": { "type": "boolean" },
+        "lifecyclePassed": { "type": "boolean" },
+        "responsePassed": { "type": "boolean" },
+        "concurrencyPassed": { "type": "boolean" },
+        "stateCleanupPassed": { "type": "boolean" }
+      }
+    },
+    "ociEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gatePassed", "providerAdmissionPassed", "inspectPassed", "rssPassed", "cleanupPassed", "readinessTimelinePassed"],
+      "properties": {
+        "gatePassed": { "type": "boolean" },
+        "providerAdmissionPassed": { "type": "boolean" },
+        "inspectPassed": { "type": "boolean" },
+        "rssPassed": { "type": "boolean" },
+        "cleanupPassed": { "type": "boolean" },
+        "readinessTimelinePassed": { "type": "boolean" }
+      }
+    }
+  }
+}

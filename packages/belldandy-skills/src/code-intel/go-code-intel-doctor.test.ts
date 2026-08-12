@@ -133,6 +133,7 @@ describe("buildGoCodeIntelDoctorReport", () => {
         status: "canary-ready",
         active: true,
         canaryReady: true,
+        goCanaryEligible: false,
         productionEligible: false,
       },
       toolchain: {
@@ -153,6 +154,34 @@ describe("buildGoCodeIntelDoctorReport", () => {
       { SystemRoot: "C:\\Windows" },
       { SystemRoot: "C:\\Windows" },
     ]);
+  });
+
+  it("projects Go canary eligibility only from a passing comparator artifact", async () => {
+    const report = await buildGoCodeIntelDoctorReport({
+      environment: enabledEnvironment(),
+      comparatorReport: passingComparatorReport(),
+      runCommand: async (command) => command === goplsCommand
+        ? { stdout: "golang.org/x/tools/gopls v0.21.0\n", stderr: "" }
+        : { stdout: "go version go1.24.2 windows/amd64\n", stderr: "" },
+    });
+
+    expect(report).toMatchObject({
+      summary: {
+        status: "canary-ready",
+        canaryReady: true,
+        goCanaryEligible: true,
+        productionEligible: false,
+      },
+      eligibility: {
+        status: "proven",
+        goCanaryEligible: true,
+        productionEligible: false,
+      },
+      governance: {
+        goCanaryEligible: true,
+        productionEligible: false,
+      },
+    });
   });
 
   it("fails closed when enabled command paths are not absolute", async () => {
@@ -183,5 +212,43 @@ function enabledEnvironment(
     BELLDANDY_CODE_INTEL_GO_COMMAND: goCommand,
     SystemRoot: "C:\\Windows",
     ...extra,
+  };
+}
+
+function passingComparatorReport() {
+  return {
+    schemaVersion: "code-intel-go-canary-comparator-report/v1",
+    identity: {
+      truthSetId: "p1-a2-go-canary-v1",
+      manifestSha256: "a".repeat(64),
+      fixtureAggregateSha256: "b".repeat(64),
+      matchedSharedRuntimeFileCount: 9,
+    },
+    toolchain: {
+      goVersion: "go1.24.2",
+      goplsVersion: "v0.21.0",
+      windowsPlatform: "windows/amd64",
+      ociPlatform: "linux/amd64",
+    },
+    truth: { caseCount: 6, positionCount: 10, matched: true },
+    evidence: {
+      windowsNative: {
+        gatePassed: true,
+        lifecyclePassed: true,
+        responsePassed: true,
+        concurrencyPassed: true,
+        stateCleanupPassed: true,
+      },
+      wsl2Oci: {
+        gatePassed: true,
+        providerAdmissionPassed: true,
+        inspectPassed: true,
+        rssPassed: true,
+        cleanupPassed: true,
+        readinessTimelinePassed: true,
+      },
+    },
+    gate: { passed: true, failures: [] },
+    governance: { comparatorPassed: true, productionEligible: false },
   };
 }

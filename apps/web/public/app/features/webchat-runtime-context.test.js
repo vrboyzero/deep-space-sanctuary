@@ -4,6 +4,22 @@ import {
   createDefaultWebChatRuntimeAdapter,
   createWebChatRuntimeContext,
 } from "./webchat-runtime-context.js";
+import { parseTaskProjectionCollectionPage } from "./task-projection-webchat.js";
+
+function createProjection() {
+  const capabilities = Object.fromEntries([
+    "tools", "languageToolchain", "sandbox", "approvalChannel", "worktree", "journal", "trace", "verifier", "mcp", "plugin", "skill",
+  ].map((name) => [name, { required: false, state: "available" }]));
+  return {
+    schemaVersion: "task-projection/v1",
+    taskId: "task-1",
+    status: "running",
+    owner: { source: "conversation", binding: { agentRunId: "run-1", conversationId: "conversation-1" } },
+    evidence: { observedAtMs: 1, reasonCategory: "running", reasonCode: "owner_running" },
+    allowedActions: ["observe", "cancel"],
+    capabilityClosure: { schemaVersion: "task-capability-closure/v1", evaluatedAtMs: 1, status: "satisfied", capabilities },
+  };
+}
 
 describe("webchat runtime context", () => {
   it("preserves the five legacy callback contracts through the default adapter", async () => {
@@ -37,6 +53,44 @@ describe("webchat runtime context", () => {
     expect(switchMode).toHaveBeenCalledWith("memory");
     expect(t).toHaveBeenCalledWith("memory.title", { count: "1" }, "Memory");
     expect(showNotice).toHaveBeenCalledWith("Saved", "Done", "success", 1200, { key: "save" });
+  });
+
+  it("exposes a read-only TaskProjection page adapter without changing legacy gateway requests", async () => {
+    const sendReq = vi.fn().mockResolvedValue({
+      ok: true,
+      payload: { epoch: "epoch-1", revision: 2, totalCount: 0, items: [] },
+    });
+    const context = createWebChatRuntimeContext({ adapter: createDefaultWebChatRuntimeAdapter({ sendReq }) });
+    await expect(context.taskProjections.list({ limit: 10 })).resolves.toEqual({
+      ok: true,
+      payload: { epoch: "epoch-1", revision: 2, totalCount: 0, items: [] },
+    });
+    expect(sendReq).toHaveBeenCalledWith({
+      type: "req",
+      method: "task.projection.list",
+      params: { limit: 10 },
+    }, {});
+  });
+
+  it("fails closed before Gateway dispatch for unsupported projection fields", async () => {
+    const sendReq = vi.fn();
+    const context = createWebChatRuntimeContext({ adapter: createDefaultWebChatRuntimeAdapter({ sendReq }) });
+    await expect(context.taskProjections.list({ prompt: "forbidden" })).rejects.toThrow("unsupported fields");
+    expect(sendReq).not.toHaveBeenCalled();
+  });
+
+  it("keeps page parsing strict for required fields and revision-bound cursors", () => {
+    const page = parseTaskProjectionCollectionPage({ epoch: "epoch-1", revision: 2, totalCount: 1, items: [createProjection()] });
+    expect(page.items[0].taskId).toBe("task-1");
+    expect(() => parseTaskProjectionCollectionPage({ epoch: "epoch-1", revision: 2, totalCount: 1 }))
+      .toThrow("invalid");
+    expect(() => parseTaskProjectionCollectionPage({
+      epoch: "epoch-1",
+      revision: 2,
+      totalCount: 1,
+      items: [createProjection()],
+      nextCursor: { epoch: "epoch-1", revision: 2, offset: 0 },
+    })).toThrow("cursor");
   });
 
   it("provides deterministic defaults when legacy callbacks are unavailable", async () => {

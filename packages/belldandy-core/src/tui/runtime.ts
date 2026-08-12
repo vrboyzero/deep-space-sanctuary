@@ -19,6 +19,8 @@ import {
   type CodingRunSubscription,
   type RunControl,
 } from "../coding-run/contracts.js";
+import type { TaskProjectionCollectionCursor, TaskProjectionCollectionPage } from "../coding-run/task-projection-collection.js";
+import { parseTaskProjectionCollectionPage } from "../coding-run/task-projection-consumer.js";
 import { runCodingRunStdio } from "../coding-run/stdio-process.js";
 import {
   CodingRunNdjsonClient,
@@ -245,6 +247,26 @@ export class CodingTuiRuntime {
     });
     if (!result.ok) throw new Error(result.error);
     return result.payload as TuiPermissionRequest[];
+  }
+
+  async listTaskProjections(input: {
+    limit?: number;
+    cursor?: TaskProjectionCollectionCursor;
+  } = {}): Promise<TaskProjectionCollectionPage> {
+    const params = {
+      ...(input.limit === undefined ? {} : { limit: input.limit }),
+      ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+    };
+    const result = await this.invokeGateway({
+      stateDir: this.stateDir,
+      method: "task.projection.list",
+      params,
+      requestIdPrefix: "bdd-tui-task-projection-list",
+      clientName: "bdd tui",
+      parsePayload: parseTaskProjectionCollectionPage,
+    });
+    if (!result.ok) throw new Error(result.error);
+    return result.payload as TaskProjectionCollectionPage;
   }
 
   async readChangeSnapshotPage(snapshotId: string, cursor?: string) {

@@ -18,6 +18,7 @@ import type { GoplsCodeIntelHost } from "./gopls-provider.js";
 import {
   LspProcessHost,
   type LspProcessHostDiagnostics,
+  type LspProcessHostErrorCode,
   type LspProcessHostOptions,
   type LspProcessNotification,
   type LspProcessRequest,
@@ -25,7 +26,15 @@ import {
 } from "./lsp-process-host.js";
 
 export const GOPLS_OCI_SANDBOX_CONTRACT_VERSION = "gopls-oci-sandbox/v1" as const;
-const GOPLS_WORKSPACE_READINESS_QUERY = "__star_sanctuary_workspace_readiness__";
+const GOPLS_WORKSPACE_READINESS_QUERY = "BuildMessage";
+const GOPLS_CROSS_MODULE_READINESS_MAX_ATTEMPTS = 8;
+const GOPLS_CROSS_MODULE_READINESS_PROGRESS_SLICE_MS = 500;
+const GOPLS_CROSS_MODULE_READINESS_SOURCE = {
+  relativePath: "app/main.go",
+  line: 7,
+  character: 13,
+} as const;
+const GOPLS_CROSS_MODULE_READINESS_TARGET = "lib/service/api.go";
 export const GOPLS_OCI_SANDBOX_RESOURCE_LIMITS = Object.freeze({
   memoryBytes: 128 * 1024 * 1024,
   cpus: 1,
@@ -60,6 +69,10 @@ export interface GoplsOciSandboxHost extends GoplsCodeIntelHost {
 type GoplsOciSandboxLspHost = GoplsCodeIntelHost & {
   getDiagnostics(): LspProcessHostDiagnostics;
   waitForWorkDoneProgress(deadlineAtMs: number, signal?: AbortSignal): Promise<void>;
+  recordTimelineMarker?: (
+    kind: "readiness_started" | "readiness_completed" | "readiness_failed",
+    errorCode?: LspProcessHostErrorCode,
+  ) => void;
 };
 
 export interface GoplsOciSandboxHostDependencies {
@@ -113,6 +126,7 @@ export async function createGoplsOciSandboxHost(
       host,
       lease,
       environmentFile.cleanup,
+      options.workspaceRoot,
     );
   } catch (error) {
     await releaseProvisioningResources(lease, environmentFile.cleanup);
@@ -131,6 +145,7 @@ class ManagedGoplsOciSandboxHost implements GoplsOciSandboxHost {
     private readonly host: GoplsOciSandboxLspHost,
     private readonly lease: OciSandboxLease,
     private readonly cleanupEnvironment: () => Promise<void>,
+    private readonly workspaceRoot: string,
   ) {}
 
   request<Result = unknown>(request: LspProcessRequest): Promise<Result> {
@@ -149,13 +164,58 @@ class ManagedGoplsOciSandboxHost implements GoplsOciSandboxHost {
 
   async waitForWorkspaceReady(deadlineAtMs: number, signal?: AbortSignal): Promise<void> {
     this.markRuntimeStarted();
-    await this.host.request({
-      method: "workspace/symbol",
-      params: { query: GOPLS_WORKSPACE_READINESS_QUERY },
-      deadlineAtMs,
-      signal,
-    });
-    await this.host.waitForWorkDoneProgress(deadlineAtMs, signal);
+    this.host.recordTimelineMarker?.("readiness_started");
+    try {
+      await this.host.request({
+        method: "workspace/symbol",
+        params: { query: GOPLS_WORKSPACE_READINESS_QUERY },
+        deadlineAtMs,
+        signal,
+      });
+      const sourceUri = toPosixFileUri(path.posix.join(
+        this.workspaceRoot,
+        GOPLS_CROSS_MODULE_READINESS_SOURCE.relativePath,
+      ));
+      const targetUri = toPosixFileUri(path.posix.join(
+        this.workspaceRoot,
+        GOPLS_CROSS_MODULE_READINESS_TARGET,
+      ));
+      let definitionReady = false;
+      for (let attempt = 0; attempt < GOPLS_CROSS_MODULE_READINESS_MAX_ATTEMPTS; attempt += 1) {
+        await waitForReadinessProgressSlice(this.host, deadlineAtMs, signal);
+        const response = await this.host.request<unknown>({
+          method: "textDocument/definition",
+          params: {
+            textDocument: { uri: sourceUri },
+            position: {
+              line: GOPLS_CROSS_MODULE_READINESS_SOURCE.line,
+              character: GOPLS_CROSS_MODULE_READINESS_SOURCE.character,
+            },
+          },
+          deadlineAtMs,
+          signal,
+        });
+        if (hasDefinitionTarget(response, targetUri)) {
+          definitionReady = true;
+          break;
+        }
+      }
+      if (!definitionReady) {
+        throw new Error("gopls OCI cross-module definition readiness probe did not resolve.");
+      }
+      if (this.host.getDiagnostics().workDoneProgress.activeCount > 0) {
+        await this.host.waitForWorkDoneProgress(deadlineAtMs, signal);
+      }
+      this.host.recordTimelineMarker?.("readiness_completed");
+    } catch (error) {
+      this.host.recordTimelineMarker?.(
+        "readiness_failed",
+        error instanceof Error && "code" in error && typeof error.code === "string"
+          ? error.code as LspProcessHostErrorCode
+          : undefined,
+      );
+      throw error;
+    }
   }
 
   async dispose(): Promise<void> {
@@ -223,6 +283,47 @@ class ManagedGoplsOciSandboxHost implements GoplsOciSandboxHost {
     if (errors.length > 0) {
       throw new Error("gopls OCI sandbox resources did not close cleanly.");
     }
+  }
+}
+
+function hasDefinitionTarget(response: unknown, targetUri: string): boolean {
+  const values = Array.isArray(response) ? response : [response];
+  return values.some((value) => (
+    isObjectRecord(value)
+    && (value.uri === targetUri || value.targetUri === targetUri)
+  ));
+}
+
+function toPosixFileUri(filePath: string): string {
+  return `file://${filePath.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function waitForReadinessProgressSlice(
+  host: GoplsOciSandboxLspHost,
+  deadlineAtMs: number,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  if (host.getDiagnostics().workDoneProgress.activeCount > 0) {
+    await host.waitForWorkDoneProgress(deadlineAtMs, signal);
+    return;
+  }
+  const sliceDeadlineAtMs = Math.min(
+    deadlineAtMs,
+    Date.now() + GOPLS_CROSS_MODULE_READINESS_PROGRESS_SLICE_MS,
+  );
+  try {
+    await host.waitForWorkDoneProgress(sliceDeadlineAtMs, signal);
+  } catch (error) {
+    if (!(error instanceof Error) || !("code" in error) || error.code !== "timeout") {
+      throw error;
+    }
+  }
+  if (host.getDiagnostics().workDoneProgress.activeCount > 0) {
+    await host.waitForWorkDoneProgress(deadlineAtMs, signal);
   }
 }
 

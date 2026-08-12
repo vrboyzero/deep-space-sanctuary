@@ -77,6 +77,7 @@
     "benchmark:code-intel:go-fault-gate": "node scripts/run-code-intel-go-fault-gate.mjs",
     "benchmark:code-intel:go-oci-sandbox-gate": "node --import tsx scripts/run-code-intel-go-oci-sandbox-gate.mjs",
     "benchmark:code-intel:go-oci-promotion-gate": "node scripts/run-code-intel-go-oci-promotion-gate.mjs",
+    "benchmark:code-intel:go-canary-comparator": "node scripts/run-code-intel-go-canary-comparator.mjs",
     "benchmark:code-intel:resource-soak": "node --expose-gc scripts/run-code-intel-resource-soak.mjs",
     "benchmark:code-intel:agent-uplift-readiness": "node scripts/run-code-intel-agent-uplift-readiness.mjs",
     "benchmark:code-intel:agent-uplift": "node scripts/run-code-intel-agent-uplift.mjs",

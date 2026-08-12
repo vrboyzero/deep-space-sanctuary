@@ -28,8 +28,28 @@ export {
   createRuntimeLostCodingRunView,
   createSubtaskCodingRunView,
   createWorkflowJournalCodingRunView,
+  createWorkflowActiveCodingRunView,
   createWorkflowRuntimeCodingRunView,
 } from "./coding-run/source-adapters.js";
+export {
+  createTaskProjection,
+  createTaskProjectionSet,
+  createTaskProjectionActionEnvelope,
+  isTaskCapabilityClosure,
+  isTaskProjectionV1,
+  isTaskProjectionActionEnvelopeV1,
+  TASK_CAPABILITY_CLOSURE_SCHEMA_VERSION,
+  TASK_PROJECTION_SCHEMA_VERSION,
+  TASK_PROJECTION_ACTIONS_SCHEMA_VERSION,
+} from "./coding-run/task-projection.js";
+export {
+  createTaskProjectionCollectionSnapshot,
+  DEFAULT_TASK_PROJECTION_COLLECTION_LIMIT,
+  MAX_TASK_PROJECTION_COLLECTION_LIMIT,
+  readTaskProjectionCollectionSnapshot,
+  TASK_PROJECTION_COLLECTION_SCHEMA_VERSION,
+} from "./coding-run/task-projection-collection.js";
+export { parseTaskProjectionCollectionPage } from "./coding-run/task-projection-consumer.js";
 export { CodingRunRecoveryMarkerStore } from "./coding-run/recovery-marker-store.js";
 export {
   CodingRunClient,
@@ -150,8 +170,34 @@ export type {
   RuntimeLostCodingRunView,
   SubtaskCodingRunView,
   WorkflowJournalCodingRunView,
+  WorkflowActiveCodingRunView,
   WorkflowRuntimeCodingRunView,
 } from "./coding-run/source-adapters.js";
+export type {
+  TaskCapability,
+  TaskCapabilityClosure,
+  TaskCapabilityName,
+  TaskCapabilityState,
+  TaskProjection,
+  TaskProjectionAction,
+  TaskProjectionActionEnvelope,
+  TaskProjectionActionEnvelopeInput,
+  TaskProjectionInput,
+  TaskProjectionReasonCategory,
+  TaskProjectionSetInput,
+  TaskProjectionStatus,
+  TaskProjectionSupportingEvidence,
+} from "./coding-run/task-projection.js";
+export type {
+  TaskProjectionCollectionCursor,
+  TaskProjectionCollectionPage,
+  TaskProjectionCollectionReadFailure,
+  TaskProjectionCollectionSnapshot,
+  TaskProjectionCollectionSource,
+} from "./coding-run/task-projection-collection.js";
+export { TaskProjectionCollectionRuntime } from "./coding-run/task-projection-collection-runtime.js";
+export { collectTaskProjectionSources, createUnknownTaskCapabilityClosure } from "./coding-run/task-projection-collector.js";
+export type { TaskProjectionCollectorContext } from "./coding-run/task-projection-collector.js";
 export type {
   CodingRunRecoveryLookup,
   CodingRunRecoveryMarker,

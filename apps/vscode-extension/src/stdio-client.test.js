@@ -271,4 +271,58 @@ describe("VS Code coding-run stdio client", () => {
     });
     expect(protocolErrors).toEqual([{ code: "invalid_frame", message: "Invalid coding run NDJSON frame." }]);
   });
+
+  it("reads a bounded TaskProjection page and rejects invalid projection inputs", async () => {
+    const harness = createChildHarness();
+    const client = new CodingRunStdioClient({
+      command: "bdd",
+      spawn: harness.spawn,
+      createRequestId: () => "projection-1",
+    });
+
+    await expect(client.listTaskProjections({ prompt: "forbidden" }))
+      .rejects.toThrow("unsupported fields");
+    expect(harness.spawn).not.toHaveBeenCalled();
+
+    const response = client.listTaskProjections({ limit: 10, cursor: { epoch: "epoch-1", revision: 2, offset: 1 } });
+    const sent = once(harness.child.stdin, "data");
+    const [chunk] = await sent;
+    expect(JSON.parse(String(chunk))).toEqual({
+      version: "v1",
+      type: "projection.request",
+      id: "projection-1",
+      projection: { limit: 10, cursor: { epoch: "epoch-1", revision: 2, offset: 1 } },
+    });
+
+    harness.child.stdout.write(`${JSON.stringify({
+      version: "v1",
+      type: "projection.response",
+      id: "projection-1",
+      ok: true,
+      result: { epoch: "epoch-1", revision: 2, totalCount: 1, items: [] },
+    })}\n`);
+    await expect(response).resolves.toEqual({
+      ok: true,
+      result: { epoch: "epoch-1", revision: 2, totalCount: 1, items: [] },
+    });
+  });
+
+  it("preserves a structured projection source rejection", async () => {
+    const harness = createChildHarness();
+    const client = new CodingRunStdioClient({ command: "bdd", spawn: harness.spawn, createRequestId: () => "projection-error" });
+    const response = client.listTaskProjections();
+    const sent = once(harness.child.stdin, "data");
+    await sent;
+    harness.child.stdout.write(`${JSON.stringify({
+      version: "v1",
+      type: "projection.response",
+      id: "projection-error",
+      ok: false,
+      error: { code: "cursor_stale", message: "Projection cursor belongs to an older Gateway epoch." },
+    })}\n`);
+    await expect(response).resolves.toEqual({
+      ok: false,
+      error: { code: "cursor_stale", message: "Projection cursor belongs to an older Gateway epoch." },
+    });
+  });
 });

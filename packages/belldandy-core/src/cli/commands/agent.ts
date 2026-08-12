@@ -7,6 +7,7 @@ export default defineCommand({
     continue: () => import("./agent/continue.js").then((module) => module.default),
     inspect: () => import("./agent/inspect.js").then((module) => module.default),
     status: () => import("./agent/status.js").then((module) => module.default),
+    "task-projections": () => import("./agent/task-projections.js").then((module) => module.default),
     "follow-up": () => import("./agent/follow-up.js").then((module) => module.default),
     "follow-up-status": () => import("./agent/follow-up-status.js").then((module) => module.default),
     steer: () => import("./agent/steer.js").then((module) => module.default),
