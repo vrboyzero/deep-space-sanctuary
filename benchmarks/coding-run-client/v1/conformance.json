@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "coding-run-client-conformance/v1",
+  "protocolVersion": "v1",
+  "previousProtocolVersion": null,
+  "previousVersionGate": "not_applicable_initial_version",
+  "requiredOperations": ["start", "subscribe", "respond_allow", "respond_deny", "cancel", "read_artifact", "close"],
+  "requiredFailureModes": ["unknown_fields", "redaction", "cursor_expired", "cursor_stale", "cursor_future", "cursor_out_of_range", "invalid_frame", "frame_too_large", "backpressure", "request_aborted", "cancellation", "request_timeout", "transport_error", "client_closed", "error_taxonomy"],
+  "gatewayErrorCodes": ["invalid_request", "not_found", "run_mismatch", "not_active", "permission_required", "permission_denied", "policy_denied", "budget_exhausted", "cancelled", "interrupted", "output_schema_invalid", "gateway_unavailable", "invalid_limit", "cursor_stale", "cursor_future", "cursor_out_of_range", "internal"],
+  "subscriptionErrorCodes": ["cursor_expired"],
+  "localErrorCodes": ["request_timeout", "request_aborted", "client_closed", "backpressure", "transport_error"],
+  "contentMode": "none"
+}

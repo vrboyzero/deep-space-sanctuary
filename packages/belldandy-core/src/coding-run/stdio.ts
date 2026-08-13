@@ -22,6 +22,7 @@ import { isTaskProjectionV1 } from "./task-projection.js";
 
 const DEFAULT_MAX_FRAME_BYTES = 1024 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+const DEFAULT_MAX_PENDING_REQUESTS = 64;
 const MAX_CONVERSATION_TEXT_CHARS = 64_000;
 const MAX_CONVERSATION_IDENTIFIER_CHARS = 256;
 
@@ -98,6 +99,7 @@ export type CodingRunClientRequestErrorCode =
   | "request_timeout"
   | "request_aborted"
   | "client_closed"
+  | "backpressure"
   | "transport_error";
 
 /** SDK 只暴露有界错误正文与稳定 code，不透传 transport/Gateway 私密细节。 */
@@ -161,6 +163,7 @@ export type CodingRunNdjsonClientOptions = {
   onProtocolError?: (error: { code: "invalid_frame" | "frame_too_large"; message: string }) => void;
   createRequestId?: () => string;
   maxFrameBytes?: number;
+  maxPendingRequests?: number;
 };
 
 export type CodingRunClientRequestOptions = {
@@ -382,16 +385,19 @@ export function createCodingRunNdjsonServer(input: {
  */
 export class CodingRunNdjsonClient {
   private readonly decoder: NdjsonDecoder;
+  private readonly maxPendingRequests: number;
   private readonly pending = new Map<string, PendingRequest>();
   private closed = false;
 
   constructor(private readonly options: CodingRunNdjsonClientOptions) {
     this.decoder = createNdjsonDecoder(options.maxFrameBytes);
+    this.maxPendingRequests = normalizePositiveInteger(options.maxPendingRequests, DEFAULT_MAX_PENDING_REQUESTS);
   }
 
   control(control: RunControl, options?: CodingRunClientRequestOptions): Promise<CodingRunControlResponse> {
     if (this.closed) return Promise.reject(clientClosedError());
     if (options?.signal?.aborted) return Promise.reject(requestAbortedError());
+    if (this.pending.size >= this.maxPendingRequests) return Promise.reject(backpressureError());
     if (!isRunControlV1(control)) {
       return Promise.resolve({
         ok: false,
@@ -420,6 +426,7 @@ export class CodingRunNdjsonClient {
   ): Promise<CodingRunSubscriptionResponse> {
     if (this.closed) return Promise.reject(clientClosedError());
     if (options?.signal?.aborted) return Promise.reject(requestAbortedError());
+    if (this.pending.size >= this.maxPendingRequests) return Promise.reject(backpressureError());
     if (!isCodingRunSubscriptionV1(subscription)) {
       return Promise.resolve({
         ok: false,
@@ -448,6 +455,7 @@ export class CodingRunNdjsonClient {
   ): Promise<CodingRunConversationResponse> {
     if (this.closed) return Promise.reject(clientClosedError());
     if (options?.signal?.aborted) return Promise.reject(requestAbortedError());
+    if (this.pending.size >= this.maxPendingRequests) return Promise.reject(backpressureError());
     if (!isCodingRunConversationRequest(conversation)) {
       return Promise.resolve({
         ok: false,
@@ -476,6 +484,7 @@ export class CodingRunNdjsonClient {
   ): Promise<CodingRunArtifactResponse> {
     if (this.closed) return Promise.reject(clientClosedError());
     if (options?.signal?.aborted) return Promise.reject(requestAbortedError());
+    if (this.pending.size >= this.maxPendingRequests) return Promise.reject(backpressureError());
     if (!isCodingRunArtifactRequest(artifact)) {
       return Promise.resolve({
         ok: false,
@@ -504,6 +513,7 @@ export class CodingRunNdjsonClient {
   ): Promise<CodingRunProjectionResponse> {
     if (this.closed) return Promise.reject(clientClosedError());
     if (options?.signal?.aborted) return Promise.reject(requestAbortedError());
+    if (this.pending.size >= this.maxPendingRequests) return Promise.reject(backpressureError());
     if (!isCodingRunProjectionRequest(projection)) {
       return Promise.resolve({
         ok: false,
@@ -590,13 +600,13 @@ export class CodingRunNdjsonClient {
       if (isCodingRunSubscriptionErrorFrame(frame)) {
         this.options.onSubscriptionError?.({
           code: frame.code,
-          message: frame.message,
+          message: toSafeCodingRunErrorMessage(frame.message),
           binding: frame.binding,
         });
         continue;
       }
       if (isProtocolErrorFrame(frame)) {
-        this.options.onProtocolError?.({ code: frame.code, message: frame.message });
+        this.options.onProtocolError?.({ code: frame.code, message: toSafeCodingRunErrorMessage(frame.message) });
         continue;
       }
       this.options.onProtocolError?.({ code: "invalid_frame", message: "Invalid coding run NDJSON frame." });
@@ -1223,12 +1233,20 @@ function normalizeRequestTimeout(value: number | undefined, fallback: number): n
   return Number.isFinite(value) ? Math.max(1, Math.trunc(value!)) : fallback;
 }
 
+function normalizePositiveInteger(value: number | undefined, fallback: number): number {
+  return Number.isFinite(value) ? Math.min(1024, Math.max(1, Math.trunc(value!))) : fallback;
+}
+
 function clientClosedError(): CodingRunClientRequestError {
   return new CodingRunClientRequestError("client_closed", "Coding run NDJSON client is closed.");
 }
 
 function requestAbortedError(): CodingRunClientRequestError {
   return new CodingRunClientRequestError("request_aborted", "Coding run request was aborted.");
+}
+
+function backpressureError(): CodingRunClientRequestError {
+  return new CodingRunClientRequestError("backpressure", "Coding run client backpressure limit reached.");
 }
 
 function parseJsonRecord(line: string): Record<string, unknown> | undefined {

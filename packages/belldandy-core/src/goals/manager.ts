@@ -6,6 +6,7 @@ import { resolveStateDir } from "@belldandy/protocol";
 import { getGlobalMemoryManager, type ExperienceCandidate } from "@belldandy/memory";
 import { publishSkillCandidate, getGlobalSkillRegistry, getUserSkillsDir } from "@belldandy/skills";
 import { getGoalUpdateAreas } from "./goal-events.js";
+import { atomicWriteGoalText } from "./atomic-write.js";
 import { normalizeGoalId, normalizeGoalSlug, resolveGoalPaths } from "./paths.js";
 import { buildGoalHandoffResult, generateGoalHandoff } from "./handoff.js";
 import { loadGoalHandoffBridgeGovernanceSummary } from "./handoff-bridge.js";
@@ -3090,10 +3091,7 @@ export class GoalManager {
   }
 
   private async atomicWriteText(targetPath: string, content: string): Promise<void> {
-    await fs.mkdir(path.dirname(targetPath), { recursive: true });
-    const tempPath = `${targetPath}.tmp-${crypto.randomUUID().slice(0, 8)}`;
-    await fs.writeFile(tempPath, content, "utf-8");
-    await fs.rename(tempPath, targetPath);
+    await atomicWriteGoalText(targetPath, content);
   }
 
   private buildCommanderPlanMarkdown(

@@ -1,6 +1,4 @@
-import crypto from "node:crypto";
 import fs from "node:fs/promises";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 
 import {
@@ -13,6 +11,7 @@ import {
   type ExtensionMarketplaceSource,
   type ExtensionPermission,
 } from "@belldandy/plugins";
+import { atomicWriteMarketplaceJson } from "./extension-marketplace-atomic-write.js";
 
 const EXTENSION_STATE_DIRNAME = "extensions";
 const KNOWN_MARKETPLACES_FILENAME = "known-marketplaces.json";
@@ -143,10 +142,7 @@ function assertExtensionStatus(value: unknown, label: string): InstalledExtensio
 }
 
 async function atomicWriteJson(targetPath: string, value: unknown): Promise<void> {
-  mkdirSync(path.dirname(targetPath), { recursive: true });
-  const tempPath = `${targetPath}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(tempPath, JSON.stringify(value, null, 2), "utf-8");
-  await fs.rename(tempPath, targetPath);
+  await atomicWriteMarketplaceJson(targetPath, value);
 }
 
 export function getExtensionMarketplaceStateDir(stateDir: string): string {

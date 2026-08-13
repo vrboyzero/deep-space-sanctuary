@@ -28,7 +28,7 @@
     "@belldandy/protocol": "workspace:*",
     "node-edge-tts": "^1.2.9",
     "openai": "^6.17.0",
-    "puppeteer-core": "^24.43.1",
+    "puppeteer-core": "^25.7.0",
     "ws": "^8.21.1",
     "jsdom": "^24.0.0",
     "@types/jsdom": "^21.1.6",

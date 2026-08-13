@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.local/schemas/p2a-subtask-supervisor-soak-report.schema.json",
+  "title": "P2-A SubTask Supervisor Soak Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "platform",
+    "sourceIdentity",
+    "workload",
+    "recovery",
+    "resources",
+    "execution",
+    "gate"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "p2a-subtask-supervisor-soak-report/v1" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "platform": { "enum": ["windows-native", "wsl2-linux"] },
+    "sourceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspaceRevision", "aggregateSha256", "files"],
+      "properties": {
+        "workspaceRevision": { "type": "string", "minLength": 1 },
+        "aggregateSha256": { "$ref": "#/$defs/sha256" },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "sha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        }
+      }
+    },
+    "workload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestedDurationMs",
+        "observedDurationMs",
+        "cycleIntervalMs",
+        "cycles",
+        "writeLanesPerCycle",
+        "readLanesPerCycle",
+        "laneAttempts",
+        "laneSucceeded",
+        "laneFailed",
+        "successRate",
+        "firstFailureCode",
+        "writeLaneAttempts",
+        "readLaneAttempts"
+      ],
+      "properties": {
+        "requestedDurationMs": { "$ref": "#/$defs/nonNegativeInteger" },
+        "observedDurationMs": { "$ref": "#/$defs/nonNegativeInteger" },
+        "cycleIntervalMs": { "$ref": "#/$defs/nonNegativeInteger" },
+        "cycles": { "$ref": "#/$defs/nonNegativeInteger" },
+        "writeLanesPerCycle": { "const": 4 },
+        "readLanesPerCycle": { "const": 8 },
+        "laneAttempts": { "$ref": "#/$defs/nonNegativeInteger" },
+        "laneSucceeded": { "$ref": "#/$defs/nonNegativeInteger" },
+        "laneFailed": { "$ref": "#/$defs/nonNegativeInteger" },
+        "successRate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "firstFailureCode": { "type": ["string", "null"], "minLength": 1 },
+        "writeLaneAttempts": { "$ref": "#/$defs/nonNegativeInteger" },
+        "readLaneAttempts": { "$ref": "#/$defs/nonNegativeInteger" }
+      }
+    },
+    "recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interruptionAttempted",
+        "interruptionRecovered",
+        "disposalCompleted",
+        "disposalUncertain",
+        "duplicateSideEffects"
+      ],
+      "properties": {
+        "interruptionAttempted": { "$ref": "#/$defs/nonNegativeInteger" },
+        "interruptionRecovered": { "$ref": "#/$defs/nonNegativeInteger" },
+        "disposalCompleted": { "$ref": "#/$defs/nonNegativeInteger" },
+        "disposalUncertain": { "$ref": "#/$defs/nonNegativeInteger" },
+        "duplicateSideEffects": { "$ref": "#/$defs/nonNegativeInteger" }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["preExisting", "differential", "runOwned"],
+      "properties": {
+        "preExisting": { "$ref": "#/$defs/workspaceCounts" },
+        "differential": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["addedWorktreeCount", "addedManagedBranchCount", "addedRelevantProcessCount"],
+          "properties": {
+            "addedWorktreeCount": { "$ref": "#/$defs/nonNegativeInteger" },
+            "addedManagedBranchCount": { "$ref": "#/$defs/nonNegativeInteger" },
+            "addedRelevantProcessCount": { "$ref": "#/$defs/nonNegativeInteger" }
+          }
+        },
+        "runOwned": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "activeSupervisorChildren",
+            "worktreeCount",
+            "managedBranchCount",
+            "processCount",
+            "receiptCount",
+            "lockCount",
+            "temporaryFileCount",
+            "stateRootExists",
+            "temporaryRootExists"
+          ],
+          "properties": {
+            "activeSupervisorChildren": { "$ref": "#/$defs/nonNegativeInteger" },
+            "worktreeCount": { "$ref": "#/$defs/nonNegativeInteger" },
+            "managedBranchCount": { "$ref": "#/$defs/nonNegativeInteger" },
+            "processCount": { "$ref": "#/$defs/nonNegativeInteger" },
+            "receiptCount": { "$ref": "#/$defs/nonNegativeInteger" },
+            "lockCount": { "$ref": "#/$defs/nonNegativeInteger" },
+            "temporaryFileCount": { "$ref": "#/$defs/nonNegativeInteger" },
+            "stateRootExists": { "type": "boolean" },
+            "temporaryRootExists": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gatewayCalls",
+        "modelCalls",
+        "paidProviderCalls",
+        "externalNetworkCalls",
+        "productionWorkspaceMutations",
+        "temporaryRepositoryMutations",
+        "credentialsRead"
+      ],
+      "properties": {
+        "gatewayCalls": { "const": 0 },
+        "modelCalls": { "const": 0 },
+        "paidProviderCalls": { "const": 0 },
+        "externalNetworkCalls": { "const": 0 },
+        "productionWorkspaceMutations": { "const": 0 },
+        "temporaryRepositoryMutations": { "$ref": "#/$defs/nonNegativeInteger" },
+        "credentialsRead": { "const": false }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "failures"],
+      "properties": {
+        "passed": { "type": "boolean" },
+        "failures": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "nonNegativeInteger": { "type": "integer", "minimum": 0 },
+    "workspaceCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["worktreeCount", "managedBranchCount", "relevantProcessCount"],
+      "properties": {
+        "worktreeCount": { "$ref": "#/$defs/nonNegativeInteger" },
+        "managedBranchCount": { "$ref": "#/$defs/nonNegativeInteger" },
+        "relevantProcessCount": { "$ref": "#/$defs/nonNegativeInteger" }
+      }
+    }
+  }
+}

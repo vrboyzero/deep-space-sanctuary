@@ -6,9 +6,18 @@ const { isTaskProjectionCollectionPage } = require("./task-projection-validator.
 const PROTOCOL_VERSION = "v1";
 const DEFAULT_MAX_FRAME_BYTES = 1024 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+const DEFAULT_MAX_PENDING_REQUESTS = 64;
 const MAX_ERROR_MESSAGE_CHARS = 512;
 const MAX_CONVERSATION_TEXT_CHARS = 64_000;
 const MAX_CONVERSATION_IDENTIFIER_CHARS = 256;
+
+class CodingRunStdioClientError extends Error {
+  constructor(code, message) {
+    super(safeMessage(message));
+    this.name = "CodingRunStdioClientError";
+    this.code = code;
+  }
+}
 
 class CodingRunStdioClient {
   constructor(options) {
@@ -22,6 +31,9 @@ class CodingRunStdioClient {
     this.requestTimeoutMs = Number.isFinite(options.requestTimeoutMs)
       ? Math.max(1, Math.trunc(options.requestTimeoutMs))
       : DEFAULT_REQUEST_TIMEOUT_MS;
+    this.maxPendingRequests = Number.isFinite(options.maxPendingRequests)
+      ? Math.min(1024, Math.max(1, Math.trunc(options.maxPendingRequests)))
+      : DEFAULT_MAX_PENDING_REQUESTS;
     this.onEvent = options.onEvent;
     this.onSubscriptionError = options.onSubscriptionError;
     this.onProtocolError = options.onProtocolError;
@@ -50,11 +62,11 @@ class CodingRunStdioClient {
       });
     } catch (error) {
       this.transition("error");
-      throw new Error(`Could not start the Belldandy coding-run bridge: ${safeMessage(error)}`);
+      throw new CodingRunStdioClientError("transport_error", `Could not start the Belldandy coding-run bridge: ${safeMessage(error)}`);
     }
     if (!child?.stdin || !child.stdout || !child.stderr) {
       this.transition("error");
-      throw new Error("Belldandy coding-run bridge did not expose stdio streams.");
+      throw new CodingRunStdioClientError("transport_error", "Belldandy coding-run bridge did not expose stdio streams.");
     }
 
     this.child = child;
@@ -80,10 +92,10 @@ class CodingRunStdioClient {
       // exit/error listener 会清理等待中的请求；停止调用本身不泄露进程详情。
     }
     this.transition("stopped");
-    this.rejectPending("Belldandy coding-run bridge was stopped.");
+    this.rejectPending(new CodingRunStdioClientError("client_closed", "Belldandy coding-run bridge was stopped."));
   }
 
-  async cancelConversation(input) {
+  async cancelConversation(input, options) {
     const conversationId = requireNonEmptyString(input.conversationId, "conversationId");
     const agentRunId = requireNonEmptyString(input.agentRunId, "agentRunId");
     const reason = normalizeOptionalString(input.reason);
@@ -92,10 +104,10 @@ class CodingRunStdioClient {
       operation: "cancel",
       binding: { conversationId, agentRunId },
       ...(reason ? { reason } : {}),
-    });
+    }, options);
   }
 
-  async cancelWorkflow(input) {
+  async cancelWorkflow(input, options) {
     const journalId = requireNonEmptyString(input.journalId, "journalId");
     const workflowRunId = requireNonEmptyString(input.workflowRunId, "workflowRunId");
     const reason = normalizeOptionalString(input.reason);
@@ -107,10 +119,10 @@ class CodingRunStdioClient {
         workflow: { journalId, workflowRunId },
       },
       ...(reason ? { reason } : {}),
-    });
+    }, options);
   }
 
-  async respondPermission(input) {
+  async respondPermission(input, options) {
     const agentRunId = requireNonEmptyString(input.agentRunId, "agentRunId");
     const toolCallId = requireNonEmptyString(input.toolCallId, "toolCallId");
     const worktreeId = normalizeOptionalString(input.worktreeId);
@@ -129,10 +141,10 @@ class CodingRunStdioClient {
       },
       toolCallId,
       decision: input.decision,
-    });
+    }, options);
   }
 
-  async subscribeConversation(input) {
+  async subscribeConversation(input, options) {
     const conversationId = requireNonEmptyString(input.conversationId, "conversationId");
     const agentRunId = requireNonEmptyString(input.agentRunId, "agentRunId");
     const cursor = normalizeCursor(input.cursor);
@@ -147,10 +159,10 @@ class CodingRunStdioClient {
         binding: { conversationId, agentRunId },
         ...(cursor === undefined ? {} : { cursor }),
       },
-    }, "Belldandy coding-run subscription timed out.");
+    }, "Belldandy coding-run subscription timed out.", options);
   }
 
-  async requestConversation(input) {
+  async requestConversation(input, options) {
     const text = requireConversationText(input.text);
     const cwd = requireAbsolutePath(input.cwd, "cwd");
     const conversationId = normalizeConversationIdentifier(input.conversationId);
@@ -166,45 +178,74 @@ class CodingRunStdioClient {
         cwd,
         ...(conversationId ? { conversationId } : {}),
       },
-    }, "Belldandy coding-run Conversation request timed out.");
+    }, "Belldandy coding-run Conversation request timed out.", options);
   }
 
-  async listTaskProjections(input = {}) {
+  async listTaskProjections(input = {}, options) {
     const projection = normalizeProjectionRequest(input);
     return this.sendRequest("projection", {
       version: PROTOCOL_VERSION,
       type: "projection.request",
       projection,
-    }, "Belldandy task projection request timed out.");
+    }, "Belldandy task projection request timed out.", options);
   }
 
-  async sendControl(control) {
+  async readArtifact(input, options) {
+    const agentRunId = requireNonEmptyString(input.agentRunId, "agentRunId");
+    const workspaceId = normalizeOptionalString(input.workspaceId);
+    if (input.workspaceId !== undefined && !workspaceId) {
+      throw new Error("workspaceId must be a non-empty string when provided.");
+    }
+    return this.sendRequest("artifact", {
+      version: PROTOCOL_VERSION,
+      type: "artifact.request",
+      artifact: {
+        revisionId: agentRunId,
+        ...(workspaceId ? { workspaceId } : {}),
+      },
+    }, "Belldandy coding-run artifact request timed out.", options);
+  }
+
+  async sendControl(control, options) {
     return this.sendRequest("control", {
       version: PROTOCOL_VERSION,
       type: "control.request",
       control,
-    }, "Belldandy coding-run control timed out.");
+    }, "Belldandy coding-run control timed out.", options);
   }
 
-  async sendRequest(kind, frame, timeoutMessage) {
+  async sendRequest(kind, frame, timeoutMessage, options = {}) {
+    if (options.signal?.aborted) throw requestAbortedError();
     await this.start();
+    if (options.signal?.aborted) throw requestAbortedError();
     const child = this.child;
-    if (!child) throw new Error("Belldandy coding-run bridge is not running.");
+    if (!child) throw new CodingRunStdioClientError("client_closed", "Belldandy coding-run bridge is not running.");
+    if (this.pending.size >= this.maxPendingRequests) {
+      throw new CodingRunStdioClientError("backpressure", "Belldandy coding-run client backpressure limit reached.");
+    }
     const id = this.createUniqueRequestId();
     const response = new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(timeoutMessage));
-      }, this.requestTimeoutMs);
-      this.pending.set(id, { kind, resolve, reject, timeout });
+        this.rejectRequest(id, new CodingRunStdioClientError("request_timeout", timeoutMessage));
+      }, normalizeRequestTimeout(options.timeoutMs, this.requestTimeoutMs));
+      const abortListener = options.signal
+        ? () => this.rejectRequest(id, requestAbortedError())
+        : undefined;
+      this.pending.set(id, { kind, resolve, reject, timeout, signal: options.signal, abortListener });
+      options.signal?.addEventListener("abort", abortListener, { once: true });
+      if (options.signal?.aborted) abortListener();
     });
+    if (!this.pending.has(id)) return response;
     try {
       await writeLine(child.stdin, JSON.stringify({
         ...frame,
         id,
       }));
     } catch (error) {
-      this.rejectRequest(id, `Could not write coding-run request: ${safeMessage(error)}`);
+      this.rejectRequest(id, new CodingRunStdioClientError(
+        "transport_error",
+        `Could not write coding-run request: ${safeMessage(error)}`,
+      ));
     }
     return response;
   }
@@ -269,22 +310,18 @@ class CodingRunStdioClient {
           ? "conversation"
           : frame.type === "projection.response"
             ? "projection"
+            : frame.type === "artifact.response"
+              ? "artifact"
           : undefined;
-    if (!responseKind || typeof frame.id !== "string" || typeof frame.ok !== "boolean"
-      || (responseKind === "projection" && frame.ok === true && frame.result !== undefined && !isProjectionPage(frame.result))) {
+    if (!responseKind || !isResponseFrame(frame, responseKind)) {
       this.notifyProtocolError("invalid_frame", "Invalid coding run NDJSON frame.");
       return;
     }
     const pending = this.pending.get(frame.id);
     if (!pending || pending.kind !== responseKind) return;
-    this.pending.delete(frame.id);
-    clearTimeout(pending.timeout);
+    this.takePending(frame.id);
     if (frame.ok) {
       pending.resolve({ ok: true, ...(Object.prototype.hasOwnProperty.call(frame, "result") ? { result: frame.result } : {}) });
-      return;
-    }
-    if (!frame.error || typeof frame.error !== "object" || typeof frame.error.code !== "string" || typeof frame.error.message !== "string") {
-      pending.resolve({ ok: false, error: { code: "internal", message: "Invalid coding-run error response." } });
       return;
     }
     pending.resolve({
@@ -296,7 +333,10 @@ class CodingRunStdioClient {
   handleProcessFailure(error) {
     this.child = undefined;
     this.transition("error");
-    this.rejectPending(`Belldandy coding-run bridge failed: ${safeMessage(error)}`);
+    this.rejectPending(new CodingRunStdioClientError(
+      "transport_error",
+      `Belldandy coding-run bridge failed: ${safeMessage(error)}`,
+    ));
   }
 
   handleExit(signal) {
@@ -304,7 +344,10 @@ class CodingRunStdioClient {
     this.child = undefined;
     if (hadChild) {
       this.transition("stopped");
-      this.rejectPending(signal ? "Belldandy coding-run bridge was interrupted." : "Belldandy coding-run bridge exited.");
+      this.rejectPending(new CodingRunStdioClientError(
+        "client_closed",
+        signal ? "Belldandy coding-run bridge was interrupted." : "Belldandy coding-run bridge exited.",
+      ));
     }
   }
 
@@ -315,20 +358,28 @@ class CodingRunStdioClient {
     }
   }
 
-  rejectRequest(id, message) {
-    const pending = this.pending.get(id);
+  rejectRequest(id, error) {
+    const pending = this.takePending(id);
     if (!pending) return;
-    this.pending.delete(id);
-    clearTimeout(pending.timeout);
-    pending.reject(new Error(message));
+    pending.reject(error);
   }
 
-  rejectPending(message) {
-    for (const [id, pending] of this.pending) {
-      this.pending.delete(id);
-      clearTimeout(pending.timeout);
-      pending.reject(new Error(message));
+  rejectPending(error) {
+    for (const id of Array.from(this.pending.keys())) {
+      const pending = this.takePending(id);
+      pending?.reject(error);
     }
+  }
+
+  takePending(id) {
+    const pending = this.pending.get(id);
+    if (!pending) return undefined;
+    this.pending.delete(id);
+    clearTimeout(pending.timeout);
+    if (pending.signal && pending.abortListener) {
+      pending.signal.removeEventListener("abort", pending.abortListener);
+    }
+    return pending;
   }
 
   notifyProtocolError(code, message) {
@@ -398,11 +449,11 @@ function normalizeConversationIdentifier(value) {
 
 function normalizeProjectionRequest(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
-    throw new Error("Task projection request must be an object.");
+    throw new CodingRunStdioClientError("invalid_request", "Task projection request must be an object.");
   }
   const keys = Object.keys(input);
   if (keys.some((key) => key !== "limit" && key !== "cursor")) {
-    throw new Error("Task projection request contains unsupported fields.");
+    throw new CodingRunStdioClientError("invalid_request", "Task projection request contains unsupported fields.");
   }
   const projection = {};
   if (input.limit !== undefined) {
@@ -435,21 +486,36 @@ function isProjectionPage(value) {
 function isAgentRunEvent(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const event = value;
-  return event.version === PROTOCOL_VERSION
+  return hasOnlyKeys(event, ["version", "seq", "timestampMs", "source", "binding", "type", "payload"])
+    && event.version === PROTOCOL_VERSION
     && Number.isSafeInteger(event.seq)
     && event.seq >= 1
-    && typeof event.type === "string"
+    && Number.isSafeInteger(event.timestampMs)
+    && event.timestampMs >= 0
+    && ["conversation", "goal", "workflow", "subtask"].includes(event.source)
+    && [
+      "run.started", "run.status", "message.delta", "tool.started", "tool.completed",
+      "permission.requested", "run.usage", "run.budget_exhausted", "run.cancelled",
+      "run.interrupted", "run.completed", "run.failed",
+    ].includes(event.type)
     && event.binding
     && typeof event.binding === "object"
+    && !Array.isArray(event.binding)
     && typeof event.binding.conversationId === "string"
-    && typeof event.binding.agentRunId === "string";
+    && typeof event.binding.agentRunId === "string"
+    && event.payload
+    && typeof event.payload === "object"
+    && !Array.isArray(event.payload);
 }
 
 function isSubscriptionErrorFrame(value) {
   return value
     && typeof value === "object"
     && !Array.isArray(value)
-    && typeof value.code === "string"
+    && hasOnlyKeys(value, ["version", "type", "code", "message", "binding"])
+    && value.version === PROTOCOL_VERSION
+    && value.type === "subscription.error"
+    && isDeclaredSubscriptionErrorCode(value.code)
     && typeof value.message === "string"
     && value.binding
     && typeof value.binding === "object"
@@ -459,7 +525,56 @@ function isSubscriptionErrorFrame(value) {
 
 function safeMessage(value) {
   const text = value instanceof Error ? value.message : String(value ?? "");
-  return text.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, MAX_ERROR_MESSAGE_CHARS) || "Unknown error.";
+  return text
+    .replace(
+      /\b((?:api[_-]?key|access[_-]?token|token|secret|password|authorization|cookie|session)[\w-]*)\s*([:=])\s*(?:Bearer\s+)?[^\s,;]+/gi,
+      "$1$2[REDACTED]",
+    )
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .trim()
+    .slice(0, MAX_ERROR_MESSAGE_CHARS) || "Unknown error.";
 }
 
-module.exports = { CodingRunStdioClient };
+function normalizeRequestTimeout(value, fallback) {
+  return Number.isFinite(value) ? Math.max(1, Math.trunc(value)) : fallback;
+}
+
+function requestAbortedError() {
+  return new CodingRunStdioClientError("request_aborted", "Belldandy coding-run request was aborted.");
+}
+
+function hasOnlyKeys(value, keys) {
+  return Object.keys(value).every((key) => keys.includes(key));
+}
+
+function isResponseFrame(frame, responseKind) {
+  if (typeof frame.id !== "string" || !frame.id.trim() || typeof frame.ok !== "boolean") return false;
+  if (frame.ok) {
+    return hasOnlyKeys(frame, ["version", "type", "id", "ok", "result"])
+      && (responseKind !== "projection" || frame.result === undefined || isProjectionPage(frame.result));
+  }
+  return hasOnlyKeys(frame, ["version", "type", "id", "ok", "error"])
+    && frame.error
+    && typeof frame.error === "object"
+    && !Array.isArray(frame.error)
+    && hasOnlyKeys(frame.error, ["code", "message"])
+    && (responseKind === "subscription"
+      ? isDeclaredSubscriptionErrorCode(frame.error.code)
+      : isDeclaredErrorCode(frame.error.code))
+    && typeof frame.error.message === "string";
+}
+
+function isDeclaredSubscriptionErrorCode(value) {
+  return value === "cursor_expired" || isDeclaredErrorCode(value);
+}
+
+function isDeclaredErrorCode(value) {
+  return [
+    "invalid_request", "not_found", "run_mismatch", "not_active", "permission_required",
+    "permission_denied", "policy_denied", "budget_exhausted", "cancelled", "interrupted",
+    "output_schema_invalid", "gateway_unavailable", "invalid_limit", "cursor_stale",
+    "cursor_future", "cursor_out_of_range", "internal",
+  ].includes(value);
+}
+
+module.exports = { CodingRunStdioClient, CodingRunStdioClientError };

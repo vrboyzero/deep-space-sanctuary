@@ -33,6 +33,7 @@ import { readMcpRoutingDoctorReport } from "../../mcp-config-routing.js";
 import { buildResidentAgentObservabilitySnapshot } from "../../resident-agent-observability.js";
 import { resolveResidentMemoryPolicy } from "../../resident-memory-policy.js";
 import { buildDeploymentBackendsDoctorReport } from "../../deployment-backends.js";
+import { buildCodingRuntimePreflightDoctorReport } from "../../coding-runtime-preflight-doctor.js";
 import { buildOptionalCapabilitiesDoctorReport } from "../../optional-capabilities-doctor.js";
 import { readRuntimeResilienceDoctorReport } from "../../runtime-resilience.js";
 import { buildRuntimeResilienceDiagnosticSummary } from "../../runtime-resilience-diagnostics.js";
@@ -355,6 +356,16 @@ export default defineCommand({
     const envLocalCheck = checkEnvLocal(ctx.envDir);
     const requiredEnvChecks = checkRequiredEnv(ctx.envDir);
     const deploymentBackends = buildDeploymentBackendsDoctorReport({ stateDir });
+    const optionalCapabilitiesPromise = buildOptionalCapabilitiesDoctorReport();
+    const codeIntelGoPromise = buildGoCodeIntelDoctorReport();
+    const codingRuntimePreflightPromise = Promise.all([
+      optionalCapabilitiesPromise,
+      codeIntelGoPromise,
+    ]).then(([optionalCapabilities, codeIntelGo]) => buildCodingRuntimePreflightDoctorReport({
+      stateDir,
+      optionalCapabilities,
+      goCodeIntel: codeIntelGo,
+    }));
 
     const [
       pnpmCheck,
@@ -363,6 +374,7 @@ export default defineCommand({
       configuredProfiles,
       optionalCapabilities,
       codeIntelGo,
+      codingRuntimePreflight,
       cameraRuntime,
       runtimeResilience,
       mcpConfigCheck,
@@ -373,8 +385,9 @@ export default defineCommand({
       checkPort(port),
       args["check-model"] ? checkModelConnectivity() : Promise.resolve<CheckResult | undefined>(undefined),
       loadAgentProfiles(path.join(stateDir, "agents.json")),
-      buildOptionalCapabilitiesDoctorReport(),
-      buildGoCodeIntelDoctorReport(),
+      optionalCapabilitiesPromise,
+      codeIntelGoPromise,
+      codingRuntimePreflightPromise,
       buildCameraRuntimeDoctorReport({
         context: {
           conversationId: "bdd.doctor",
@@ -459,6 +472,12 @@ export default defineCommand({
         : "pass",
       message: codeIntelGo.summary.headline,
     });
+    results.push({
+      name: "Coding Runtime Preflight",
+      status: codingRuntimePreflight.summary.startupReady ? "pass" : "fail",
+      message: codingRuntimePreflight.summary.headline,
+      fix: codingRuntimePreflight.items.find((item) => item.blocking)?.setup?.action,
+    });
     if (cameraRuntime) {
       results.push({
         name: "Camera Runtime",
@@ -506,6 +525,7 @@ export default defineCommand({
         deploymentBackends,
         optionalCapabilities,
         codeIntelGo,
+        codingRuntimePreflight,
         mcpRouting,
         ...(cameraRuntime ? { cameraRuntime } : {}),
         ...(runtimeResilience ? { runtimeResilience } : {}),
@@ -568,6 +588,13 @@ export default defineCommand({
       if (item.fix) {
         ctx.log(`    fix: ${item.fix}`);
       }
+    }
+    ctx.log("");
+    ctx.log("Coding Runtime Preflight");
+    ctx.log(`  headline: ${codingRuntimePreflight.summary.headline}`);
+    ctx.log(`  startup ready: ${codingRuntimePreflight.summary.startupReady ? "yes" : "no"}`);
+    for (const item of codingRuntimePreflight.items.filter((entry) => entry.active)) {
+      ctx.log(`  - ${item.name}: ${item.status} (${item.reasonCode})`);
     }
     if (cameraRuntime) {
       ctx.log("");

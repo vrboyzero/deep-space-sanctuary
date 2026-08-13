@@ -79,6 +79,10 @@ export type {
   SubTaskSupervisorSteerInput,
 } from "./subtask-supervisor-control-runtime.js";
 export {
+  SUBTASK_SUPERVISOR_WORKTREE_DISPOSAL_SCHEMA_VERSION,
+  SubTaskSupervisorWorktreeDisposalRuntime,
+} from "./subtask-supervisor-worktree-disposal-runtime.js";
+export {
   SUBTASK_SUPERVISOR_FAN_IN_SCHEMA_VERSION,
   SubTaskSupervisorFanInError,
   SubTaskSupervisorFanInRuntime,

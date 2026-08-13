@@ -644,6 +644,7 @@ export type AgentCapabilities = {
   spawnParallel?: (tasks: SpawnSubAgentOptions[]) => Promise<SubAgentResult[]>;
   listSessions?: (parentConversationId?: string) => Promise<SessionInfo[]>;
   controlSubTask?: (input: SubTaskSupervisorControlInput) => Promise<SubTaskSupervisorControlItem | undefined>;
+  disposeSubTaskWorktree?: (input: SubTaskSupervisorWorktreeDisposalCapabilityInput) => Promise<SubTaskSupervisorWorktreeDisposalCapabilityResult>;
   fanInSubTasks?: (input: SubTaskSupervisorFanInCapabilityInput) => Promise<SubTaskSupervisorFanInCapabilityResult>;
 };
 
@@ -707,6 +708,29 @@ export type SubTaskSupervisorControlInput = {
   message?: string;
   expectedRevision?: number;
   idempotencyKey?: string;
+};
+
+export type SubTaskSupervisorWorktreeDisposalCapabilityInput = {
+  action: "preview" | "confirm";
+  managerConversationId: string;
+  managerAgentRunId: string;
+  teamId: string;
+  laneId: string;
+  taskId: string;
+  sessionId: string;
+  expectedRevision: number;
+  receiptId?: string;
+  confirm?: true;
+};
+
+export type SubTaskSupervisorWorktreeDisposalCapabilityResult = {
+  schemaVersion: "subtask-supervisor-worktree-disposal/v1";
+  contentMode: "none";
+  status: "ready" | "completed" | "failed" | "uncertain";
+  applied: boolean;
+  duplicateSideEffect: false;
+  blockers: string[];
+  receipt?: { id: string; expiresAtMs: number };
 };
 
 export type SubTaskSupervisorControlItem = {

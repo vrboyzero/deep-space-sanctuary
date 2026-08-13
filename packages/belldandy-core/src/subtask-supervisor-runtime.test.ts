@@ -398,6 +398,44 @@ describe("SubTaskSupervisorRuntime", () => {
     expect(runtime.getSnapshot()).toMatchObject({ activeCount: 0, retainedTerminalCount: 1 });
   });
 
+  it("publishes a 4-write and 8-read restart batch atomically when a persisted lane conflicts", () => {
+    const runtime = new SubTaskSupervisorRuntime({
+      maxActiveChildren: 12,
+      maxDepth: 2,
+      maxWallTimeMs: 60_000,
+    });
+    const lanes = Array.from({ length: 12 }, (_, index) => ({
+      binding: {
+        managerConversationId: "conversation-manager",
+        managerAgentRunId: "run-manager",
+        teamId: "team-supervised",
+        laneId: `lane_${index + 1}`,
+        mode: index < 4 ? "write" as const : "read" as const,
+      },
+      taskId: `task-${index + 1}`,
+      sessionId: `session-${index + 1}`,
+      status: index % 3 === 0 ? "done" as const : index % 3 === 1 ? "timeout" as const : "interrupted" as const,
+      admittedAtMs: 100 + index,
+      updatedAtMs: 200 + index,
+      finishedAtMs: 200 + index,
+    }));
+
+    expect(() => runtime.reattach([
+      ...lanes,
+      {
+        ...lanes[11]!,
+        binding: { ...lanes[11]!.binding, laneId: "lane_conflict" },
+        taskId: "task-1",
+      },
+    ])).toThrowError(expect.objectContaining({ code: "binding_conflict" }));
+
+    expect(runtime.getSnapshot()).toMatchObject({
+      activeCount: 0,
+      retainedTerminalCount: 0,
+      items: [],
+    });
+  });
+
   it("keeps a steered session authoritative when the original launch settles late", async () => {
     let releaseOriginal!: () => void;
     const originalReleased = new Promise<void>((resolve) => {
@@ -456,5 +494,166 @@ describe("SubTaskSupervisorRuntime", () => {
       status: "running",
       binding: { sessionId: "session-steered" },
     });
+  });
+
+  it("releases mixed 4-write and 8-read lane budgets without accepting late obsolete completion", async () => {
+    const releases = new Map<string, (result: SubAgentResult) => void>();
+    const runtime = new SubTaskSupervisorRuntime({
+      maxActiveChildren: 4,
+      maxVerifierChildren: 1,
+      maxDepth: 2,
+      maxWallTimeMs: 60_000,
+    });
+    const launch = vi.fn(async (launchSpec: AgentLaunchSpec, observer: {
+      bindTask(taskId: string): void;
+      bindSession(sessionId: string): void;
+    }): Promise<SubAgentResult> => {
+      const laneId = launchSpec.delegationProtocol?.team?.currentLaneId ?? "unknown";
+      observer.bindTask(`task-${laneId}`);
+      observer.bindSession(`session-${laneId}`);
+      return new Promise<SubAgentResult>((resolve) => {
+        releases.set(laneId, resolve);
+      });
+    });
+    const executeLane = (index: number) => runtime.execute({
+      launchSpec: createParallelLaunch({
+        laneId: `lane_${index + 1}`,
+        ...(index < 4 ? { writeScope: [`packages/lane-${index + 1}/**`] } : {}),
+        ...(index === 4 ? { role: "verifier" as const } : {}),
+      }),
+      parentOperation,
+      worktreeIsolationAvailable: true,
+      launch,
+    });
+
+    const firstWave = [0, 1, 2, 4].map(executeLane);
+    await vi.waitFor(() => expect(releases.size).toBe(4));
+    expect(runtime.getSnapshot()).toMatchObject({
+      activeCount: 4,
+      budget: { activeChildren: 4, activeVerifiers: 1 },
+    });
+
+    for (const index of [3, 5, 6, 7, 8, 9, 10, 11]) {
+      await expect(executeLane(index)).rejects.toMatchObject({ code: "child_budget_exceeded" });
+    }
+
+    releases.get("lane_1")?.({
+      success: false,
+      output: "",
+      error: "Sub-agent timed out after 30000ms",
+      taskId: "task-lane_1",
+      sessionId: "session-lane_1",
+    });
+    releases.get("lane_2")?.({
+      success: false,
+      output: "",
+      error: "Child process exited before completion.",
+      taskId: "task-lane_2",
+      sessionId: "session-lane_2",
+    });
+    releases.get("lane_5")?.({
+      success: true,
+      output: "verified",
+      taskId: "task-lane_5",
+      sessionId: "session-lane_5",
+    });
+    await Promise.all([firstWave[0], firstWave[1], firstWave[3]]);
+    expect(runtime.getSnapshot()).toMatchObject({
+      activeCount: 1,
+      budget: { activeChildren: 1, activeVerifiers: 0 },
+    });
+
+    const secondWave = [3, 5, 6].map(executeLane);
+    await vi.waitFor(() => expect(runtime.getSnapshot().activeCount).toBe(4));
+    runtime.reconcile({
+      binding: {
+        managerConversationId: "conversation-manager",
+        managerAgentRunId: "run-manager",
+        teamId: "team-supervised",
+        laneId: "lane_3",
+        mode: "write",
+      },
+      taskId: "task-lane_3",
+      sessionId: "session-lane_3-steered",
+      status: "running",
+      commandGeneration: 1,
+      admittedAtMs: 100,
+      updatedAtMs: 200,
+    });
+    releases.get("lane_3")?.({
+      success: false,
+      output: "",
+      error: "Original session stopped for steering.",
+      taskId: "task-lane_3",
+      sessionId: "session-lane_3",
+    });
+    await firstWave[2];
+    expect(runtime.observe({
+      managerConversationId: "conversation-manager",
+      managerAgentRunId: "run-manager",
+      teamId: "team-supervised",
+      laneId: "lane_3",
+      taskId: "task-lane_3",
+      sessionId: "session-lane_3-steered",
+    })).toMatchObject({ status: "running", revision: 1 });
+
+    runtime.reconcile({
+      binding: {
+        managerConversationId: "conversation-manager",
+        managerAgentRunId: "run-manager",
+        teamId: "team-supervised",
+        laneId: "lane_3",
+        mode: "write",
+      },
+      taskId: "task-lane_3",
+      sessionId: "session-lane_3-steered",
+      status: "done",
+      commandGeneration: 1,
+      admittedAtMs: 100,
+      updatedAtMs: 300,
+      finishedAtMs: 300,
+    });
+    for (const laneId of ["lane_4", "lane_6", "lane_7"]) {
+      releases.get(laneId)?.({
+        success: true,
+        output: "done",
+        taskId: `task-${laneId}`,
+        sessionId: `session-${laneId}`,
+      });
+    }
+    await Promise.all(secondWave);
+
+    for (const index of [7, 8, 9, 10, 11]) {
+      const pending = executeLane(index);
+      await vi.waitFor(() => expect(releases.has(`lane_${index + 1}`)).toBe(true));
+      releases.get(`lane_${index + 1}`)?.({
+        success: true,
+        output: "done",
+        taskId: `task-lane_${index + 1}`,
+        sessionId: `session-lane_${index + 1}`,
+      });
+      await pending;
+    }
+
+    expect(runtime.getSnapshot()).toMatchObject({
+      activeCount: 0,
+      retainedTerminalCount: 12,
+      budget: { activeChildren: 0, activeVerifiers: 0 },
+    });
+
+    const followUp = runtime.execute({
+      launchSpec: createParallelLaunch({ laneId: "lane_13" }),
+      parentOperation,
+      worktreeIsolationAvailable: true,
+      launch,
+    });
+    await vi.waitFor(() => expect(releases.has("lane_13")).toBe(true));
+    releases.get("lane_13")?.({
+      success: true,
+      output: "done",
+      taskId: "task-lane_13",
+      sessionId: "session-lane_13",
+    });
+    await expect(followUp).resolves.toMatchObject({ success: true });
   });
 });

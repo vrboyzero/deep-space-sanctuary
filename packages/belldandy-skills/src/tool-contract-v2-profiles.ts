@@ -383,6 +383,46 @@ const TOOL_CONTRACT_V2_PROFILES: Record<string, ToolContractV2Profile> = {
     ],
     userVisibleRiskNote: "fan-in confirm 会修改当前本地工作区。必须先 preview，且只能确认仍绑定 exact lane、passed test 与只读 reviewer evidence 的短期 receipt。",
   },
+  subtask_worktree_dispose: {
+    family: "session-orchestration",
+    riskLevel: "high",
+    needsPermission: false,
+    isReadOnly: false,
+    isConcurrencySafe: false,
+    activityDescription: "Preview or explicitly confirm exact interrupted worktree disposal",
+    outputPersistencePolicy: "conversation",
+    channels: ["gateway", "web"] satisfies ToolContract["channels"],
+    safeScopes: ["local-safe", "web-safe"] satisfies ToolContract["safeScopes"],
+    recommendedWhen: [
+      "A write lane is authoritative interrupted/runtime_lost and its dirty worktree needs an explicit final disposition",
+      "The manager still has the exact team/lane/task/session/revision binding",
+    ],
+    avoidWhen: [
+      "The lane is active, clean, read-only, shared-workspace, or owned by another manager",
+      "The intended action is fan-in, merge, release, deployment, or implicit archive cleanup",
+    ],
+    confirmWhen: [
+      "Preview returned a short-lived receipt and the authoritative task/worktree content has not drifted",
+      "The source repository must remain unchanged while only the exact managed lane is discarded",
+    ],
+    preflightChecks: [
+      "Bind manager Conversation/run, team/lane/task/current session and expected revision exactly",
+      "Run preview before confirm; regenerate the receipt after any task, worktree, session, or content drift",
+    ],
+    fallbackStrategy: [
+      "Preserve the dirty worktree when receipt or content evidence is stale or cleanup is uncertain",
+      "Use manual recovery or a new explicit delegation instead of broad task-level force cleanup",
+    ],
+    expectedOutput: [
+      "Bounded JSON with contentMode none, ready/completed/failed/uncertain status, blockers, and receipt metadata",
+      "No worktree path, repository path, branch, patch body, child output, or file content",
+    ],
+    sideEffectSummary: [
+      "preview only records a short-lived receipt and content digest",
+      "explicit confirm removes the exact managed subtask worktree/branch after rechecking authoritative binding and digest",
+    ],
+    userVisibleRiskNote: "dispose confirm 是不可逆的本地 dirty lane 删除。必须先 preview，并确认 exact manager/lane/session/revision 与内容摘要仍匹配；主仓不会被修改。",
+  },
   file_write: {
     family: "workspace-write",
     riskLevel: "high",

@@ -1,6 +1,5 @@
-import crypto from "node:crypto";
-import fs from "node:fs/promises";
 import path from "node:path";
+import { atomicWriteGoalJson, atomicWriteGoalText } from "./atomic-write.js";
 import { parseGoalProgressEntries } from "./progress.js";
 import type {
   GoalCapabilityPlan,
@@ -282,20 +281,6 @@ function buildMarkdown(retrospective: GoalRetrospectiveSnapshot): string {
   ].join("\n");
 }
 
-async function atomicWriteJson(targetPath: string, value: unknown): Promise<void> {
-  await fs.mkdir(path.dirname(targetPath), { recursive: true });
-  const tempPath = `${targetPath}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(tempPath, JSON.stringify(value, null, 2), "utf-8");
-  await fs.rename(tempPath, targetPath);
-}
-
-async function atomicWriteText(targetPath: string, content: string): Promise<void> {
-  await fs.mkdir(path.dirname(targetPath), { recursive: true });
-  const tempPath = `${targetPath}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(tempPath, content, "utf-8");
-  await fs.rename(tempPath, targetPath);
-}
-
 export function getGoalRetrospectiveJsonPath(goal: Pick<LongTermGoal, "runtimeRoot">): string {
   return path.join(goal.runtimeRoot, "retrospective.json");
 }
@@ -335,7 +320,7 @@ export async function generateGoalRetrospective(input: GoalRetrospectiveInput): 
     jsonPath: getGoalRetrospectiveJsonPath(goal),
   };
   const content = buildMarkdown(retrospective);
-  await atomicWriteJson(retrospective.jsonPath, retrospective);
-  await atomicWriteText(retrospective.markdownPath, content);
+  await atomicWriteGoalJson(retrospective.jsonPath, retrospective);
+  await atomicWriteGoalText(retrospective.markdownPath, content);
   return { goal, retrospective, content };
 }

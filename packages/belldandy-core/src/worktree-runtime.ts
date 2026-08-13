@@ -7,6 +7,7 @@ import type { AgentLaunchSpec } from "@belldandy/agent";
 import {
   ManagedWorktreeRuntime,
   type ManagedWorktree,
+  type ManagedWorktreeContentInspection,
   type ManagedWorktreeStatus,
 } from "./managed-worktree.js";
 
@@ -53,6 +54,10 @@ export type SubTaskWorktreeFanInArtifact = {
   patch?: { path: string; sha256: string; byteLength: number };
   manifest: { path: string; sha256: string };
   changedPaths: string[];
+};
+
+export type SubTaskWorktreeDisposalInspection = ManagedWorktreeContentInspection & {
+  runtime: SubTaskWorktreeRuntimeSummary;
 };
 
 type RuntimeLogger = {
@@ -166,6 +171,46 @@ export class SubTaskWorktreeRuntime {
         worktreeError: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  async abortPreparedTaskRuntime(
+    taskId: string,
+    runtime: PersistedSubTaskWorktreeRuntime,
+  ): Promise<SubTaskWorktreeRuntimeSummary> {
+    const worktree = this.fromPersisted(taskId, runtime);
+    if (!worktree || runtime.isolationMode !== "worktree") {
+      return {
+        worktreeStatus: "remove_failed",
+        worktreeError: "Missing prepared managed worktree binding.",
+      };
+    }
+    const result = await this.managedWorktrees.abortPreparedWorktree(worktree);
+    return {
+      ...this.toSummary(worktree, runtime.resolvedCwd ? path.resolve(runtime.resolvedCwd) : undefined),
+      worktreeStatus: result.status === "removed" ? "removed" : "remove_failed",
+      worktreeError: result.reason,
+    };
+  }
+
+  async inspectTaskDisposal(
+    taskId: string,
+    runtime: PersistedSubTaskWorktreeRuntime,
+  ): Promise<SubTaskWorktreeDisposalInspection> {
+    if (runtime.isolationMode !== "worktree") {
+      throw new Error("Subtask worktree disposal requires worktree isolation.");
+    }
+    const worktree = this.fromPersisted(taskId, runtime);
+    if (!worktree) {
+      throw new Error("Subtask worktree disposal requires a persisted managed worktree binding.");
+    }
+    const reconciled = await this.managedWorktrees.reconcile(worktree);
+    if (reconciled.status !== "created") {
+      throw new Error(`Subtask worktree disposal is unavailable: ${reconciled.error ?? reconciled.status}`);
+    }
+    return {
+      ...await this.managedWorktrees.inspectContent(reconciled),
+      runtime: this.toSummary(reconciled, runtime.resolvedCwd ? path.resolve(runtime.resolvedCwd) : undefined),
+    };
   }
 
   async collectFanInArtifact(record: {

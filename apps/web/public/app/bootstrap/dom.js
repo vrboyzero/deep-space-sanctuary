@@ -331,6 +331,8 @@ export const APP_DOM_REFS = {
   cfgSubAgentMaxQueueSize: byId("cfgSubAgentMaxQueueSize"),
   cfgSubAgentTimeoutMs: byId("cfgSubAgentTimeoutMs"),
   cfgSubAgentMaxDepth: byId("cfgSubAgentMaxDepth"),
+  cfgSubAgentMaxVerifiers: byId("cfgSubAgentMaxVerifiers"),
+  cfgSubAgentMaxCostUsd: byId("cfgSubAgentMaxCostUsd"),
   cfgWorkflowMaxConcurrent: byId("cfgWorkflowMaxConcurrent"),
   cfgWorkflowMaxQueueSize: byId("cfgWorkflowMaxQueueSize"),
   cfgWorkflowTimeoutMs: byId("cfgWorkflowTimeoutMs"),

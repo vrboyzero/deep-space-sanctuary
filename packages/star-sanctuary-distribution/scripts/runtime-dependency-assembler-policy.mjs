@@ -16,17 +16,10 @@ function createSharedPnpmArgs(storeDir) {
   ];
 }
 
-function appendOptionalDependencyPolicy(args, includeOptionalNative) {
-  if (!includeOptionalNative) {
-    args.push("--no-optional");
-  }
-  return args;
-}
-
-export function createRuntimeDependencyPrefetchArgs({ includeOptionalNative, storeDir }) {
+export function createRuntimeDependencyPrefetchArgs({ storeDir }) {
   const sharedArgs = createSharedPnpmArgs(storeDir);
   // Prefetch 是唯一允许解析/访问 registry 的阶段；它先产出匹配 runtime manifest 的 lockfile，再填充 store。
-  const lockfileArgs = appendOptionalDependencyPolicy([
+  const lockfileArgs = [
     "pnpm",
     "install",
     "--prod",
@@ -35,15 +28,15 @@ export function createRuntimeDependencyPrefetchArgs({ includeOptionalNative, sto
     "--prefer-offline",
     "--no-frozen-lockfile",
     ...sharedArgs,
-  ], includeOptionalNative);
-  const fetchArgs = appendOptionalDependencyPolicy([
+  ];
+  const fetchArgs = [
     "pnpm",
     "fetch",
     "--prod",
     "--frozen-lockfile",
     "--prefer-offline",
     ...sharedArgs,
-  ], includeOptionalNative);
+  ];
   return { lockfileArgs, fetchArgs };
 }
 
@@ -67,19 +60,43 @@ export function assertFrozenOfflineInstallArgs(args) {
   return args;
 }
 
-export function createRuntimeDependencyInstallArgs({ includeOptionalNative, storeDir }) {
-  const args = appendOptionalDependencyPolicy([
+export function createRuntimeDependencyInstallArgs({ storeDir }) {
+  const args = [
     "pnpm",
     "install",
     "--prod",
     "--offline",
     "--frozen-lockfile",
     ...createSharedPnpmArgs(storeDir),
-  ], includeOptionalNative);
+  ];
   return assertFrozenOfflineInstallArgs(args);
 }
 
-export function createRuntimeRootPackageJson({ packageManager, engines, pnpm, sqliteVecVersion }) {
+function filterExcludedDependencyPatches(pnpm, excludedOptionalDependencies) {
+  if (!pnpm || typeof pnpm !== "object" || Array.isArray(pnpm)) return pnpm;
+  const excluded = new Set(excludedOptionalDependencies ?? []);
+  if (excluded.size === 0 || !pnpm.patchedDependencies) return pnpm;
+
+  const patchedDependencies = Object.fromEntries(
+    Object.entries(pnpm.patchedDependencies)
+      .filter(([patchKey]) => ![...excluded].some((dependency) => patchKey.startsWith(`${dependency}@`))),
+  );
+  const filtered = { ...pnpm };
+  if (Object.keys(patchedDependencies).length > 0) {
+    filtered.patchedDependencies = patchedDependencies;
+  } else {
+    delete filtered.patchedDependencies;
+  }
+  return filtered;
+}
+
+export function createRuntimeRootPackageJson({
+  packageManager,
+  engines,
+  pnpm,
+  sqliteVecVersion,
+  excludedOptionalDependencies = [],
+}) {
   const runtimePackageJson = {
     name: "star-sanctuary-portable-runtime",
     private: true,
@@ -90,9 +107,10 @@ export function createRuntimeRootPackageJson({ packageManager, engines, pnpm, sq
       "sqlite-vec-windows-x64": requireNonEmptyString(sqliteVecVersion, "sqlite-vec version"),
     },
   };
-  if (pnpm && typeof pnpm === "object" && !Array.isArray(pnpm)) {
+  const runtimePnpm = filterExcludedDependencyPatches(pnpm, excludedOptionalDependencies);
+  if (runtimePnpm && typeof runtimePnpm === "object" && !Array.isArray(runtimePnpm)) {
     // Lockfile settings must match the root pnpm policy, including overrides and patch identities.
-    runtimePackageJson.pnpm = pnpm;
+    runtimePackageJson.pnpm = runtimePnpm;
   }
   return runtimePackageJson;
 }
@@ -113,13 +131,23 @@ function stripRuntimeTypeExportConditions(value) {
   return runtimeValue;
 }
 
-export function sanitizeRuntimeWorkspacePackageJson(packageJson) {
+export function sanitizeRuntimeWorkspacePackageJson(packageJson, options = {}) {
   const sanitized = { ...packageJson };
   delete sanitized.devDependencies;
   delete sanitized.scripts;
   delete sanitized.types;
   if (sanitized.exports) {
     sanitized.exports = stripRuntimeTypeExportConditions(sanitized.exports);
+  }
+  const excludedOptionalDependencies = new Set(options.excludedOptionalDependencies ?? []);
+  if (sanitized.optionalDependencies && excludedOptionalDependencies.size > 0) {
+    sanitized.optionalDependencies = Object.fromEntries(
+      Object.entries(sanitized.optionalDependencies)
+        .filter(([dependency]) => !excludedOptionalDependencies.has(dependency)),
+    );
+    if (Object.keys(sanitized.optionalDependencies).length === 0) {
+      delete sanitized.optionalDependencies;
+    }
   }
   return sanitized;
 }

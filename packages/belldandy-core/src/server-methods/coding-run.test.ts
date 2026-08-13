@@ -895,6 +895,7 @@ describe("coding.run.control", () => {
       agentRunId: "conversation-run-1",
       toolCallId: "tool-call-1",
       decision: "allow",
+      responderKind: "unknown",
     });
     expect(response).toMatchObject({
       ok: true,

@@ -1,6 +1,5 @@
-import crypto from "node:crypto";
-import fs from "node:fs/promises";
 import path from "node:path";
+import { atomicWriteGoalJson, atomicWriteGoalText } from "./atomic-write.js";
 import { normalizeGoalSlug } from "./paths.js";
 import { parseGoalProgressEntries } from "./progress.js";
 import { buildGoalDerivedMethodDraft } from "./experience-draft-template.js";
@@ -69,20 +68,6 @@ function buildRationale(node: GoalTaskNode, plan: GoalCapabilityPlan | undefined
     reasons.push("节点已记录实际能力使用，可辅助补齐方法中的工具与能力清单。");
   }
   return reasons.length > 0 ? reasons : ["当前节点已形成一版可追踪执行过程，值得作为 method 候选进入人工审阅。"];
-}
-
-async function atomicWriteJson(targetPath: string, value: unknown): Promise<void> {
-  await fs.mkdir(path.dirname(targetPath), { recursive: true });
-  const tempPath = `${targetPath}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(tempPath, JSON.stringify(value, null, 2), "utf-8");
-  await fs.rename(tempPath, targetPath);
-}
-
-async function atomicWriteText(targetPath: string, content: string): Promise<void> {
-  await fs.mkdir(path.dirname(targetPath), { recursive: true });
-  const tempPath = `${targetPath}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(tempPath, content, "utf-8");
-  await fs.rename(tempPath, targetPath);
 }
 
 function buildMarkdown(goal: LongTermGoal, candidates: GoalMethodCandidate[], retrospective: GoalRetrospectiveSnapshot, markdownPath: string, jsonPath: string): string {
@@ -192,8 +177,8 @@ export async function generateGoalMethodCandidates(input: GoalMethodCandidateInp
   const jsonPath = getJsonPath(goal);
   const markdownPath = getMarkdownPath(goal);
   const content = buildMarkdown(goal, candidates, retrospective, markdownPath, jsonPath);
-  await atomicWriteJson(jsonPath, state);
-  await atomicWriteText(markdownPath, content);
+  await atomicWriteGoalJson(jsonPath, state);
+  await atomicWriteGoalText(markdownPath, content);
   return {
     goal,
     candidates,

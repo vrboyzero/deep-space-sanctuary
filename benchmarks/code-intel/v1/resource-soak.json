@@ -30,12 +30,12 @@
       {
         "path": "packages/belldandy-skills/src/code-intel/code-intel.ts",
         "runtimePath": "packages/belldandy-skills/dist/code-intel/code-intel.js",
-        "sha256": "7807c38913ec9f447e056a807813d603d055716d96fbd96edb62d35447f464aa"
+        "sha256": "5914eb0ba9bb6bf5803912c158932db4eabe06e1887dafbe49909816152e6aed"
       },
       {
         "path": "packages/belldandy-skills/src/code-intel/types.ts",
         "runtimePath": "packages/belldandy-skills/dist/code-intel/types.js",
-        "sha256": "02f1861ddc52223b710de011e8307f0b95e7b784f09549685c4c9d3fbd12205b"
+        "sha256": "30df8ac99ef3c955080da57784bb0b9f815b5986c20c6bb8e990dc73e0900f9c"
       },
       {
         "path": "scripts/run-code-intel-resource-soak.mjs",

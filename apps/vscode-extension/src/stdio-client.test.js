@@ -412,4 +412,39 @@ describe("VS Code coding-run stdio client", () => {
       error: { code: "cursor_stale", message: "Projection cursor belongs to an older Gateway epoch." },
     });
   });
+
+  it("reads a bounded artifact and fails closed above the pending request budget", async () => {
+    const harness = createChildHarness();
+    let requestIndex = 0;
+    const client = new CodingRunStdioClient({
+      command: "bdd",
+      spawn: harness.spawn,
+      maxPendingRequests: 1,
+      requestTimeoutMs: 50,
+      createRequestId: () => `artifact-${++requestIndex}`,
+    });
+
+    const response = client.readArtifact({ agentRunId: "run-1", workspaceId: "workspace-1" });
+    const sent = once(harness.child.stdin, "data");
+    const [chunk] = await sent;
+    expect(JSON.parse(String(chunk))).toEqual({
+      version: "v1",
+      type: "artifact.request",
+      id: "artifact-1",
+      artifact: { revisionId: "run-1", workspaceId: "workspace-1" },
+    });
+    await expect(client.cancelConversation({ conversationId: "conversation-1", agentRunId: "run-1" }))
+      .rejects.toThrow(/backpressure/u);
+    harness.child.stdout.write(`${JSON.stringify({
+      version: "v1",
+      type: "artifact.response",
+      id: "artifact-1",
+      ok: true,
+      result: { revisionId: "run-1", contentMode: "none" },
+    })}\n`);
+    await expect(response).resolves.toEqual({
+      ok: true,
+      result: { revisionId: "run-1", contentMode: "none" },
+    });
+  });
 });

@@ -182,6 +182,25 @@ const TOOL_BEHAVIOR_CONTRACTS: ToolBehaviorContract[] = [
       "Leave terminal or restart-lost lanes untouched unless an explicit new delegation is required",
     ],
   },
+  {
+    name: "subtask_worktree_dispose",
+    useWhen: [
+      "Need to explicitly dispose one interrupted dirty write lane after a crash or runtime loss",
+      "The exact manager/team/lane/task/session/revision binding is still authoritative",
+    ],
+    avoidWhen: [
+      "The lane is active, clean, read-only, shared-workspace, or owned by another manager",
+      "The intended action is fan-in, merge, release, deployment, or implicit task archive cleanup",
+    ],
+    preflightChecks: [
+      "Run preview first and confirm the short-lived receipt only after the lane remains interrupted and unchanged",
+      "Keep the source repository outside the mutation target and verify the exact lane binding",
+    ],
+    fallbackStrategy: [
+      "Regenerate preview after any session, revision, worktree, or content drift",
+      "Preserve the lane for manual recovery when cleanup returns uncertain",
+    ],
+  },
 ];
 
 export function getToolBehaviorContract(

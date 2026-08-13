@@ -1,6 +1,5 @@
-import crypto from "node:crypto";
-import fs from "node:fs/promises";
 import path from "node:path";
+import { atomicWriteGoalText } from "./atomic-write.js";
 import type {
   GoalCapabilityPlan,
   GoalCheckpointItem,
@@ -467,13 +466,6 @@ function buildMarkdown(goal: LongTermGoal, handoff: GoalHandoffSnapshot): string
   ].join("\n");
 }
 
-async function atomicWriteText(targetPath: string, content: string): Promise<void> {
-  await fs.mkdir(path.dirname(targetPath), { recursive: true });
-  const tempPath = `${targetPath}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(tempPath, content, "utf-8");
-  await fs.rename(tempPath, targetPath);
-}
-
 export function buildGoalHandoffResult(input: GoalHandoffInput): GoalHandoffReadResult {
   const { goal, runtime, graph, checkpoints, plans, progressContent, bridgeGovernanceSummary } = input;
   const openCheckpoints = checkpoints.items
@@ -536,6 +528,6 @@ export function buildGoalHandoffResult(input: GoalHandoffInput): GoalHandoffRead
 
 export async function generateGoalHandoff(input: GoalHandoffInput): Promise<GoalHandoffGenerateResult> {
   const result = buildGoalHandoffResult(input);
-  await atomicWriteText(input.goal.handoffPath, result.content);
+  await atomicWriteGoalText(input.goal.handoffPath, result.content);
   return result;
 }

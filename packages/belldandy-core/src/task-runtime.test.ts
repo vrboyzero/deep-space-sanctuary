@@ -1019,6 +1019,71 @@ test("task runtime agent capabilities persist resolved worktree launch runtime b
   await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
 });
 
+test("task runtime agent capabilities abort a prepared worktree when ownership persistence fails", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-worktree-persist-failure-"));
+  const store = new SubTaskRuntimeStore(stateDir);
+  await store.load();
+  const requestedCwd = path.join(stateDir, "repo");
+  const worktreePath = path.join(stateDir, "state", "subtasks", "worktrees", "prepared");
+  const originalUpdate = store.updateTaskLaunchSpec.bind(store);
+  vi.spyOn(store, "updateTaskLaunchSpec")
+    .mockRejectedValueOnce(new Error("registry publication failed"))
+    .mockImplementation(originalUpdate);
+  const abortPreparedTaskRuntime = vi.fn(async () => ({
+    requestedCwd,
+    resolvedCwd: worktreePath,
+    worktreePath,
+    worktreeRepoRoot: requestedCwd,
+    worktreeBranch: "belldandy-prepared",
+    worktreeStatus: "removed" as const,
+  }));
+  const orchestrator = {
+    spawn: vi.fn(async () => ({ success: true, output: "unexpected" })),
+    listSessions: vi.fn(() => []),
+  };
+  const caps = createSubTaskAgentCapabilities({
+    orchestrator: orchestrator as any,
+    runtimeStore: store,
+    worktreeRuntime: {
+      async prepareTaskLaunch(_taskId: string, launchSpec: AgentLaunchSpec) {
+        return {
+          launchSpec: { ...launchSpec, cwd: worktreePath },
+          summary: {
+            requestedCwd,
+            resolvedCwd: worktreePath,
+            worktreePath,
+            worktreeRepoRoot: requestedCwd,
+            worktreeBranch: "belldandy-prepared",
+            worktreeBaseRef: "a".repeat(40),
+            worktreeStatus: "created" as const,
+          },
+        };
+      },
+      abortPreparedTaskRuntime,
+    } as any,
+  });
+
+  const result = await caps.spawnSubAgent!({
+    parentConversationId: "conv-worktree-persist-failure",
+    agentId: "coder",
+    instruction: "Prepare but fail ownership persistence.",
+    cwd: requestedCwd,
+    isolationMode: "worktree",
+  });
+
+  expect(result).toMatchObject({ success: false, error: "registry publication failed" });
+  expect(orchestrator.spawn).not.toHaveBeenCalled();
+  expect(abortPreparedTaskRuntime).toHaveBeenCalledTimes(1);
+  expect(await store.getTask(String(result.taskId))).toMatchObject({
+    status: "error",
+    launchSpec: {
+      worktreePath,
+      worktreeStatus: "removed",
+    },
+  });
+  await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+});
+
 test("subtask runtime store supports stop request and archive filtering", async () => {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-stop-"));
   const store = new SubTaskRuntimeStore(stateDir);
@@ -1275,6 +1340,56 @@ test("task runtime agent capabilities route fan-in preview and explicit confirm 
   })).resolves.toMatchObject({ status: "completed", applied: true });
   expect(preview).toHaveBeenCalledTimes(1);
   expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ receiptId: "fan-in-receipt-1", confirm: true }));
+
+  await store.flushAndClose();
+  await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+});
+
+test("task runtime agent capabilities route exact interrupted worktree disposal preview and confirm", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-supervisor-disposal-capability-"));
+  const store = new SubTaskRuntimeStore(stateDir);
+  await store.load();
+  const preview = vi.fn(async () => ({
+    schemaVersion: "subtask-supervisor-worktree-disposal/v1" as const,
+    contentMode: "none" as const,
+    status: "ready" as const,
+    applied: false,
+    duplicateSideEffect: false as const,
+    blockers: [],
+    receipt: { id: "dispose-receipt-1", expiresAtMs: 20_000 },
+  }));
+  const confirm = vi.fn(async () => ({
+    schemaVersion: "subtask-supervisor-worktree-disposal/v1" as const,
+    contentMode: "none" as const,
+    status: "completed" as const,
+    applied: true,
+    duplicateSideEffect: false as const,
+    blockers: [],
+  }));
+  const caps = createSubTaskAgentCapabilities({
+    orchestrator: { spawn: vi.fn(), listSessions: vi.fn(() => []) } as any,
+    runtimeStore: store,
+    supervisorWorktreeDisposalRuntime: { preview, confirm },
+  });
+  const common = {
+    managerConversationId: "conversation-manager",
+    managerAgentRunId: "run-manager",
+    teamId: "team-parallel",
+    laneId: "lane_1",
+    taskId: "task-lane-1",
+    sessionId: "session-lane-1",
+    expectedRevision: 0,
+  };
+
+  await expect(caps.disposeSubTaskWorktree?.({ action: "preview", ...common })).resolves.toMatchObject({ status: "ready" });
+  await expect(caps.disposeSubTaskWorktree?.({
+    action: "confirm",
+    ...common,
+    receiptId: "dispose-receipt-1",
+    confirm: true,
+  })).resolves.toMatchObject({ status: "completed", applied: true });
+  expect(preview).toHaveBeenCalledWith(common);
+  expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ receiptId: "dispose-receipt-1", confirm: true }));
 
   await store.flushAndClose();
   await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});

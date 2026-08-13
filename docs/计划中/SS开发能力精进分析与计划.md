@@ -21,7 +21,7 @@ SS 已从上一轮 `7.4/10` 推进到安全、恢复、编辑、Headless、本�
 | SS 内部硬 Gate | **9.1/10**（原始加权 `9.065`） | corrected v2、类别下限、核心类别、测试、patch、回归、双平台和工程 Gate 均通过；只对既定 benchmark 与环境成立 |
 | 新一轮横向评分 | **9.0/10**（原始加权 `8.955`） | 对真实仓泛化、语义导航、验证控制面、并行和生态成熟度保留折扣；竞品未参加同环境 benchmark |
 
-横向评分不是模型能力排名。当前主要差距是：单一当前 HEAD 原生 aggregate 尚未完成、真实任务外部有效性不足、统一验证控制面与 TaskProjection 尚未完全闭合、生态消费者证据不足。
+横向评分不是模型能力排名。当前主要差距是：单一当前 HEAD 原生 aggregate 尚未完成、真实任务外部有效性不足、当前变更的远端 CI 证据尚未取得，以及两个新增 Settings 字段仍待人工可见交互/console 手测。P2-B 本地严格零发现依赖 Gate 已通过；P1-B 验证 DAG、P1-C TaskProjection/Capability Closure 与 P2-A Supervisor fault matrix/双平台长稳/零残留 Gate 均已完成。前部旧切片中的“尚未闭合”只描述当时上下文，不代表当前状态，当前状态以第 11、12 节为准。
 
 ### 1.2 下一轮五个闭环
 
@@ -117,9 +117,9 @@ node .\node_modules\vitest\vitest.mjs run packages/belldandy-core/src/coding-run
 
 1. `72/72` 是 r11 的 54 个不变任务与 r13 的 18 个 successor 任务组成的 `cross_revision_successor_projection`，`nativeAggregate=false`。
 2. r13 两组 `file_edit` 均为 0 次调用，只能证明结果 Gate，不能证明 exact edit 的因果 uplift。
-3. fixture 仍以确定性 Node 为主，独立真实仓、多语言迁移、浏览器 UI 闭环和并行 Agent 写入证据不足。
-4. Goal/Workflow/Subtask/Orchestrator/worktree/journal 尚未完全统一为项目开发任务投影与预算化并行体验。
-5. 产品级 symbol/definition/reference/freshness 统一接口和外部 reference client/conformance 仍在补齐。
+3. fixture 仍以确定性 Node 为主，独立真实仓、多语言迁移和浏览器 UI 闭环证据不足；P2-A 已补齐受控并行 lane、故障恢复和双平台长稳证据，但不等同于仓外真实任务泛化。
+4. P1-C 已将 Goal/Workflow/Subtask/worktree/journal 闭合为只读 TaskProjection，并完成任务级 Capability Closure；P2-A 已完成多 lane fault matrix、竞争 confirm/crash/restart 对账、双平台 60 分钟 soak 与零残留 Gate。
+5. 产品级 symbol/definition/reference/freshness 统一接口已完成 TS/JS 与 Go canary 闭环；P2-B reference client、两个仓外 consumer、failure conformance、运行前置 Doctor、Puppeteer 25 零发现依赖 Gate 与 portable 真实启动/恢复的本地证据已补齐，但当前工作树对应的远端 GitHub Actions 运行证据及 Settings 人工手测仍缺失。
 
 ## 4. 横向评分与竞品适配
 
@@ -141,7 +141,7 @@ SS 的优势是 fail-closed 安全、durable side-effect reconciliation、双平
 - CodeIntel Provider 只产出规范化只读证据；Context Inspector、freshness、revision、capability closure 和 mutation owner 由 SS 持有。
 - TaskProjection 只读聚合现有 authoritative owner，不写入领域状态，不创建万能 TaskStore。
 - 验证 DAG 复用 command job、workspace snapshot、trace 和 Browser Relay，不创建第二套测试状态机。
-- Supervisor 只拥有 spawn/observe/steer/cancel/reattach/projection；并行写任务经 managed worktree 和显式 fan-in。
+- Supervisor 只编排 spawn/observe/steer/cancel/reattach/projection；并行写任务经 managed worktree、显式 fan-in，或在 crash 后由独立 exact-bound disposal owner 处置隔离 lane，永不直接 mutation source workspace。
 - 外部 LSP、浏览器和语言工具链均需 pinned profile、network off、资源/期限限制、kill/reap、零残留和 Doctor capability。
 
 ### 5.2 目标形态
@@ -165,11 +165,44 @@ Source / Workspace Revision
 
 **方案重点**：冻结 24 项任务、Windows/WSL2 各 3 次共 144 项矩阵；固定仓 commit、snapshot receipt、source/harness identity、费用/usage/trace/敏感/残留 Gate；B 层使用 Express、Preact、vscode-languageserver-node、spf13/cobra，C 层覆盖 browser、parallel-read、parallel-write、restart-delivery；所有外部输入在创建运行目录前失败关闭。
 
-**已完成/验证要点**：P0.1-P0.29 合同、fixture、runner、Linux preparation、system harness、cost-containment-v1 和三代 navigation shadow 均已形成可复算 artifact。`cost-containment-v1` 仅 `hold_explicit_opt_in`，默认启用/未授权 Provider canary 禁止，`taskUplift=not_measured`，candidate v1-v3 均 `do_not_promote`，navigation candidate line 已停止；冻结 aggregate 仍为同 identity `6/144`，历史 `2/6` passed，三轮 navigation shadow 费用复算为 `0.08318752 RMB`。
+**已完成/验证要点**：P0.1-P0.30 合同、fixture、runner、Linux preparation、system harness、cost-containment-v1、三代 navigation shadow 与原生 aggregate 重启边界审计均已形成可复算 evidence。`cost-containment-v1` 仅 `hold_explicit_opt_in`，默认启用/未授权 Provider canary 禁止，`taskUplift=not_measured`，candidate v1-v3 均 `do_not_promote`，navigation candidate line 已停止；冻结 aggregate 仍为同 identity `6/144`，历史 `2/6` passed，三轮 navigation shadow 费用复算为 `0.08318752 RMB`。
 
 **当前缺口/关闭边界**：仍需单一 HEAD 原生 completed aggregate、真实任务外部有效性和重复 Provider 子集；禁止 candidate v4、竞品代跑、公开排行榜和无新证据的付费扩样。
 
 **风险/工作量**：中高风险，主要是费用越界、identity 漂移、无效 Provider 结果进入分母和 artifact 覆盖；估算 `14-22 人日`，不含 Provider 费用和观察窗口。
+
+#### P0 当前切片审计结论：原生 aggregate 重启边界（2026-08-14）
+
+##### 已完成内容
+
+1. **历史 v3 partial baseline 只读复核**：
+   - 对 `artifacts/p0.17-canary-20260809-partial-aggregate` 执行聚合器离线 `--verify`，确认 artifact 仍可从保留的两份 source report 重算为 `partial 6/144`，没有修改历史输入或输出。
+   - 该 baseline 固定 source/harness commit `72e916d062fd8917bb7a018afdf9b427c2181382`、worktree identity `01981c50...` 和 report SHA-256 `f008259b...`。
+
+2. **当前源码 identity 边界审计**：
+   - 本切片审计时本地基线为 `HEAD=6ce85794d1f05c507ad1258669be1eb980803619`，且 P2-A/P2-B/Quality Gate 仍为未提交工作树；无论 commit 还是 worktree identity 均不等于历史 partial baseline。
+   - v3 aggregator 会拒绝跨 source/harness identity 聚合，因此旧 `6` 项不能续拼到下一轮单一 HEAD 原生矩阵，只能作为历史付费证据保留。
+
+3. **正式矩阵执行授权边界复核**：
+   - v3 A/B/C 正式 runner 均启动真实 Coding CI/Provider 链；fixture、system smoke、离线 replay 或 partial 聚合器不能替代剩余 `138` 项模型样本。
+   - 按既有 `cost-containment-v1=hold_explicit_opt_in`，在稳定 commit identity、Provider 凭据、明确费用上限和用户授权同时具备前，不创建新矩阵 artifact，不读取凭据、不调用 Provider、不提高预算。
+
+4. **效果**：
+   - 下一轮 P0 不会把旧 `6/144`、离线 smoke 或跨 revision 样本混入正式分母。
+   - 正式矩阵启动条件收敛为“稳定提交 identity + 重新准备双平台输入 + 显式付费授权”，避免在持续变化的工作树上产生立即失效的付费证据。
+
+##### 验证结果
+
+- TypeScript 编译无错误：当前 workspace `corepack pnpm build` 通过。
+- 当前完整测试 `945` 个文件、`5749` 个测试条目全部通过；`verify:coding-benchmark` 与 `git diff --check` 通过。
+- `corepack pnpm aggregate:coding-agent:baseline --verify --output-root artifacts/p0.17-canary-20260809-partial-aggregate` 返回 `verified partial 6 run(s)`。
+- 本审计执行 `0` Gateway、`0` 模型、`0` Provider、`0` 凭据读取、`0` 网络和 `0` 远端写入。
+
+##### 后续计划
+
+- **下一步准备做什么**：先在用户授权下将当前计划改动形成稳定 `main` commit 并推送 `private/main`，闭合 P2-B 远端 Quality Gates；随后另行取得 Provider/费用授权，从该稳定 commit identity 重新准备 Windows/WSL2 v3 输入并启动全新原生矩阵。
+- **为什么先做它**：任何继续生成的 P0 report 都必须绑定最终 source/harness identity；在提交前运行会产生无法与后续改动聚合的付费孤立样本，也不能帮助 P2-B 取得远端证据。
+- **当前还缺的关键闭环**：稳定 commit SHA、当前提交的完整远端 Gate、双平台 v3 repository input/receipt 重新准备、明确 Provider 与总费用上限，以及用户对真实模型矩阵的单独授权；P0 保持进行中。
 
 ### 6.2 P1-A：语言无关 CodeIntel 与 Context Inspector
 
@@ -207,7 +240,7 @@ Source / Workspace Revision
 
 **已完成/验证**：前十一切片已完成 v1 contract、supporting evidence、exact-binding action envelope、revision-bound collection/cursor、owner-safe collector、pairing-protected `task.projection.list` RPC、TUI/Headless additive consumer、restart cursor Gate、VS Code stdio consumer、WebChat adapter；Windows/WSL2 真实双进程 restart 均证明旧 TaskProjection cursor 返回 `cursor_stale`、旧 run binding 返回 `not_found` 且 managed Gateway 零残留；`message.send` 已在 mutation 前接入 exact-binding capability Gate，显式 requirement 缺 resolver 时失败关闭，未声明 requirement 的旧行为保持兼容；Headless/Gateway 已增加严格、无正文的 required capability v1 声明；production owner 已完成 exact-bound snapshot、异步评估、真实 Gateway authoritative reader 装配、active projection 和生命周期释放。
 
-**当前缺口**：production capability closure、reconciliation journal、pending approval、child crash、worktree keep/discard、Goal verifier failure、四类 consumer conformance、无正文效率指标合同，以及 Conversation `needs_input` 生命周期 observation 已闭合。Gateway broker 只声明真实覆盖的 `needs_input`，不虚构 `blocked/verifying`；公共 `permission.respond` 缺少可信人类 provenance 时标为 `unknown`，因此人工次数仍可能省略。独立 P1-B verification DAG/command job 也缺可信 production task/run 外键，三项均保持 `defer/split_task`。不迁移领域真源，不启动 P2-A 并行写任务。
+**当前边界与拆分项**：production capability closure、reconciliation journal、pending approval、child crash、worktree keep/discard、Goal verifier failure、四类 consumer conformance、无正文效率指标合同，以及 Conversation `needs_input` 生命周期 observation 均已闭合。Gateway broker 只声明真实覆盖的 `needs_input`，不虚构 `blocked/verifying`；公共 `permission.respond` 缺少可信人类 provenance 时标为 `unknown`，因此人工次数仍可能省略。独立 P1-B verification DAG/command job 仍缺可信 production task/run 外键，作为 `defer/split_task` 保留；不迁移领域真源。P2-A 已在后续阶段完成，不受该拆分项阻塞。
 
 #### P1-C 当前切片实现结论：任务启动能力闭包只读 resolver seam（2026-08-13）
 
@@ -337,7 +370,7 @@ Source / Workspace Revision
 
 - **下一步准备做什么**：把现有 reconciliation journal 的 `conversationId + agentRunId` 精确读取接入 TaskProjection supporting evidence；command job/validation 继续等待领域 owner 的可信外键。
 - **为什么先做它**：production capability closure 已闭合；journal 是 supporting evidence 中唯一已具备精确 Conversation binding、且可在不迁移真源前提下继续闭合的缺口。
-- **当前还缺的关键闭环**：本切片最终核心集合 `75/75`、benchmark 脚本 `62/62`、core build 和 diff check 均通过；P1-C 仍缺真实 journal projection，command job/validation 保持 `defer`。
+- **当时还缺的关键闭环**：本切片最终核心集合 `75/75`、benchmark 脚本 `62/62`、core build 和 diff check 均通过；后续已补齐真实 journal projection，command job/validation 仍按 `defer` 保留。
 
 #### P1-C supporting evidence binding 审计结论（2026-08-13）
 
@@ -475,7 +508,7 @@ Source / Workspace Revision
 
 - **下一步准备做什么**：审计 `UserWorktreeStatus.retention` 在 keep/discard 生命周期中的真实状态与持久化边界，并判断现有 supporting evidence 能否无损表达。
 - **为什么先做它**：child crash 已闭合，worktree keep/discard 是原 P1-C 完成标准中下一项具备 exact Conversation/run owner、且可能无需迁移领域真源即可完成的场景。
-- **当前还缺的关键闭环**：keep/discard 的可观察状态、verifier failure 的可信 task/run 外键、四类 consumer/无正文指标汇总；P1-C 继续保持进行中。
+- **当时还缺的关键闭环**：keep/discard 的可观察状态、verifier failure 的可信 task/run 外键、四类 consumer/无正文指标汇总；后续切片已完成这些可安全接入项，P1-C 最终 Gate 已闭合。
 
 #### P1-C 当前切片实现结论：worktree keep/discard production 投影闭环（2026-08-13）
 
@@ -514,7 +547,7 @@ Source / Workspace Revision
 
 - **下一步准备做什么**：审计 verifier/validation DAG 是否已有可信 `taskId/agentRunId` 外键，以及 verifier failure 能否无迁移地投影到 TaskProjection。
 - **为什么先做它**：worktree keep/discard 已闭合；verifier failure 是剩余完成标准中最后一个明确故障场景，且必须先证明领域 owner 外键，不能按 jobId、artifact 名称或相似 ID 猜测。
-- **当前还缺的关键闭环**：verifier failure 的证据化接入或 `defer` 结论、默认无正文任务效率指标核对、四类 consumer 同事件序列 conformance 汇总；P1-C 继续保持进行中。
+- **当时还缺的关键闭环**：verifier failure 的证据化接入或 `defer` 结论、默认无正文任务效率指标核对、四类 consumer 同事件序列 conformance 汇总；后续切片已完成，P1-C 最终 Gate 已闭合。
 
 #### P1-C 当前切片实现结论：Goal verifier failure production 投影闭环（2026-08-13）
 
@@ -549,7 +582,7 @@ Source / Workspace Revision
 
 - **下一步准备做什么**：用同一组固定 TaskProjection 事件/页面样本核对 TUI、Headless CLI/NDJSON、WebChat、VS Code 四类 consumer 的状态、动作、cursor 和拒绝行为，并汇总默认无正文任务效率指标。
 - **为什么先做它**：明确故障场景与可安全接入的 production owner 已全部闭合；consumer conformance 和效率指标是 P1-C 宣告完成前剩余的横向验收。
-- **当前还缺的关键闭环**：四类 consumer 同事件序列 conformance、无正文投影的体积/解析/重复状态指标和最终完成边界复核；P1-C 继续保持进行中。
+- **当时还缺的关键闭环**：四类 consumer 同事件序列 conformance、无正文投影的体积/解析/重复状态指标和最终完成边界复核；后续切片已完成，P1-C 最终 Gate 已闭合。
 
 #### P1-C 当前切片实现结论：四类 consumer 同序列 conformance（2026-08-13）
 
@@ -582,7 +615,7 @@ Source / Workspace Revision
 
 - **下一步准备做什么**：完成默认无正文任务效率指标的边界测试与 production 接线审计，确认哪些指标可由现有 trace/TaskProjection 可信计算。
 - **为什么先做它**：四类 consumer conformance 已闭合；效率指标是 P1-C 最后一个明确交付项，且必须区分真实可计算值与缺少 production 时间线时的未知值。
-- **当前还缺的关键闭环**：TaskProjection 时间线的串绑、乱序和覆盖不足拒绝验证，以及 production blocked/needs-input/validation duration 是否存在可信 observation 来源；闭合前 P1-C 继续保持进行中。
+- **当时还缺的关键闭环**：TaskProjection 时间线的串绑、乱序和覆盖不足拒绝验证，以及 production blocked/needs-input/validation duration 是否存在可信 observation 来源；后续已完成可验证的 observation 边界审计，P1-C 最终 Gate 已闭合，未知指标仍保持 `incomplete`。
 
 #### P1-C 当前切片实现结论：默认无正文任务效率指标合同（2026-08-13）
 
@@ -620,7 +653,7 @@ Source / Workspace Revision
 
 - **下一步准备做什么**：复核能否在既有 Gateway event broker 上增加不持久化、exact-bound 的状态 observation，并为 permission settle 标注可信 responder kind；只有不创建第二状态真源时才实施。
 - **为什么先做它**：效率指标合同已完成，剩余问题不是计算公式，而是 production evidence 是否存在；先关闭 observation 来源边界可避免为了填数字持久化一套 TaskProjection 历史。
-- **当前还缺的关键闭环**：blocked/needs-input/validation 完整生命周期 evidence 与人工 responder evidence；若现有 owner 无法提供，则保持 `defer/split_task`，P1-C 不提前标记完成，也不进入 P2-A。
+- **当时还缺的关键闭环**：blocked/needs-input/validation 完整生命周期 evidence 与人工 responder evidence；后续已闭合可验证的 `needs_input` observation 与 responder 分类，缺少 authoritative owner 的指标仍按 `defer/split_task` 保持 `incomplete`。
 
 #### P1-C 当前切片实现结论：Gateway 状态 observation 与审批 responder 证据（2026-08-13）
 
@@ -691,7 +724,7 @@ Source / Workspace Revision
 
 **风险/工作量**：高风险，主要是投影漂移、旧缓存复活和跨模块契约耦合；估算 `10-15 人日`。
 
-### 6.5 P2-A：受控 Supervisor 与并行 worktree（进行中）
+### 6.5 P2-A：受控 Supervisor 与并行 worktree（已完成）
 
 **目的与方案**：在 P1-C 闭合后增加 spawn/observe/steer/cancel/reattach/fan-in；读任务共享 snapshot，写任务独立 managed worktree；限制 child/turn/token/费用/wall time/风险/验证预算；fan-in 只消费 diff/test/evidence，冲突进入 preview/confirm，reviewer 只读不 mutation。
 
@@ -878,11 +911,889 @@ Source / Workspace Revision
 - **为什么先做它**：统一预算合同已经固定 admission 与执行边界，下一步应验证多 lane 和故障窗口下不会重复副作用、跨 owner 漂移或遗留进程/worktree/lease。
 - **当前还缺的关键闭环**：2-4 写 lane/8 读 lane 的完整故障矩阵、竞争 confirm/crash/restart 对账、双平台长稳与进程/worktree/lease/资源零残留 Gate；P2-A 保持进行中。
 
-### 6.6 P2-B：生态与运行前置收口（延后）
+#### P2-A fault matrix 当前切片实现结论：Supervisor 批量重附原子性（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/subtask-supervisor-runtime.ts` 修改**：
+   - 将 restart `reattach()` 改为先规范化并校验完整批次，再统一发布 Supervisor records。
+   - 同时校验既有状态和批次内部的 lane key/task ID 唯一性；任一冲突时整个批次失败关闭，不留下部分恢复状态。
+   - 保持原有 exact binding、terminal 状态映射、retention 和无正文 snapshot 合同，不新增持久化 owner。
+
+2. **`packages/belldandy-core/src/subtask-supervisor-runtime.test.ts` 扩展**：
+   - 新增 `4` 个写 lane + `8` 个读 lane 的混合 terminal restart 批次，覆盖 `done/timeout/interrupted`。
+   - 在批次尾部注入重复 task ID，红灯证明旧实现会先发布前 `12` 个 lane；修复后确认冲突批次 snapshot 保持为空。
+
+3. **效果**：
+   - Gateway/Supervisor 重启恢复不会因后部坏记录形成半恢复任务视图。
+   - 冲突批次不占用 active/terminal retention，也不会影响后续 authoritative 重附或 admission。
+   - 本切片不执行 Provider、容器、主工作区 mutation、自动 merge/release/deploy。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/core build` 通过。
+- Supervisor/Control/Fan-in/Task runtime 定向回归 `5` 个文件 `51/51` 通过，其中新增批量重附原子性测试 `1` 项。
+- 红灯证据确认旧实现冲突后残留 `12` 个 terminal lane；绿灯确认相同输入抛出 `binding_conflict` 且 `items=[]`、`retainedTerminalCount=0`。
+- `git diff --check` 通过，仅有既有 Windows CRLF 转换提示。
+
+##### 后续计划
+
+- **下一步准备做什么**：继续 fault matrix 的竞争 fan-in confirm 与 crash/restart 对账，先固定相同 receipt 并发确认只能执行一次主工作区 apply，再覆盖 completion audit 丢失后的恢复结果。
+- **为什么先做它**：多 lane restart 投影已经原子化；当前最高副作用风险转为两个 manager 请求或进程窗口竞争消费同一 fan-in receipt。
+- **当前还缺的关键闭环**：预算耗尽/deadline、approval、journal、worktree、child crash/restart 的组合矩阵，竞争 confirm 进程恢复，Windows/WSL2 60 分钟 soak 与进程/worktree/lease/资源零残留 Gate；P2-A 保持进行中。
+
+#### P2-A fault matrix 当前切片实现结论：同 receipt 并发 fan-in confirm 单飞（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/subtask-supervisor-fan-in-resolution-runtime.ts` 修改**：
+   - 增加按 `receiptId + requestHash` 绑定的进程内 confirm singleflight，相同 fan-in 请求共享同一结算 Promise。
+   - settlement 后释放 pending 记录；不同 request hash 不复用结果，继续由 receipt binding 失败关闭。
+   - 主工作区 apply、operation audit 和 resolution cleanup 仍由既有 `UserWorktreeRuntime` receipt owner 执行，不复制 mutation owner。
+
+2. **`packages/belldandy-core/src/subtask-supervisor-fan-in-resolution-runtime.test.ts` 扩展**：
+   - 新增同一 receipt 四路并发 confirm 回归，要求四个调用均观察同一 `completed/applied` 结果。
+   - 红灯确认旧实现只有首个请求成功，其余三个返回 `failed/owner_lock_busy`；修复后全部完成，源文件只应用一次且 resolution worktree/branch 全部清理。
+
+3. **效果**：
+   - 同一 Gateway 内竞争确认不会把底层互斥状态暴露为业务失败，也不会让失败结果与成功结果竞争覆盖 fan-in receipt。
+   - 顺序重放仍返回既有结果，冲突 preview 仍不可确认。
+   - 本切片尚未宣称跨 Gateway/进程竞争已闭合。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/core build` 通过。
+- Supervisor/Control/Fan-in/Task runtime 定向回归 `5` 个文件 `52/52` 通过，其中新增四路并发 confirm 测试 `1` 项。
+- 关键功能验证：四个并发请求均返回 `completed/applied=true/duplicateSideEffect=false`；源仓仅保留目标内容，worktree list 仅主工作树，受管临时 branch 为零。
+- `git diff --check` 通过，仅有既有 Windows CRLF 转换提示。
+
+##### 后续计划
+
+- **下一步准备做什么**：把同 receipt 竞争扩展到两个独立 runtime/Gateway owner，并接入持久 receipt 级锁与 crash/restart recovery，确保进程边界只执行一次 apply 且最终结果不被 `owner_lock_busy` 覆盖。
+- **为什么先做它**：进程内 singleflight 已消除本实例竞态，但 Gateway restart 或双 owner 窗口不会共享内存 Map；必须以持久证据关闭跨进程副作用风险。
+- **当前还缺的关键闭环**：跨 runtime/进程竞争 confirm、apply 前后 crash/restart 对账、其余 fault matrix、双平台 60 分钟 soak 与资源零残留 Gate；P2-A 保持进行中。
+
+#### P2-A fault matrix 当前切片实现结论：跨 runtime fan-in receipt 串行（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/subtask-supervisor-fan-in-resolution-runtime.ts` 修改**：
+   - 复用 Core `withFileMutationLock()`，以 fan-in receipt 文件为跨 runtime/进程 mutation lock 目标。
+   - 锁内重新读取 durable result，再执行 `UserWorktreeRuntime` apply、fan-in receipt 更新和 resolution cleanup；后到 owner 等待后读取同一 completed 结果。
+   - 继承 existing lock 的 exclusive-create、live-owner timeout、dead-owner stale recovery 和 release failure 语义，不另建锁协议。
+
+2. **`packages/belldandy-core/src/subtask-supervisor-fan-in-resolution-runtime.test.ts` 扩展**：
+   - 新增两个共享 `stateDir` 的独立 runtime 同时 confirm 同一 receipt 的回归。
+   - 红灯确认旧实现一个完成、另一个 `failed/owner_lock_busy`；修复后两个 owner 都观察同一 completed 结果，且主仓只应用一次。
+
+3. **`docs/project-map.md` 更新**：
+   - 补充 fan-in resolution owner 的同请求单飞与 receipt 文件锁跨 runtime/进程串行职责。
+
+4. **效果**：
+   - 双 Gateway owner 窗口不再把基础设施互斥泄漏成业务失败，也不会并发覆盖 fan-in result。
+   - apply authority 仍唯一归属 `UserWorktreeRuntime`，fan-in lock 只串行 receipt orchestration。
+   - 本切片未触发真实进程终止，apply 后 cleanup 前的 crash recovery 继续作为下一切片。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/core build` 通过。
+- Supervisor/Control/Fan-in/Task runtime 与文件锁 Adapter 回归 `7` 个文件 `61/61` 通过，其中新增双 runtime 竞争 confirm 测试 `1` 项。
+- 两个 runtime 均返回 `completed/applied=true/duplicateSideEffect=false`；源仓目标内容正确，worktree list 仅主工作树，临时 branch 为零。
+- `git diff --check` 通过，仅有既有 Windows CRLF 转换提示。
+
+##### 后续计划
+
+- **下一步准备做什么**：覆盖 apply audit 已成功、fan-in result 已持久化但 resolution cleanup 尚未完成的 crash/restart 窗口；重启 confirm 必须先对账并清理残留，不能直接返回 completed。
+- **为什么先做它**：跨 owner 串行已闭合，但当前 durable completed result 写入早于 cleanup；该窗口若中断会留下 worktree/branch，违反 P2-A 零残留 Gate。
+- **当前还缺的关键闭环**：apply 前后真实进程终止对账、其余预算/approval/journal/worktree/child 故障矩阵、双平台 60 分钟 soak 与资源零残留 Gate；P2-A 保持进行中。
+
+#### P2-A fault matrix 当前切片实现结论：fan-in completed-before-cleanup 进程恢复（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/subtask-supervisor-fan-in-resolution-runtime.ts` 修改**：
+   - 将 durable `completed` receipt 解释为“主仓 apply 已完成、cleanup 仍需对账”，不再直接返回。
+   - 首次 confirm 和 restart replay 共用可重入 cleanup helper；存在 resolution worktree 时只依据既有 apply audit 执行 `cleanupConfirmedApply()`，不重放 patch。
+   - worktree 已不存在时返回原 completed 结果；cleanup evidence 不足则把 fan-in receipt 持久化为 `uncertain`，不虚报零残留。
+
+2. **真实进程恢复测试与 fixture 新建**：
+   - `subtask-supervisor-fan-in-process-recovery.test.ts` 使用真实 Git repo/worktree、fan-in receipt 和独立 Node child。
+   - `fixtures/subtask-supervisor-fan-in-crash-child.mjs` 在 completed receipt 原子 rename 完成后、cleanup 前暂停；测试强制终止进程并用新 runtime 重启 confirm。
+   - 红灯确认主仓已应用但 worktree 数仍为 `2`；修复后重启只清理残留，worktree 收敛为 `1`、临时 branch 为零。
+
+3. **`docs/project-map.md` 更新**：
+   - 记录 fan-in completed-before-cleanup 真实进程终止与重启收敛测试位置。
+
+4. **效果**：
+   - apply 成功与 cleanup 之间的进程崩溃不会导致永久残留，也不会在重启后再次应用 lane patch。
+   - durable completed、底层 apply audit 和 resolution worktree 三者重新形成可对账的恢复链。
+   - 未执行远端写入、自动 merge/release/deploy、Provider 或容器。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/core build` 通过。
+- 真实进程恢复、fan-in、Supervisor/Control、Task runtime、完整 UserWorktree 与文件锁回归 `9` 个文件 `90/90` 通过，其中新增真实进程终止测试 `1` 项。
+- 关键功能验证：终止前主仓内容已应用且存在 `2` 个 worktree；重启后内容不变、worktree=`1`、临时 branch=`0`、crash child 进程扫描为空。
+- 本轮完整 `user-worktree-runtime.test.ts` 通过，未复现此前记录的 Windows completion audit 瞬时不稳定。
+- `git diff --check` 通过，仅有既有 Windows CRLF 转换提示。
+
+##### 后续计划
+
+- **下一步准备做什么**：扩展 Supervisor fault matrix 的预算耗尽/deadline 组合，验证 4 写 + 8 读 lane 在 success、budget failure、timeout 和 late completion 下准确释放 active/verifier 水位且不复活旧 generation。
+- **为什么先做它**：fan-in 副作用与 crash 窗口已经闭合；下一风险是多 lane 故障后预算槽未释放或迟到 completion 覆盖 authoritative terminal，阻塞后续任务并破坏长稳。
+- **当前还缺的关键闭环**：预算/deadline、approval/journal/worktree/child 的完整组合矩阵，双平台 60 分钟 soak 与进程/worktree/lease/资源零残留 Gate；P2-A 保持进行中。
+
+#### P2-A fault matrix 当前切片实现结论：多 lane 预算/deadline/late completion（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/subtask-supervisor-runtime.test.ts` 扩展**：
+   - 新增 `4` 个写 lane 与 `8` 个读 lane 的混合生命周期矩阵，通过公共 `execute/reconcile/observe/getSnapshot` seam 驱动。
+   - 首波占满 `4` 个 child 槽和 `1` 个 verifier 槽，其余 lane 必须以 `child_budget_exceeded` 在 launch 前失败关闭；timeout、child failure 和 verifier success 终止后复核槽位释放。
+   - 对运行中的写 lane 发布 generation `1` authoritative steer，再释放 generation `0` 的迟到 completion，确认旧 session 不覆盖新 session/revision；全部 lane 终止后再接纳第 `13` 个 lane。
+
+2. **`packages/belldandy-core/src/subtask-supervisor-runtime.ts` 行为审计**：
+   - 新增组合测试直接通过，证明既有 terminal 结算、active/verifier 计数和 `commandGeneration` Gate 已满足本切片，无需制造生产代码改动。
+   - 预算拒绝不会生成残留 record；deadline/失败释放 child 槽，verifier 终止释放 verifier 槽；authoritative generation 到达后旧 launch 的 bind/settle 均失效。
+
+3. **效果**：
+   - 多 lane 混合失败不会永久耗尽 Supervisor 预算，后续 lane 可继续进入。
+   - 迟到的旧 session 结果不能复活或覆盖已 steer 的 authoritative generation。
+   - 本切片未启动 Provider、容器、远端写入、自动 merge/release/deploy，也未创建真实工作区并行写任务。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/core build` 通过。
+- Supervisor、Control、fan-in、真实进程恢复、Task runtime、完整 UserWorktree 与文件锁回归 `9` 个文件 `88/88` 通过，其中新增多 lane 预算/deadline/late completion 组合测试 `1` 项。
+- 关键功能验证：首波水位 `activeChildren=4`、`activeVerifiers=1`；混合终止后 verifier 水位归零；最终 `activeChildren=0`、`activeVerifiers=0`、`12` 个 terminal lane 全部保留，第 `13` 个 lane 成功完成。
+- 新测试直接绿灯，未观察到需要生产修复的缺口；`git diff --check` 通过，仅有既有 Windows CRLF 转换提示。
+
+##### 后续计划
+
+- **下一步准备做什么**：进入 approval/journal/worktree/child 组合矩阵，先从 exact-bound approval wait 与 child crash/restart 的交错状态开始，验证 pending approval 不占错 lane、重启后 journal 与 authoritative child 状态一致且旧 completion 不复活。
+- **为什么先做它**：预算与 generation 水位已闭合；下一高风险是外部等待和进程中断跨越持久化边界后，各 owner 对同一 lane 给出不一致终态或遗留 worktree/lease。
+- **当前还缺的关键闭环**：approval/journal/worktree/child 的组合故障矩阵，Windows/WSL2 60 分钟 soak，以及进程/worktree/lease/资源零残留 Gate；P2-A 保持进行中。
+
+#### P2-A fault matrix 当前切片实现结论：approval wait 中写 lane crash/restart 对账（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/subtask-supervisor-approval-crash-recovery.test.ts` 新建**：
+   - 复用真实 `SubTaskRuntimeStore`、`PendingToolPermissionRuntime`、`CodingRunReconciliationJournal`、`SubTaskSupervisorRuntime` 与 `SubTaskWorktreeRuntime`，创建 exact-bound 写 lane、真实 managed worktree 和 pending write approval。
+   - 在 `delegate_parallel` journal 只有 durable started、approval 尚未决定、child session 仍 active 时模拟 runtime restart；新 Store 把旧 child 收敛为 `interrupted/runtime_lost`，Supervisor 只重附 terminal observation。
+   - 新 permission owner 对旧 `agentRunId + worktreeId + toolCallId` 的 allow 返回 `not_found`；journal 保持 `uncertain/tool_started`，worktree 保持 `created`，主仓 HEAD 内容与工作区均未变化。
+
+2. **`docs/project-map.md` 更新**：
+   - 登记 approval/journal/worktree/child 组合恢复测试及其 fail-closed 职责，不改变四个 owner 的既有边界。
+
+3. **生产行为审计**：
+   - 新增组合测试直接通过，证明 approval 是进程内一次性 owner，重启不会默认继承或放行；SubTask、Supervisor、journal 与 worktree 的既有恢复语义一致，无需生产代码修改。
+   - 测试清理时显式 deny 原 pending promise 并回收临时 managed worktree；临时目录扫描无残留。
+
+4. **效果**：
+   - 审批等待中的 child crash 不会把未决定授权扩大为跨进程授权，也不会自动 replay delegation mutation。
+   - 未完成的父 operation 保留为可诊断 `uncertain`，隔离 worktree 留给后续显式恢复/处置，不会污染主仓或被静默删除。
+   - 未执行 Provider、容器、远端写入、自动 merge/release/deploy。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/core build` 通过。
+- 新增 approval/crash/restart 组合测试 `1/1` 通过；Supervisor、fan-in、Task runtime、worktree、permission、journal 与 broker 扩展并发回归首次 `12` 文件 `125/126` 通过。
+- 首次扩展回归唯一失败为既有 Windows UserWorktree stage completion-audit 瞬时失败，mutation 后按设计返回 `applied=false/canConfirm=false`；同测试隔离复验 `1/1`、完整 `user-worktree-runtime.test.ts` 复验 `28/28` 通过，首次失败证据不被覆盖。
+- 回归行为：Given 写 lane 正等待 exact approval，When runtime 在 delegation completion 前丢失，Then 新 owner 不接受旧授权、child 为 `interrupted`、journal 为 `uncertain`、worktree 仍隔离且主仓无修改。
+- `git diff --check` 通过，仅有既有 Windows CRLF 转换提示。
+
+##### 后续计划
+
+- **下一步准备做什么**：继续组合矩阵的后半窗口：approval 已显式 allow、隔离 worktree 已产生 lane diff，但 `delegate_parallel` completion 尚未持久化时 child crash/restart；验证 journal 不误判 applied、fan-in 不接受 interrupted lane、worktree 只能显式 keep/discard/恢复。
+- **为什么先做它**：本切片闭合了 mutation 前的 approval-wait crash；更高风险窗口位于授权之后、父 completion 之前，此时磁盘上已有真实 lane 改动，最容易发生重复副作用或错误 fan-in。
+- **当前还缺的关键闭环**：approval 后 worktree mutation/crash、journal completion 与 fan-in 拒绝/恢复组合，Windows/WSL2 60 分钟 soak，以及进程/worktree/lease/资源零残留 Gate；P2-A 保持进行中。
+
+#### P2-A fault matrix 当前切片实现结论：approval 后 dirty lane crash/fan-in 拒绝（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/subtask-supervisor-approval-crash-recovery.test.ts` 扩展**：
+   - 新增 approval 已按 exact binding 显式 `allow`、lane worktree 已写入真实 diff、父 `delegate_parallel` completion 尚未持久化时的 crash/restart 场景。
+   - 新 Store/Supervisor 重启后将 child 收敛为 `interrupted/runtime_lost`；journal 仍为 `uncertain/tool_started`，不因 approval 或磁盘 diff 推断 operation 已完成。
+   - 通过真实 `SubTaskSupervisorFanInRuntime.preview` 验证 interrupted lane 在 artifact 收集和 resolution 前以 `fan_in_evidence_invalid` 失败关闭；dirty worktree 保持 `created`，主仓文件和 Git status 未变化。
+
+2. **生产行为审计**：
+   - 新增场景直接通过，证明 approval、journal completion、authoritative child terminal 与 fan-in readiness 的边界已分离，无需生产代码修改。
+   - dirty subtask worktree 不会在 reload/reconcile 时自动 cleanup 或 apply；测试结束才在临时仓中显式清理。
+
+3. **效果**：
+   - 授权后的 lane 局部改动不会被误当作可 fan-in 的完成结果，child crash 也不会把 diff 自动应用到主仓。
+   - `uncertain` 有明确 `tool_started + interrupted child` 故障依据，等待显式恢复/处置，不属于未解释终态。
+   - 未执行 Provider、容器、远端写入、自动 merge/release/deploy。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/core build` 通过。
+- approval/crash 组合文件 `2/2` 通过；Supervisor/Control/Fan-in/Task runtime/Worktree/Permission/Journal 相关回归 `8` 个文件 `84/84` 通过。
+- 关键功能验证：旧 approval 已 settle 为 allow，但重启后 child=`interrupted`、journal=`uncertain`、fan-in preview 被拒绝、dirty worktree 内容保留、主仓内容与 status 不变。
+- `git diff --check` 通过，仅有既有 Windows CRLF 转换提示。
+
+##### 后续计划
+
+- **下一步准备做什么**：覆盖父 `delegate_parallel` completion 已持久化为 success 且携带 exact lane binding、但 authoritative child 在 crash/restart 后为 `interrupted` 的冲突窗口；journal 必须输出 `delegation_child_not_done`，fan-in 仍不得消费。
+- **为什么先做它**：started-only 窗口已闭合；completion record 是最容易诱发“父成功覆盖 child 真源”的最后一个 journal/fan-in 竞态，必须证明 authoritative child 状态优先。
+- **当前还缺的关键闭环**：delegation completion 与 interrupted child 对账、dirty worktree 的显式处置恢复，Windows/WSL2 60 分钟 soak，以及进程/worktree/lease/资源零残留 Gate；P2-A 保持进行中。
+
+#### P2-A fault matrix 当前切片实现结论：delegation success 与 interrupted child 对账（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/subtask-supervisor-approval-crash-recovery.test.ts` 扩展**：
+   - 在同一真实 dirty-lane 场景中，先证明 started-only journal 为 `uncertain/tool_started`，再持久化带 exact `taskId + sessionId` binding 的 `delegate_parallel` success completion。
+   - runtime restart 后 authoritative SubTask 将 child 收敛为 `interrupted/runtime_lost`；新 journal reconcile 必须从父 success 回退为 `uncertain/delegation_child_not_done`。
+   - 保留 fan-in preview 拒绝、dirty worktree 内容保留和主仓无修改断言，确认父 completion 不会绕过 child 真源或 worktree evidence Gate。
+
+2. **生产行为审计**：
+   - completion/child 冲突测试直接通过；现有 reconciliation journal 会交叉验证 completion metadata 与 authoritative SubTask Store，不以父 success 单独宣告 applied，无需生产代码修改。
+
+3. **效果**：
+   - 父 tool completion 不能覆盖 crash 后的 child terminal 真源，错误成功记录不会进入 fan-in 或触发主仓 mutation。
+   - journal 给出稳定 `delegation_child_not_done` 诊断，dirty worktree 继续等待显式处置。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/core build` 通过。
+- approval/crash 组合文件 `2/2` 通过；Supervisor/Control/Fan-in/Task runtime/Worktree/Permission/Journal 相关回归 `8` 个文件 `84/84` 通过。
+- 关键功能验证：父 completion success + exact binding 存在时，authoritative child=`interrupted` 仍使 journal=`uncertain/delegation_child_not_done`，fan-in=`fan_in_evidence_invalid`，主仓无 mutation。
+- `git diff --check` 通过，仅有既有 Windows CRLF 转换提示。
+
+##### 后续计划
+
+- **下一步准备做什么**：审计并闭合 interrupted dirty subtask worktree 的 manager exact-bound 显式处置入口，区分 artifact 保留/恢复与确认 discard；不得用内部 force cleanup 或测试 teardown 冒充产品行为。
+- **为什么先做它**：approval/journal/child/fan-in 的冲突对账已闭合，当前仍存在预期保留的 dirty worktree；P2-A 零残留 Gate 需要一个明确、可审计、不会跨 lane 的最终处置动作。
+- **当前还缺的关键闭环**：dirty interrupted lane 的显式恢复/处置、Windows/WSL2 60 分钟 soak，以及进程/worktree/lease/资源零残留 Gate；P2-A 保持进行中。
+
+#### P2-A fault matrix 当前切片实现结论：interrupted dirty lane 的 exact-bound 显式处置（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/subtask-supervisor-worktree-disposal-runtime.ts` 新建**：
+   - 增加 `preview/confirm` 两阶段 disposal owner，仅接受当前 manager Conversation/run、team/lane/task/current session、SubTask revision 的 exact binding。
+   - preview 只读取 authoritative `interrupted/runtime_lost`、write、worktree-isolated lane，并保存短期 receipt、runtime binding hash 和不含正文的 worktree 内容摘要；不暴露路径、仓库、分支或 patch。
+   - confirm 在跨 runtime/进程文件锁内重新读取 task、revision、worktree binding 与内容摘要，漂移、旧 session/revision、跨 lane 或 receipt 不匹配均失败关闭；成功后只调用受管 subtask cleanup，重复 confirm 返回同一结果。
+
+2. **`packages/belldandy-core/src/managed-worktree.ts`、`worktree-runtime.ts` 扩展**：
+   - 增加受管 worktree 内容 inspection，限制 tracked binary diff、untracked 路径和总字节范围，生成稳定 SHA-256 摘要。
+   - 处置仍复用 managed-root、Git branch/worktree 校验与 subtask owner 的 force cleanup；source repository 不参与 apply 或删除。
+
+3. **`packages/belldandy-core/src/task-runtime.ts`、`bin/gateway-main.ts` 与 Skills 工具接入**：
+   - `createSubTaskAgentCapabilities()`、Gateway 装配和 `subtask_worktree_dispose` builtin tool 接入 `preview/confirm` capability；manager identity 由当前 ToolContext 注入，公开 schema 不接收 `repo/worktree/path/patch`。
+   - `tool-contract-v2` 与 behavior contract 增加 high-risk、非并发安全、receipt-bound disposal 规则；`docs/project-map.md` 同步记录 owner 和边界。
+
+4. **效果**：
+   - crash/restart 后的 dirty interrupted lane 有可审计的最终 discard 入口，且不会被 task archive、测试 teardown 或内部 force cleanup 冒充 manager 意图。
+   - 真实临时 Git 仓验证了仅目标 lane worktree/branch 收敛，主仓 HEAD、文件内容和 Git status 保持不变；receipt 消费幂等，preview 后内容漂移会保留 worktree。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/skills build`、`corepack pnpm --filter @belldandy/core build` 通过。
+- disposal 真实 Git/Store 回归、Task capability、Skills session、tool-contract-v2、behavior contract 共 `5` 个文件 `62/62` 通过；新增 disposal 集成场景 `1/1` 通过。
+- 关键功能验证：exact binding、旧 revision/session、receipt/content drift 均拒绝；合法 confirm 删除目标 subtask worktree/branch，父 SubTask 仍为 `interrupted`，主仓无 mutation，重复 confirm 不产生第二次副作用。
+- `git diff --check` 通过，仅有既有 Windows CRLF 转换提示。
+
+##### 后续计划
+
+- **下一步准备做什么**：补充跨 runtime/进程的 disposal receipt 恢复与竞争 confirm fault slice，验证 cleanup 中途进程终止后新 owner 只能返回 `uncertain`/可恢复状态，随后执行 subtask/worktree/branch/lease 零残留 sweep。
+- **为什么先做它**：本切片已闭合单 runtime 的 manager exact-bound discard，但删除是不可逆副作用；跨进程 receipt 锁、completed/started audit 和 cleanup 中断仍是 P2-A 最后一个高风险窗口。
+- **当前还缺的关键闭环**：disposal process-recovery/竞争确认、Windows/WSL2 60 分钟 soak，以及进程/worktree/lease/资源零残留 Gate；P2-A 保持进行中。
+
+#### P2-A fault matrix 当前切片实现结论：disposal 竞争确认与进程恢复（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/subtask-supervisor-worktree-disposal-runtime.test.ts` 扩展**：
+   - 两个独立 runtime 对同一 exact receipt 并发 confirm；共享 disposal lock 保证只执行一次 subtask cleanup，两个调用收到同一 completed result，且无第二次副作用。
+
+2. **`packages/belldandy-core/src/subtask-supervisor-worktree-disposal-process-recovery.test.ts` 与 fixture 新建**：
+   - 真实临时 Git 仓中模拟 cleanup 已删除 worktree/branch、receipt result 尚未落盘时子进程终止。
+   - 新 owner reload 后不把缺失路径推断为成功，返回并持久化 `uncertain/worktree_cleanup_state_unknown`；重复 confirm 保持同一保守结果，Git worktree/branch 无残留。
+
+3. **生产行为修正**：
+   - disposal confirm 无法重新 inspection 时保守失败关闭，不再构造伪造 content digest 或把 cleanup 中断误判为 completed。
+
+##### 效果
+
+- 同 receipt 的跨 runtime/进程竞争 confirm 串行且幂等。
+- cleanup 与 receipt 持久化之间发生进程丢失时，状态明确为 `uncertain`，不会重复删除或宣称已完成；残留检查可在人工恢复窗口继续进行。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/skills build`、`corepack pnpm --filter @belldandy/core build` 通过。
+- disposal 单 runtime/竞争 confirm 与跨进程 recovery `2/2` 通过；前一切片相关 Core/Skills 回归保持 `62/62` 通过。
+- 关键功能验证：跨 runtime 同 receipt 只产生一个 cleanup；cleanup 中途终止后新 owner 返回 `uncertain/worktree_cleanup_state_unknown`，目标 worktree/branch 不残留，主仓不变。
+- `git diff --check` 通过，仅有既有 Windows CRLF 转换提示。
+
+##### 后续计划
+
+- **下一步准备做什么**：执行一次 P2-A 资源零残留 sweep，覆盖 SubTask Store、disposal/fan-in receipt 与 lock、managed worktree/branch、子进程和临时 artifact；记录首次失败并分类，不以重跑覆盖证据。
+- **为什么先做它**：fault matrix 的高风险 disposal 竞态已闭合，先做资源 Gate 能确认新增 receipt/lock 与 cleanup 真实收敛，再进入长时间 soak。
+- **当前还缺的关键闭环**：跨模块零残留 sweep、Windows/WSL2 60 分钟 soak，以及最终 P2-A 完成判定；P2-A 保持进行中。
+
+#### P2-A fault matrix 当前切片实现结论：资源零残留 sweep（2026-08-13）
+
+##### 已完成内容
+
+1. **相关回归与临时资源扫描**：
+   - Supervisor/Control/Fan-in/approval/process-recovery/Worktree/Task/Permission/Journal 与 Skills contract 相关 `13` 个测试文件 `89/89` 通过。
+   - 本轮 disposal 测试生成的临时目录、disposal receipt/lock 和 managed lane 均由测试 teardown 收敛；受限扫描未发现本轮 `belldandy-supervisor-dispose-*` 残留。
+
+2. **Gate 边界审计**：
+   - 当前主仓无 `belldandy-*` 分支，主工作树 HEAD/status 未被 disposal 测试改变。
+   - `git worktree list` 仍报告仓库既有的 WSL/Codex prunable worktree、release worktree 与 `.tmp/p0a-*` 历史 harness；多个 Node 进程也无法从当前证据归因于本切片。未擅自执行 `git worktree prune` 或终止进程，避免删除/影响用户既有环境。
+
+##### 效果
+
+- 新增 disposal 资源在测试范围内无残留，且没有把既有仓库维护残留误报为本轮成功。
+- P2-A 的“项目级零残留 Gate”仍未通过，保留明确的环境清理前置项。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/skills build`、`corepack pnpm --filter @belldandy/core build` 通过。
+- 相关回归 `13` 文件 `89/89` 通过；本轮临时目录受限扫描为空。
+- `git diff --check` 通过，仅有既有 Windows CRLF 转换提示。
+
+##### 后续计划
+
+- **下一步准备做什么**：先由维护者确认并清理上述既有 prunable/release/历史 harness worktree 与无主 Node 进程，再在干净基线执行 Windows/WSL2 60 分钟 soak 和最终零残留 sweep。
+- **为什么先做它**：当前环境残留无法安全归因或自动删除；若直接宣称 P2-A 零残留，会把历史资源问题混入本轮 fault matrix 结论。
+- **当前还缺的关键闭环**：维护者确认后的环境清理、Windows/WSL2 长稳窗口、项目级进程/worktree/lease/receipt 零残留 Gate；P2-A 保持进行中。
+
+#### P2-A fault matrix 当前切片实现结论：ignored content 与 archive 竞态边界（2026-08-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/managed-worktree.ts` 扩展**：
+   - disposal content inspection 同时摘要 tracked diff、普通 untracked 和 `.gitignore` ignored 文件；路径与总大小限制保持不变，摘要不输出正文。
+
+2. **`packages/belldandy-core/src/subtask-supervisor-worktree-disposal-runtime.ts` 扩展**：
+   - exact disposal 明确拒绝已进入 task-level archive 的 lane，避免 archive lifecycle cleanup 与 manager receipt confirm 交叉删除。
+
+3. **回归测试**：
+   - preview 后 ignored 文件漂移返回 `receipt_stale` 并保留 worktree；archived lane 返回 `binding_conflict`。
+
+##### 效果
+
+- disposal receipt 的内容证据覆盖 Git worktree 中可见和被忽略的本地文件，避免 preview/confirm 之间的 ignored-file 漂移绕过 stale Gate。
+- task-level archive 与 manager exact-bound disposal 互斥，归档后的 lane 不会被第二个生命周期 owner 重复删除。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/skills build`、`corepack pnpm --filter @belldandy/core build` 通过。
+- disposal runtime/进程 recovery/ignored-content/archive-race 新增组合回归 `3/3` 通过；既有相关回归保持 `13` 文件 `89/89`。
+- `git diff --check` 通过，仅有既有 Windows CRLF 转换提示。
+
+##### 后续计划
+
+- **下一步准备做什么**：在维护者确认既有 worktree/process 清理后，执行 Windows/WSL2 60 分钟 soak，并把 ignored-content、archive race、disposal recovery 纳入最终 P2-A fault matrix artifact。
+- **为什么先做它**：本切片关闭了两类容易绕过摘要或生命周期边界的隐式副作用，剩余风险集中到跨平台长稳与环境级资源归因。
+- **当前还缺的关键闭环**：维护者确认后的环境清理、Windows/WSL2 长稳窗口、项目级零残留和最终 P2-A 完成判定；P2-A 保持进行中。
+
+#### P2-A fault matrix 当前切片实现结论：双平台 soak runner 与 differential zero-residue Gate（2026-08-13）
+
+##### 已完成内容
+
+1. **`scripts/run-subtask-supervisor-soak.mjs` 新建**：
+   - 每轮复用生产 `SubTaskSupervisorRuntime`、`SubTaskRuntimeStore`、`SubTaskWorktreeRuntime` 与 exact-bound disposal，执行 `4 write + 8 read` lane、runtime-loss 重启恢复、dirty lane disposal 和 run-owned Node 子进程回收。
+   - 运行前保存工作区 worktree/受管 branch/相关 Node 进程的哈希基线；运行后只把新增 identity 计为 differential residue，并单独检查临时仓的 run-owned worktree/branch/process/state，不删除或终止既有资源。
+   - 报告绑定当前 HEAD 与关键源码 SHA-256、拒绝覆盖；双平台 comparator 拒绝不同 source identity、workload 或失败 Gate 的证据拼接。
+
+2. **`benchmarks/supervisor/v1/p2a-subtask-supervisor-soak-report.schema.json` 与契约测试新建**：
+   - Schema 固化平台、`4 write + 8 read`、恢复、disposal、资源和零外部副作用字段。
+   - `4/4` 测试覆盖 60 分钟通过合同、短时/`uncertain`/新增残留失败关闭、历史基线不误报、不可覆盖输出和双平台 identity 比较。
+
+3. **双平台真实单周期 smoke**：
+   - Windows native 与 WSL2 各执行 `1` 轮 `12` lane，均为 `12/12` 成功；每端 `4/4` runtime-loss 恢复、`4/4` disposal 完成，`uncertain=0`、重复副作用=`0`。
+   - 两端 differential worktree/branch/process 均为 `0`，临时仓 run-owned worktree/branch/process/state 均为零；报告唯一失败均为预期的 `duration_gate_failed`，未以 smoke 冒充 60 分钟长稳证据。
+
+4. **效果**：
+   - 既有 prunable/release/history worktree 与 Codex/MCP Node 进程不再阻止本轮 exact-owned 泄漏验证，也不会被 runner 自动清理。
+   - P2-A 已具备同一源码 identity 下可重复的 Windows/WSL2 60 分钟 workload、恢复与资源 Gate；正式长稳失败会保留首份不可覆盖 artifact。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/skills build`、`corepack pnpm --filter @belldandy/core build` 通过。
+- runner/Schema/comparator 契约测试 `4/4` 通过；Windows/WSL2 单周期 smoke 各 `12/12` lane 通过，唯一 Gate 失败均为预期的 60 分钟时长不足。
+- 关键功能验证：两端均未新增主仓 worktree/branch/process，run-owned 临时仓/state 完全移除；主仓无 mutation，历史资源保持原样。
+
+##### 后续计划
+
+- **下一步准备做什么**：使用同一 source identity 并行执行 Windows native 与 WSL2 各 60 分钟正式 soak，之后运行双平台 comparator、相关 fault matrix 回归和最终资源 sweep。
+- **为什么先做它**：runner 与双平台短时接线已经闭合，当前最直接且不可由单元测试替代的风险只剩长时间循环中的资源累积、恢复漂移和平台差异。
+- **当前还缺的关键闭环**：两端 60 分钟 artifact 必须各自 Gate 通过、source/workload identity 一致、最终回归无新增失败；在这些证据完成前 P2-A 保持进行中。
+
+#### P2-A fault matrix 当前切片实现结论：soak identity 与外层中断清理加固（2026-08-13）
+
+##### 已完成内容
+
+1. **首次正式长稳 attempt r1 保留失败边界**：
+   - 启动后静态对抗性检查发现报告只绑定 `src`、实际执行却加载 `dist`，且外层执行通道中断时 runner 的 `finally` 不保证执行；r1 在形成正式 artifact 前主动停止，未把不完整 identity 当作完成证据。
+   - r1 外层中断真实留下一个 Windows/一个 WSL2 临时根；两者按本轮明确 PID、创建时间与精确路径归因并清理，未触碰既有 worktree 或其他 Node 进程。
+
+2. **`scripts/run-subtask-supervisor-soak.mjs` 与报告合同加固**：
+   - source identity 同时绑定五个生产 `src`、实际加载的五个 Core `dist`、runner、Schema 与 cleanup watchdog；双平台 comparator 继续要求相同 HEAD 和 aggregate SHA-256。
+   - 增加 `firstFailureCode`，不再把首个真实错误折算为无原因的整轮失败；最终 run-owned inventory 扩展 receipt、lock、`.tmp`、state root 和 temporary root。
+
+3. **`scripts/subtask-supervisor-soak-cleanup-watchdog.mjs` 新建**：
+   - detached watchdog 只接受系统临时目录直属的 `belldandy-p2a-soak-*` 精确根；parent runner 消失后删除该单一根，正常结束时由 runner 主动回收 watchdog。
+   - Windows 主动中断 smoke 强制终止 runner 后，watchdog 与精确临时根在 `3` 秒内均收敛，未生成或覆盖报告。
+
+4. **效果**：
+   - 正式长稳证据与实际执行产物一致；外层 shell、工具会话或终端意外退出不再依赖 runner 自身 `finally` 才能清理 run-owned state/worktree。
+   - r2 可在保留历史环境基线的同时，对本轮 receipt/lock/tmp/root 和进程残留失败关闭。
+
+##### 验证结果
+
+- runner/Schema/identity/comparator 契约测试 `5/5` 通过；`node --check` 与局部 `git diff --check` 通过。
+- Supervisor/Control/Fan-in/approval/process recovery/Worktree/Task/Permission/Journal/Skills contract/soak runner 相关 `15` 个测试文件 `117/117` 通过。
+- watchdog 主动中断 smoke 通过：runner=`stopped`、watchdog=`stopped`、temporary root=`absent`、report=`absent`。
+
+##### 后续计划
+
+- **下一步准备做什么**：执行当前修复 identity 下的 Windows/WSL2 r3 60 分钟正式 soak；完成后校验 Schema、双平台 comparator、最终资源 sweep 和 build/diff check。
+- **为什么先做它**：r2 已按首次失败证据进入 Fix Mode，并暴露共享 Git 管理区并发 mutation 缺口；该缺口已有定向回归与 WSL2 高频 stress 证据，下一步必须用正式时长验证长期资源收敛和双平台一致性。
+- **当前还缺的关键闭环**：r3 两端必须各自 Gate 通过且 comparator 通过；若任一端失败，保留首份 artifact 并按 `firstFailureCode` 继续 Fix Mode，P2-A 继续保持进行中。
+
+#### P2-A fault matrix 当前切片实现结论：r2 并发残留修复与 r3 stress 复核（2026-08-14）
+
+##### 已完成内容
+
+1. **r2 双平台首次失败证据保留**：
+   - Windows r2 完成 `30` 轮、`360/360` lane，runtime-loss 与 disposal 均为 `120/120`，run-owned worktree/branch/process/receipt/lock/tmp/root 全部为零，平台 Gate 通过。
+   - WSL2 r2 完成 `30` 轮、`348/360` lane，首错为 `cycle_execution_failed`，run-owned residue 为 `3` 个 worktree、`4` 个 branch，平台 Gate 与 comparator 按 `platform_gate_failed` 失败；原始报告保持不变，未用重跑覆盖。
+
+2. **`packages/belldandy-core/src/managed-worktree.ts` 并发 mutation 修复**：
+   - 按 `stateDir + repoRoot` identity 增加跨 runtime/进程 mutation lock，使 prepare、abort 与 cleanup 对同一 Git 管理区串行。
+   - `git worktree add` 部分失败时仅补偿本次新建、仍绑定原 base 的 worktree/path/branch；预存同名 branch 或发生 ownership/content drift 时保持失败关闭，不越权删除。
+
+3. **`packages/belldandy-core/src/worktree-runtime.ts`、`task-runtime.ts` 与 soak runner 失败补偿**：
+   - 增加 prepared runtime exact abort；worktree 已创建但 Task Store ownership 持久化失败时，先回收本次 exact-bound runtime，再返回失败。
+   - 每波 lane 使用 `Promise.allSettled` 收齐结果；Store 持久化失败调用同一补偿路径，避免测试 harness 将单 lane 故障放大为共享 Git 残留。
+
+4. **效果**：
+   - 真实红灯复现的 `.git/worktrees/.../commondir: Permission denied` 不再由同仓并行 prepare/cleanup 竞争触发。
+   - WSL2 r3 高频 stress 在 `1` 分钟、`2` 秒间隔内完成 `30` 轮、`360/360` lane，runtime-loss/disposal=`120/120`，所有 run-owned residue 为零；唯一失败为预期的 `duration_gate_failed`，因此不冒充正式长稳通过。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`@belldandy/core` build 通过。
+- 修复定向回归 `4` 个测试文件 `52/52` 通过；四并发 prepare/cleanup 连续四轮、ownership 持久化失败补偿与预存 branch 保留均通过。
+- WSL2 Node/dist stress runner 通过功能与零残留 Gate；WSL2 Vitest 因共享 `node_modules` 缺少 `@rollup/rollup-linux-x64-gnu` 未执行，未擅自安装依赖。
+- `git diff --check` 通过；正式 r3 前仍需以包含 `managed-worktree.test.ts` 的完整相关回归替换修复前 `15` 文件 `117/117` 基线。
+
+##### 后续计划
+
+- **下一步准备做什么**：先完成修复后的 Core/Skills build 与完整 P2-A 相关回归，再冻结 source/workload identity，并行执行 Windows/WSL2 r3 各 60 分钟正式 soak。
+- **为什么先做它**：r3 stress 已验证高频并发窗口，但没有满足正式时长 Gate；完整回归是冻结新 identity 的前置条件，避免用修复前结果为新实现背书。
+- **当前还缺的关键闭环**：两端正式 r3 平台 Gate、Schema、identity comparator、最终 exact-owner residue sweep 与完成状态回写；P2-A 保持进行中。
+
+#### P2-A fault matrix 当前切片实现结论：r3 冻结前完整回归（2026-08-14）
+
+##### 已完成内容
+
+1. **修复后构建与完整相关回归**：
+   - `@belldandy/core` 与 `@belldandy/skills` build 通过，正式 runner 实际加载的 Core `dist` 已与当前源码同步。
+   - Supervisor admission/control/fan-in、approval/process recovery、worktree disposal、managed worktree、Task/Bridge、permission/journal、Skills contract 与 soak runner 共 `18` 个测试文件纳入同一回归。
+
+2. **效果**：
+   - 修复前 `15` 文件 `117/117` 基线已由修复后 `18` 文件 `138/138` 取代，新增并发 mutation、ownership 持久化失败补偿和预存 branch 保留均在冻结 identity 前得到直接覆盖。
+   - 当前 source/dist/runner/Schema 可作为正式 r3 双平台同 identity soak 输入。
+
+##### 验证结果
+
+- TypeScript 编译无错误：Core/Skills build 均通过。
+- `18` 个 P2-A 相关测试文件、`138/138` 个测试全部通过。
+- runner Schema 测试通过；仅有 schema compiler 忽略已知 `date-time` format 的 stderr 提示，无测试失败。
+
+##### 后续计划
+
+- **下一步准备做什么**：核对 Windows/WSL2 source aggregate identity 相同且 r3 输出路径不存在，随后并行执行两端各 60 分钟正式 soak。
+- **为什么先做它**：实现、实际 `dist` 与完整回归已冻结，继续修改会破坏 comparator 的同 identity 前提；现在应直接取得不可由短跑替代的正式长稳证据。
+- **当前还缺的关键闭环**：两份 Schema-valid 且平台 Gate 通过的正式 r3 artifact、双平台 comparator、最终 exact-owner residue sweep；P2-A 保持进行中。
+
+#### P2-A 最终实现结论：Supervisor fault matrix 与双平台长稳闭环（2026-08-14）
+
+##### 已完成内容
+
+1. **Windows/WSL2 r3 正式长稳证据**：
+   - Windows native 与 WSL2 均按同一冻结 identity `13114908aff4acceae82f5c32086ca4b07e7abc5123caaf3baa51e5defef1034` 执行 `60` 分钟、`120` 秒间隔的正式 workload。
+   - 两端均完成 `30` 轮、`360/360` lane，其中每轮 `4` 个写 lane、`8` 个读 lane；runtime-loss recovery=`120/120`，disposal=`120/120`，uncertain/duplicate side effect=`0/0`。
+
+2. **双平台 Gate 与最终资源 sweep**：
+   - 两份报告分别通过 `p2a-subtask-supervisor-soak-report/v1` Schema，平台 Gate 均通过，同 identity comparator 返回 `passed=true`。
+   - 两端 differential worktree/branch/process 均为零；run-owned child/worktree/branch/process/receipt/lock/tmp/state root/temporary root 均为零。
+   - runner 与 cleanup watchdog 进程最终均为零，Windows/WSL2 `belldandy-p2a-soak-*` 临时根均为零；仓库 worktree 基线保持 `16`，本轮 managed branch 为零，未清理或改写历史/release worktree。
+
+3. **证据文件与状态闭合**：
+   - Windows 报告：`tmp/p2a-supervisor-soak-20260814-windows-r3/report.json`。
+   - WSL2 报告：`tmp/p2a-supervisor-soak-20260814-wsl-r3/report.json`。
+   - r2 WSL2 首次失败 artifact 继续原样保留；r3 通过不覆盖失败历史，只证明并发锁与 exact compensation 修复后的冻结 identity。
+
+4. **效果**：
+   - P2-A 的结构化并行 admission、隔离写入、预算、observe/cancel/steer/reattach、fan-in、fault matrix、竞争恢复、长稳和零残留已形成同一可审计闭环。
+   - 自动 merge/release/deploy、共享工作区并行写和历史资源自动清理仍不在 P2-A 范围内。
+
+##### 验证结果
+
+- TypeScript 编译无错误：Core/Skills build 均通过。
+- 修复后完整相关回归 `18` 个测试文件、`138/138` 个测试全部通过。
+- Windows/WSL2 正式 r3 共 `60` 轮、`720/720` lane，双端平台 Gate、Schema、identity comparator 与 exact-owner 零残留 sweep 全部通过。
+- `git diff --check` 通过，仅有既有 Windows CRLF 转换提示。
+
+### 6.6 P2-B：生态与运行前置收口（进行中）
 
 **目的与方案**：提炼 reference client，建立 N-1/N conformance，接入两个仓外消费者（其中一个真实 CI），扩展 Doctor 检查 OCI、PTY、cleanup、TS/JS、Go 和已启用语言的 toolchain/server；setup 只给建议和可重复命令，不自动安装/升级系统依赖。
 
-**完成标准**：两个消费者完成 start/subscribe/approve-or-deny/cancel/read-artifact/close，未知字段、脱敏、cursor、backpressure、error taxonomy 和 cancellation conformance 通过；OCI 或语言工具链不可用时明确报告 capability 并失败关闭。估算 `8-14 人日`，不含公开发布、生产凭据、依赖主版本升级或 sandbox 替换。
+**完成标准**：两个消费者完成 start/subscribe/approve-or-deny/cancel/read-artifact/close，未知字段、脱敏、cursor、backpressure、error taxonomy 和 cancellation conformance 通过；OCI 或语言工具链不可用时明确报告 capability 并失败关闭。估算 `8-14 人日`，不含公开发布、生产凭据、未经单独授权的依赖主版本升级或 sandbox 替换。
+
+#### P2-B 当前切片实现结论：reference client seam 与 v1 conformance（2026-08-14）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/coding-run-client.ts` 与 package subpath 新建**：
+   - 新增 `@belldandy/core/coding-run-client` 窄入口，只导出 `CodingRunClient`、稳定错误、生命周期输入类型和协议兼容状态，不暴露 Gateway/server/领域 owner。
+   - 当前协议只有 v1，兼容状态明确为 `previousVersionGate=not_applicable_initial_version`；不虚构 v0，后续出现 v2 时必须补 v1 fixture 才能通过 N-1 Gate。
+
+2. **Core reference client 与 VS Code stdio Adapter 收口**：
+   - 两端增加默认 `64`、最大 `1024` 的 pending request backpressure；Core 使用稳定 `backpressure` error code，VS Code 在启动新请求前失败关闭。
+   - VS Code Adapter 补齐只读 `readArtifact()` 与 `artifact.response` 关联，继续不拥有 Gateway 状态、artifact 正文或 mutation。
+
+3. **版本化 conformance 与真实 CI 接线**：
+   - 新增 `benchmarks/coding-run-client/v1/conformance.json`/Schema 和共享 conformance 测试，固定 start/subscribe/allow/deny/cancel/read-artifact/close 及 backpressure/cursor/protocol/close 失败模式，`contentMode=none`。
+   - 根命令 `verify:coding-run-client` 已接入 Windows/Linux `coding-ci-contract` Quality Gate；本地只验证 workflow 配置与命令，未声称远端 GitHub Actions 已实际运行。
+
+4. **效果**：
+   - reference client 的关联、超时、取消、错误归一化与 backpressure 保持在同一深模块内，外部 consumer 只需学习窄生命周期 interface。
+   - Core reference 与 VS Code 进程 Adapter 使用同一 v1 行为夹具，消除两套实现对 artifact/backpressure 的可观察漂移。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`@belldandy/core` build 通过，`dist/coding-run-client.js/.d.ts` 均生成且 package 自引用可导入。
+- 首切片 `3` 个测试文件、`26/26` 个测试全部通过；conformance manifest Schema-valid。
+- Node/JSON 语法与 `git diff --check` 通过。
+
+##### 后续计划
+
+- **下一步准备做什么**：从构建 tarball 创建系统临时目录中的独立 package consumer，验证真实 package subpath 解析和完整生命周期，再增加第二个 TypeScript consumer。
+- **为什么先做它**：内仓 reference/Adapter conformance 只能证明 interface 行为一致，不能证明打包产物可被仓外工程导入；P2-B 完成标准要求两个仓外消费者。
+- **当前还缺的关键闭环**：两个仓外 consumer、远端 CI 实际运行证据、完整 error taxonomy/cancellation fixture 和运行前置 Doctor；P2-B 保持进行中。
+
+#### P2-B 当前切片实现结论：packed ESM 外部 consumer（2026-08-14）
+
+##### 已完成内容
+
+1. **`scripts/run-coding-run-client-external-consumer.mjs` 新建**：
+   - 将构建后的 `@belldandy/core` 打包到系统临时根，并解包为独立 `node_modules/@belldandy/core` consumer 环境。
+   - 临时 `consumer.mjs` 通过真实 `import "@belldandy/core/coding-run-client"` 加载窄 subpath，执行 start/subscribe/allow/deny/cancel/read-artifact/close 全生命周期。
+   - 不联网、不安装全局依赖、不调用 Gateway；`finally` 只删除本轮精确临时根，并返回 `temporaryRootRemoved=true`。
+
+2. **双平台与可重复 Gate**：
+   - Windows native 与 WSL2 各自从新打包 tarball 完成同一 v1、`contentMode=none` 生命周期。
+   - 外部 consumer 测试加入 `verify:coding-run-client`，与 Core/VS Code conformance 一起执行。
+
+3. **效果**：
+   - 已有 `1/2` 个仓外 consumer 证据：它不依赖 monorepo 根自引用或 workspace symlink，能够从实际 package exports 解析窄客户端入口。
+   - 临时 consumer root 在 Windows/WSL2 最终均收敛为零。
+
+##### 验证结果
+
+- TypeScript 编译无错误：沿用本切片前置 Core build 产物，package subpath 自引用与 packed consumer 导入均通过。
+- `verify:coding-run-client` 共 `4` 个测试文件、`27/27` 个测试全部通过。
+- Windows/WSL2 packed consumer 均返回完整 `7/7` operation、`protocolVersion=v1`、`temporaryRootRemoved=true`。
+
+##### 后续计划
+
+- **下一步准备做什么**：新增第二个仓外 TypeScript consumer，在独立临时工程内对 tarball 类型入口执行 `tsc --noEmit` 并运行编译后的生命周期；随后扩展 error taxonomy/cancellation conformance。
+- **为什么先做它**：第一个 consumer 证明 ESM 运行时 exports，但没有证明 `.d.ts` 对独立 TypeScript 工程可用；两种消费方式提供互补证据，且不需要制造第二套客户端实现。
+- **当前还缺的关键闭环**：第二个仓外 consumer、真实 CI 运行结果、完整 failure-mode conformance 与 OCI/PTY/cleanup/TS/JS/Go Doctor；P2-B 保持进行中。
+
+#### P2-B 当前切片实现结论：独立 TypeScript consumer 与声明边界（2026-08-14）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/coding-run-client.ts` 声明边界收敛**：
+   - 首次独立 `NodeNext + strict` 编译暴露窄 subpath 仍经 `stdio.d.ts` 拉入 Core 领域类型和 workspace 包；随后将 subpath 改为自包含公共合同与薄 wrapper，运行时继续委托既有 NDJSON reference client。
+   - 保留 start/subscribe/respond/steer/cancel/read-artifact/projection/consume/close 方法、稳定错误码和回调合同；内部错误归一化为 subpath 自有 `CodingRunClientRequestError`，公开 `.d.ts` 不再 import Core 内部模块。
+
+2. **独立 TypeScript consumer 与 runner 新建**：
+   - `benchmarks/coding-run-client/v1/typescript-consumer.ts` 只从实际 `@belldandy/core/coding-run-client` 导入 value/type，使用 `satisfies CodingRunClientOptions` 和稳定 error code 证明声明可用。
+   - `scripts/run-coding-run-client-typescript-consumer.mjs` 在系统临时根打包/解包 Core，以仓库固定 TypeScript、`module=NodeNext`、`moduleResolution=NodeNext`、`strict=true`、`skipLibCheck=false` 编译，再运行编译后的 `7/7` 生命周期。
+   - runner 不联网、不安装依赖、不调用 Gateway；子命令失败保留有界 stdout/stderr，`finally` 只删除本轮精确临时根。
+
+3. **可重复 Gate 与项目导航接线**：
+   - 新增 runner 测试并接入 `verify:coding-run-client`；项目地图同步记录 TypeScript fixture、声明 Gate 和清理边界。
+   - Windows/WSL2 均从同一工作区重新打包，并在各自系统临时目录完成严格编译和运行。
+
+4. **效果**：
+   - 两个互补仓外 consumer 已闭合：packed ESM consumer 证明 runtime exports，packed TypeScript consumer 证明独立 NodeNext 工程无需 workspace symlink 或 Core 内部包即可消费 `.d.ts`。
+   - 首次失败未被当作通过证据；修复后双平台结果均为完整生命周期且临时根零残留。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`@belldandy/core` build 通过，生成的 `dist/coding-run-client.d.ts` 无内部 import。
+- `verify:coding-run-client` 共 `5` 个测试文件、`28/28` 个测试全部通过。
+- Windows/WSL2 TypeScript consumer 均返回完整 `7/7` operation、`protocolVersion=v1`、`strict=true`、`temporaryRootRemoved=true`；双端 consumer 临时根最终均为零。
+
+##### 后续计划
+
+- **下一步准备做什么**：补齐 unknown fields、redaction、cursor、invalid/oversized frame、backpressure、abort/cancel、timeout、transport close 与稳定 error taxonomy 的共享 conformance。
+- **为什么先做它**：两个外部消费入口已经闭合，当前最直接缺口转为失败行为一致性；先固定错误分类和取消语义，才能让后续 Doctor/CI 对 capability 缺失做可靠的失败关闭判断。
+- **当前还缺的关键闭环**：完整 failure-mode conformance、真实远端 CI 运行证据与 OCI/PTY/cleanup/TS/JS/Go Doctor；P2-B 保持进行中。
+
+#### P2-B 当前切片实现结论：failure-mode conformance 与稳定错误分类（2026-08-14）
+
+##### 已完成内容
+
+1. **`benchmarks/coding-run-client/v1/conformance.json` / Schema 扩展**：
+   - 版本化 manifest 固定 unknown fields、redaction、cursor expired/stale/future/out-of-range、invalid/oversized frame、backpressure、request abort/cancel、timeout、transport error/close 和 error taxonomy。
+   - 显式列出 v1 `17` 个 Gateway error code、`cursor_expired` subscription code 与 `5` 个本地 transport code；当前仍只有 v1，N-1 状态保持 `not_applicable_initial_version`。
+
+2. **`apps/vscode-extension/src/stdio-client.cjs` 失败合同收敛**：
+   - 新增 additive `CodingRunStdioClientError.code`，本地 backpressure、abort、timeout、write/process failure 与 close 使用稳定 code；请求方法支持可选 `AbortSignal` 和单请求 timeout，旧调用/成功返回结构不变。
+   - pending timer/Abort listener 统一由 `takePending()` 清理；pending 上限与 Core 同样硬封顶 `1024`，未知 response/error/event envelope field、非法 code 和非法 event source/type 失败关闭。
+   - Gateway/subscription 错误正文统一做 secret-like 脱敏、控制字符清理和 `512` 字符上限；payload/result 内协议扩展仍可保留。
+
+3. **Core 窄 wrapper 安全边界补齐**：
+   - `CodingRunClientRequestError`、subscription/protocol callback 均在 subpath 边界执行同等级脱敏与有界处理；JavaScript consumer 的 projection 未知字段在 transport 启动前返回 `invalid_request`。
+   - transport/protocol parsing 仍复用既有内部深模块，不复制 Gateway/领域逻辑。
+
+4. **`scripts/coding-run-client-failure-conformance.test.mjs` 新建并接线**：
+   - 同一数据表驱动 Core reference 与 VS Code Adapter，直接验证严格帧、全部 declared code、四类 cursor、redaction、backpressure、abort、timeout、transport failure、close 和输入失败关闭。
+   - 首次为 `7/8`，唯一失败是测试在 VS Code bridge 启动前读取 harness child；补齐显式 `start()` 前置后 `8/8`，未改生产实现迎合测试。
+
+5. **效果**：
+   - 两个 adapter 的成功生命周期、Gateway 业务错误和本地 transport 失败现在具有可重复、可机读且不泄密的共同合同。
+   - 非法 frame 不错误 settle pending；cancel/close/abort/timeout 后资源可收敛，late/unknown response 不复活请求。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`@belldandy/core` build 通过。
+- failure conformance 修复后 `2` 文件 `8/8`；完整 `verify:coding-run-client` 共 `7` 个测试文件、`40/40` 个测试全部通过。
+- Windows 完整 Gate 重跑两个 packed consumer；WSL2 ESM/TypeScript consumer 均再次返回 `7/7` 与 `temporaryRootRemoved=true`，双端临时根最终均为零。
+- Node 语法检查和 `git diff --check` 通过；diff check 仅有既有 Windows CRLF 转换提示。
+
+##### 后续计划
+
+- **下一步准备做什么**：核对远端 GitHub Actions 是否已有实际运行证据；若仍缺失，保持不推送、不宣称远端通过。
+- **为什么先做它**：本地 Doctor、CLI/Gateway 投影和完整 coding client Gate 已通过，剩余风险集中在外部 CI 运行证据，不再需要扩大本地实现范围。
+- **当前还缺的关键闭环**：真实远端 GitHub Actions 运行证据；本地 Doctor、CLI/Gateway 投影、TS/JS/Go/OCI/PTY/lease 状态与失败关闭已完成，P2-B 仍保持进行中。
+
+#### P2-B 当前切片实现结论：运行前置 Doctor（2026-08-14）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/coding-runtime-preflight-doctor.ts` 新建**：
+   - 聚合 OCI 配置/runtime/本地 digest image、native PTY、进程树清理、持久 command-job sandbox lease、TypeScript/JavaScript Language Service 与 Go/gopls canary，固定 `coding-runtime-preflight-doctor/v1`、`active/required/status/reasonCode/blocking` 字段和 startup 汇总。
+   - OCI 只执行 runtime `version` 与本地 `image inspect`；lease 只读 `<stateDir>/command-jobs` 元数据计数，不创建目录、不执行 `docker rm`、不输出路径、容器名、环境值、原始错误或 lease 正文。
+   - setup 只返回可重复命令和建议，缺失 required runtime 时报告 `unavailable/incompatible/unknown` 并让 `startupReady=false`；可选 PTY/语言能力保持 `degraded/inactive` 的明确投影。
+
+2. **`packages/belldandy-skills/src/index.ts` 与生产 capability closure 接线**：
+   - 以窄导出暴露现有 OCI config/runtime probe；生产 `languageToolchain` reader 读取已注册 TS/JS `code_intel` tool，不把 Doctor 报告缓存成第二状态真源。
+
+3. **`packages/belldandy-core/src/cli/commands/doctor.ts` / `server-methods/system-doctor.ts` 接入**：
+   - CLI JSON/文本和 Gateway `system.doctor` 增加 `codingRuntimePreflight` 与 `Coding Runtime Preflight` check；optional/Go probe Promise 复用，避免同一请求重复外部探测。
+   - 现有 CLI 退出码保持兼容；check 可报告 `fail`，但不擅自设置进程退出码。
+
+4. **`packages/belldandy-core/src/coding-runtime-preflight-doctor.test.ts` 与 Doctor 回归扩展**：
+   - 覆盖 inactive 无副作用、runtime/image 成功、runtime 失败根因去重、lease 计数/非法记录、路径/错误/secret 脱敏和 setup 建议。
+
+##### 效果
+
+- coding run 在 mutation/启动前拥有真实 capability 预检投影；必需 OCI/runtime/image/TS/Go 路径不可用时不会伪装为 ready，也不会自动安装、拉取、创建或清理资源。
+- CLI、Gateway 与 production task capability closure 使用同一现有 owner 边界，Doctor 只聚合观察，不形成第二套状态机。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`@belldandy/skills`、`@belldandy/core` build 通过。
+- Doctor 聚合定向测试 `3/3`；CLI Doctor `14/14`；Gateway `system.doctor` `43/43` 全部通过。
+- 关键行为：inactive 不创建 `command-jobs`；runtime 失败不执行 image inspect；报告不含配置路径、容器名、secret 或原始错误。
+
+##### 后续计划
+
+- **下一步准备做什么**：在获得用户明确授权后，先确认 `main` 分支和待提交范围，再将本轮变更推送到默认私有目标 `private/main`，取得包含当前 `verify:coding-run-client` 接线的真实 Windows/Linux Actions 运行证据。
+- **为什么先做它**：本地 Doctor、两个外部 consumer、failure conformance 和 coding client 全量 Gate 均已通过；继续扩大本地实现不能替代远端 runner 对打包、双平台和 workflow 接线的验证。
+- **当前还缺的关键闭环**：当前工作树尚未提交/推送；`private/main` 的 `6ce8579` 旧运行 `31686674919` 仅证明旧 coding CI contract 成功，完整测试和依赖审计失败，且不包含本轮 coding client 接线，因此 P2-B 仍保持进行中。
+
+#### P2-B 当前切片实现结论：远端 CI 证据审计（2026-08-14）
+
+##### 已完成内容
+
+1. **`private/main` GitHub Actions 运行审计**：
+   - 只读检查 `private/main` 当前 `6ce8579` 对应的 Quality Gates 运行 `31686674919`，确认 `Coding CI contract (ubuntu-latest)` 与 `Coding CI contract (windows-latest)` 均成功。
+   - 同一运行的 `Build and full test suite` 因 `15` 个既有基线失败、`Dependency audit report` 因依赖审计 Gate 失败；这些失败不被归因到本轮未提交改动。
+   - 对比当前工作树确认 `.github/workflows/quality-gates.yml` 的 `verify:coding-run-client` 接线仍为未提交 diff，旧远端运行不包含该步骤。
+
+2. **本地替代证据复核**：
+   - 重新执行 `corepack pnpm verify:coding-run-client`，获得 `7` 个测试文件、`40/40` 通过。
+   - 重新执行 `corepack pnpm verify:coding-ci`、`@belldandy/skills` build 和 `@belldandy/core` build，全部通过。
+
+3. **效果**：
+   - P2-B 的本地行为、声明边界、双平台 consumer 与运行前置证据保持闭合；远端证据缺口被精确限定为“当前变更尚未进入 `private/main` Actions”，没有用旧运行或部分成功结果替代。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`@belldandy/skills`、`@belldandy/core` build 通过。
+- coding client 全量 Gate `7` 个测试文件 `40/40` 通过；`verify:coding-ci` 通过。
+- 远端审计结果已记录：run `31686674919` 的双平台 coding CI contract 成功，但该 run 不含本轮 `verify:coding-run-client`，且整体 Quality Gates 未通过。
+
+##### 后续计划
+
+- **下一步准备做什么**：等待用户明确授权后提交并推送到 `private/main`，再读取同一变更的 Actions 结果；授权前保持只读审计和本地验证，不执行 push、发布或部署。
+- **为什么先做它**：远端运行是 P2-B 完成标准中唯一尚未取得的证据，且必须绑定当前源码 identity，不能用旧提交结果替代。
+- **当前还缺的关键闭环**：当前变更的 commit SHA、`private/main` 远端 workflow 运行及其双平台 conformance artifact。
+
+#### P2-B 当前切片实现结论：Quality Gate 基线回归收口（2026-08-14）
+
+##### 已完成内容
+
+1. **WebChat Sub Agents 设置接线补齐**：
+   - `apps/web/public/index.html`、`app/bootstrap/dom.js`、`app/features/settings.js` 增加 `BELLDANDY_SUB_AGENT_MAX_VERIFIERS` 与 `BELLDANDY_SUB_AGENT_MAX_COST_USD` 的现有 Settings 区域控件、DOM 引用和 load/save 映射。
+   - `app/features/settings.test.js` 与中英文 i18n 补齐读写断言和文案，不新增顶层页面或独立状态 owner。
+
+2. **冻结合同与 Gateway 断言对齐**：
+   - `benchmarks/code-intel/v1/resource-soak.json` 仅更新当前 `code-intel.ts`、`types.ts` 的真实源码 SHA-256；历史 artifact 保持不变，runtime identity 漂移仍失败关闭。
+   - `packages/belldandy-core/src/server-methods/coding-run.test.ts` 补齐公共审批响应的 `responderKind="unknown"` 断言，不把缺少可信 provenance 的公共响应误记为人工。
+
+3. **完整测试基线稳定化**：
+   - `packages/belldandy-core/src/goals/runtime.ts` 对 `EPERM/EACCES/EBUSY` 原子 rename 增加最多 `3` 次、间隔 `50ms` 的有界重试；最终失败仍清理临时文件并原样抛出。
+   - `packages/belldandy-core/src/goals/manager.test.ts` 新增首轮 `EPERM` 的红/绿回归，同时保留非可重试 `EIO` 失败关闭断言。
+   - `packages/belldandy-core/src/gateway-prompt-snapshot.e2e.test.ts` 仅将 14 轮低风险 A/B 长链路场景的显式等待窗放宽到 `30s`，全局 e2e 默认 `15s` 和生产超时均不变。
+
+4. **效果**：
+   - 旧远端 run 记录的完整测试 `15` 项基线失败，在当前工作树首次复核收敛为 `2` 项；完成红/绿修复后全量测试收敛为零失败。
+   - P2-B 的配置模板、WebChat 设置、审批来源分类、CodeIntel 冻结 identity、完整测试和 coding client Gate 形成一致的本地 Quality Gate 基线。
+   - 未提交、未推送、未发布，远端依赖审计和当前源码 identity 的 Windows/Linux Actions 结果仍未取得。
+
+##### 验证结果
+
+- TypeScript 编译无错误：workspace `corepack pnpm build`、`@belldandy/skills` build、`@belldandy/core` build 全部通过。
+- 完整 `corepack pnpm test` 通过；同一 Vitest 配置收集 `945` 个测试文件、`5749` 个测试条目。
+- 定向回归：Settings `29/29`、CodeIntel resource soak `4/4`、env/coding-run `25/25`、Goal/Gateway 修复反馈环 `4/4`、coding client `7` 文件 `40/40` 全部通过。
+- `verify:webchat` 验证 `433` 个文件与资源清单；`verify:webchat:security` 通过本机 Chrome CSP/Trusted Types fixture；`verify:coding-ci`、`verify:coding-benchmark`、`git diff --check` 通过。
+- 当前会话没有可用的 Browser 自动化控制接口，未执行 Settings 页可见交互与控制台手测；按持续开发规则记录为计划完成后的人工验证：打开 Settings 的 Sub Agents 区域，读写两个新增字段并确认页面无新增 console error。
+
+##### 后续计划
+
+- **下一步准备做什么**：获得用户明确授权后确认 `main` 分支与提交范围，提交并推送到默认私有目标 `private/main`；随后读取绑定该 commit SHA 的完整 Quality Gates，重点核对 Windows/Linux coding client、full test suite 和 dependency audit。
+- **为什么先做它**：当前本地可复现 Gate 已全部通过；继续增加本地实现不能替代远端 runner、干净 checkout、依赖审计和 workflow artifact 的真实证据。
+- **当前还缺的关键闭环**：当前变更的 commit SHA、`private/main` 完整 Actions 成功记录与双平台 conformance artifact；计划全部开发完成后还需执行上述 Settings 人工手测。因此 P2-B 继续保持进行中。
+
+#### P2-B 当前切片实现结论：本地完成标准审计与 Windows 全量稳定化（2026-08-14）
+
+##### 已完成内容
+
+1. **`coding-runtime-preflight-doctor.ts` 与 `coding-run-client-conformance.test.mjs` 收紧**：
+   - Go CodeIntel 显式启用时将 gopls 视为 required capability；gopls 不可用会返回 `blocking=true`、`startupReady=false`，不再以 degraded 状态继续启动。
+   - conformance Gate 自动枚举连续的 `benchmarks/coding-run-client/vN` 目录并校验 manifest/version 一致性；初始 v1 必须声明 `not_applicable_initial_version`，出现 v2 后必须引用 v1 fixture 与 `required_previous_version_fixture`，不虚构 v0。
+
+2. **Windows 原子替换失败路径稳定化**：
+   - 新增 `extension-marketplace-atomic-write.ts` 与测试，并接入 Marketplace audit/ledger；保留 audit 尾换行、ledger JSON 和 `ENOSPC` 失败语义。
+   - 新增 `goals/atomic-write.ts` 与测试，并接入 Goal runtime、task graph、handoff、retrospective、method/skill candidate、review governance 和 Commander artifact 写入。
+   - 两个 owner 均只对瞬时 `EPERM/EACCES/EBUSY` 执行最多 `3` 次、间隔 `50ms` 的 rename 重试；非瞬时错误立即失败，最终失败清理本轮临时文件。
+
+3. **全量负载预算与可见性窗口校正**：
+   - packed ESM consumer 测试显式使用 `20s` 测试预算；Gateway 五条多轮体验 A/B 场景仅在用例内使用 `60s` 等待窗，总用例预算保持有界，全局 E2E 默认与生产请求超时均不变。
+   - built CLI pairing durable-store 可见性重试窗由 `5s` 调整为 `15s`；1 小时 pairing TTL、权限与请求超时不变。
+   - UserWorktree discard 的全量偶发 `uncertain` 无法在定向回归复现，未放宽成功断言、未修改业务逻辑；清理一个从早前测试遗留的明确 Vitest worker 后重新取得干净全量证据。
+
+4. **效果**：
+   - Go、OCI、PTY、cleanup、TS/JS 和 lease 的 required capability 均按同一 Doctor 合同失败关闭。
+   - 初始版本兼容声明与未来 N-1 fixture 要求已经机器化，后继协议无法只改文档绕过 Gate。
+   - Windows 防病毒/文件索引造成的短暂 rename 占用不再随机击穿 Marketplace 与 Goals 全量测试，持久化真实失败仍保持可诊断、可清理。
+   - P2-B 本地完成标准已审计闭合；当前唯一核心缺口仍是绑定本轮源码 identity 的真实远端 Actions。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/core build` 通过。
+- 完整 Vitest 通过：JUnit 汇总 `947` 个测试文件、`5758` 个测试，`0` failure、`0` error、`3` skipped。
+- coding client Gate `7` 个测试文件 `41/41`；GoalManager/共享原子写 `2` 个文件 `42/42`；Marketplace `5` 个文件 `28/28`；Go/N-1 定向 `2` 个文件 `8/8`；Doctor/CLI/Gateway 定向 `3` 个文件 `58/58` 全部通过。
+- Gateway 五条负载敏感体验 A/B 定向 `5/5` 通过；UserWorktree discard 定向 `1/1`、packed consumer/pairing/built CLI `3` 文件 `6/6` 通过。
+- `git diff --check` 通过，仅有既有 Windows CRLF 转换提示。
+
+##### 后续计划
+
+- **下一步准备做什么**：等待用户明确授权后确认当前仍在 `main`，形成稳定 commit 并执行 `git push private main`；随后跟踪绑定该 commit SHA 的完整 Quality Gates 与 Windows/Linux conformance artifact。
+- **为什么先做它**：本地完成标准与全量回归已经闭合，继续增加本地实现不能证明干净 checkout、远端 workflow 接线、依赖审计或双平台 runner 行为。
+- **当前还缺的关键闭环**：当前 commit SHA、`private/main` 完整 Actions 成功记录和双平台 conformance artifact；计划全部开发完成后仍需执行 Settings 两个新增字段的可见交互与 console 人工手测。未经授权不 commit、不 push、不触碰 `origin/main`。
+
+#### P2-B 当前切片实现结论：依赖审计补丁批次与 Puppeteer 25 升级前审计（2026-08-14）
+
+##### 已完成内容
+
+1. **`package.json` 与 `pnpm-lock.yaml` 依赖安全刷新**：
+   - 在不升级依赖主版本的边界内，将 DOMPurify 升至 `3.4.13`，并以定向 override 收敛 Body Parser `2.3.0`、Fast URI `3.1.5`、PostCSS `8.5.26`、Nano ID `3.3.18`、Undici `6.28.0/7.29.0`、IP Address `10.5.0`、Hono `4.13.2`、Hono Node Server `1.19.17` 与 Tar `7.5.21`。
+   - 保留 Puppeteer `24.43.1`，未绕过或豁免剩余漏洞；`corepack pnpm audit --json` 从 `24` 个漏洞组（`6 high / 16 moderate / 2 low`）降至唯一 `extract-zip` high（`GHSA-jmr9-qjv8-65gv`）。
+
+2. **依赖合同扩展与旧断言修正**：
+   - `packages/star-sanctuary-distribution/src/dependency-remediation-contract.test.ts` 增加修复版本、override 与脆弱 package snapshot 消失断言。
+   - `packages/belldandy-memory/src/embeddings/fastembed-dependency-contract.test.ts` 将 Tar ESM compatibility 合同对齐到 `7.5.21`，仍保留 Fastembed patch 内容校验。
+
+3. **Puppeteer 25 只读兼容性审计**：
+   - 官方 `25.0.0` breaking changes 为 Node 下限、ESM-only 和 `executablePath/defaultArgs` 异步化；仓库已经是 ESM、Node 下限为 `>=22.12.0`，实际调用面仅使用 `connect`、`launch`、`Browser/Page`，未使用两个异步化 API。
+   - 隔离临时工程以 `puppeteer-core 25.7.0` 完成 `NodeNext + strict` 编译和真实 Chrome `151.0.7922.137` 启动/页面执行；其依赖链为 `@puppeteer/browsers 3.2.0 -> modern-tar 0.8.4`，不再含 `extract-zip`。隔离探针未修改仓库依赖声明。
+
+4. **效果**：
+   - 所有已有补丁且无需主版本升级的已知依赖漏洞均已关闭，剩余风险被收敛到单一、可解释的 Puppeteer 主版本决策。
+   - 严格零发现 dependency Gate 保持原样；没有通过漏洞豁免、Gate 降级或源码 patch 伪造通过。
+
+##### 验证结果
+
+- TypeScript 编译无错误：workspace `corepack pnpm build` 通过；隔离 Puppeteer 25 `NodeNext + strict` type probe 通过。
+- 当前 collect 为 `945` 个测试文件、`5757` 个测试；`node .\\node_modules\\vitest\\vitest.mjs run --maxWorkers=4` 全量零失败。默认 `8` worker 首轮出现 `6` 个负载超时和 `1` 个过期 Tar 合同失败；合同修正后，相关 `6` 文件以单 worker `27/27` 通过。
+- 依赖合同 `17/17`、受影响 MCP/Discord/Browser/Camera 回归 `17` 文件 `99/99`、WebChat `433` 文件与 Chrome CSP/Trusted Types fixture 均通过；frozen/offline install 与 `git diff --check` 通过。
+- dependency audit 当前为 `1 high / 0 moderate / 0 low`，唯一模块 `extract-zip`，因此严格零发现 Gate 仍会失败。
+
+##### 后续计划
+
+- **下一步准备做什么**：等待用户对 `puppeteer-core 24 -> 25` 主版本升级的 HITL 明确授权；若授权，更新两个直接声明与依赖合同，刷新锁文件，并执行 Browser Relay、WebChat security、benchmark browser harness、portable distribution、workspace build、全量测试和零发现 audit 回归。
+- **为什么先做它**：`extract-zip 2.0.1` 没有修复版本，Puppeteer 24 已无可升级的小版本；隔离证据表明 Puppeteer 25 会移除该依赖链，且当前 API/Node/ESM 前置兼容，但主版本变更仍需正式回归与回滚边界。
+- **当前还缺的关键闭环**：Puppeteer 主版本升级授权、升级后的零发现 audit、当前 commit 的 `private/main` 完整 Actions 与双平台 conformance artifact，以及计划完成后的 Settings 两字段可见交互/console 人工手测。未经授权不升级、不 commit、不 push、不触碰 `origin/main`。
+
+#### P2-B 当前切片实现结论：Puppeteer 25 零发现依赖 Gate 与 portable 启动恢复（2026-08-14）
+
+##### 已完成内容
+
+1. **`package.json`、`packages/belldandy-skills/package.json` 与 `pnpm-lock.yaml` 升级**：
+   - 按 HITL 授权将两个直接 `puppeteer-core` 声明从 `24.43.1` 升至 `25.7.0`。
+   - 锁文件依赖链收敛为 `@puppeteer/browsers 3.2.0 -> modern-tar 0.8.4`，移除 Puppeteer 24、Browsers 2 与 `extract-zip`。
+   - `packages/belldandy-skills/src/builtin/browser/tools.ts` 与 `scripts/run-verification-browser-relay.mjs` 对齐 Puppeteer 25 的 `Browser.connected` 属性，保持连接复用和关闭判定语义。
+
+2. **依赖与 portable 构建合同扩展**：
+   - `dependency-remediation-contract.test.ts` 固定 Puppeteer 25、`modern-tar` 与 `extract-zip` 消失合同。
+   - `runtime-build-script-policy.mjs` / `prefetch-portable-deps.mjs` 将 workspace 源策略与 slim/full 目标策略分开校验，snapshot 继续绑定目标 runtime workspace 配置哈希。
+   - `runtime-dependency-assembler-policy.mjs` 对 slim 仅移除 `fastembed`/`node-pty` 及对应 patch，不再以全局 `--no-optional` 误伤 esbuild 平台二进制；prefetch 后的 store 可被连续 frozen/offline build 重复消费。
+
+3. **`build-portable.mjs` 与 portable 合同修复**：
+   - 恢复 launcher 不再裸拷贝整个 distribution `dist`，改用仓库既有 esbuild 生成约 `119.5 KB` 的自包含 ESM `launcher/portable-entry.js`。
+   - 修复 launcher 位于 runtime 外时无法解析 `@belldandy/protocol` 的真实启动故障，同时保留 runtime 损坏时由独立 launcher 从 payload 恢复的架构边界。
+   - `portable-artifact-contract.test.ts` 增加自包含 recovery launcher 构建合同；portable slim 首次启动、复用、升级和损坏恢复均通过。
+
+4. **全量测试稳定性收口**：
+   - `gateway-prompt-snapshot.e2e.test.ts` 的 Browser A/B 场景在全仓高并发下两次触发固定 `60s` 等待超时，精确单场景在 `23.4s` 通过。
+   - 只将该场景等待预算提高到 `120s`、整体预算提高到 `300s`，不修改 production 行为；标准全量测试随后通过。
+
+5. **效果**：
+   - `pnpm audit --audit-level low` 为零发现，P2-B 本地严格 dependency Gate 不再被 `extract-zip` 阻断。
+   - Puppeteer 25 的真实 Chrome/MV3 Relay、Skills browser/camera、WebChat security 与 browser benchmark 路径保持可用。
+   - portable slim 能离线、可重复构建，launcher 可真实启动并在 runtime 被破坏后恢复原始 Gateway 文件。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build` 与 `@belldandy/skills` build 通过。
+- `62` 个直接相关测试全部通过：distribution/依赖策略 `37/37`、Skills browser/camera `13/13`、真实 Chrome/MV3 Relay `12/12`；标准 `corepack pnpm test` 在当前 `945` 个文件、`5759` 个收集条目上退出码为 `0`。
+- `prefetch:portable`、连续 `build:portable`、`verify:portable-deps`、`verify:portable-artifacts`、`smoke:portable` 与 `verify:portable-lifecycle` 全部通过；lifecycle 的 initial/reuse/upgrade/recovery 四个场景均为 `ok: true`。
+- `corepack pnpm audit --audit-level low` 返回 `No known vulnerabilities found`；frozen/offline install、WebChat CSP/Trusted Types、Browser Relay/WebChat fixture benchmark 与 `git diff --check` 通过。
+
+##### 后续计划
+
+- **下一步准备做什么**：暂停本地持续开发；待用户另行授权后确认仍在 `main`，形成稳定 commit 并执行 `git push private main`，随后读取绑定该 commit SHA 的 Windows/Linux Quality Gates 与双平台 conformance artifact。计划开发完成后再执行 Settings 两个新增字段的可见交互与 console 人工手测。
+- **为什么先做它**：本地严格依赖、portable、build 与全量测试 Gate 均已闭合，继续增加本地实现不能替代干净 checkout、远端 workflow 接线和真实 runner 证据。
+- **当前还缺的关键闭环**：当前 commit SHA、`private/main` 完整 Actions 成功记录、双平台 conformance artifact，以及 Settings 两字段人工手测。未经授权不 commit、不 push、不触碰 `origin/main`。
 
 ### 6.7 P2-C：9.5 稳定化与最终复核（延后）
 
@@ -937,7 +1848,7 @@ Source / Workspace Revision
 | SCIP/tree-sitter/外部 MCP | `record_only` | 保留扩展位置，真实需求出现前不引入运行时复杂度 |
 | Browser coding verification | `split_task` | 已由 P1-B 独立闭环 |
 | `file_edit` 因果 uplift | `record_only` | 当前无调用因果证据，未来随冻结任务自然选择复核 |
-| TaskProjection/capability closure | `split_task` | 当前 P1-C，需兼容性和跨入口验证 |
+| TaskProjection/capability closure | `split_task` | P1-C 已完成；兼容性和跨入口验证已通过，后续仅保留 authoritative owner 缺失项 |
 | verification DAG/command job 投影绑定 | `defer` | 当前 artifact/snapshot 无可信 `conversationId/agentRunId` production owner 外键；禁止按自由 taskId、jobId 或文件名猜测关联 |
 | production 效率状态时间线/人工 responder evidence | `split_task/defer` | Gateway broker 已闭合 exact-bound `needs_input` observation，并区分 `human/automatic/unknown` settle；公共 WebSocket 人工 provenance 与 `blocked/verifying` 事件源仍缺失，未知指标保持 `incomplete`，不得新增第二状态真源或按客户端身份猜测 |
 | 高级 Dashboard | `defer` | 先完成投影、验证、预算和故障注入，复用现有视图 |
@@ -964,6 +1875,8 @@ Source / Workspace Revision
 - `packages/belldandy-core/src/remote-delivery-runtime.ts`
 - `packages/belldandy-agent/src/orchestrator.ts`
 - `packages/belldandy-browser/src/index.ts`
+- `tmp/p2a-supervisor-soak-20260814-windows-r3/report.json`
+- `tmp/p2a-supervisor-soak-20260814-wsl-r3/report.json`
 
 ### 10.2 竞品官方来源
 
@@ -979,6 +1892,10 @@ Source / Workspace Revision
 
 - 继续完成单一当前 HEAD 原生 aggregate 和真实项目外部有效性。
 - 保持 `cost-containment-v1` 为 `hold_explicit_opt_in`；不扩展付费矩阵、不创建 candidate v4、不将 `taskUplift=not_measured` 改写为已验证 uplift。
+- 历史 v3 partial baseline 已再次离线验证为 `partial 6/144`，但固定 commit `72e916d...` 与本轮审计基线 `6ce8579...`/未提交工作树不同；旧 `6` 项只保留历史证据，禁止续拼到下一轮单一 identity aggregate。
+- **下一步准备做什么**：先在用户授权下形成稳定提交并闭合 P2-B 私有远端 Gate，再以该 commit 重新准备 v3 双平台输入；真实 Provider 矩阵另行取得费用上限与明确授权后启动。
+- **为什么先做它**：正式矩阵所有 report 都绑定 source/harness identity，提交前执行会制造无法进入最终分母的付费孤立样本。
+- **当前还缺的关键闭环**：稳定 commit SHA、当前提交远端 Gate、双平台 input/receipt、Provider/总费用上限及真实模型执行授权。
 
 ### P1-C（已完成）
 
@@ -997,7 +1914,17 @@ Source / Workspace Revision
 - 最终完成 Gate 已通过：原始只读聚合/启动闭包/四端接线、六类故障投影、required capability 失败关闭、固定序列与 cursor/binding 防复活均有直接证据；广泛回归 `31` 文件 `312/312` 通过。
 - `blocked/verifying` observation、可信人工 provenance 和 verification DAG/command job 外键已明确拆分为 `split_task/defer`，只有 authoritative owner 出现时再接入，不以推断逻辑阻塞 P1-C。
 - 独立 P1-B verification DAG/command job 在领域 owner 提供可信 task/run 外键前继续 `defer`，不得按自由 taskId、jobId、artifact 名称或相似 ID 猜测关联。
-- P2-A 已完成 parallel lane admission/worktree Gate、restart reattach/durable binding、exact-bound `observe/cancel/steer` control、显式 fan-in diff/test/evidence、冲突 preview/confirm 与统一 child/turn/token/可选费用/wall-time/风险/verifier 预算合同：预算只能收紧，费用未配置时不注入，verifier 只按 authoritative roster role 计数；下一步进入 fault matrix 与双平台 soak，不自动 merge/release/deploy，不共享工作区并行写。
+- P2-A 已完成 parallel lane admission/worktree Gate、restart reattach/durable binding、exact-bound `observe/cancel/steer` control、显式 fan-in diff/test/evidence、冲突 preview/confirm、统一预算合同和完整 fault matrix；预算只能收紧，费用未配置时不注入，verifier 只按 authoritative roster role 计数。
+- P2-A 双平台正式 r3 使用同一 identity 完成 Windows/WSL2 各 `30` 轮、合计 `720/720` lane，runtime-loss/disposal 各端 `120/120`，Schema、平台 Gate、comparator 和最终零残留 sweep 全部通过；P2-A 按完成标准关闭。r2 WSL2 首次失败 artifact 原样保留，不自动 merge/release/deploy，不共享工作区并行写。
+- P2-B 已新增窄 `@belldandy/core/coding-run-client` subpath、初始版本兼容 manifest、Core/VS Code 共享 v1 conformance、pending backpressure 和 VS Code artifact；Quality Gate 已接线，首切片 `26/26` 通过。
+- 两个仓外 consumer 已在 Windows/WSL2 闭合：packed ESM 与独立 `NodeNext + strict` TypeScript 工程均完成 `7/7` 生命周期；后者促使 subpath `.d.ts` 收敛为不拉入 Core workspace 类型的自包含合同，累计命令 `28/28` 通过，双端临时根零残留。
+- 完整 failure-mode conformance 已闭合：版本化 manifest 固定 `17 + 1 + 5` error taxonomy，Core/VS Code 共测 unknown fields、脱敏、四类 cursor、frame、backpressure、abort/cancel、timeout、transport close；完整命令 `7` 文件 `40/40` 通过。
+- P2-B 本地 Quality Gate 基线已收口：补齐两个 Sub Agents Settings 字段、公共审批 `responderKind=unknown` 断言与 CodeIntel source identity；Go 显式启用但 gopls 不可用时已失败关闭，初始 v1/N-1 后继 fixture 规则已机器化。Marketplace/Goals Windows rename、Gateway 长链路和 pairing 可见性均完成有界稳定化；Core build、当前 collect `945` 文件/`5759` 条目并以 4 worker 全量零失败、coding client `41/41`、WebChat module/security、coding CI/benchmark contract 和 diff check 全部通过。
+- P2-B 已按 HITL 授权将 `puppeteer-core 24.43.1` 升至 `25.7.0`，依赖链改为 `@puppeteer/browsers 3.2.0 -> modern-tar 0.8.4` 并移除 `extract-zip`；`pnpm audit --audit-level low` 为零发现，严格 dependency Gate 本地闭合。
+- Puppeteer 25 真实 Chrome/MV3 Relay `12/12`、Skills browser/camera `13/13`、distribution/依赖策略 `37/37`、WebChat security/browser benchmark、workspace build 和标准全量测试均通过；portable slim 的 frozen/offline 重复构建、静态依赖/artifact、真实 smoke 与 initial/reuse/upgrade/recovery lifecycle 全部通过。
+- **下一步准备做什么**：按用户要求暂停；待另行授权后形成稳定 commit、执行 `git push private main`，读取绑定本轮源码 identity 的 Windows/Linux Actions 运行结果；计划开发完成后执行 Settings 两字段人工手测。
+- **为什么先做它**：本地依赖、portable、build 与测试 Gate 已闭合，剩余证据只能由干净 checkout、远端 workflow 和人工可见交互产生。
+- **当前还缺的关键闭环**：当前变更的 commit/远端 artifact；旧 `6ce8579` run `31686674919` 不含本轮 `verify:coding-run-client`，不能替代当前证据。Settings 两字段的可见交互与 console 人工手测仍未执行。
 
 ### Go canary
 
@@ -1013,12 +1940,12 @@ Source / Workspace Revision
 | 项目 | 优先级 | 状态 | 粗略工作量 | 完成边界 |
 | --- | --- | --- | ---: | --- |
 | 本轮 SS 能力复核与 9.5 增强规划 | - | 已完成 | - | 已复核 scorecard、目标向量 `9.510`、C#/Go 投入收益、多语言方案和竞品资料；竞品未做同环境 benchmark |
-| P0：Benchmark v3 与外部有效性 | P0 | 进行中；P0.1-P0.29 已完成；`cost-containment-v1`=`hold_explicit_opt_in`；默认启用/未授权 Provider canary 禁止；`taskUplift=not_measured`；candidate v1-v3=`do_not_promote`；navigation candidate line 已停止；冻结 aggregate 同 identity `6/144`，历史 `2/6` passed；三轮 navigation shadow 费用 `0.08318752 RMB` | 14-22 人日 | A/B/C 三层、至少 4 个固定仓、144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；不含 candidate v4、竞品代跑、公开排行榜 |
+| P0：Benchmark v3 与外部有效性 | P0 | 进行中；P0.1-P0.30 已完成；`cost-containment-v1`=`hold_explicit_opt_in`，默认启用/未授权 Provider canary 禁止，`taskUplift=not_measured`，candidate v1-v3=`do_not_promote`。历史 v3 aggregate 已离线复核为同 identity `6/144`、`2/6` passed、SHA `f008259b...`，但其 commit `72e916d...` 与本轮审计基线 `6ce8579...`/未提交工作树不同，不能续拼；待稳定 commit、P2-B 远端 Gate、双平台输入重备和明确 Provider/费用授权后，从新 identity 启动完整矩阵 | 14-22 人日 | A/B/C 三层、至少 4 个固定仓、144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；不含 candidate v4、竞品代跑、公开排行榜 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | 已完成；attempt 12 aggregate=`passed`；binary regression/Provider failure=`0/0`；`semantic-live=7/8`；非目标整文件读取 `21 -> 14`；16/16 cell 预算耗尽；candidate task/patch success=`0/8`；累计费用 `1.68214072 RMB` | 8-12 人日 | 公共 contract、TS/JS Provider、Inspector、truth set、resource soak、双平台 native runtime 与真实 uplift Gate；不含外部 LSP、Go/C# GA、SCIP store |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | 已完成；Host、pinned profile、Go Doctor、Adapter/truth/fault、双平台 native/OCI、readiness/progress/monitor、comparator 和 eligibility 已闭合；`goCanaryEligible=true`、`productionEligible=false` | 6-11 人日 | 双平台 identity/truth/lifecycle/OCI evidence、只读 comparator、单一 eligibility owner、Doctor projection；不含 Go 生产默认启用、自动安装、公开发布、扩大 fixture、rollout 观察窗口 |
 | P1-A3：C# 条件接入 | 条件 | 延后，等待真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild 执行面、restore/联网和生命周期；未命中需求不进入生产，也不阻断 9.5 |
 | P1-B：验证 DAG 与 Browser Relay 闭环 | P1 | 已完成；8 场景 `24/24` 影响节点通过；Windows 相关路径 `81` 项；WSL2 Browser producer `12` 项；两端 lifecycle pending/orphan=`0/0` | 10-16 人日 | 验证 DAG 选择/终态、Browser artifact producer/consumer、故障和双平台 evidence；不含自动安装浏览器、云浏览器、无条件多 Agent Review |
 | P1-C：TaskProjection 与 Capability Closure | P1 | 已完成；硬 Gate 全部闭合，广泛回归 `31` 文件 `312/312`、最后切片 `58/58`、Core build/diff check 通过。公共人工 provenance、`blocked/verifying` observation 与 verification DAG 外键缺 authoritative owner，已拆分为 `split_task/defer`，未知指标保持 `incomplete` | 10-15 人日 | 只读跨 owner 投影、exact-binding action、任务启动闭包、六类故障投影和旧客户端兼容；不迁移领域真源，不按客户端身份猜测人工来源 |
-| P2-A：受控 Supervisor 与并行 worktree | P2 | 进行中；parallel lane admission/worktree Gate、restart reattach/durable binding、exact-bound `observe/cancel/steer`、显式 fan-in diff/test/evidence、冲突 preview/confirm 及统一 child/turn/token/可选费用/wall-time/风险/verifier 预算合同已完成；预算链路联合回归 `12` 文件 `230/230`，Skills/Agent/Core build 与 diff check 通过。下一步执行 2-4 写 lane/8 读 lane fault matrix、竞争 confirm/crash/restart 对账和 Windows/WSL2 60 分钟 soak/零残留 sweep | 12-20 人日 | 隔离写入、预算、60 分钟 soak、steer/cancel/reattach、fan-in 和 fault matrix；不含自动 merge/release/deploy |
-| P2-B：生态与运行前置收口 | P2 | 延后，等待公共合同稳定 | 8-14 人日 | 两个外部消费者、N-1/N conformance、真实 CI、OCI/语言 Doctor；不含公开发布、系统级自动安装、sandbox 替换 |
+| P2-A：受控 Supervisor 与并行 worktree | P2 | 已完成；admission/worktree Gate、restart reattach、exact-bound control、fan-in、统一预算、fault matrix、跨进程 Git mutation lock 与 failure compensation 均闭合。修复后 Core/Skills build、相关回归 `18` 文件 `138/138` 通过；Windows/WSL2 正式 r3 同 identity 各 `360/360` lane，平台 Gate、Schema、comparator 与 child/worktree/branch/process/receipt/lock/tmp/root 零残留 sweep 全部通过。r2 WSL2 首次失败 artifact 原样保留 | 12-20 人日 | 隔离写入、预算、60 分钟 soak、steer/cancel/reattach、fan-in 和 fault matrix；不含自动 merge/release/deploy |
+| P2-B：生态与运行前置收口 | P2 | 进行中；窄 reference client、初始 v1 manifest、两个 Windows/WSL2 仓外 consumer、完整 `17 + 1 + 5` error taxonomy、failure conformance 与 coding runtime preflight Doctor 均已完成；Go/gopls required path 已失败关闭，初始 v1 与未来 N-1 fixture 要求已机器化。coding client `41/41`，Core/workspace build、当前 collect `945` 文件/`5759` 条目及标准全量测试、WebChat module/security、coding CI/benchmark contract、CodeIntel resource soak 与 diff check 均通过；Marketplace/Goals Windows rename、Gateway 长链路和 pairing 可见性已稳定化。Puppeteer 已按 HITL 授权升级至 `25.7.0`，`extract-zip` 链移除，audit 零发现；真实 Chrome/MV3 Relay、browser/camera 与 portable frozen/offline build、smoke、四场景 lifecycle 均闭合。之后仍需当前 commit 的 `private/main` 完整 Actions/双平台 artifact 与 Settings 人工手测 | 8-14 人日 | 两个外部消费者、N-1/N conformance、真实 CI、OCI/语言 Doctor、零发现 dependency Gate；不含公开发布、系统级自动安装、sandbox 替换，未经授权不再升级依赖主版本 |
 | P2-C：9.5 稳定化与最终复核 | P2 | 延后，等待 P0-P2-B | 5-8 人日 + 观察窗口 | 两个连续候选版本原始 `>=9.500`、目标维度和全部硬 Gate 通过；不含竞品联合 benchmark、生产写入 |

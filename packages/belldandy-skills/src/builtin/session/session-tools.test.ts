@@ -5,6 +5,7 @@ import { delegateTaskTool } from "./delegate.js";
 import { delegateParallelTool } from "./delegate-parallel.js";
 import { subtaskFanInTool } from "./subtask-fan-in.js";
 import { subtaskSupervisorTool } from "./subtask-supervisor.js";
+import { subtaskWorktreeDisposeTool } from "./subtask-worktree-dispose.js";
 
 function createContext(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
@@ -189,6 +190,66 @@ describe("session tools launchSpec wiring", () => {
     }, createContext({ agentCapabilities: { controlSubTask } }));
     expect(missingRun).toMatchObject({ success: false, failureKind: "permission_or_policy" });
     expect(controlSubTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("subtask_worktree_dispose binds preview and confirm to the current manager without accepting paths", async () => {
+    const disposeSubTaskWorktree = vi.fn(async (input: { action: "preview" | "confirm" }) => input.action === "preview"
+      ? {
+          schemaVersion: "subtask-supervisor-worktree-disposal/v1" as const,
+          contentMode: "none" as const,
+          status: "ready" as const,
+          applied: false,
+          blockers: [],
+          receipt: { id: "dispose-receipt-1", expiresAtMs: 20_000 },
+        }
+      : {
+          schemaVersion: "subtask-supervisor-worktree-disposal/v1" as const,
+          contentMode: "none" as const,
+          status: "completed" as const,
+          applied: true,
+          duplicateSideEffect: false as const,
+          blockers: [],
+        });
+    const context = createContext({
+      agentRunId: "run-manager",
+      agentCapabilities: { disposeSubTaskWorktree },
+    });
+    const exact = {
+      team_id: "team-parallel",
+      lane_id: "lane_1",
+      task_id: "task-lane-1",
+      session_id: "session-lane-1",
+      expected_revision: 2,
+    };
+
+    const preview = await subtaskWorktreeDisposeTool.execute({ action: "preview", ...exact }, context);
+    const confirm = await subtaskWorktreeDisposeTool.execute({
+      action: "confirm",
+      ...exact,
+      receipt_id: "dispose-receipt-1",
+      confirm: true,
+    }, context);
+
+    expect(preview.success).toBe(true);
+    expect(confirm.success).toBe(true);
+    expect(disposeSubTaskWorktree).toHaveBeenNthCalledWith(1, {
+      action: "preview",
+      managerConversationId: "conv-session",
+      managerAgentRunId: "run-manager",
+      teamId: "team-parallel",
+      laneId: "lane_1",
+      taskId: "task-lane-1",
+      sessionId: "session-lane-1",
+      expectedRevision: 2,
+    });
+    expect(disposeSubTaskWorktree).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      action: "confirm",
+      receiptId: "dispose-receipt-1",
+      confirm: true,
+    }));
+    expect(JSON.parse(preview.output)).toMatchObject({ status: "ready", contentMode: "none" });
+    expect(JSON.parse(confirm.output)).toMatchObject({ status: "completed", applied: true });
+    expect(JSON.stringify(subtaskWorktreeDisposeTool.definition.parameters)).not.toMatch(/repo|worktree|patch|path/i);
   });
 
   it("sessions_spawn should build an explicit launchSpec with inherited runtime defaults", async () => {

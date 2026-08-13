@@ -5,6 +5,7 @@ import {
   assertRuntimeBuildScriptPolicy,
   createRuntimeBuildScriptPolicy,
   resolveRuntimeBuildScriptPolicy,
+  serializeRuntimeWorkspaceConfig,
 } from "./runtime-build-script-policy.mjs";
 
 const workspaceRoot = fileURLToPath(new URL("../../../", import.meta.url));
@@ -52,6 +53,17 @@ describe("runtime build script policy", () => {
     for (const decision of policy.decisions) {
       expect(decision.reason.trim().length).toBeGreaterThan(0);
     }
+  });
+
+  it("serializes target workspace config from the same slim/full policy owner", () => {
+    const slim = serializeRuntimeWorkspaceConfig("slim");
+    const full = serializeRuntimeWorkspaceConfig("full");
+
+    expect(slim).toContain("packages:\n  - packages/*\n  - apps/*");
+    expect(slim).toContain("onlyBuiltDependencies:\n  - better-sqlite3\n  - esbuild");
+    expect(slim).toContain("ignoredBuiltDependencies:\n  - node-pty\n  - onnxruntime-node\n  - protobufjs");
+    expect(full).toContain("onlyBuiltDependencies:\n  - better-sqlite3\n  - esbuild\n  - node-pty\n  - onnxruntime-node");
+    expect(full).toContain("ignoredBuiltDependencies:\n  - protobufjs");
   });
 
   it("reads the current development workspace policy through pnpm's structured config output", () => {

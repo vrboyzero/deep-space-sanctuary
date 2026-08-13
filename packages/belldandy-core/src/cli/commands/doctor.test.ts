@@ -205,10 +205,24 @@ test("bdd doctor json output includes tool behavior observability", async () => 
         expect.objectContaining({ id: "build_scripts" }),
       ]),
     });
+    expect(parsed.codingRuntimePreflight).toMatchObject({
+      schemaVersion: "coding-runtime-preflight-doctor/v1",
+      summary: {
+        startupReady: true,
+        blockingCount: 0,
+      },
+      languages: {
+        enabled: [],
+      },
+    });
     expect(parsed.checks).toEqual(expect.arrayContaining([
       expect.objectContaining({
         name: "Optional Capabilities",
         message: expect.any(String),
+      }),
+      expect.objectContaining({
+        name: "Coding Runtime Preflight",
+        status: "pass",
       }),
     ]));
     expect(parsed.toolContractV2Observability).toMatchObject({

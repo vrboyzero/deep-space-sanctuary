@@ -20,6 +20,8 @@ import type {
   SubAgentResult,
   SubTaskSupervisorControlInput,
   SubTaskSupervisorControlItem,
+  SubTaskSupervisorWorktreeDisposalCapabilityInput,
+  SubTaskSupervisorWorktreeDisposalCapabilityResult,
   SubTaskSupervisorFanInCapabilityInput,
   SubTaskSupervisorFanInCapabilityResult,
 } from "@belldandy/skills";
@@ -60,7 +62,12 @@ import { parseGoalSessionKey } from "./goals/session.js";
 import { GoalRuntimeBindingStore, type GoalRuntimeBindingSource } from "./goal-runtime-binding-store.js";
 import { getGoalRegistryEntry } from "./goals/registry.js";
 import { enrichDelegationProtocolTeamWithIdentity } from "./team-identity-governance.js";
-import type { SubTaskWorktreeRuntime, SubTaskWorktreeRuntimeSummary, WorktreeRuntimeStatus } from "./worktree-runtime.js";
+import type {
+  PreparedSubTaskLaunchSpec,
+  SubTaskWorktreeRuntime,
+  SubTaskWorktreeRuntimeSummary,
+  WorktreeRuntimeStatus,
+} from "./worktree-runtime.js";
 import { createConversationOperationId } from "./coding-run/reconciliation-journal.js";
 import {
   SubTaskSupervisorAdmissionError,
@@ -3175,6 +3182,10 @@ export function createSubTaskAgentCapabilities(input: {
   supervisorControlRuntime?: {
     control: (input: SubTaskSupervisorControlInput) => Promise<SubTaskSupervisorControlItem | undefined>;
   };
+  supervisorWorktreeDisposalRuntime?: {
+    preview: (input: Omit<SubTaskSupervisorWorktreeDisposalCapabilityInput, "action" | "receiptId" | "confirm">) => Promise<SubTaskSupervisorWorktreeDisposalCapabilityResult>;
+    confirm: (input: Omit<SubTaskSupervisorWorktreeDisposalCapabilityInput, "action"> & { receiptId: string; confirm: true }) => Promise<SubTaskSupervisorWorktreeDisposalCapabilityResult>;
+  };
   supervisorFanInRuntime?: {
     preview: (input: Omit<SubTaskSupervisorFanInCapabilityInput, "action" | "receiptId" | "confirm">) => Promise<SubTaskSupervisorFanInCapabilityResult>;
     confirm: (input: Omit<SubTaskSupervisorFanInCapabilityInput, "action"> & { receiptId: string; confirm: true }) => Promise<SubTaskSupervisorFanInCapabilityResult>;
@@ -3236,25 +3247,42 @@ export function createSubTaskAgentCapabilities(input: {
     let resolvedLaunchSpec = launchSpec;
     try {
       if (input.worktreeRuntime) {
+        let prepared: PreparedSubTaskLaunchSpec | undefined;
         try {
-          const prepared = await input.worktreeRuntime.prepareTaskLaunch(task.id, launchSpec);
+          prepared = await input.worktreeRuntime.prepareTaskLaunch(task.id, launchSpec);
           resolvedLaunchSpec = prepared.launchSpec;
-          await input.runtimeStore.updateTaskLaunchSpec(task.id, {
+          const persisted = await input.runtimeStore.updateTaskLaunchSpec(task.id, {
             launchSpec: resolvedLaunchSpec,
             runtimeSummary: {
               requestedCwd: launchSpec.cwd,
               ...prepared.summary,
             },
           });
+          if (!persisted) {
+            throw new Error("Prepared worktree ownership was not persisted.");
+          }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
+          let rollbackSummary: Partial<SubTaskWorktreeRuntimeSummary> | undefined;
+          if (prepared) {
+            rollbackSummary = await input.worktreeRuntime.abortPreparedTaskRuntime(task.id, {
+              ...prepared.launchSpec,
+              ...prepared.summary,
+            }).catch((rollbackError) => ({
+              worktreeStatus: "remove_failed" as const,
+              worktreeError: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+            }));
+          }
           await input.runtimeStore.updateTaskLaunchSpec(task.id, {
             launchSpec,
             runtimeSummary: {
               requestedCwd: launchSpec.cwd,
               resolvedCwd: launchSpec.cwd,
-              worktreeStatus: "failed",
-              worktreeError: errorMessage,
+              ...(prepared?.summary ?? {}),
+              ...(rollbackSummary ?? {
+                worktreeStatus: "failed" as const,
+                worktreeError: errorMessage,
+              }),
             },
           });
           const completed = await input.runtimeStore.completeTask(task.id, {
@@ -3368,6 +3396,24 @@ export function createSubTaskAgentCapabilities(input: {
     listSessions: (parentConversationId?: string) => input.runtimeStore.listSessionInfos(parentConversationId),
     ...(input.supervisorControlRuntime
       ? { controlSubTask: (controlInput) => input.supervisorControlRuntime!.control(controlInput) }
+      : {}),
+    ...(input.supervisorWorktreeDisposalRuntime
+      ? {
+          disposeSubTaskWorktree: (disposalInput: SubTaskSupervisorWorktreeDisposalCapabilityInput) => {
+            const { action, ...runtimeInput } = disposalInput;
+            if (action === "preview") {
+              return input.supervisorWorktreeDisposalRuntime!.preview(runtimeInput);
+            }
+            if (!runtimeInput.receiptId || runtimeInput.confirm !== true) {
+              throw new Error("Subtask worktree disposal confirm requires a receipt and explicit confirmation.");
+            }
+            return input.supervisorWorktreeDisposalRuntime!.confirm({
+              ...runtimeInput,
+              receiptId: runtimeInput.receiptId,
+              confirm: true,
+            });
+          },
+        }
       : {}),
     ...(input.supervisorFanInRuntime
       ? {

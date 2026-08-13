@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { CODING_RUN_PROTOCOL_VERSION, type AgentRunEvent, type CodingRunSubscription } from "./contracts.js";
 import {
+  CodingRunClient,
   CodingRunNdjsonClient,
   createCodingRunNdjsonServer,
 } from "./stdio.js";
@@ -416,5 +417,21 @@ describe("coding-run NDJSON stdio transport", () => {
       ok: false,
       error: { code: "invalid_request", message: "Invalid task projection request." },
     });
+  });
+});
+
+describe("CodingRunClient backpressure", () => {
+  it("rejects above the pending request budget and closes the admitted request", async () => {
+    let requestIndex = 0;
+    const client = new CodingRunClient({
+      write: () => undefined,
+      maxPendingRequests: 1,
+      requestTimeoutMs: 50,
+      createRequestId: () => `pending-${++requestIndex}`,
+    });
+    const pending = client.start({ prompt: "Inspect it.", cwd: process.cwd() });
+    await expect(client.readArtifact({ agentRunId: "run-1" })).rejects.toMatchObject({ code: "backpressure" });
+    client.close();
+    await expect(pending).rejects.toMatchObject({ code: "client_closed" });
   });
 });

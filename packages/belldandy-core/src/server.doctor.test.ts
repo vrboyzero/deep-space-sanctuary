@@ -320,10 +320,24 @@ test("system.doctor exposes tool behavior observability summary", async () => {
         expect.objectContaining({ id: "build_scripts" }),
       ]),
     });
+    expect(response.payload?.codingRuntimePreflight).toMatchObject({
+      schemaVersion: "coding-runtime-preflight-doctor/v1",
+      summary: {
+        startupReady: true,
+        blockingCount: 0,
+      },
+      languages: {
+        enabled: [],
+      },
+    });
     expect(response.payload?.checks).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: "optional_capabilities",
         status: expect.stringMatching(/pass|warn/),
+      }),
+      expect.objectContaining({
+        id: "coding_runtime_preflight",
+        status: "pass",
       }),
       expect.objectContaining({
         id: "tool_behavior_observability",

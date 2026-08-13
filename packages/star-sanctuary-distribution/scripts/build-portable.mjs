@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import crypto from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { resolveDistributionMode, resolvePortableArtifactRoot } from "./distribution-mode.mjs";
@@ -21,6 +22,7 @@ import { assertPathInsideRoots, guardedRemovePath } from "./sandbox-paths.mjs";
 import { copyPackageNonDistBinArtifacts } from "../../../scripts/artifact-contract.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")), "..", "..", "..");
+const require = createRequire(import.meta.url);
 const rootPackageJson = JSON.parse(fs.readFileSync(path.join(workspaceRoot, "package.json"), "utf-8"));
 const memoryPackageJson = JSON.parse(
   fs.readFileSync(path.join(workspaceRoot, "packages", "belldandy-memory", "package.json"), "utf-8"),
@@ -51,6 +53,7 @@ const runtimeRoot = path.join(portableRoot, "runtime");
 const runtimePackagesRoot = path.join(runtimeRoot, "packages");
 const runtimeAppsRoot = path.join(runtimeRoot, "apps");
 const runtimeManifestPath = path.join(portableRoot, "runtime-manifest.json");
+const esbuildCliPath = require.resolve("esbuild/bin/esbuild");
 const PORTABLE_PNPM_MAX_ATTEMPTS = 4;
 const PORTABLE_PNPM_RETRY_DELAY_MS = 1_500;
 const PORTABLE_PNPM_RETRYABLE_CODES = new Set(["EACCES", "EPERM"]);
@@ -530,6 +533,7 @@ function writeRuntimePackageJson() {
     engines: rootPackageJson.engines,
     pnpm: rootPackageJson.pnpm,
     sqliteVecVersion,
+    excludedOptionalDependencies: distributionPolicy.excludedOptionalDependencies,
   });
   fs.writeFileSync(
     path.join(runtimeRoot, "package.json"),
@@ -543,7 +547,9 @@ function copyRuntimePackageJson(src, dest) {
   ensureDir(path.dirname(dest));
   fs.writeFileSync(
     dest,
-    `${JSON.stringify(sanitizeRuntimeWorkspacePackageJson(packageJson), null, 2)}\n`,
+    `${JSON.stringify(sanitizeRuntimeWorkspacePackageJson(packageJson, {
+      excludedOptionalDependencies: distributionPolicy.excludedOptionalDependencies,
+    }), null, 2)}\n`,
     "utf-8",
   );
   return packageJson;
@@ -626,10 +632,36 @@ function writePortableReadme(executableName) {
 }
 
 function writePortableLauncher() {
-  copyDir(
-    path.join(workspaceRoot, "packages", "star-sanctuary-distribution", "dist"),
-    portableLauncherRoot,
+  const sourceEntryPath = path.join(
+    workspaceRoot,
+    "packages",
+    "star-sanctuary-distribution",
+    "dist",
+    "portable-entry.js",
   );
+  const launcherEntryPath = path.join(portableLauncherRoot, "portable-entry.js");
+  assertExists(sourceEntryPath, "portable launcher entry");
+
+  const bundleResult = spawnSync(process.execPath, [
+    esbuildCliPath,
+    sourceEntryPath,
+    "--bundle",
+    "--format=esm",
+    "--platform=node",
+    "--target=node22",
+    `--outfile=${launcherEntryPath}`,
+    "--legal-comments=none",
+  ], {
+    cwd: workspaceRoot,
+    encoding: "utf-8",
+    shell: false,
+  });
+  if (bundleResult.stdout) process.stdout.write(bundleResult.stdout);
+  if (bundleResult.stderr) process.stderr.write(bundleResult.stderr);
+  if (bundleResult.status !== 0) {
+    throw new Error(`Portable launcher bundle failed with exit code ${bundleResult.status ?? 1}`);
+  }
+
   fs.writeFileSync(
     path.join(portableLauncherRoot, "package.json"),
     `${JSON.stringify({

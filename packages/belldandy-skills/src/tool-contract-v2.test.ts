@@ -138,6 +138,7 @@ describe("tool contract v2", () => {
     const delegateParallel = getToolContractV2("delegate_parallel");
     const subtaskFanIn = getToolContractV2("subtask_fan_in");
     const subtaskSupervisor = getToolContractV2("subtask_supervisor");
+    const subtaskWorktreeDispose = getToolContractV2("subtask_worktree_dispose");
     const fileRead = getToolContractV2("file_read");
     const listFiles = getToolContractV2("list_files");
     const webFetch = getToolContractV2("web_fetch");
@@ -168,6 +169,16 @@ describe("tool contract v2", () => {
       hasGovernanceContract: false,
       hasBehaviorContract: false,
     });
+    expect(subtaskWorktreeDispose).toMatchObject({
+      family: "session-orchestration",
+      riskLevel: "high",
+      needsPermission: false,
+      isReadOnly: false,
+      isConcurrencySafe: false,
+      hasBehaviorContract: true,
+    });
+    expect(subtaskWorktreeDispose?.confirmWhen.join("\n")).toContain("short-lived receipt");
+    expect(subtaskWorktreeDispose?.expectedOutput.join("\n")).toContain("No worktree path");
     expect(commandJob?.preflightChecks.join("\n")).toContain("shell-free commandPlan");
     expect(commandJob?.preflightChecks.join("\n")).toContain("stdin as sensitive");
     expect(commandJob?.expectedOutput.join("\n")).toContain("stable job ID");

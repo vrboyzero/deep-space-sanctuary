@@ -1998,6 +1998,16 @@
             <input id="cfgSubAgentMaxDepth" class="input" data-i18n-placeholder="settings.subAgentMaxDepthPlaceholder" placeholder="2" />
             <div class="form-help" data-i18n="settings.subAgentMaxDepthHelp">子代理继续派生子代理时允许的最大嵌套层级。</div>
           </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgSubAgentMaxVerifiers" data-i18n="settings.subAgentMaxVerifiersLabel">Sub Agent Max Verifiers</label>
+            <input id="cfgSubAgentMaxVerifiers" class="input" inputmode="numeric" data-i18n-placeholder="settings.subAgentMaxVerifiersPlaceholder" placeholder="1" />
+            <div class="form-help" data-i18n="settings.subAgentMaxVerifiersHelp">Supervisor 同时运行的 verifier 数量上限。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgSubAgentMaxCostUsd" data-i18n="settings.subAgentMaxCostUsdLabel">Sub Agent Max Cost (USD)</label>
+            <input id="cfgSubAgentMaxCostUsd" class="input" inputmode="decimal" data-i18n-placeholder="settings.subAgentMaxCostUsdPlaceholder" placeholder="0.25" />
+            <div class="form-help" data-i18n="settings.subAgentMaxCostUsdHelp">单个子代理的可选费用上限；仅在 Provider 提供定价信息时生效。</div>
+          </div>
 
           <div class="settings-subsection-header settings-subsection-header--spaced">
             <div>

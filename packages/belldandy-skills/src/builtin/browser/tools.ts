@@ -294,7 +294,7 @@ export class BrowserManager {
 
     public async connect(signal?: AbortSignal): Promise<Browser> {
         throwIfAborted(signal);
-        if (this.browser && this.browser.isConnected()) {
+        if (this.browser?.connected) {
             return this.browser;
         }
 
@@ -303,7 +303,7 @@ export class BrowserManager {
             while (this.connecting) {
                 await sleepWithAbort(100, signal);
             }
-            if (this.browser && this.browser.isConnected()) {
+            if (this.browser?.connected) {
                 return this.browser;
             }
         }

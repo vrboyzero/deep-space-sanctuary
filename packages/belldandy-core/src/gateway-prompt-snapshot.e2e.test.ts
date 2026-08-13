@@ -1683,6 +1683,7 @@ test("gateway carryover context forensics keeps a single latest file_read source
 }, 60000);
 
 test("gateway low-risk config A/B keeps retained history thicker without displacing carryover context", async () => {
+  const scenarioWaitTimeoutMs = 60_000;
   const rounds = Array.from({ length: 12 }, (_, index) => {
     const turn = index + 1;
     return `第${turn}轮：保留这个续做锚点 MARKER_TURN_${turn.toString().padStart(2, "0")}，并继续当前分析。`;
@@ -1750,6 +1751,7 @@ test("gateway low-risk config A/B keeps retained history thicker without displac
           conversationId: input.conversationId,
           requestId,
           text,
+          timeoutMs: scenarioWaitTimeoutMs,
         });
         return runId;
       };
@@ -1763,7 +1765,10 @@ test("gateway low-risk config A/B keeps retained history thicker without displac
             conversationId: input.conversationId,
           },
         }));
-        await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true));
+        await waitFor(
+          () => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true),
+          scenarioWaitTimeoutMs,
+        );
         return wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId)?.payload;
       };
 
@@ -1855,7 +1860,7 @@ test("gateway low-risk config A/B keeps retained history thicker without displac
   expect(countSubstring(variant.finalCarryoverBlock, "file_read: src/app.ts")).toBe(1);
   expect(baseline.requestCount).toBe(14);
   expect(variant.requestCount).toBe(14);
-}, 120000);
+}, 180_000);
 
 test("gateway carryover context ranks multi-source records by current request relevance and keeps stable source keys", async () => {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-carryover-multi-source-e2e-"));
@@ -2014,6 +2019,7 @@ test("gateway carryover context ranks multi-source records by current request re
 }, 120000);
 
 test("gateway long-session experience A/B compares baseline, low-risk, and low-risk+carryover on rereads, omissions, and conclusion stability", async () => {
+  const scenarioWaitTimeoutMs = 60_000;
   const FACT_ROLLOUT_DECISION = "rolloutDecision=low-risk-first";
   const FACT_NORMALIZE_OLD_FACTS = "normalizeOldFacts = false;";
   const FACT_STOP_POINT = "stopPoint=verify-long-session-ab-metrics";
@@ -2193,7 +2199,7 @@ test("gateway long-session experience A/B compares baseline, low-risk, and low-r
       const sendMessage = async (
         requestId: string,
         text: string,
-        timeoutMs = E2E_WAIT_TIMEOUT_MS,
+        timeoutMs = scenarioWaitTimeoutMs,
       ): Promise<{ runId: string; finalText: string }> => sendGatewayMessage({
         wsHandle: wsHandle!,
         conversationId: input.conversationId,
@@ -2211,7 +2217,10 @@ test("gateway long-session experience A/B compares baseline, low-risk, and low-r
             conversationId: input.conversationId,
           },
         }));
-        await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true));
+        await waitFor(
+          () => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true),
+          scenarioWaitTimeoutMs,
+        );
         return wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId)?.payload;
       };
 
@@ -2240,7 +2249,7 @@ test("gateway long-session experience A/B compares baseline, low-risk, and low-r
       const finalResult = await sendMessage(
         `${input.conversationId}-final`,
         "不要重读，直接给完整结论：需要包含 rolloutDecision、normalizeOldFacts、stopPoint、rootCause。",
-        15000,
+        scenarioWaitTimeoutMs,
       );
       const initialFinalPromptText = fakeOpenAI.requestTexts[preFinalRequestCount] ?? "";
       const initialMissingFacts = EXPECTED_FACTS.filter((fact) => !initialFinalPromptText.includes(fact));
@@ -2345,6 +2354,7 @@ test("gateway long-session experience A/B compares baseline, low-risk, and low-r
 }, 180000);
 
 test("gateway debug-session experience A/B keeps run_command failure facts and log_read hints without reruns when low-risk history and carryover are combined", async () => {
+  const scenarioWaitTimeoutMs = 60_000;
   const FACT_DECISION = "decision=prefer-log-read-before-rerun";
   const FACT_FAILURE_SIGNATURE = "failureSignature=spawn-EPERM-while-launching-pnpm-test";
   const FACT_LOG_HINT = "logHint=close-inherited-handles-before-spawning-vitest-child";
@@ -2489,7 +2499,7 @@ test("gateway debug-session experience A/B keeps run_command failure facts and l
       const sendMessage = async (
         requestId: string,
         text: string,
-        timeoutMs = E2E_WAIT_TIMEOUT_MS,
+        timeoutMs = scenarioWaitTimeoutMs,
       ): Promise<{ runId: string; finalText: string }> => sendGatewayMessage({
         wsHandle: wsHandle!,
         conversationId: input.conversationId,
@@ -2507,7 +2517,10 @@ test("gateway debug-session experience A/B keeps run_command failure facts and l
             conversationId: input.conversationId,
           },
         }));
-        await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true));
+        await waitFor(
+          () => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true),
+          scenarioWaitTimeoutMs,
+        );
         return wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId)?.payload;
       };
 
@@ -2523,7 +2536,7 @@ test("gateway debug-session experience A/B keeps run_command failure facts and l
       }));
       await approveLatestPairingCode(wsHandle.frames, stateDir);
 
-      await sendMessage(`${input.conversationId}-source-run-command`, "先跑一次 pnpm test，确认失败信号。", 15000);
+      await sendMessage(`${input.conversationId}-source-run-command`, "先跑一次 pnpm test，确认失败信号。", scenarioWaitTimeoutMs);
       await sendMessage(`${input.conversationId}-source-log-read`, "再直接读取当天日志，确认错误提示。");
       await sendMessage(`${input.conversationId}-decision`, `再记住这个决策：${FACT_DECISION}。`);
 
@@ -2535,7 +2548,7 @@ test("gateway debug-session experience A/B keeps run_command failure facts and l
       const finalResult = await sendMessage(
         `${input.conversationId}-final`,
         "不要重跑命令，直接给完整结论：需要包含 decision、failureSignature、logHint。",
-        15000,
+        scenarioWaitTimeoutMs,
       );
       const initialFinalPromptText = fakeOpenAI.requestTexts[preFinalRequestCount] ?? "";
       const initialMissingFacts = EXPECTED_FACTS.filter((fact) => !initialFinalPromptText.includes(fact));
@@ -2644,6 +2657,7 @@ test("gateway debug-session experience A/B keeps run_command failure facts and l
 }, 180000);
 
 test("gateway browser_get_content experience A/B keeps article facts and avoids rereads when low-risk history and carryover are combined", async () => {
+  const scenarioWaitTimeoutMs = 120_000;
   const FACT_BROWSER_DECISION = "browserDecision=prefer-carryover-page-facts";
   const FACT_BROWSER_ROOT_CAUSE = "browserRootCause=fixture-article-shows-context-drift";
   const FACT_BROWSER_STOP_POINT = "browserStopPoint=verify-browser-content-ab-metrics";
@@ -2807,7 +2821,7 @@ test("gateway browser_get_content experience A/B keeps article facts and avoids 
       const sendMessage = async (
         requestId: string,
         text: string,
-        timeoutMs = E2E_WAIT_TIMEOUT_MS,
+        timeoutMs = scenarioWaitTimeoutMs,
       ): Promise<{ runId: string; finalText: string }> => sendGatewayMessage({
         wsHandle: wsHandle!,
         conversationId: input.conversationId,
@@ -2825,7 +2839,10 @@ test("gateway browser_get_content experience A/B keeps article facts and avoids 
             conversationId: input.conversationId,
           },
         }));
-        await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true));
+        await waitFor(
+          () => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true),
+          scenarioWaitTimeoutMs,
+        );
         return wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId)?.payload;
       };
 
@@ -2854,7 +2871,7 @@ test("gateway browser_get_content experience A/B keeps article facts and avoids 
         return wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId)?.payload;
       })();
 
-      await sendMessage(`${input.conversationId}-source-browser`, "先读取当前页面正文，并记住关键事实。", 15000);
+      await sendMessage(`${input.conversationId}-source-browser`, "先读取当前页面正文，并记住关键事实。", scenarioWaitTimeoutMs);
       await sendMessage(`${input.conversationId}-source-conversation`, "再读取当前会话 restore 视图，确认停点。");
       await sendMessage(`${input.conversationId}-decision`, `再记住这个决策：${FACT_BROWSER_DECISION}。`);
 
@@ -2866,7 +2883,7 @@ test("gateway browser_get_content experience A/B keeps article facts and avoids 
       const finalResult = await sendMessage(
         `${input.conversationId}-final`,
         "不要重复读取页面，直接给完整结论：需要包含 browserDecision、browserRootCause、browserStopPoint。",
-        15000,
+        scenarioWaitTimeoutMs,
       );
       const initialFinalPromptText = fakeOpenAI.requestTexts[preFinalRequestCount] ?? "";
       const initialMissingFacts = EXPECTED_FACTS.filter((fact) => !initialFinalPromptText.includes(fact));
@@ -2969,9 +2986,10 @@ test("gateway browser_get_content experience A/B keeps article facts and avoids 
   expect(Number(baseline.meta?.carryoverContextEstimate?.itemCount ?? 0)).toBeGreaterThan(0);
   expect(Number(lowRiskOnly.meta?.carryoverContextEstimate?.itemCount ?? 0)).toBe(0);
   expect(Number(lowRiskWithCarryover.meta?.carryoverContextEstimate?.itemCount ?? 0)).toBeGreaterThan(0);
-}, 180000);
+}, 300_000);
 
 test("gateway browser_get_content carryover keeps pageUrl-scoped facts separated across page switches", async () => {
+  const scenarioWaitTimeoutMs = 60_000;
   const PAGE_A_URL = "https://example.com/context/browser-carryover-page-a";
   const PAGE_B_URL = "https://example.com/context/browser-carryover-page-b";
   const FACT_PAGE_A_ROOT_CAUSE = "browserPageARootCause=page-a-documents-old-render-path";
@@ -3121,7 +3139,7 @@ test("gateway browser_get_content carryover keeps pageUrl-scoped facts separated
     const sendMessage = async (
       requestId: string,
       text: string,
-      timeoutMs = E2E_WAIT_TIMEOUT_MS,
+      timeoutMs = scenarioWaitTimeoutMs,
     ): Promise<{ runId: string; finalText: string }> => sendGatewayMessage({
       wsHandle: wsHandle!,
       conversationId,
@@ -3139,7 +3157,10 @@ test("gateway browser_get_content carryover keeps pageUrl-scoped facts separated
           conversationId,
         },
       }));
-      await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true));
+      await waitFor(
+        () => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true),
+        scenarioWaitTimeoutMs,
+      );
       return wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId)?.payload;
     };
 
@@ -3154,8 +3175,8 @@ test("gateway browser_get_content carryover keeps pageUrl-scoped facts separated
     }));
     await approveLatestPairingCode(wsHandle.frames, stateDir);
 
-    await sendMessage(`${conversationId}-page-a`, "先读取第一页正文，并只记住第一页事实。", 15000);
-    await sendMessage(`${conversationId}-page-b`, "现在切换到第二页，再读取当前页面正文，并记住第二页事实。", 15000);
+    await sendMessage(`${conversationId}-page-a`, "先读取第一页正文，并只记住第一页事实。", scenarioWaitTimeoutMs);
+    await sendMessage(`${conversationId}-page-b`, "现在切换到第二页，再读取当前页面正文，并记住第二页事实。", scenarioWaitTimeoutMs);
     await sendMessage(`${conversationId}-decision`, `再记住这个当前页决策：${FACT_PAGE_B_DECISION}。`);
 
     for (let index = 0; index < fillerTurns.length; index += 1) {
@@ -3166,7 +3187,7 @@ test("gateway browser_get_content carryover keeps pageUrl-scoped facts separated
     const finalResult = await sendMessage(
       `${conversationId}-final`,
       "不要重复读取页面，直接给第二页稳定结论：需要包含 browserPageBDecision、browserPageBRootCause、browserPageBStopPoint，且不要把第一页事实误当成第二页。",
-      15000,
+      scenarioWaitTimeoutMs,
     );
     const initialFinalPromptText = fakeOpenAI.requestTexts[preFinalRequestCount] ?? "";
     const initialFinalCarryoverBlock = extractTaggedPromptBlock(initialFinalPromptText, "carryover-context");

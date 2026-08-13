@@ -273,6 +273,8 @@ function createSettingsRefs(overrides = {}) {
     cfgSubAgentMaxQueueSize: overrides.cfgSubAgentMaxQueueSize || createInput(""),
     cfgSubAgentTimeoutMs: overrides.cfgSubAgentTimeoutMs || createInput(""),
     cfgSubAgentMaxDepth: overrides.cfgSubAgentMaxDepth || createInput(""),
+    cfgSubAgentMaxVerifiers: overrides.cfgSubAgentMaxVerifiers || createInput(""),
+    cfgSubAgentMaxCostUsd: overrides.cfgSubAgentMaxCostUsd || createInput(""),
     cfgWorkflowMaxConcurrent: overrides.cfgWorkflowMaxConcurrent || createInput(""),
     cfgWorkflowMaxQueueSize: overrides.cfgWorkflowMaxQueueSize || createInput(""),
     cfgWorkflowTimeoutMs: overrides.cfgWorkflowTimeoutMs || createInput(""),
@@ -1973,6 +1975,8 @@ describe("settings controller", () => {
       BELLDANDY_SUB_AGENT_MAX_QUEUE_SIZE: "10",
       BELLDANDY_SUB_AGENT_TIMEOUT_MS: "120000",
       BELLDANDY_SUB_AGENT_MAX_DEPTH: "2",
+      BELLDANDY_SUB_AGENT_MAX_VERIFIERS: "1",
+      BELLDANDY_SUB_AGENT_MAX_COST_USD: "0.25",
       BELLDANDY_WORKFLOW_MAX_CONCURRENT: "6",
       BELLDANDY_WORKFLOW_MAX_QUEUE_SIZE: "20",
       BELLDANDY_WORKFLOW_TIMEOUT_MS: "600000",
@@ -2061,6 +2065,8 @@ describe("settings controller", () => {
     expect(refs.cfgDangerousToolsEnabled.checked).toBe(true);
     expect(refs.cfgToolsPolicyFile.value).toBe("~/.star_sanctuary/tools-policy.json");
     expect(refs.cfgSubAgentMaxDepth.value).toBe("2");
+    expect(refs.cfgSubAgentMaxVerifiers.value).toBe("1");
+    expect(refs.cfgSubAgentMaxCostUsd.value).toBe("0.25");
     expect(refs.cfgWorkflowMaxConcurrent.value).toBe("6");
     expect(refs.cfgWorkflowMaxQueueSize.value).toBe("20");
     expect(refs.cfgWorkflowTimeoutMs.value).toBe("600000");
@@ -2493,6 +2499,8 @@ describe("settings controller", () => {
       cfgSubAgentMaxQueueSize: createInput("10"),
       cfgSubAgentTimeoutMs: createInput("120000"),
       cfgSubAgentMaxDepth: createInput("2"),
+      cfgSubAgentMaxVerifiers: createInput("1"),
+      cfgSubAgentMaxCostUsd: createInput("0.25"),
       cfgWorkflowMaxConcurrent: createInput("6"),
       cfgWorkflowMaxQueueSize: createInput("20"),
       cfgWorkflowTimeoutMs: createInput("600000"),
@@ -2625,6 +2633,8 @@ describe("settings controller", () => {
       BELLDANDY_SUB_AGENT_MAX_QUEUE_SIZE: "10",
       BELLDANDY_SUB_AGENT_TIMEOUT_MS: "120000",
       BELLDANDY_SUB_AGENT_MAX_DEPTH: "2",
+      BELLDANDY_SUB_AGENT_MAX_VERIFIERS: "1",
+      BELLDANDY_SUB_AGENT_MAX_COST_USD: "0.25",
       BELLDANDY_WORKFLOW_MAX_CONCURRENT: "6",
       BELLDANDY_WORKFLOW_MAX_QUEUE_SIZE: "20",
       BELLDANDY_WORKFLOW_TIMEOUT_MS: "600000",

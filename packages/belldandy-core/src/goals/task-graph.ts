@@ -1,7 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
-import path from "node:path";
-import { mkdirSync } from "node:fs";
+import { atomicWriteGoalJson } from "./atomic-write.js";
 import type {
   GoalTaskCheckpointStatus,
   GoalTaskGraph,
@@ -109,13 +108,6 @@ function createEdgeId(from: string, to: string): string {
 function mergeStringArray(base: string[], patch?: string[]): string[] {
   if (!patch || patch.length === 0) return [...base];
   return [...new Set([...base, ...patch])];
-}
-
-function atomicWriteJson(targetPath: string, value: unknown): Promise<void> {
-  mkdirSync(path.dirname(targetPath), { recursive: true });
-  const tempPath = `${targetPath}.${crypto.randomUUID()}.tmp`;
-  return fs.writeFile(tempPath, JSON.stringify(value, null, 2), "utf-8")
-    .then(() => fs.rename(tempPath, targetPath));
 }
 
 function buildEdges(nodes: GoalTaskNode[]): GoalTaskGraph["edges"] {
@@ -303,7 +295,7 @@ export async function writeGoalTaskGraph(
     goalId: goal.id,
     updatedAt: new Date().toISOString(),
   });
-  await atomicWriteJson(goal.tasksPath, normalized);
+  await atomicWriteGoalJson(goal.tasksPath, normalized);
   return normalized;
 }
 

@@ -149,6 +149,64 @@ describe("SubTaskSupervisorFanInResolutionRuntime", () => {
     }
   }, 20_000);
 
+  it("settles concurrent confirms for one receipt with the same completed result", async () => {
+    const fixture = await createFixture("belldandy-supervisor-fan-in-concurrent-confirm-");
+    try {
+      const first = await createPatch(fixture.repoRoot, fixture.artifactDir, "lane-1", { "first.txt": "first-lane\n" });
+      const second = await createPatch(fixture.repoRoot, fixture.artifactDir, "lane-2", { "second.txt": "second-lane\n" });
+      const runtime = new SubTaskSupervisorFanInResolutionRuntime({ stateDir: fixture.stateDir });
+      const input = previewInput(fixture.repoRoot, fixture.baseRef, [first, second]);
+      const preview = await runtime.preview(input);
+      const confirmInput = { ...input, receiptId: preview.receipt.id, confirm: true as const };
+
+      const results = await Promise.all(Array.from({ length: 4 }, () => runtime.confirm(confirmInput)));
+
+      expect(results).toEqual(Array.from({ length: 4 }, () => expect.objectContaining({
+        status: "completed",
+        applied: true,
+        duplicateSideEffect: false,
+        blockers: [],
+      })));
+      await expect(readText(path.join(fixture.repoRoot, "first.txt"))).resolves.toBe("first-lane\n");
+      await expect(readText(path.join(fixture.repoRoot, "second.txt"))).resolves.toBe("second-lane\n");
+      expect((await runGit(["worktree", "list", "--porcelain"], fixture.repoRoot)).split(/\r?\n/).filter((line) => line.startsWith("worktree "))).toHaveLength(1);
+      expect(await runGit(["branch", "--list", "belldandy-user-*"], fixture.repoRoot)).toBe("");
+    } finally {
+      await fs.rm(fixture.root, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 20_000);
+
+  it("serializes concurrent confirms across runtime owners sharing one state directory", async () => {
+    const fixture = await createFixture("belldandy-supervisor-fan-in-cross-runtime-confirm-");
+    try {
+      const first = await createPatch(fixture.repoRoot, fixture.artifactDir, "lane-1", { "first.txt": "first-lane\n" });
+      const second = await createPatch(fixture.repoRoot, fixture.artifactDir, "lane-2", { "second.txt": "second-lane\n" });
+      const firstRuntime = new SubTaskSupervisorFanInResolutionRuntime({ stateDir: fixture.stateDir });
+      const secondRuntime = new SubTaskSupervisorFanInResolutionRuntime({ stateDir: fixture.stateDir });
+      const input = previewInput(fixture.repoRoot, fixture.baseRef, [first, second]);
+      const preview = await firstRuntime.preview(input);
+      const confirmInput = { ...input, receiptId: preview.receipt.id, confirm: true as const };
+
+      const results = await Promise.all([
+        firstRuntime.confirm(confirmInput),
+        secondRuntime.confirm(confirmInput),
+      ]);
+
+      expect(results).toEqual(Array.from({ length: 2 }, () => expect.objectContaining({
+        status: "completed",
+        applied: true,
+        duplicateSideEffect: false,
+        blockers: [],
+      })));
+      await expect(readText(path.join(fixture.repoRoot, "first.txt"))).resolves.toBe("first-lane\n");
+      await expect(readText(path.join(fixture.repoRoot, "second.txt"))).resolves.toBe("second-lane\n");
+      expect((await runGit(["worktree", "list", "--porcelain"], fixture.repoRoot)).split(/\r?\n/).filter((line) => line.startsWith("worktree "))).toHaveLength(1);
+      expect(await runGit(["branch", "--list", "belldandy-user-*"], fixture.repoRoot)).toBe("");
+    } finally {
+      await fs.rm(fixture.root, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 20_000);
+
   it("returns a non-confirmable conflict preview without mutating the source", async () => {
     const fixture = await createFixture("belldandy-supervisor-fan-in-conflict-");
     try {

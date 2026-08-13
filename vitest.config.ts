@@ -46,7 +46,7 @@ export default defineConfig({
     // 使用 forks 而非 threads，node:sqlite 在 worker_threads 中可能有问题
     pool: "forks",
     // 全量套件包含 SQLite、子进程和大文本用例；高核心机器默认 fork 过多会饿死 worker RPC。
-    maxWorkers: Math.min(8, availableTestWorkers),
+    maxWorkers: Math.min(4, availableTestWorkers),
     minWorkers: 1,
     deps: {
       interopDefault: true,

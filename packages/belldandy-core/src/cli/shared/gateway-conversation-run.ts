@@ -411,7 +411,7 @@ async function approvePairingCodeWithRetry(input: {
   code: string;
   stateDir: string;
 }): Promise<Awaited<ReturnType<typeof approvePairingCode>>> {
-  const deadline = Date.now() + 5_000;
+  const deadline = Date.now() + 15_000;
   let latest = await approvePairingCode(input);
   while (!latest.ok && latest.message === "pairing code not found or expired" && Date.now() < deadline) {
     await delay(20);

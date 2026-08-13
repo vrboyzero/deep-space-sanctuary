@@ -1,6 +1,5 @@
-import crypto from "node:crypto";
-import fs from "node:fs/promises";
 import path from "node:path";
+import { atomicWriteGoalJson, atomicWriteGoalText } from "./atomic-write.js";
 import { normalizeGoalSlug } from "./paths.js";
 import { buildGoalDerivedSkillDraft } from "./experience-draft-template.js";
 import type {
@@ -63,20 +62,6 @@ function buildRationale(plan: GoalCapabilityPlan): string[] {
   if (plan.analysis.deviations.length > 0) reasons.push("节点存在 capability 偏差，当前更需要能力封装而不是只补 method。");
   if (plan.riskLevel === "high") reasons.push("节点为高风险执行场景，skill 化有助于稳定执行约束。");
   return reasons.length > 0 ? reasons : ["当前节点已形成一组可复用执行模式，值得作为 skill 候选进入人工审阅。"];
-}
-
-async function atomicWriteJson(targetPath: string, value: unknown): Promise<void> {
-  await fs.mkdir(path.dirname(targetPath), { recursive: true });
-  const tempPath = `${targetPath}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(tempPath, JSON.stringify(value, null, 2), "utf-8");
-  await fs.rename(tempPath, targetPath);
-}
-
-async function atomicWriteText(targetPath: string, content: string): Promise<void> {
-  await fs.mkdir(path.dirname(targetPath), { recursive: true });
-  const tempPath = `${targetPath}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(tempPath, content, "utf-8");
-  await fs.rename(tempPath, targetPath);
 }
 
 function buildMarkdown(goal: LongTermGoal, candidates: GoalSkillCandidate[], retrospective: GoalRetrospectiveSnapshot, markdownPath: string, jsonPath: string): string {
@@ -181,8 +166,8 @@ export async function generateGoalSkillCandidates(input: GoalSkillCandidateInput
   const jsonPath = getJsonPath(goal);
   const markdownPath = getMarkdownPath(goal);
   const content = buildMarkdown(goal, candidates, retrospective, markdownPath, jsonPath);
-  await atomicWriteJson(jsonPath, state);
-  await atomicWriteText(markdownPath, content);
+  await atomicWriteGoalJson(jsonPath, state);
+  await atomicWriteGoalText(markdownPath, content);
   return {
     goal,
     candidates,

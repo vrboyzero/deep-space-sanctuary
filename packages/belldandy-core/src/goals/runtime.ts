@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import crypto from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { atomicWriteGoalJson } from "./atomic-write.js";
 import type {
   GoalCapabilityPlan,
   GoalCapabilityPlanAcceptanceGate,
@@ -69,10 +68,7 @@ import {
 } from "./learning-review-refresh.js";
 
 async function atomicWriteJson(targetPath: string, value: unknown): Promise<void> {
-  mkdirSync(path.dirname(targetPath), { recursive: true });
-  const tempPath = `${targetPath}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(tempPath, JSON.stringify(value, null, 2), "utf-8");
-  await fs.rename(tempPath, targetPath);
+  await atomicWriteGoalJson(targetPath, value);
 }
 
 export function getGoalStatePath(goal: Pick<LongTermGoal, "runtimeRoot">): string {

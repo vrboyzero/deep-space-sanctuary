@@ -22,6 +22,7 @@ describe("tool behavior contract registry", () => {
       "delegate_parallel",
       "subtask_fan_in",
       "subtask_supervisor",
+      "subtask_worktree_dispose",
       "not_registered",
     ]).map((contract) => contract.name)).toEqual([
       "apply_patch",
@@ -30,6 +31,7 @@ describe("tool behavior contract registry", () => {
       "delegate_parallel",
       "subtask_fan_in",
       "subtask_supervisor",
+      "subtask_worktree_dispose",
     ]);
   });
 

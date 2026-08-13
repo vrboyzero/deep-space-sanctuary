@@ -86,6 +86,24 @@ export function createRuntimeBuildScriptPolicy(modeInput) {
   };
 }
 
+export function serializeRuntimeWorkspaceConfig(modeInput) {
+  const policy = createRuntimeBuildScriptPolicy(modeInput);
+  const serializeList = (label, values) => [
+    `${label}:`,
+    ...values.map((value) => `  - ${value}`),
+  ];
+  return [
+    "packages:",
+    "  - packages/*",
+    "  - apps/*",
+    "",
+    ...serializeList("onlyBuiltDependencies", policy.onlyBuiltDependencies),
+    "",
+    ...serializeList("ignoredBuiltDependencies", policy.ignoredBuiltDependencies),
+    "",
+  ].join("\n");
+}
+
 export function assertRuntimeBuildScriptPolicy({
   mode,
   onlyBuiltDependencies,

@@ -65,6 +65,7 @@ import {
 } from "../task-runtime.js";
 import { SubTaskSupervisorRuntime } from "../subtask-supervisor-runtime.js";
 import { SubTaskSupervisorControlRuntime } from "../subtask-supervisor-control-runtime.js";
+import { SubTaskSupervisorWorktreeDisposalRuntime } from "../subtask-supervisor-worktree-disposal-runtime.js";
 import { SubTaskSupervisorFanInRuntime } from "../subtask-supervisor-fan-in-runtime.js";
 import { SubTaskSupervisorFanInResolutionRuntime } from "../subtask-supervisor-fan-in-resolution-runtime.js";
 import {
@@ -301,6 +302,7 @@ import {
   delegateParallelTool,
   subtaskFanInTool,
   subtaskSupervisorTool,
+  subtaskWorktreeDisposeTool,
   conversationListTool,
   conversationReadTool,
   retrieveToolResultTool,
@@ -1125,6 +1127,7 @@ const gatewayToolPoolAssembler = new ToolPoolAssembler([
       delegateParallelTool,
       subtaskFanInTool,
       subtaskSupervisorTool,
+      subtaskWorktreeDisposeTool,
       conversationListTool,
       conversationReadTool,
       retrieveToolResultTool,
@@ -3241,6 +3244,11 @@ if (agentRegistry && toolsEnabled) {
     cancelSubTask: stopSubTask,
     steerSubTask: updateSubTask,
   });
+  const subTaskSupervisorWorktreeDisposalRuntime = new SubTaskSupervisorWorktreeDisposalRuntime({
+    stateDir,
+    runtimeStore: subTaskRuntimeStore,
+    worktreeRuntime: subTaskWorktreeRuntime,
+  });
   const subTaskSupervisorFanInRuntime = new SubTaskSupervisorFanInRuntime({
     runtimeStore: subTaskRuntimeStore,
     worktreeRuntime: subTaskWorktreeRuntime,
@@ -3254,6 +3262,7 @@ if (agentRegistry && toolsEnabled) {
     worktreeRuntime: subTaskWorktreeRuntime,
     supervisorRuntime: subTaskSupervisorRuntime,
     supervisorControlRuntime: subTaskSupervisorControlRuntime,
+    supervisorWorktreeDisposalRuntime: subTaskSupervisorWorktreeDisposalRuntime,
     supervisorFanInRuntime: subTaskSupervisorFanInRuntime,
     logger: {
       warn: (m, d) => logger.warn("task-runtime", m, d),
@@ -4362,6 +4371,9 @@ const taskCapabilityClosureResolver = createProductionTaskCapabilityClosureOwner
       ? { available: true, reasonCode: "available" }
       : { available: false, reasonCode: admission.metadata.commandSandboxReason };
   },
+  readLanguageToolchain: () => toolExecutor.getRegisteredToolNames().includes(codeIntelTool.definition.name)
+    ? { available: true, reasonCode: "typescript_language_service_available" }
+    : { available: false, reasonCode: "typescript_language_service_unavailable" },
   hasApprovalChannel: () => Boolean(pendingToolPermissionRuntime),
   readWorktree: async ({ conversationId, agentRunId }) => {
     const matches = (await userWorktreeRuntime.listStatus()).filter((status) => (

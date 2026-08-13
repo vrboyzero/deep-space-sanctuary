@@ -118,6 +118,8 @@ export function createSettingsController({
     cfgSubAgentMaxQueueSize,
     cfgSubAgentTimeoutMs,
     cfgSubAgentMaxDepth,
+    cfgSubAgentMaxVerifiers,
+    cfgSubAgentMaxCostUsd,
     cfgWorkflowMaxConcurrent,
     cfgWorkflowMaxQueueSize,
     cfgWorkflowTimeoutMs,
@@ -885,6 +887,8 @@ export function createSettingsController({
     if (cfgSubAgentMaxQueueSize) cfgSubAgentMaxQueueSize.value = c["BELLDANDY_SUB_AGENT_MAX_QUEUE_SIZE"] || "";
     if (cfgSubAgentTimeoutMs) cfgSubAgentTimeoutMs.value = c["BELLDANDY_SUB_AGENT_TIMEOUT_MS"] || "";
     if (cfgSubAgentMaxDepth) cfgSubAgentMaxDepth.value = c["BELLDANDY_SUB_AGENT_MAX_DEPTH"] || "";
+    if (cfgSubAgentMaxVerifiers) cfgSubAgentMaxVerifiers.value = c["BELLDANDY_SUB_AGENT_MAX_VERIFIERS"] || "";
+    if (cfgSubAgentMaxCostUsd) cfgSubAgentMaxCostUsd.value = c["BELLDANDY_SUB_AGENT_MAX_COST_USD"] || "";
     if (cfgWorkflowMaxConcurrent) cfgWorkflowMaxConcurrent.value = c["BELLDANDY_WORKFLOW_MAX_CONCURRENT"] || "";
     if (cfgWorkflowMaxQueueSize) cfgWorkflowMaxQueueSize.value = c["BELLDANDY_WORKFLOW_MAX_QUEUE_SIZE"] || "";
     if (cfgWorkflowTimeoutMs) cfgWorkflowTimeoutMs.value = c["BELLDANDY_WORKFLOW_TIMEOUT_MS"] || "";
@@ -2147,6 +2151,8 @@ export function createSettingsController({
     if (cfgSubAgentMaxQueueSize) updates["BELLDANDY_SUB_AGENT_MAX_QUEUE_SIZE"] = cfgSubAgentMaxQueueSize.value.trim();
     if (cfgSubAgentTimeoutMs) updates["BELLDANDY_SUB_AGENT_TIMEOUT_MS"] = cfgSubAgentTimeoutMs.value.trim();
     if (cfgSubAgentMaxDepth) updates["BELLDANDY_SUB_AGENT_MAX_DEPTH"] = cfgSubAgentMaxDepth.value.trim();
+    if (cfgSubAgentMaxVerifiers) updates["BELLDANDY_SUB_AGENT_MAX_VERIFIERS"] = cfgSubAgentMaxVerifiers.value.trim();
+    if (cfgSubAgentMaxCostUsd) updates["BELLDANDY_SUB_AGENT_MAX_COST_USD"] = cfgSubAgentMaxCostUsd.value.trim();
     if (cfgWorkflowMaxConcurrent) updates["BELLDANDY_WORKFLOW_MAX_CONCURRENT"] = cfgWorkflowMaxConcurrent.value.trim();
     if (cfgWorkflowMaxQueueSize) updates["BELLDANDY_WORKFLOW_MAX_QUEUE_SIZE"] = cfgWorkflowMaxQueueSize.value.trim();
     if (cfgWorkflowTimeoutMs) updates["BELLDANDY_WORKFLOW_TIMEOUT_MS"] = cfgWorkflowTimeoutMs.value.trim();

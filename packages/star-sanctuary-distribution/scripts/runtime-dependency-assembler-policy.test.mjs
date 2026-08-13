@@ -37,7 +37,7 @@ describe("runtime dependency assembler policy", () => {
 
     expect(slimArgs).toContain("--offline");
     expect(slimArgs).toContain("--frozen-lockfile");
-    expect(slimArgs).toContain("--no-optional");
+    expect(slimArgs).not.toContain("--no-optional");
     expect(slimArgs).not.toContain("--prefer-offline");
     expect(slimArgs).not.toContain("--no-frozen-lockfile");
     expect(fullArgs).not.toContain("--no-optional");
@@ -53,14 +53,12 @@ describe("runtime dependency assembler policy", () => {
       "install",
       "--lockfile-only",
       "--no-frozen-lockfile",
-      "--no-optional",
     ]));
     expect(fetchArgs).toEqual(expect.arrayContaining([
       "pnpm",
       "fetch",
       "--frozen-lockfile",
       "--prefer-offline",
-      "--no-optional",
     ]));
     expect(lockfileArgs).not.toContain("--offline");
     expect(fetchArgs).not.toContain("--offline");
@@ -84,6 +82,10 @@ describe("runtime dependency assembler policy", () => {
       scripts: { build: "tsc -b" },
       dependencies: { zod: "^3.24.0" },
       devDependencies: { typescript: "^5.7.3" },
+      optionalDependencies: {
+        fastembed: "^2.1.0",
+        "@esbuild/win32-x64": "0.25.12",
+      },
       exports: {
         ".": {
           types: "./dist/index.d.ts",
@@ -107,11 +109,32 @@ describe("runtime dependency assembler policy", () => {
         "sqlite-vec-windows-x64": "0.1.7-alpha.2",
       },
     });
-    expect(sanitizeRuntimeWorkspacePackageJson(sourcePackage)).toEqual({
+    expect(createRuntimeRootPackageJson({
+      packageManager: "pnpm@10.23.0",
+      engines: { node: ">=22.12.0" },
+      pnpm: {
+        overrides: { vite: "6.4.3" },
+        patchedDependencies: { "fastembed@2.1.0": "patches/fastembed.patch" },
+      },
+      sqliteVecVersion: "0.1.7-alpha.2",
+      excludedOptionalDependencies: ["fastembed"],
+    })).toEqual({
+      name: "star-sanctuary-portable-runtime",
+      private: true,
+      type: "module",
+      packageManager: "pnpm@10.23.0",
+      engines: { node: ">=22.12.0" },
+      pnpm: { overrides: { vite: "6.4.3" } },
+      dependencies: { "sqlite-vec-windows-x64": "0.1.7-alpha.2" },
+    });
+    expect(sanitizeRuntimeWorkspacePackageJson(sourcePackage, {
+      excludedOptionalDependencies: ["fastembed"],
+    })).toEqual({
       name: "@belldandy/example",
       type: "module",
       main: "./dist/index.js",
       dependencies: { zod: "^3.24.0" },
+      optionalDependencies: { "@esbuild/win32-x64": "0.25.12" },
       exports: {
         ".": {
           import: "./dist/index.js",

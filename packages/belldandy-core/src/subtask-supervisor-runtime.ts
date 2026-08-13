@@ -262,6 +262,13 @@ export class SubTaskSupervisorRuntime {
   }
 
   reattach(items: SubTaskSupervisorReattachInput[]): void {
+    const records: RuntimeRecord[] = [];
+    const occupiedKeys = new Set(this.records.keys());
+    const occupiedTaskIds = new Set(
+      [...this.records.values()]
+        .map((record) => record.binding.taskId)
+        .filter((taskId): taskId is string => taskId !== undefined),
+    );
     for (const item of items) {
       const binding = normalizePersistedBinding(item.binding);
       const taskId = normalizeBindingValue(item.taskId);
@@ -273,7 +280,7 @@ export class SubTaskSupervisorRuntime {
         );
       }
       const key = bindingKey(binding);
-      if (this.records.has(key) || this.findByTaskId(taskId)) {
+      if (occupiedKeys.has(key) || occupiedTaskIds.has(taskId)) {
         throw new SubTaskSupervisorAdmissionError(
           "binding_conflict",
           "Persisted parallel lane binding conflicts with an existing Supervisor record.",
@@ -282,7 +289,7 @@ export class SubTaskSupervisorRuntime {
       const admittedAtMs = nonNegativeTimestamp(item.admittedAtMs, this.now());
       const updatedAtMs = nonNegativeTimestamp(item.updatedAtMs, admittedAtMs);
       const finishedAtMs = nonNegativeTimestamp(item.finishedAtMs, updatedAtMs);
-      this.records.set(key, {
+      records.push({
         key,
         status: item.status === "done"
           ? "done"
@@ -306,6 +313,11 @@ export class SubTaskSupervisorRuntime {
         finishedAtMs,
         commandGeneration: 0,
       });
+      occupiedKeys.add(key);
+      occupiedTaskIds.add(taskId);
+    }
+    for (const record of records) {
+      this.records.set(record.key, record);
     }
     this.trimTerminalRecords();
   }

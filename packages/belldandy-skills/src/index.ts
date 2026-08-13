@@ -32,6 +32,8 @@ export type {
   SubTaskSupervisorFanInLaneInput,
   SubTaskSupervisorControlInput,
   SubTaskSupervisorControlItem,
+  SubTaskSupervisorWorktreeDisposalCapabilityInput,
+  SubTaskSupervisorWorktreeDisposalCapabilityResult,
   ToolRuntimeLaunchSpec,
   ToolExecutionRuntimeContext,
   CommandPermissionPreviewAction,
@@ -112,8 +114,16 @@ export {
   buildCommandPermissionPreview,
   sanitizeCommandPermissionPreview,
 } from "./command-plan.js";
-export { evaluateCommandSandboxAdmission } from "./command-sandbox.js";
-export type { CommandSandboxAdmission } from "./command-sandbox.js";
+export {
+  evaluateCommandSandboxAdmission,
+  probeOciCommandSandboxRuntime,
+  resolveOciCommandSandboxConfig,
+} from "./command-sandbox.js";
+export type {
+  CommandSandboxAdmission,
+  OciCommandSandboxConfig,
+  OciRuntimeProbeResult,
+} from "./command-sandbox.js";
 export {
   buildFailureToolCallResult,
   inferToolFailureKindFromError,
@@ -304,6 +314,7 @@ export {
   delegateParallelTool,
   subtaskFanInTool,
   subtaskSupervisorTool,
+  subtaskWorktreeDisposeTool,
 } from "./builtin/session/index.js";
 export { runWorkflowTool, RUN_WORKFLOW_TOOL_NAME } from "./builtin/run-workflow.js";
 export {

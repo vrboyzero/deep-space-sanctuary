@@ -83,6 +83,9 @@ jobs:
       - name: Verify coding CI schemas and compatibility
         run: pnpm verify:coding-ci
 
+      - name: Verify coding-run client conformance
+        run: pnpm verify:coding-run-client
+
       - name: Verify coding benchmark contracts
         run: pnpm verify:coding-benchmark
 

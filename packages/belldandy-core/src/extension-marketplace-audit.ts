@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { atomicWriteMarketplaceJson } from "./extension-marketplace-atomic-write.js";
 import {
   getExtensionMarketplaceStateDir,
   getInstalledExtensionsLedgerPath,
@@ -50,10 +51,7 @@ function getMarketplaceExtensionAuditPath(stateDir: string, auditId: string): st
 
 async function atomicWriteAudit(stateDir: string, record: MarketplaceExtensionAuditRecord): Promise<void> {
   const targetPath = getMarketplaceExtensionAuditPath(stateDir, record.auditId);
-  await fs.mkdir(path.dirname(targetPath), { recursive: true });
-  const tempPath = `${targetPath}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(tempPath, `${JSON.stringify(record, null, 2)}\n`, "utf-8");
-  await fs.rename(tempPath, targetPath);
+  await atomicWriteMarketplaceJson(targetPath, record, { trailingNewline: true });
 }
 
 function parseAuditRecord(value: unknown): MarketplaceExtensionAuditRecord {

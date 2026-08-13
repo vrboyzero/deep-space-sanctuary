@@ -20,12 +20,12 @@ test("fastembed resolves tar 7 through its ESM compatibility patch", () => {
         "utf8",
     );
 
-    expect(rootPackage.pnpm?.overrides?.["fastembed@2.1.0>tar"]).toBe("7.5.20");
+    expect(rootPackage.pnpm?.overrides?.["fastembed@2.1.0>tar"]).toBe("7.5.21");
     expect(rootPackage.pnpm?.patchedDependencies?.["fastembed@2.1.0"]).toBe(
         "patches/fastembed@2.1.0.patch",
     );
     expect(lockfile).not.toContain("tar@6.2.1:");
-    expect(lockfile).toContain("tar@7.5.20:");
+    expect(lockfile).toContain("tar@7.5.21:");
     expect(patch).toContain('-import tar from "tar";');
     expect(patch).toContain('+import * as tar from "tar";');
 });

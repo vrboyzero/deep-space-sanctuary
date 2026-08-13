@@ -197,4 +197,51 @@ describe("ManagedWorktreeRuntime", () => {
       await fs.rm(fixture.rootDir, { recursive: true, force: true }).catch(() => {});
     }
   }, 20_000);
+
+  it("serializes concurrent prepare and cleanup mutations across runtime instances", async () => {
+    const fixture = await createGitFixture("belldandy-managed-worktree-concurrent-");
+    try {
+      for (let cycle = 0; cycle < 4; cycle += 1) {
+        const runtimes = Array.from({ length: 4 }, () => new ManagedWorktreeRuntime(fixture.stateDir));
+        const prepared = await Promise.all(runtimes.map((runtime, index) => runtime.prepare({
+          id: `concurrent-${cycle}-${index}`,
+          ownerKind: "subtask",
+          cwd: fixture.nestedDir,
+        })));
+        expect(new Set(prepared.map((item) => item.worktreePath))).toHaveLength(4);
+        expect((await runGit(["worktree", "list", "--porcelain"], fixture.repoDir))
+          .split(/\r?\n/u).filter((line) => line.startsWith("worktree "))).toHaveLength(5);
+
+        await expect(Promise.all(prepared.map((worktree, index) => (
+          runtimes[index]!.cleanup(worktree, undefined)
+        )))).resolves.toEqual(Array.from({ length: 4 }, () => expect.objectContaining({ status: "removed" })));
+        expect((await runGit(["worktree", "list", "--porcelain"], fixture.repoDir))
+          .split(/\r?\n/u).filter((line) => line.startsWith("worktree "))).toHaveLength(1);
+        expect(await runGit(["branch", "--list", "belldandy-concurrent-*"], fixture.repoDir)).toBe("");
+      }
+    } finally {
+      await fs.rm(fixture.rootDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 30_000);
+
+  it("does not remove a pre-existing branch when prepare fails before ownership", async () => {
+    const fixture = await createGitFixture("belldandy-managed-worktree-existing-branch-");
+    try {
+      const branch = "belldandy-existing-branch";
+      const head = await runGit(["rev-parse", "HEAD"], fixture.repoDir);
+      await runGit(["branch", branch, head], fixture.repoDir);
+      const runtime = new ManagedWorktreeRuntime(fixture.stateDir);
+
+      await expect(runtime.prepare({
+        id: "existing-branch",
+        ownerKind: "subtask",
+        cwd: fixture.nestedDir,
+      })).rejects.toThrow(/branch/i);
+      expect(await runGit(["rev-parse", branch], fixture.repoDir)).toBe(head);
+      expect((await runGit(["worktree", "list", "--porcelain"], fixture.repoDir))
+        .split(/\r?\n/u).filter((line) => line.startsWith("worktree "))).toHaveLength(1);
+    } finally {
+      await fs.rm(fixture.rootDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 15_000);
 });

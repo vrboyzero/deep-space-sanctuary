@@ -13,7 +13,10 @@ import {
   serializeRuntimeDependencySnapshot,
 } from "./runtime-dependency-snapshot-policy.mjs";
 import { createRuntimeDependencyStoreSnapshot } from "./runtime-dependency-store-snapshot-policy.mjs";
-import { resolveRuntimeBuildScriptPolicy } from "./runtime-build-script-policy.mjs";
+import {
+  resolveRuntimeBuildScriptPolicy,
+  serializeRuntimeWorkspaceConfig,
+} from "./runtime-build-script-policy.mjs";
 import { assertPathInsideRoots, resetSandboxDir } from "./sandbox-paths.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")), "..", "..", "..");
@@ -91,7 +94,9 @@ function copyRuntimePackageJson(src, dest) {
   ensureDir(path.dirname(dest));
   fs.writeFileSync(
     dest,
-    `${JSON.stringify(sanitizeRuntimeWorkspacePackageJson(packageJson), null, 2)}\n`,
+    `${JSON.stringify(sanitizeRuntimeWorkspacePackageJson(packageJson, {
+      excludedOptionalDependencies: distributionPolicy.excludedOptionalDependencies,
+    }), null, 2)}\n`,
     "utf-8",
   );
 }
@@ -102,6 +107,7 @@ function writeRuntimePackageJson() {
     engines: rootPackageJson.engines,
     pnpm: rootPackageJson.pnpm,
     sqliteVecVersion,
+    excludedOptionalDependencies: distributionPolicy.excludedOptionalDependencies,
   });
   fs.writeFileSync(
     path.join(runtimeRoot, "package.json"),
@@ -146,7 +152,11 @@ function preparePrefetchWorkspace() {
   ensureDir(runtimeAppsRoot);
 
   writeRuntimePackageJson();
-  copyFile(path.join(workspaceRoot, "pnpm-workspace.yaml"), path.join(runtimeRoot, "pnpm-workspace.yaml"));
+  fs.writeFileSync(
+    path.join(runtimeRoot, "pnpm-workspace.yaml"),
+    serializeRuntimeWorkspaceConfig(mode),
+    "utf-8",
+  );
   copyFile(path.join(workspaceRoot, "pnpm-lock.yaml"), path.join(runtimeRoot, "pnpm-lock.yaml"));
   copyRuntimeDependencyPatches();
 
@@ -242,12 +252,13 @@ async function main() {
     throw new Error(`Portable dependency prefetch currently only targets Windows. Current platform: ${platform}`);
   }
 
-  resolveRuntimeBuildScriptPolicy({ cwd: workspaceRoot, mode });
+  resolveRuntimeBuildScriptPolicy({ cwd: workspaceRoot, mode: "workspace" });
   resetSandboxDir(portablePnpmStoreDir, {
     allowedRoots: [portableCacheRoot],
     label: "reset portable pnpm store",
   });
   preparePrefetchWorkspace();
+  resolveRuntimeBuildScriptPolicy({ cwd: runtimeRoot, mode });
   prefetchRuntimeDependencies();
   // Descriptor 只在 lockfile resolution 与 store fetch 都成功后发布，避免部分 prefetch 被 assembler 接纳。
   await writeRuntimeDependencySnapshot();

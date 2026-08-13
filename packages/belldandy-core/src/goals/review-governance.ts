@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import crypto from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { atomicWriteGoalJson } from "./atomic-write.js";
 import type {
   GoalCheckpointPolicyMode,
   GoalCapabilityRiskLevel,
@@ -176,13 +175,6 @@ function normalizeReviewNotification(value: unknown, index: number, goalId?: str
   };
 }
 
-async function atomicWriteJson(targetPath: string, value: unknown): Promise<void> {
-  mkdirSync(path.dirname(targetPath), { recursive: true });
-  const tempPath = `${targetPath}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(tempPath, JSON.stringify(value, null, 2), "utf-8");
-  await fs.rename(tempPath, targetPath);
-}
-
 export function getReviewGovernanceConfigPath(stateDir: string): string {
   return path.join(stateDir, "governance", "review-governance.json");
 }
@@ -259,7 +251,7 @@ export async function readReviewGovernanceConfig(stateDir: string): Promise<Goal
 }
 
 export async function writeReviewGovernanceConfig(stateDir: string, config: GoalReviewGovernanceConfig): Promise<void> {
-  await atomicWriteJson(getReviewGovernanceConfigPath(stateDir), config);
+  await atomicWriteGoalJson(getReviewGovernanceConfigPath(stateDir), config);
 }
 
 export function getGoalReviewNotificationsPath(goal: Pick<LongTermGoal, "runtimeRoot">): string {
@@ -304,5 +296,5 @@ export async function readGoalReviewNotifications(goal: Pick<LongTermGoal, "runt
 }
 
 export async function writeGoalReviewNotifications(goal: Pick<LongTermGoal, "runtimeRoot">, state: GoalReviewNotificationState): Promise<void> {
-  await atomicWriteJson(getGoalReviewNotificationsPath(goal), state);
+  await atomicWriteGoalJson(getGoalReviewNotificationsPath(goal), state);
 }

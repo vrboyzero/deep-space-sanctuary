@@ -48,6 +48,7 @@ import {
   parseAssistantExternalDeliveryPreference,
 } from "../assistant-mode-runtime.js";
 import { buildChannelSecurityDoctorReport } from "../channel-security-doctor.js";
+import { buildCodingRuntimePreflightDoctorReport } from "../coding-runtime-preflight-doctor.js";
 import {
   applyTimelineProjectionFilter,
   applyTranscriptExportProjection,
@@ -931,6 +932,17 @@ export async function handleSystemDoctorMethod(
   });
   const optionalCapabilitiesStage = captureDoctorStage(doctorPerformanceStages, "optional_capabilities", () => buildOptionalCapabilitiesDoctorReport());
   const codeIntelGoStage = captureDoctorStage(doctorPerformanceStages, "code_intel_go", () => buildGoCodeIntelDoctorReport());
+  const codingRuntimePreflightStage = captureDoctorStage(doctorPerformanceStages, "coding_runtime_preflight", async () => {
+    const [optionalCapabilitiesResult, codeIntelGoResult] = await Promise.all([
+      optionalCapabilitiesStage,
+      codeIntelGoStage,
+    ]);
+    return await buildCodingRuntimePreflightDoctorReport({
+      stateDir: ctx.stateDir,
+      optionalCapabilities: unwrapDoctorStageResult(optionalCapabilitiesResult),
+      goCodeIntel: unwrapDoctorStageResult(codeIntelGoResult),
+    });
+  });
   const cameraRuntimeStage = captureDoctorStage(doctorPerformanceStages, "camera_runtime", () => buildCameraRuntimeDoctorReport({
     context: {
       conversationId: "system.doctor",
@@ -1115,6 +1127,7 @@ export async function handleSystemDoctorMethod(
     memoryEmbeddingCacheResult,
     optionalCapabilitiesResult,
     codeIntelGoResult,
+    codingRuntimePreflightResult,
     cameraRuntimeResult,
     extensionMarketplaceResult,
     dreamRuntimeResult,
@@ -1135,6 +1148,7 @@ export async function handleSystemDoctorMethod(
     memoryEmbeddingCacheStage,
     optionalCapabilitiesStage,
     codeIntelGoStage,
+    codingRuntimePreflightStage,
     cameraRuntimeStage,
     extensionMarketplaceStage,
     dreamRuntimeStage,
@@ -1156,6 +1170,7 @@ export async function handleSystemDoctorMethod(
   const memoryEmbeddingCache = unwrapDoctorStageResult(memoryEmbeddingCacheResult);
   const optionalCapabilities = unwrapDoctorStageResult(optionalCapabilitiesResult);
   const codeIntelGo = unwrapDoctorStageResult(codeIntelGoResult);
+  const codingRuntimePreflight = unwrapDoctorStageResult(codingRuntimePreflightResult);
   const cameraRuntime = unwrapDoctorStageResult(cameraRuntimeResult);
   const extensionMarketplace = unwrapDoctorStageResult(extensionMarketplaceResult);
   const dreamRuntime = unwrapDoctorStageResult(dreamRuntimeResult);
@@ -1339,6 +1354,12 @@ export async function handleSystemDoctorMethod(
       ? "warn"
       : "pass",
     message: codeIntelGo.summary.headline,
+  });
+  checks.push({
+    id: "coding_runtime_preflight",
+    name: "Coding Runtime Preflight",
+    status: codingRuntimePreflight.summary.startupReady ? "pass" : "fail",
+    message: codingRuntimePreflight.summary.headline,
   });
   // ── 动态工作流 WorkflowRuntime 观测 ──
   if (ctx.workflowRuntime) {
@@ -2120,6 +2141,7 @@ export async function handleSystemDoctorMethod(
       deploymentBackends,
       optionalCapabilities,
       codeIntelGo,
+      codingRuntimePreflight,
       ...(cameraRuntime ? { cameraRuntime } : {}),
       ...(runtimeResilience ? { runtimeResilience } : {}),
       ...(runtimeResilienceDiagnostics ? { runtimeResilienceDiagnostics } : {}),

@@ -9,6 +9,7 @@ import type {
   SubTaskSupervisorReviewEvidence,
   SubTaskSupervisorTestEvidence,
 } from "./subtask-supervisor-fan-in-runtime.js";
+import { withFileMutationLock } from "./file-mutation-lock.js";
 import type { SubTaskSupervisorExactBinding } from "./subtask-supervisor-runtime.js";
 import { UserWorktreeRuntime } from "./user-worktree-runtime.js";
 
@@ -68,6 +69,7 @@ type FanInReceiptRecord = {
 export class SubTaskSupervisorFanInResolutionRuntime {
   private readonly receiptsDir: string;
   private readonly userWorktrees: UserWorktreeRuntime;
+  private readonly pendingConfirms = new Map<string, Promise<SubTaskSupervisorFanInResolutionResult>>();
 
   constructor(input: { stateDir: string }) {
     const stateDir = path.resolve(input.stateDir);
@@ -156,63 +158,98 @@ export class SubTaskSupervisorFanInResolutionRuntime {
       return failed("confirmation_required");
     }
     validateResolutionInput(input);
-    const receipt = await this.readReceipt(input.receiptId);
-    if (!receipt || receipt.requestHash !== hashResolutionInput(input)) return failed("receipt_mismatch");
-    if (receipt.result) return receipt.result;
-    if (receipt.status === "conflict") {
-      const result: SubTaskSupervisorFanInResolutionResult = {
-        status: "conflict",
-        applied: false,
-        duplicateSideEffect: false,
-        blockers: ["conflict_resolution_required"],
-      };
-      await this.updateReceipt({ ...receipt, result });
-      return result;
-    }
-    if (!receipt.resolutionWorktreeId || !receipt.applyReceiptId) return failed("receipt_incomplete");
-
-    const applied = await this.userWorktrees.confirm({
-      operation: "apply",
-      worktreeId: receipt.resolutionWorktreeId,
-      receiptId: receipt.applyReceiptId,
-      confirm: true,
-    });
-    const result: SubTaskSupervisorFanInResolutionResult = applied.outcome === "succeeded" && applied.applied
-      ? {
-          status: "completed",
-          applied: true,
-          duplicateSideEffect: false,
-          blockers: [],
-          ...(applied.audit?.artifactId ? { auditArtifactId: applied.audit.artifactId } : {}),
-        }
-      : {
-          status: applied.outcome === "uncertain" ? "uncertain" : "failed",
-          applied: applied.applied,
-          duplicateSideEffect: false,
-          blockers: [...applied.blockers],
-          ...(applied.audit?.artifactId ? { auditArtifactId: applied.audit.artifactId } : {}),
-        };
-    await this.updateReceipt({ ...receipt, result });
-    if (result.status === "completed") {
-      const status = await this.userWorktrees.getStatus(receipt.resolutionWorktreeId);
-      if (status) {
-        await runGit(["restore", "--source", "HEAD", "--staged", "--worktree", "--", "."], status.worktreePath);
-        const cleanup = await this.userWorktrees.cleanupConfirmedApply({
-          worktreeId: receipt.resolutionWorktreeId,
-          receiptId: receipt.applyReceiptId,
-        });
-        if (!cleanup.removed) {
-          const uncertain = {
-            ...result,
-            status: "uncertain" as const,
-            blockers: cleanup.blockers.length > 0 ? cleanup.blockers : ["resolution_cleanup_failed"],
-          };
-          await this.updateReceipt({ ...receipt, result: uncertain });
-          Object.assign(result, uncertain);
-        }
+    const requestHash = hashResolutionInput(input);
+    const pendingKey = `${input.receiptId}\0${requestHash}`;
+    const existing = this.pendingConfirms.get(pendingKey);
+    if (existing) return existing;
+    const pending = this.confirmOnce(input, requestHash);
+    this.pendingConfirms.set(pendingKey, pending);
+    try {
+      return await pending;
+    } finally {
+      if (this.pendingConfirms.get(pendingKey) === pending) {
+        this.pendingConfirms.delete(pendingKey);
       }
     }
-    return result;
+  }
+
+  private async confirmOnce(
+    input: SubTaskSupervisorFanInResolutionConfirmInput,
+    requestHash: string,
+  ): Promise<SubTaskSupervisorFanInResolutionResult> {
+    return withFileMutationLock(this.receiptPath(input.receiptId), async () => {
+      const receipt = await this.readReceipt(input.receiptId);
+      if (!receipt || receipt.requestHash !== requestHash) return failed("receipt_mismatch");
+      if (receipt.result) {
+        return receipt.result.status === "completed"
+          ? this.cleanupCompletedReceipt(receipt, receipt.result)
+          : receipt.result;
+      }
+      if (receipt.status === "conflict") {
+        const result: SubTaskSupervisorFanInResolutionResult = {
+          status: "conflict",
+          applied: false,
+          duplicateSideEffect: false,
+          blockers: ["conflict_resolution_required"],
+        };
+        await this.updateReceipt({ ...receipt, result });
+        return result;
+      }
+      if (!receipt.resolutionWorktreeId || !receipt.applyReceiptId) return failed("receipt_incomplete");
+
+      const applied = await this.userWorktrees.confirm({
+        operation: "apply",
+        worktreeId: receipt.resolutionWorktreeId,
+        receiptId: receipt.applyReceiptId,
+        confirm: true,
+      });
+      const result: SubTaskSupervisorFanInResolutionResult = applied.outcome === "succeeded" && applied.applied
+        ? {
+            status: "completed",
+            applied: true,
+            duplicateSideEffect: false,
+            blockers: [],
+            ...(applied.audit?.artifactId ? { auditArtifactId: applied.audit.artifactId } : {}),
+          }
+        : {
+            status: applied.outcome === "uncertain" ? "uncertain" : "failed",
+            applied: applied.applied,
+            duplicateSideEffect: false,
+            blockers: [...applied.blockers],
+            ...(applied.audit?.artifactId ? { auditArtifactId: applied.audit.artifactId } : {}),
+          };
+      await this.updateReceipt({ ...receipt, result });
+      if (result.status === "completed") {
+        return this.cleanupCompletedReceipt(receipt, result);
+      }
+      return result;
+    });
+  }
+
+  private async cleanupCompletedReceipt(
+    receipt: FanInReceiptRecord,
+    result: SubTaskSupervisorFanInResolutionResult,
+  ): Promise<SubTaskSupervisorFanInResolutionResult> {
+    if (!receipt.resolutionWorktreeId || !receipt.applyReceiptId) {
+      const uncertain = { ...result, status: "uncertain" as const, blockers: ["receipt_incomplete"] };
+      await this.updateReceipt({ ...receipt, result: uncertain });
+      return uncertain;
+    }
+    const status = await this.userWorktrees.getStatus(receipt.resolutionWorktreeId);
+    if (!status) return result;
+    await runGit(["restore", "--source", "HEAD", "--staged", "--worktree", "--", "."], status.worktreePath);
+    const cleanup = await this.userWorktrees.cleanupConfirmedApply({
+      worktreeId: receipt.resolutionWorktreeId,
+      receiptId: receipt.applyReceiptId,
+    });
+    if (cleanup.removed) return result;
+    const uncertain = {
+      ...result,
+      status: "uncertain" as const,
+      blockers: cleanup.blockers.length > 0 ? cleanup.blockers : ["resolution_cleanup_failed"],
+    };
+    await this.updateReceipt({ ...receipt, result: uncertain });
+    return uncertain;
   }
 
   private async cleanupResolutionWorktree(worktreeId: string, worktreePath: string): Promise<void> {

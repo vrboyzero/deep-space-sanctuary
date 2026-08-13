@@ -15,6 +15,11 @@
       "types": "./dist/cron/index.d.ts",
       "import": "./dist/cron/index.js",
       "default": "./dist/cron/index.js"
+    },
+    "./coding-run-client": {
+      "types": "./dist/coding-run-client.d.ts",
+      "import": "./dist/coding-run-client.js",
+      "default": "./dist/coding-run-client.js"
     }
   },
   "bin": {

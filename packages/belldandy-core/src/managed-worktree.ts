@@ -4,6 +4,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { withFileMutationLock } from "./file-mutation-lock.js";
+
 const execFile = promisify(execFileCallback);
 
 const MAX_UNTRACKED_FILE_BYTES = 16 * 1024 * 1024;
@@ -52,6 +54,11 @@ export type ManagedWorktreeCleanupResult = {
   worktreePath: string;
   branch: string;
   reason?: string;
+};
+
+export type ManagedWorktreeContentInspection = {
+  dirty: boolean;
+  sha256: string;
 };
 
 export type ManagedWorktreePrepareInput = {
@@ -154,12 +161,14 @@ async function pathExists(targetPath: string): Promise<boolean> {
 export class ManagedWorktreeRuntime {
   private readonly worktreesDir: string;
   private readonly artifactsDir: string;
+  private readonly mutationLocksDir: string;
   private readonly logger?: RuntimeLogger;
 
   constructor(stateDir: string, logger?: RuntimeLogger) {
     const resolvedStateDir = path.resolve(stateDir);
     this.worktreesDir = path.join(resolvedStateDir, "subtasks", "worktrees");
     this.artifactsDir = path.join(resolvedStateDir, "subtasks", "worktree-artifacts");
+    this.mutationLocksDir = path.join(resolvedStateDir, "subtasks", "worktree-mutation-locks");
     this.logger = logger;
   }
 
@@ -167,59 +176,67 @@ export class ManagedWorktreeRuntime {
     const id = normalizeId(input.id);
     const requestedCwd = path.resolve(input.cwd);
     const repoRoot = await this.resolveRepositoryRoot(requestedCwd);
-    const sourceStatus = await runGit(["status", "--porcelain=v1", "-z"], repoRoot);
-    if (sourceStatus) {
-      throw new Error("Managed worktree requires a clean source repository; tracked, untracked, or unmerged changes were detected.");
-    }
+    return this.withRepoMutationLock(repoRoot, async () => {
+      const sourceStatus = await runGit(["status", "--porcelain=v1", "-z"], repoRoot);
+      if (sourceStatus) {
+        throw new Error("Managed worktree requires a clean source repository; tracked, untracked, or unmerged changes were detected.");
+      }
 
-    const relativeCwd = path.relative(repoRoot, requestedCwd);
-    if (relativeCwd.startsWith("..") || path.isAbsolute(relativeCwd)) {
-      throw new Error(`Managed worktree cwd is outside the resolved repository root: ${requestedCwd}`);
-    }
+      const relativeCwd = path.relative(repoRoot, requestedCwd);
+      if (relativeCwd.startsWith("..") || path.isAbsolute(relativeCwd)) {
+        throw new Error(`Managed worktree cwd is outside the resolved repository root: ${requestedCwd}`);
+      }
 
-    const baseRef = await runGit(["rev-parse", "HEAD"], repoRoot);
-    if (!baseRef) {
-      throw new Error("Managed worktree requires a source repository with a resolved HEAD commit.");
-    }
+      const baseRef = await runGit(["rev-parse", "HEAD"], repoRoot);
+      if (!baseRef) {
+        throw new Error("Managed worktree requires a source repository with a resolved HEAD commit.");
+      }
 
-    const worktreePath = path.join(this.worktreesDir, id);
-    const branch = buildBranchName(id);
-    await fs.mkdir(this.worktreesDir, { recursive: true });
-    if (await pathExists(worktreePath)) {
-      throw new Error(`Managed worktree path already exists: ${worktreePath}`);
-    }
+      const worktreePath = path.join(this.worktreesDir, id);
+      const branch = buildBranchName(id);
+      await fs.mkdir(this.worktreesDir, { recursive: true });
+      if (await pathExists(worktreePath)) {
+        throw new Error(`Managed worktree path already exists: ${worktreePath}`);
+      }
+      if (await runGit(["branch", "--list", branch], repoRoot)) {
+        throw new Error(`Managed worktree branch already exists: ${branch}`);
+      }
 
-    this.logger?.info?.("Creating managed worktree.", {
-      id,
-      ownerKind: input.ownerKind,
-      repoRoot,
-      requestedCwd,
-      worktreePath,
-      branch,
-      baseRef,
+      this.logger?.info?.("Creating managed worktree.", {
+        id,
+        ownerKind: input.ownerKind,
+        repoRoot,
+        requestedCwd,
+        worktreePath,
+        branch,
+        baseRef,
+      });
+
+      try {
+        await runGit(["worktree", "add", "-b", branch, worktreePath, baseRef], repoRoot);
+      } catch (error) {
+        const rollback = await this.rollbackFailedPrepare({ worktreePath, repoRoot, branch, baseRef });
+        throw new Error(
+          `Failed to create managed worktree: ${toErrorMessage(error)}${rollback ? `; ${rollback}` : ""}`,
+        );
+      }
+
+      const candidateCwd = relativeCwd && relativeCwd !== "."
+        ? path.join(worktreePath, relativeCwd)
+        : worktreePath;
+      const resolvedCwd = await pathExists(candidateCwd) ? candidateCwd : worktreePath;
+      return {
+        id,
+        ownerKind: input.ownerKind,
+        requestedCwd,
+        resolvedCwd,
+        worktreePath,
+        repoRoot,
+        branch,
+        baseRef,
+        status: "created",
+      };
     });
-
-    try {
-      await runGit(["worktree", "add", "-b", branch, worktreePath, baseRef], repoRoot);
-    } catch (error) {
-      throw new Error(`Failed to create managed worktree: ${toErrorMessage(error)}`);
-    }
-
-    const candidateCwd = relativeCwd && relativeCwd !== "."
-      ? path.join(worktreePath, relativeCwd)
-      : worktreePath;
-    const resolvedCwd = await pathExists(candidateCwd) ? candidateCwd : worktreePath;
-    return {
-      id,
-      ownerKind: input.ownerKind,
-      requestedCwd,
-      resolvedCwd,
-      worktreePath,
-      repoRoot,
-      branch,
-      baseRef,
-      status: "created",
-    };
   }
 
   /**
@@ -228,16 +245,17 @@ export class ManagedWorktreeRuntime {
    */
   async abortPreparedWorktree(worktree: ManagedWorktree): Promise<ManagedWorktreeCleanupResult> {
     this.assertManagedWorktree(worktree);
-    const reconciled = await this.reconcile(worktree);
-    if (reconciled.status !== "created") {
-      return {
-        status: "remove_failed",
-        worktreePath: worktree.worktreePath,
-        branch: worktree.branch,
-        reason: reconciled.error ?? "Prepared worktree is unavailable.",
-      };
-    }
-    try {
+    return this.withRepoMutationLock(worktree.repoRoot, async () => {
+      const reconciled = await this.reconcile(worktree);
+      if (reconciled.status !== "created") {
+        return {
+          status: "remove_failed",
+          worktreePath: worktree.worktreePath,
+          branch: worktree.branch,
+          reason: reconciled.error ?? "Prepared worktree is unavailable.",
+        };
+      }
+      try {
       const [status, branchHead] = await Promise.all([
         runGit(["status", "--porcelain=v1", "-z"], reconciled.worktreePath),
         runGit(["rev-parse", "--verify", reconciled.branch], reconciled.repoRoot),
@@ -251,14 +269,15 @@ export class ManagedWorktreeRuntime {
       if (branchListing) await runGit(["branch", "-d", reconciled.branch], reconciled.repoRoot);
       await runGit(["worktree", "prune"], reconciled.repoRoot).catch(() => "");
       return { status: "removed", worktreePath: reconciled.worktreePath, branch: reconciled.branch };
-    } catch (error) {
-      return {
-        status: "remove_failed",
-        worktreePath: reconciled.worktreePath,
-        branch: reconciled.branch,
-        reason: toErrorMessage(error),
-      };
-    }
+      } catch (error) {
+        return {
+          status: "remove_failed",
+          worktreePath: reconciled.worktreePath,
+          branch: reconciled.branch,
+          reason: toErrorMessage(error),
+        };
+      }
+    });
   }
 
   async reconcile(worktree: ManagedWorktree): Promise<ManagedWorktree> {
@@ -291,6 +310,57 @@ export class ManagedWorktreeRuntime {
       resolvedCwd: await pathExists(candidateCwd) ? candidateCwd : worktree.worktreePath,
       status: "created",
       error: undefined,
+    };
+  }
+
+  /** Computes a bounded digest without persisting an artifact or exposing file content. */
+  async inspectContent(worktree: ManagedWorktree): Promise<ManagedWorktreeContentInspection> {
+    this.assertManagedWorktree(worktree);
+    const reconciled = await this.reconcile(worktree);
+    if (reconciled.status !== "created") {
+      throw new Error(`Managed worktree content is unavailable: ${reconciled.error ?? reconciled.status}`);
+    }
+    const patch = await runGitOutput(
+      ["diff", "--binary", "--no-ext-diff", reconciled.baseRef, "--"],
+      reconciled.worktreePath,
+      MAX_UNTRACKED_BACKUP_BYTES + 2 * 1024 * 1024,
+    );
+    const untrackedPaths = parseNullDelimited(
+      await runGit(["ls-files", "--others", "--exclude-standard", "-z"], reconciled.worktreePath),
+    ).sort();
+    const ignoredPaths = parseNullDelimited(
+      await runGit(["ls-files", "--others", "--ignored", "--exclude-standard", "-z"], reconciled.worktreePath),
+    ).sort();
+    const contentPaths = [
+      ...untrackedPaths.map((relativePath) => ({ relativePath, kind: "untracked" })),
+      ...ignoredPaths
+        .filter((relativePath) => !untrackedPaths.includes(relativePath))
+        .map((relativePath) => ({ relativePath, kind: "ignored" })),
+    ];
+    const digest = createHash("sha256")
+      .update("managed-worktree-content/v1\0")
+      .update(patch)
+      .update("\0untracked\0");
+    let totalBytes = 0;
+    for (const { relativePath, kind } of contentPaths) {
+      if (!isSafeRelativePath(relativePath)) {
+        throw new Error(`Untracked worktree path is unsafe: ${relativePath}`);
+      }
+      const sourcePath = path.resolve(reconciled.worktreePath, relativePath);
+      if (!isInside(reconciled.worktreePath, sourcePath)) {
+        throw new Error(`Untracked worktree path escapes the managed root: ${relativePath}`);
+      }
+      const stat = await fs.stat(sourcePath);
+      if (!stat.isFile() || stat.size > MAX_UNTRACKED_FILE_BYTES || totalBytes + stat.size > MAX_UNTRACKED_BACKUP_BYTES) {
+        throw new Error(`Untracked worktree content exceeds the inspection limit: ${relativePath}`);
+      }
+      const content = await fs.readFile(sourcePath);
+      totalBytes += content.byteLength;
+      digest.update(kind).update("\0").update(relativePath).update("\0").update(content).update("\0");
+    }
+    return {
+      dirty: Boolean(patch || contentPaths.length > 0),
+      sha256: digest.digest("hex"),
     };
   }
 
@@ -422,7 +492,8 @@ export class ManagedWorktreeRuntime {
       return { status: "remove_failed", worktreePath: worktree.worktreePath, branch: worktree.branch, reason: "Source repository root is missing." };
     }
 
-    try {
+    return this.withRepoMutationLock(worktree.repoRoot, async () => {
+      try {
       if (worktree.ownerKind === "workflow_call") {
         const currentBranch = await runGit(["branch", "--show-current"], worktree.worktreePath);
         if (currentBranch !== worktree.branch) {
@@ -451,14 +522,15 @@ export class ManagedWorktreeRuntime {
       }
       await runGit(["worktree", "prune"], worktree.repoRoot).catch(() => "");
       return { status: "removed", worktreePath: worktree.worktreePath, branch: worktree.branch };
-    } catch (error) {
-      return {
-        status: "remove_failed",
-        worktreePath: worktree.worktreePath,
-        branch: worktree.branch,
-        reason: toErrorMessage(error),
-      };
-    }
+      } catch (error) {
+        return {
+          status: "remove_failed",
+          worktreePath: worktree.worktreePath,
+          branch: worktree.branch,
+          reason: toErrorMessage(error),
+        };
+      }
+    });
   }
 
   async resolveRepositoryRoot(cwd: string): Promise<string> {
@@ -473,6 +545,49 @@ export class ManagedWorktreeRuntime {
 
   private isManagedWorktreePath(targetPath: string): boolean {
     return isInside(this.worktreesDir, targetPath);
+  }
+
+  private withRepoMutationLock<T>(repoRoot: string, operation: () => Promise<T>): Promise<T> {
+    const identity = createHash("sha256")
+      .update(path.resolve(repoRoot).replaceAll("\\", "/").toLowerCase())
+      .digest("hex");
+    return withFileMutationLock(
+      path.join(this.mutationLocksDir, `${identity}.json`),
+      operation,
+      { timeoutMs: 120_000, staleAfterMs: 300_000 },
+    );
+  }
+
+  private async rollbackFailedPrepare(input: {
+    worktreePath: string;
+    repoRoot: string;
+    branch: string;
+    baseRef: string;
+  }): Promise<string | undefined> {
+    try {
+      if (await pathExists(input.worktreePath)) {
+        const [resolvedRoot, currentBranch, status] = await Promise.all([
+          runGit(["rev-parse", "--show-toplevel"], input.worktreePath),
+          runGit(["branch", "--show-current"], input.worktreePath),
+          runGit(["status", "--porcelain=v1", "-z"], input.worktreePath),
+        ]);
+        if (path.resolve(resolvedRoot) !== path.resolve(input.worktreePath)
+          || currentBranch !== input.branch
+          || status) {
+          return "partial worktree was retained because its ownership or content drifted";
+        }
+        await runGit(["worktree", "remove", "--force", input.worktreePath], input.repoRoot);
+      }
+      const branchHead = await runGit(["rev-parse", "--verify", input.branch], input.repoRoot).catch(() => "");
+      if (branchHead && branchHead !== input.baseRef) {
+        return "partial branch was retained because its head drifted";
+      }
+      if (branchHead) await runGit(["branch", "-D", input.branch], input.repoRoot);
+      await runGit(["worktree", "prune"], input.repoRoot).catch(() => "");
+      return undefined;
+    } catch (error) {
+      return `partial worktree rollback failed: ${toErrorMessage(error)}`;
+    }
   }
 
   private assertManagedWorktree(worktree: ManagedWorktree): void {

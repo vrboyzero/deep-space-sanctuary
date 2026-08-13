@@ -110,6 +110,18 @@ test("portable builder uses the shared non-dist bin copy policy", async () => {
   expect(source).not.toMatch(/packageName\s*===\s*["']belldandy-browser["']/);
 });
 
+test("portable builder bundles a self-contained recovery launcher", async () => {
+  const source = await fs.readFile(portableBuilderPath, "utf-8");
+
+  expect(source).toContain('const esbuildCliPath = require.resolve("esbuild/bin/esbuild")');
+  expect(source).toContain('path.join(portableLauncherRoot, "portable-entry.js")');
+  expect(source).toContain('"--bundle"');
+  expect(source).toContain('"--format=esm"');
+  expect(source).not.toContain(
+    'copyDir(\n    path.join(workspaceRoot, "packages", "star-sanctuary-distribution", "dist"),\n    portableLauncherRoot,\n  )',
+  );
+});
+
 test("portable builder packages the dependency report policy beside the runtime check", async () => {
   const [builderSource, runtimeCheckSource] = await Promise.all([
     fs.readFile(portableBuilderPath, "utf-8"),
@@ -161,11 +173,23 @@ test("portable builder consumes a prefetched lockfile and only performs frozen o
   expect(prefetchSource).toContain('from "./runtime-dependency-assembler-policy.mjs"');
   expect(prefetchSource).toContain("createRuntimeDependencyPrefetchArgs");
   expect(prefetchSource).toContain("createRuntimeDependencyStoreSnapshot(portablePnpmStoreDir)");
-  expect(prefetchSource).toContain("resolveRuntimeBuildScriptPolicy({ cwd: workspaceRoot, mode })");
+  expect(prefetchSource).toContain('resolveRuntimeBuildScriptPolicy({ cwd: workspaceRoot, mode: "workspace" })');
+  expect(prefetchSource).toContain("resolveRuntimeBuildScriptPolicy({ cwd: runtimeRoot, mode })");
+  const workspacePolicyIndex = prefetchSource.indexOf(
+    'resolveRuntimeBuildScriptPolicy({ cwd: workspaceRoot, mode: "workspace" })',
+  );
+  const runtimePrepareIndex = prefetchSource.lastIndexOf("preparePrefetchWorkspace();");
+  const runtimePolicyIndex = prefetchSource.indexOf(
+    "resolveRuntimeBuildScriptPolicy({ cwd: runtimeRoot, mode })",
+  );
   const prefetchIndex = prefetchSource.indexOf("prefetchRuntimeDependencies();");
   const snapshotPublishIndex = prefetchSource.indexOf("writeRuntimeDependencySnapshot();");
   const storeResetIndex = prefetchSource.indexOf("resetSandboxDir(portablePnpmStoreDir");
   expect(storeResetIndex).toBeGreaterThan(-1);
+  expect(workspacePolicyIndex).toBeGreaterThan(-1);
+  expect(runtimePrepareIndex).toBeGreaterThan(workspacePolicyIndex);
+  expect(runtimePolicyIndex).toBeGreaterThan(runtimePrepareIndex);
+  expect(prefetchIndex).toBeGreaterThan(runtimePolicyIndex);
   expect(prefetchIndex).toBeGreaterThan(storeResetIndex);
   expect(prefetchIndex).toBeGreaterThan(-1);
   expect(snapshotPublishIndex).toBeGreaterThan(prefetchIndex);

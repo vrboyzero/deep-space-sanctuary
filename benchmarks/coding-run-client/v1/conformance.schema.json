@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.local/schemas/coding-run-client-conformance-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "protocolVersion", "previousProtocolVersion", "previousVersionGate", "requiredOperations", "requiredFailureModes", "gatewayErrorCodes", "subscriptionErrorCodes", "localErrorCodes", "contentMode"],
+  "properties": {
+    "schemaVersion": { "const": "coding-run-client-conformance/v1" },
+    "protocolVersion": { "const": "v1" },
+    "previousProtocolVersion": { "type": "null" },
+    "previousVersionGate": { "const": "not_applicable_initial_version" },
+    "requiredOperations": { "const": ["start", "subscribe", "respond_allow", "respond_deny", "cancel", "read_artifact", "close"] },
+    "requiredFailureModes": { "const": ["unknown_fields", "redaction", "cursor_expired", "cursor_stale", "cursor_future", "cursor_out_of_range", "invalid_frame", "frame_too_large", "backpressure", "request_aborted", "cancellation", "request_timeout", "transport_error", "client_closed", "error_taxonomy"] },
+    "gatewayErrorCodes": { "const": ["invalid_request", "not_found", "run_mismatch", "not_active", "permission_required", "permission_denied", "policy_denied", "budget_exhausted", "cancelled", "interrupted", "output_schema_invalid", "gateway_unavailable", "invalid_limit", "cursor_stale", "cursor_future", "cursor_out_of_range", "internal"] },
+    "subscriptionErrorCodes": { "const": ["cursor_expired"] },
+    "localErrorCodes": { "const": ["request_timeout", "request_aborted", "client_closed", "backpressure", "transport_error"] },
+    "contentMode": { "const": "none" }
+  }
+}

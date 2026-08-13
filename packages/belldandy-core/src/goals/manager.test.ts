@@ -152,6 +152,41 @@ describe("GoalManager", () => {
     expect(storedGoal?.activeNodeId).toBeUndefined();
   });
 
+  it("retries a transient runtime header rename failure during resume", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "ss-goal-state-"));
+    const manager = new GoalManager(stateDir);
+    const goal = await manager.createGoal({
+      title: "Runtime Rename Retry Goal",
+      objective: "Keep runtime persistence resilient to transient Windows rename failures",
+    });
+
+    const runtimePath = path.join(goal.runtimeRoot, "runtime.json");
+    const originalRename = fs.rename.bind(fs);
+    let failedOnce = false;
+    const renameSpy = vi.spyOn(fs, "rename").mockImplementation(async (source, target) => {
+      if (!failedOnce && target === runtimePath) {
+        failedOnce = true;
+        const error = new Error("transient runtime rename failure") as NodeJS.ErrnoException;
+        error.code = "EPERM";
+        throw error;
+      }
+      return originalRename(source, target);
+    });
+
+    try {
+      const resumed = await manager.resumeGoal(goal.id, "node_runtime_retry");
+      expect(resumed.goal.activeNodeId).toBe("node_runtime_retry");
+    } finally {
+      renameSpy.mockRestore();
+    }
+
+    const runtime = JSON.parse(await fs.readFile(runtimePath, "utf-8")) as {
+      activeNodeId?: string;
+    };
+    expect(failedOnce).toBe(true);
+    expect(runtime.activeNodeId).toBe("node_runtime_retry");
+  });
+
   it("rolls runtime header state back when registry persistence fails during resume", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "ss-goal-state-"));
     const manager = new GoalManager(stateDir);

@@ -43,6 +43,7 @@ test("dependency contract keeps Feishu on the audited same-major SDK line", () =
 });
 
 test("dependency contract keeps Discord on the upstream Undici-fixed same-major SDK line", () => {
+  const rootPackage = readJson("package.json");
   const channelsPackage = readJson("packages/belldandy-channels/package.json");
   expect(channelsPackage.dependencies?.["discord.js"]).toBe("^14.27.0");
 
@@ -51,8 +52,9 @@ test("dependency contract keeps Discord on the upstream Undici-fixed same-major 
   expect(lockfile).not.toContain("discord.js@14.26.5");
   expect(lockfile).toContain("'@discordjs/rest@2.6.2':");
   expect(lockfile).not.toContain("'@discordjs/rest@2.6.1':");
-  expect(lockfile).toContain("undici@6.27.0:");
-  expect(lockfile).not.toContain("undici@6.24.1:");
+  expect(rootPackage.pnpm?.overrides?.["undici@6.27.0"]).toBe("6.28.0");
+  expect(lockfile).toContain("undici@6.28.0:");
+  expect(lockfile).not.toMatch(/^  undici@6\.27\.0:$/m);
 });
 
 test("dependency contract keeps MCP consumers on the audited same-major SDK line", () => {
@@ -66,15 +68,19 @@ test("dependency contract keeps MCP consumers on the audited same-major SDK line
   expect(lockfile).not.toContain("'@modelcontextprotocol/sdk@1.26.0'");
 });
 
-test("dependency contract keeps Puppeteer consumers on the audited same-major line", () => {
+test("dependency contract keeps Puppeteer consumers on the audited 25 line without extract-zip", () => {
   const rootPackage = readJson("package.json");
   const skillsPackage = readJson("packages/belldandy-skills/package.json");
-  expect(rootPackage.devDependencies?.["puppeteer-core"]).toBe("^24.43.1");
-  expect(skillsPackage.dependencies?.["puppeteer-core"]).toBe("^24.43.1");
+  expect(rootPackage.devDependencies?.["puppeteer-core"]).toBe("^25.7.0");
+  expect(skillsPackage.dependencies?.["puppeteer-core"]).toBe("^25.7.0");
 
   const lockfile = fs.readFileSync(path.join(workspaceRoot, "pnpm-lock.yaml"), "utf-8");
-  expect(lockfile).toContain("puppeteer-core@24.43.1");
-  expect(lockfile).not.toContain("puppeteer-core@24.36.1");
+  expect(lockfile).toContain("puppeteer-core@25.7.0");
+  expect(lockfile).toContain("'@puppeteer/browsers@3.2.0'");
+  expect(lockfile).toContain("modern-tar@");
+  expect(lockfile).not.toContain("puppeteer-core@24.");
+  expect(lockfile).not.toContain("'@puppeteer/browsers@2.");
+  expect(lockfile).not.toContain("extract-zip@");
 });
 
 test("dependency contract deduplicates vulnerable transitive versions within consumer ranges", () => {
@@ -140,13 +146,16 @@ test("dependency contract refreshes path-to-regexp within the Router declaration
   expect(lockfile).not.toContain("path-to-regexp@8.3.0:");
 });
 
-test("dependency contract refreshes PostCSS within the Vite declaration", () => {
+test("dependency contract refreshes PostCSS and Nano ID within the Vite declaration", () => {
   const rootPackage = readJson("package.json");
-  expect(rootPackage.pnpm?.overrides?.["vite@6.4.3>postcss"]).toBe("8.5.19");
+  expect(rootPackage.pnpm?.overrides?.["vite@6.4.3>postcss"]).toBe("8.5.26");
+  expect(rootPackage.pnpm?.overrides?.["nanoid@3.3.16"]).toBe("3.3.18");
 
   const lockfile = fs.readFileSync(path.join(workspaceRoot, "pnpm-lock.yaml"), "utf-8");
-  expect(lockfile).toContain("postcss@8.5.19:");
-  expect(lockfile).not.toContain("postcss@8.5.6:");
+  expect(lockfile).toContain("postcss@8.5.26:");
+  expect(lockfile).toContain("nanoid@3.3.18:");
+  expect(lockfile).not.toContain("postcss@8.5.19:");
+  expect(lockfile).not.toMatch(/^  nanoid@3\.3\.16:$/m);
 });
 
 test("dependency contract refreshes Rollup within the Vite declaration", () => {
@@ -160,17 +169,62 @@ test("dependency contract refreshes Rollup within the Vite declaration", () => {
 
 test("dependency contract refreshes Tar 7 within optional native consumer declarations", () => {
   const rootPackage = readJson("package.json");
-  expect(rootPackage.pnpm?.overrides?.["fastembed@2.1.0>tar"]).toBe("7.5.20");
-  expect(rootPackage.pnpm?.overrides?.["onnxruntime-node@1.21.0>tar"]).toBe("7.5.20");
+  expect(rootPackage.pnpm?.overrides?.["fastembed@2.1.0>tar"]).toBe("7.5.21");
+  expect(rootPackage.pnpm?.overrides?.["onnxruntime-node@1.21.0>tar"]).toBe("7.5.21");
 
   const lockfile = fs.readFileSync(path.join(workspaceRoot, "pnpm-lock.yaml"), "utf-8");
-  expect(lockfile).toContain("tar@7.5.20:");
+  expect(lockfile).toContain("tar@7.5.21:");
+  expect(lockfile).not.toContain("tar@7.5.20:");
   expect(lockfile).not.toContain("tar@7.5.7:");
   expect(lockfile).not.toContain("tar@6.2.1:");
 });
 
 test("dependency contract refreshes Undici 7 within the Jsdom declaration", () => {
+  const rootPackage = readJson("package.json");
+  expect(rootPackage.pnpm?.overrides?.["undici@7.28.0"]).toBe("7.29.0");
+
   const lockfile = fs.readFileSync(path.join(workspaceRoot, "pnpm-lock.yaml"), "utf-8");
-  expect(lockfile).toContain("undici@7.28.0:");
+  expect(lockfile).toContain("undici@7.29.0:");
+  expect(lockfile).not.toMatch(/^  undici@7\.28\.0:$/m);
   expect(lockfile).not.toContain("undici@7.21.0:");
+});
+
+test("dependency contract pins patched transitive security floors", () => {
+  const rootPackage = readJson("package.json");
+  const overrides = rootPackage.pnpm?.overrides ?? {};
+
+  expect(overrides["@hono/node-server@1.19.14"]).toBe("1.19.17");
+  expect(overrides["body-parser@2.2.2"]).toBe("2.3.0");
+  expect(overrides["fast-uri@3.1.3"]).toBe("3.1.5");
+  expect(overrides["hono@4.12.30"]).toBe("4.13.2");
+  expect(overrides["ip-address@10.2.0"]).toBe("10.5.0");
+
+  const lockfile = fs.readFileSync(path.join(workspaceRoot, "pnpm-lock.yaml"), "utf-8");
+  for (const fixedVersion of [
+    "'@hono/node-server@1.19.17'",
+    "body-parser@2.3.0:",
+    "fast-uri@3.1.5:",
+    "hono@4.13.2:",
+    "ip-address@10.5.0:",
+  ]) {
+    expect(lockfile).toContain(fixedVersion);
+  }
+  for (const vulnerableSnapshot of [
+    /^  '@hono\/node-server@1\.19\.14':$/m,
+    /^  body-parser@2\.2\.2:$/m,
+    /^  fast-uri@3\.1\.3:$/m,
+    /^  hono@4\.12\.30:$/m,
+    /^  ip-address@10\.2\.0:$/m,
+  ]) {
+    expect(lockfile).not.toMatch(vulnerableSnapshot);
+  }
+});
+
+test("dependency contract keeps DOMPurify on the patched 3.4 line", () => {
+  const rootPackage = readJson("package.json");
+  expect(rootPackage.devDependencies?.dompurify).toBe("^3.4.13");
+
+  const lockfile = fs.readFileSync(path.join(workspaceRoot, "pnpm-lock.yaml"), "utf-8");
+  expect(lockfile).toContain("dompurify@3.4.13:");
+  expect(lockfile).not.toContain("dompurify@3.4.12:");
 });

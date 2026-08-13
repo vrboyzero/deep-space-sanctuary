@@ -261,7 +261,7 @@ export async function runVerificationBrowserRelayFixture({
   const relayLifecycle = relay.getLifecycleSnapshot();
   const proxyLifecycle = proxy?.getLifecycleSnapshot() ?? { openSocketCount: 0, pendingCommandCount: 0 };
   const pageClosed = (!relayPage && !sourcePage) || Boolean(relayPage?.isClosed() || sourcePage?.isClosed());
-  const browserClosed = !chromeBrowser || !chromeBrowser.isConnected();
+  const browserClosed = !chromeBrowser || !chromeBrowser.connected;
   // 页面已关闭后，迟到的 Puppeteer requestfailed 事件不再代表仍存活的网络资源。
   if (pageClosed) requestState.pending.clear();
   const pendingRequestCount = requestState.pending.size + relayLifecycle.pendingRequestCount + proxyLifecycle.pendingCommandCount;
