@@ -95,6 +95,7 @@ import { buildExtensionGovernanceReport } from "./extension-governance.js";
 import { loadExtensionMarketplaceState } from "./extension-marketplace-state.js";
 import { buildExtensionRuntimeReport } from "./extension-runtime.js";
 import { compileOutputSchema } from "./coding-run/output-schema.js";
+import { parseCodingRunCapabilityRequirements } from "./coding-run/capability-requirements.js";
 import type { ExtensionHostState } from "./extension-host.js";
 import { handleMessageSendWithQueryRuntime, MessageSendConfigurationError } from "./query-runtime-message-send.js";
 import {
@@ -169,6 +170,7 @@ import { handleRemoteDeliveryMethod } from "./server-methods/remote-delivery.js"
 import { handleExtensionRuntimeMethod } from "./server-methods/extension-runtime.js";
 import { handleCodingRunMethod } from "./server-methods/coding-run.js";
 import { handleTaskProjectionMethod } from "./server-methods/task-projection.js";
+import type { TaskCapabilityClosureResolver } from "./coding-run/task-capability-closure.js";
 import { handleCommandJobMethod } from "./server-methods/command-job.js";
 import { handleCodingRunSubscriptionMethod } from "./server-methods/coding-run-subscription.js";
 import { createCodingRunGatewayEventBroker, type CodingRunGatewayEventBroker } from "./coding-run/gateway-event-broker.js";
@@ -266,6 +268,8 @@ export type GatewayServerOptions = {
   codingRunReconciliationJournal?: CodingRunReconciliationJournalOwner;
   /** 只读 TaskProjection collection revision/cursor owner。 */
   taskProjectionCollectionRuntime?: TaskProjectionCollectionRuntime;
+  /** 只读、exact-binding 的任务启动能力闭包 resolver。 */
+  taskCapabilityClosureResolver?: TaskCapabilityClosureResolver;
   /** confirm 工具调用的 worker-scoped pending permission 真源。 */
   pendingToolPermissionRuntime?: PendingToolPermissionRuntime;
   topLevelConversationLifecycle?: TopLevelConversationLifecycle;
@@ -1429,6 +1433,7 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     codingRunEventBroker,
     codingRunReconciliationJournal,
     taskProjectionCollectionRuntime,
+    taskCapabilityClosureResolver: opts.taskCapabilityClosureResolver,
     pendingToolPermissionRuntime: opts.pendingToolPermissionRuntime,
     topLevelConversationLifecycle,
     durableExtractionRuntime,
@@ -2019,6 +2024,7 @@ async function handleReq(
         conversationStore: ctx.conversationStore,
         conversationRunRegistry: ctx.conversationRunRegistry,
         codingRunEventBroker: ctx.codingRunEventBroker,
+        taskCapabilityClosureResolver: ctx.taskCapabilityClosureResolver,
         topLevelConversationLifecycle: ctx.topLevelConversationLifecycle,
         getConversationPromptSnapshot: ctx.getConversationPromptSnapshot,
         durableExtractionRuntime: ctx.durableExtractionRuntime,
@@ -2429,11 +2435,14 @@ async function handleReq(
     case "task.projection.list": {
       return handleTaskProjectionMethod(req, {
         collectionRuntime: ctx.taskProjectionCollectionRuntime,
+        taskCapabilityClosureResolver: ctx.taskCapabilityClosureResolver,
         conversationRunRegistry: ctx.conversationRunRegistry,
         goalManager: ctx.goalManager,
         subTaskRuntimeStore: ctx.subTaskRuntimeStore,
         workflowRuntime: ctx.workflowRuntime,
         userWorktreeRuntime: ctx.userWorktreeRuntime,
+        reconciliationJournal: ctx.codingRunReconciliationJournal,
+        pendingToolPermissionRuntime: ctx.pendingToolPermissionRuntime,
       });
     }
 
@@ -2590,6 +2599,7 @@ function parseCodingRunOptions(
     "maxTurns",
     "maxTokens",
     "maxCostUsd",
+    "requiredCapabilities",
     "outputSchema",
   ]);
   const unknownKey = Object.keys(value).find((key) => !allowedKeys.has(key));
@@ -2649,6 +2659,10 @@ function parseCodingRunOptions(
   if (!maxTurns.ok) return maxTurns;
   const maxTokens = parseCodingRunPositiveInteger(value.maxTokens, "maxTokens");
   if (!maxTokens.ok) return maxTokens;
+  const requiredCapabilities = value.requiredCapabilities === undefined
+    ? undefined
+    : parseCodingRunCapabilityRequirements(value.requiredCapabilities);
+  if (requiredCapabilities && !requiredCapabilities.ok) return requiredCapabilities;
 
   let maxCostUsd: number | undefined;
   if (value.maxCostUsd !== undefined) {
@@ -2676,6 +2690,7 @@ function parseCodingRunOptions(
       ...(maxTurns.value ? { maxTurns: maxTurns.value } : {}),
       ...(maxTokens.value ? { maxTokens: maxTokens.value } : {}),
       ...(maxCostUsd === undefined ? {} : { maxCostUsd }),
+      ...(requiredCapabilities?.value ? { requiredCapabilities: requiredCapabilities.value } : {}),
       ...(value.outputSchema === undefined ? {} : { outputSchema: value.outputSchema }),
     },
   };

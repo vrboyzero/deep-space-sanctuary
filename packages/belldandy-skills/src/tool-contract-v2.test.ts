@@ -136,6 +136,8 @@ describe("tool contract v2", () => {
     const fileDelete = getToolContractV2("file_delete");
     const delegateTask = getToolContractV2("delegate_task");
     const delegateParallel = getToolContractV2("delegate_parallel");
+    const subtaskFanIn = getToolContractV2("subtask_fan_in");
+    const subtaskSupervisor = getToolContractV2("subtask_supervisor");
     const fileRead = getToolContractV2("file_read");
     const listFiles = getToolContractV2("list_files");
     const webFetch = getToolContractV2("web_fetch");
@@ -184,6 +186,27 @@ describe("tool contract v2", () => {
 
     expect(delegateParallel?.expectedOutput.join("\n")).toContain("Aggregated status text");
     expect(delegateParallel?.confirmWhen.join("\n")).toContain("same files");
+
+    expect(subtaskFanIn).toMatchObject({
+      family: "session-orchestration",
+      riskLevel: "high",
+      needsPermission: false,
+      isReadOnly: false,
+      hasBehaviorContract: true,
+    });
+    expect(subtaskFanIn?.preflightChecks.join("\n")).toContain("passed test evidence");
+    expect(subtaskFanIn?.confirmWhen.join("\n")).toContain("receipt");
+    expect(subtaskFanIn?.expectedOutput.join("\n")).toContain("contentMode none");
+
+    expect(subtaskSupervisor).toMatchObject({
+      family: "session-orchestration",
+      riskLevel: "medium",
+      needsPermission: false,
+      isReadOnly: false,
+      hasBehaviorContract: true,
+    });
+    expect(subtaskSupervisor?.preflightChecks.join("\n")).toContain("current session");
+    expect(subtaskSupervisor?.fallbackStrategy.join("\n")).toContain("observe");
 
     expect(fileRead).toMatchObject({
       family: "workspace-read",

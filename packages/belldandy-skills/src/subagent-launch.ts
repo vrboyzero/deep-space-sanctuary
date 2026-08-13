@@ -464,6 +464,11 @@ export function buildSubAgentLaunchSpec(
     role,
     allowedToolFamilies: cloneStringArray(fallbackAllowedToolFamilies),
     maxToolRiskLevel: fallbackMaxRiskLevel,
+    maxRunWallTimeMs: inherited?.maxRunWallTimeMs,
+    toolLoopIterationBudget: inherited?.toolLoopIterationBudget,
+    maxTotalTokens: inherited?.maxTotalTokens,
+    maxCostUsd: inherited?.maxCostUsd,
+    maxHighRiskToolCalls: inherited?.maxHighRiskToolCalls,
     policySummary: options.policySummary ?? inherited?.policySummary,
     delegationProtocol,
   };

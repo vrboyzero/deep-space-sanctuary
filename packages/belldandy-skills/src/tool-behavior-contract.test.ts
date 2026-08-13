@@ -20,12 +20,16 @@ describe("tool behavior contract registry", () => {
       "apply_patch",
       "file_write",
       "delegate_parallel",
+      "subtask_fan_in",
+      "subtask_supervisor",
       "not_registered",
     ]).map((contract) => contract.name)).toEqual([
       "apply_patch",
       "delegate_task",
       "file_write",
       "delegate_parallel",
+      "subtask_fan_in",
+      "subtask_supervisor",
     ]);
   });
 

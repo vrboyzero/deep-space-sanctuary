@@ -50,6 +50,71 @@ export {
   TASK_PROJECTION_COLLECTION_SCHEMA_VERSION,
 } from "./coding-run/task-projection-collection.js";
 export { parseTaskProjectionCollectionPage } from "./coding-run/task-projection-consumer.js";
+export {
+  SUBTASK_SUPERVISOR_RUNTIME_SCHEMA_VERSION,
+  SubTaskSupervisorAdmissionError,
+  SubTaskSupervisorRuntime,
+} from "./subtask-supervisor-runtime.js";
+export type {
+  SubTaskSupervisorAdmissionErrorCode,
+  SubTaskSupervisorBinding,
+  SubTaskSupervisorExactBinding,
+  SubTaskSupervisorLaunchObserver,
+  SubTaskSupervisorReattachInput,
+  SubTaskSupervisorRuntimeItem,
+  SubTaskSupervisorRuntimeSnapshot,
+} from "./subtask-supervisor-runtime.js";
+export {
+  resolveSubTaskSupervisorBudgetLimits,
+  tightenSubTaskLaunchBudgets,
+} from "./subtask-supervisor-budget.js";
+export type {
+  SubTaskSupervisorBudgetLimits,
+  SubTaskSupervisorBudgetSnapshot,
+  SubTaskSupervisorRiskLevel,
+} from "./subtask-supervisor-budget.js";
+export { SubTaskSupervisorControlRuntime } from "./subtask-supervisor-control-runtime.js";
+export type {
+  SubTaskSupervisorCancelInput,
+  SubTaskSupervisorSteerInput,
+} from "./subtask-supervisor-control-runtime.js";
+export {
+  SUBTASK_SUPERVISOR_FAN_IN_SCHEMA_VERSION,
+  SubTaskSupervisorFanInError,
+  SubTaskSupervisorFanInRuntime,
+} from "./subtask-supervisor-fan-in-runtime.js";
+export type {
+  SubTaskSupervisorFanInArtifact,
+  SubTaskSupervisorFanInConfirmInput,
+  SubTaskSupervisorFanInPreview,
+  SubTaskSupervisorFanInPreviewInput,
+  SubTaskSupervisorFanInResult,
+  SubTaskSupervisorTestEvidence,
+  SubTaskSupervisorReviewEvidence,
+} from "./subtask-supervisor-fan-in-runtime.js";
+export {
+  SubTaskSupervisorFanInResolutionRuntime,
+} from "./subtask-supervisor-fan-in-resolution-runtime.js";
+export type {
+  SubTaskSupervisorFanInResolutionConfirmInput,
+  SubTaskSupervisorFanInResolutionInput,
+  SubTaskSupervisorFanInResolutionLane,
+  SubTaskSupervisorFanInResolutionPreview,
+  SubTaskSupervisorFanInResolutionResult,
+} from "./subtask-supervisor-fan-in-resolution-runtime.js";
+export {
+  summarizeTaskEfficiencyMetrics,
+  TASK_EFFICIENCY_METRICS_SCHEMA_VERSION,
+} from "./coding-run/task-efficiency-metrics.js";
+export type {
+  HumanInterventionEvidence,
+  TaskEfficiencyEvidence,
+  TaskEfficiencyMetricName,
+  TaskEfficiencyMetrics,
+  TaskProjectionTimeline,
+  TaskStatusObservation,
+  TaskStatusObservationTimeline,
+} from "./coding-run/task-efficiency-metrics.js";
 export { CodingRunRecoveryMarkerStore } from "./coding-run/recovery-marker-store.js";
 export {
   CodingRunClient,
@@ -149,8 +214,10 @@ export type {
   WorkspaceRevisionCheckpointRef,
 } from "./coding-run/contracts.js";
 export type {
+  CodingRunEfficiencyEvidence,
   CodingRunGatewayEventSubscription,
   CodingRunGatewayEventSubscriptionResult,
+  PermissionResponderKind,
 } from "./coding-run/gateway-event-broker.js";
 export type {
   CodingRunReconciliation,
@@ -158,8 +225,10 @@ export type {
   CodingRunReconciliationOperation,
 } from "./coding-run/reconciliation-journal.js";
 export type {
+  PendingToolPermissionResponderKind,
   PendingToolPermissionResponse,
   PendingToolPermissionResponseResult,
+  PendingToolPermissionSettlement,
 } from "./coding-run/pending-tool-permission-runtime.js";
 export type { GatewayCodingRunSubscriptionResult } from "./coding-run/gateway-subscription-session.js";
 export type {
@@ -198,6 +267,20 @@ export type {
 export { TaskProjectionCollectionRuntime } from "./coding-run/task-projection-collection-runtime.js";
 export { collectTaskProjectionSources, createUnknownTaskCapabilityClosure } from "./coding-run/task-projection-collector.js";
 export type { TaskProjectionCollectorContext } from "./coding-run/task-projection-collector.js";
+export {
+  createConversationTaskCapabilityClosureBinding,
+  createTaskCapabilityClosureResolver,
+  evaluateTaskCapabilityClosureForStart,
+} from "./coding-run/task-capability-closure.js";
+export type {
+  TaskCapabilityClosureResolver,
+  TaskCapabilityClosureResolverInput,
+  TaskCapabilityClosureStartEvaluationInput,
+  TaskCapabilityClosureStartDecision,
+} from "./coding-run/task-capability-closure.js";
+export { parseCodingRunCapabilityRequirements } from "./coding-run/capability-requirements.js";
+export { createProductionTaskCapabilityClosureOwner } from "./coding-run/production-task-capability-owner.js";
+export type { ProductionTaskCapabilityClosureOwnerOptions } from "./coding-run/production-task-capability-owner.js";
 export type {
   CodingRunRecoveryLookup,
   CodingRunRecoveryMarker,

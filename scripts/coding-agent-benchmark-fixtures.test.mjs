@@ -1443,6 +1443,18 @@ function confirmedProcessRestartInjection(events) {
     replacementGateway,
     subscription: { exitCode: 0, errorCode: "not_found", eventCount: 0, diagnostic: null },
     cancellation: { exitCode: 0, accepted: false, state: "not_found" },
+    projection: {
+      beforeRestart: {
+        exitCode: 0,
+        ok: true,
+        epoch: "gateway-before",
+        revision: 1,
+        totalCount: 0,
+        cursor: { epoch: "gateway-before", revision: 1, offset: 0 },
+        errorCode: null,
+      },
+      afterRestart: { exitCode: 0, ok: false, errorCode: "cursor_stale" },
+    },
     cleanup: {
       managedGatewayProcessCount: 0,
       originalGateway,

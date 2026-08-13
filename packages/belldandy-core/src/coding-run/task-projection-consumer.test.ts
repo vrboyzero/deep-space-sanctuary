@@ -24,6 +24,9 @@ function projection(status: "uncertain" | "verifying" | "blocked") {
       status: "satisfied",
       capabilities,
     },
+    supportingEvidence: {
+      worktree: { status: "missing", lifecycle: "discarded", observedAtMs: 2 },
+    },
   };
 }
 
@@ -40,9 +43,9 @@ describe("TaskProjection consumer conformance", () => {
       revision: 7,
       totalCount: 3,
       items: [
-        { status: "uncertain" },
-        { status: "verifying" },
-        { status: "blocked" },
+        { status: "uncertain", supportingEvidence: { worktree: { lifecycle: "discarded" } } },
+        { status: "verifying", supportingEvidence: { worktree: { lifecycle: "discarded" } } },
+        { status: "blocked", supportingEvidence: { worktree: { lifecycle: "discarded" } } },
       ],
     });
   });

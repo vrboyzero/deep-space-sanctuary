@@ -18,6 +18,9 @@ function createProjection() {
     evidence: { observedAtMs: 1, reasonCategory: "running", reasonCode: "owner_running" },
     allowedActions: ["observe", "cancel"],
     capabilityClosure: { schemaVersion: "task-capability-closure/v1", evaluatedAtMs: 1, status: "satisfied", capabilities },
+    supportingEvidence: {
+      worktree: { status: "missing", lifecycle: "discarded", observedAtMs: 2 },
+    },
   };
 }
 
@@ -390,7 +393,14 @@ describe("coding-run NDJSON stdio transport", () => {
       ok: true,
       result: { epoch: "epoch-1", revision: 2, totalCount: 1, items: [createProjection()] },
     })}\n`);
-    await expect(pending).resolves.toMatchObject({ ok: true, result: { epoch: "epoch-1", revision: 2 } });
+    await expect(pending).resolves.toMatchObject({
+      ok: true,
+      result: {
+        epoch: "epoch-1",
+        revision: 2,
+        items: [{ supportingEvidence: { worktree: { lifecycle: "discarded" } } }],
+      },
+    });
   });
 
   it("fails malformed TaskProjection requests closed with a correlated response", async () => {

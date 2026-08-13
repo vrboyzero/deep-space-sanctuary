@@ -396,6 +396,16 @@ export class ManagedWorktreeRuntime {
     }
   }
 
+  async collectOrReadArtifact(worktree: ManagedWorktree): Promise<ManagedWorktreeArtifact> {
+    this.assertManagedWorktree(worktree);
+    const artifactRoot = path.join(this.artifactsDir, worktree.ownerKind, worktree.id);
+    if (!(await pathExists(artifactRoot))) return this.collectArtifact(worktree);
+
+    const artifact = await this.readArtifactManifest(worktree);
+    await this.assertArtifactFresh(worktree, artifact);
+    return artifact;
+  }
+
   async cleanup(
     worktree: ManagedWorktree,
     artifact: ManagedWorktreeArtifact | undefined,
@@ -492,6 +502,91 @@ export class ManagedWorktreeRuntime {
       },
       artifact,
     }, null, 2)}\n`, "utf-8");
+  }
+
+  private async readArtifactManifest(worktree: ManagedWorktree): Promise<ManagedWorktreeArtifact> {
+    const artifactRoot = path.join(this.artifactsDir, worktree.ownerKind, worktree.id);
+    const manifestPath = path.join(artifactRoot, "manifest.json");
+    let value: unknown;
+    try {
+      value = JSON.parse(await fs.readFile(manifestPath, "utf-8"));
+    } catch {
+      throw new Error("Managed worktree artifact manifest is unavailable.");
+    }
+    const candidate = value as {
+      version?: unknown;
+      worktree?: Partial<ManagedWorktree>;
+      artifact?: Partial<ManagedWorktreeArtifact>;
+    };
+    const persisted = candidate.worktree;
+    const artifact = candidate.artifact;
+    if (candidate.version !== 1
+      || persisted?.id !== worktree.id
+      || persisted.ownerKind !== worktree.ownerKind
+      || path.resolve(String(persisted.worktreePath ?? "")) !== path.resolve(worktree.worktreePath)
+      || path.resolve(String(persisted.repoRoot ?? "")) !== path.resolve(worktree.repoRoot)
+      || persisted.branch !== worktree.branch
+      || persisted.baseRef !== worktree.baseRef
+      || (artifact?.status !== "complete" && artifact?.status !== "no_changes")
+      || artifact.worktreeId !== worktree.id
+      || artifact.ownerKind !== worktree.ownerKind
+      || path.resolve(String(artifact.artifactRoot ?? "")) !== path.resolve(artifactRoot)
+      || path.resolve(String(artifact.manifestPath ?? "")) !== path.resolve(manifestPath)
+      || !Array.isArray(artifact.trackedChanges)
+      || !Array.isArray(artifact.untrackedFiles)) {
+      throw new Error("Managed worktree artifact manifest does not match its authoritative worktree binding.");
+    }
+    return {
+      status: artifact.status,
+      worktreeId: artifact.worktreeId,
+      ownerKind: artifact.ownerKind,
+      artifactRoot,
+      patchPath: typeof artifact.patchPath === "string" ? artifact.patchPath : undefined,
+      manifestPath,
+      backupRoot: typeof artifact.backupRoot === "string" ? artifact.backupRoot : undefined,
+      trackedChanges: artifact.trackedChanges.filter((item): item is string => typeof item === "string"),
+      untrackedFiles: artifact.untrackedFiles.filter((item): item is ManagedWorktreeUntrackedFile => {
+        return Boolean(item && typeof item === "object" && typeof item.path === "string"
+          && (item.status === "backed_up" || item.status === "rejected"));
+      }),
+    };
+  }
+
+  private async assertArtifactFresh(worktree: ManagedWorktree, artifact: ManagedWorktreeArtifact): Promise<void> {
+    const currentPatch = await runGitOutput(
+      ["diff", "--binary", "--no-ext-diff", worktree.baseRef, "--"],
+      worktree.worktreePath,
+      MAX_UNTRACKED_BACKUP_BYTES + 2 * 1024 * 1024,
+    );
+    const persistedPatch = artifact.patchPath ? await fs.readFile(artifact.patchPath, "utf-8") : "";
+    const currentTrackedChanges = parseChangedPaths(
+      await runGit(["diff", "--name-status", "-z", worktree.baseRef, "--"], worktree.worktreePath),
+    );
+    if (currentPatch !== persistedPatch
+      || JSON.stringify(currentTrackedChanges) !== JSON.stringify(artifact.trackedChanges)) {
+      throw new Error("Managed worktree drifted after fan-in artifact capture.");
+    }
+
+    const currentUntracked = parseNullDelimited(
+      await runGit(["ls-files", "--others", "--exclude-standard", "-z"], worktree.worktreePath),
+    );
+    const persistedUntracked = artifact.untrackedFiles.map((item) => item.path);
+    if (JSON.stringify(currentUntracked) !== JSON.stringify(persistedUntracked)) {
+      throw new Error("Managed worktree drifted after fan-in artifact capture.");
+    }
+    for (const item of artifact.untrackedFiles) {
+      if (item.status !== "backed_up" || !item.sha256) {
+        throw new Error("Managed worktree fan-in artifact contains an unusable untracked file.");
+      }
+      const sourcePath = path.resolve(worktree.worktreePath, item.path);
+      if (!isInside(worktree.worktreePath, sourcePath)) {
+        throw new Error("Managed worktree fan-in artifact contains an unsafe untracked path.");
+      }
+      const sha256 = createHash("sha256").update(await fs.readFile(sourcePath)).digest("hex");
+      if (sha256 !== item.sha256) {
+        throw new Error("Managed worktree drifted after fan-in artifact capture.");
+      }
+    }
   }
 }
 

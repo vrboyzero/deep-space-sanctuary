@@ -18,6 +18,10 @@ import type {
   SessionInfo,
   SpawnSubAgentOptions,
   SubAgentResult,
+  SubTaskSupervisorControlInput,
+  SubTaskSupervisorControlItem,
+  SubTaskSupervisorFanInCapabilityInput,
+  SubTaskSupervisorFanInCapabilityResult,
 } from "@belldandy/skills";
 import {
   summarizeDelegationProtocol,
@@ -58,6 +62,12 @@ import { getGoalRegistryEntry } from "./goals/registry.js";
 import { enrichDelegationProtocolTeamWithIdentity } from "./team-identity-governance.js";
 import type { SubTaskWorktreeRuntime, SubTaskWorktreeRuntimeSummary, WorktreeRuntimeStatus } from "./worktree-runtime.js";
 import { createConversationOperationId } from "./coding-run/reconciliation-journal.js";
+import {
+  SubTaskSupervisorAdmissionError,
+  type SubTaskSupervisorBinding,
+  type SubTaskSupervisorLaunchObserver,
+  type SubTaskSupervisorRuntime,
+} from "./subtask-supervisor-runtime.js";
 
 export type SubTaskStatus = "pending" | "running" | "done" | "error" | "timeout" | "stopped" | "interrupted";
 
@@ -183,6 +193,11 @@ export type SubTaskLaunchSpec = {
   toolSet?: string[];
   allowedToolFamilies?: string[];
   maxToolRiskLevel?: "low" | "medium" | "high" | "critical";
+  maxRunWallTimeMs?: number;
+  toolLoopIterationBudget?: number;
+  maxTotalTokens?: number;
+  maxCostUsd?: number;
+  maxHighRiskToolCalls?: number;
   policySummary?: string;
   permissionMode?: string;
   isolationMode?: string;
@@ -194,6 +209,7 @@ export type SubTaskLaunchSpec = {
   worktreePath?: string;
   worktreeRepoRoot?: string;
   worktreeBranch?: string;
+  worktreeBaseRef?: string;
   worktreeStatus?: WorktreeRuntimeStatus;
   worktreeError?: string;
 };
@@ -204,6 +220,7 @@ export type SubTaskRecord = {
   parentConversationId: string;
   /** 父 Conversation operation 的脱敏标识；不保存原始 tool call ID。 */
   parentOperationId?: string;
+  supervisorBinding?: SubTaskSupervisorBinding;
   sessionId?: string;
   agentId: string;
   launchSpec: SubTaskLaunchSpec;
@@ -254,6 +271,7 @@ type SubTaskRuntimeState = {
 type CreateSubTaskInput = {
   launchSpec: AgentLaunchSpecInput;
   parentOperationId?: string;
+  supervisorBinding?: SubTaskSupervisorBinding;
 };
 
 type CreateBridgeSessionTaskInput = {
@@ -346,7 +364,9 @@ function inferNotificationKind(status: Extract<SubTaskStatus, "done" | "error" |
   return "failed";
 }
 
-function isTerminalStatus(status: SubTaskStatus): boolean {
+function isTerminalStatus(
+  status: SubTaskStatus,
+): status is Extract<SubTaskStatus, "done" | "error" | "timeout" | "stopped" | "interrupted"> {
   return status === "done" || status === "error" || status === "timeout"
     || status === "stopped" || status === "interrupted";
 }
@@ -460,6 +480,21 @@ function normalizeSubTaskRecovery(value: unknown): SubTaskRecovery | undefined {
   };
 }
 
+function positiveIntegerOrUndefined(value: unknown): number | undefined {
+  const numeric = Number(value);
+  return Number.isSafeInteger(numeric) && numeric > 0 ? numeric : undefined;
+}
+
+function positiveNumberOrUndefined(value: unknown): number | undefined {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : undefined;
+}
+
+function nonNegativeIntegerOrUndefined(value: unknown): number | undefined {
+  const numeric = Number(value);
+  return Number.isSafeInteger(numeric) && numeric >= 0 ? numeric : undefined;
+}
+
 function createLaunchSpecSummary(
   spec: AgentLaunchSpec,
   runtimeSummary: Partial<SubTaskWorktreeRuntimeSummary> = {},
@@ -476,6 +511,11 @@ function createLaunchSpecSummary(
     toolSet: spec.toolSet ? [...spec.toolSet] : undefined,
     allowedToolFamilies: spec.allowedToolFamilies ? [...spec.allowedToolFamilies] : undefined,
     maxToolRiskLevel: spec.maxToolRiskLevel,
+    maxRunWallTimeMs: spec.maxRunWallTimeMs,
+    toolLoopIterationBudget: spec.toolLoopIterationBudget,
+    maxTotalTokens: spec.maxTotalTokens,
+    maxCostUsd: spec.maxCostUsd,
+    maxHighRiskToolCalls: spec.maxHighRiskToolCalls,
     policySummary: spec.policySummary,
     permissionMode: spec.permissionMode,
     isolationMode: spec.isolationMode,
@@ -487,6 +527,7 @@ function createLaunchSpecSummary(
     worktreePath: runtimeSummary.worktreePath,
     worktreeRepoRoot: runtimeSummary.worktreeRepoRoot,
     worktreeBranch: runtimeSummary.worktreeBranch,
+    worktreeBaseRef: runtimeSummary.worktreeBaseRef,
     worktreeStatus: runtimeSummary.worktreeStatus ?? (spec.isolationMode === "worktree" ? "pending" : "not_requested"),
     worktreeError: runtimeSummary.worktreeError,
   };
@@ -794,6 +835,7 @@ function cloneRecord(record: SubTaskRecord): SubTaskRecord {
       contextKeys: record.launchSpec.contextKeys ? [...record.launchSpec.contextKeys] : undefined,
       delegation: cloneDelegationSummary(record.launchSpec.delegation),
     },
+    supervisorBinding: record.supervisorBinding ? { ...record.supervisorBinding } : undefined,
     bridgeSessionRuntime: record.bridgeSessionRuntime ? { ...record.bridgeSessionRuntime } : undefined,
     recovery: record.recovery ? { ...record.recovery } : undefined,
     activeCommandClaim: record.activeCommandClaim ? { ...record.activeCommandClaim } : undefined,
@@ -831,6 +873,9 @@ function mergeLaunchSpecWorktreeRuntime(
   if (Object.prototype.hasOwnProperty.call(runtimeSummary, "worktreeBranch")) {
     next.worktreeBranch = runtimeSummary.worktreeBranch;
   }
+  if (Object.prototype.hasOwnProperty.call(runtimeSummary, "worktreeBaseRef")) {
+    next.worktreeBaseRef = runtimeSummary.worktreeBaseRef;
+  }
   if (Object.prototype.hasOwnProperty.call(runtimeSummary, "worktreeStatus")) {
     next.worktreeStatus = runtimeSummary.worktreeStatus;
   }
@@ -845,6 +890,39 @@ function normalizeConversationOperationId(value: unknown): string | undefined {
   return typeof value === "string" && /^op_[a-f0-9]{64}$/.test(value)
     ? value
     : undefined;
+}
+
+function normalizeSubTaskSupervisorBinding(value: unknown): SubTaskSupervisorBinding | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const managerConversationId = normalizeSupervisorBindingValue(record.managerConversationId);
+  const managerAgentRunId = normalizeSupervisorBindingValue(record.managerAgentRunId);
+  const teamId = normalizeSupervisorBindingValue(record.teamId);
+  const laneId = normalizeSupervisorBindingValue(record.laneId);
+  if (!managerConversationId || !managerAgentRunId || !teamId || !laneId
+    || (record.mode !== "read" && record.mode !== "write")) {
+    return undefined;
+  }
+  return { managerConversationId, managerAgentRunId, teamId, laneId, mode: record.mode };
+}
+
+function normalizeSupervisorBindingValue(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim();
+  return normalized && normalized.length <= 512 && !/[\u0000-\u001f\u007f]/.test(normalized)
+    ? normalized
+    : undefined;
+}
+
+function isSameSubTaskSupervisorLane(
+  left: SubTaskSupervisorBinding | undefined,
+  right: SubTaskSupervisorBinding,
+): boolean {
+  return Boolean(left
+    && left.managerConversationId === right.managerConversationId
+    && left.managerAgentRunId === right.managerAgentRunId
+    && left.teamId === right.teamId
+    && left.laneId === right.laneId);
 }
 
 function resolveGoalBindingFromTaskRecord(record: SubTaskRecord): {
@@ -988,15 +1066,19 @@ export class SubTaskRuntimeStore {
 
   async flushAndClose(): Promise<void> {
     return this.lifecycle.close(async () => {
-      await this.load();
-      this.cancelDeferredPersist();
-      await this.writeChain;
-      if (this.quarantineStatus) {
-        return;
+      try {
+        await this.load();
+        this.cancelDeferredPersist();
+        await this.writeChain;
+        if (this.quarantineStatus) {
+          return;
+        }
+        const run = this.writeChain.then(() => this.persist());
+        this.writeChain = run.catch(() => {});
+        await run;
+      } finally {
+        this.listeners.clear();
       }
-      const run = this.writeChain.then(() => this.persist());
-      this.writeChain = run.catch(() => {});
-      await run;
     });
   }
 
@@ -1012,11 +1094,27 @@ export class SubTaskRuntimeStore {
     return this.mutate(async () => {
       const now = Date.now();
       const launchSpec = normalizeAgentLaunchSpec(input.launchSpec);
+      const supervisorBinding = normalizeSubTaskSupervisorBinding(input.supervisorBinding);
+      if (supervisorBinding && supervisorBinding.managerConversationId !== launchSpec.parentConversationId) {
+        throw new SubTaskSupervisorAdmissionError(
+          "binding_conflict",
+          "Supervisor manager Conversation binding does not match the subtask launch binding.",
+        );
+      }
+      if (supervisorBinding && [...this.records.values()].some((record) => (
+        isSameSubTaskSupervisorLane(record.supervisorBinding, supervisorBinding)
+      ))) {
+        throw new SubTaskSupervisorAdmissionError(
+          "binding_conflict",
+          "Parallel lane binding has already been persisted by the SubTask owner.",
+        );
+      }
       const record: SubTaskRecord = {
         id: `task_${crypto.randomUUID().slice(0, 8)}`,
         kind: "sub_agent",
         parentConversationId: launchSpec.parentConversationId,
         parentOperationId: normalizeConversationOperationId(input.parentOperationId),
+        supervisorBinding,
         agentId: launchSpec.agentId,
         launchSpec: createLaunchSpecSummary(launchSpec),
         background: launchSpec.background,
@@ -2201,6 +2299,7 @@ export class SubTaskRuntimeStore {
       kind,
       parentConversationId: typeof value.parentConversationId === "string" ? value.parentConversationId : "system",
       parentOperationId: normalizeConversationOperationId(value.parentOperationId),
+      supervisorBinding: normalizeSubTaskSupervisorBinding(value.supervisorBinding),
       sessionId: typeof value.sessionId === "string" && value.sessionId.trim() ? value.sessionId : undefined,
       agentId: typeof value.agentId === "string" && value.agentId.trim() ? value.agentId : "default",
       launchSpec: {
@@ -2245,6 +2344,16 @@ export class SubTaskRuntimeStore {
               || launchSpecSource.maxToolRiskLevel === "critical"
               ? launchSpecSource.maxToolRiskLevel
               : fallbackLaunchSpec.maxToolRiskLevel,
+            maxRunWallTimeMs: positiveIntegerOrUndefined(launchSpecSource.maxRunWallTimeMs)
+              ?? fallbackLaunchSpec.maxRunWallTimeMs,
+            toolLoopIterationBudget: positiveIntegerOrUndefined(launchSpecSource.toolLoopIterationBudget)
+              ?? fallbackLaunchSpec.toolLoopIterationBudget,
+            maxTotalTokens: positiveIntegerOrUndefined(launchSpecSource.maxTotalTokens)
+              ?? fallbackLaunchSpec.maxTotalTokens,
+            maxCostUsd: positiveNumberOrUndefined(launchSpecSource.maxCostUsd)
+              ?? fallbackLaunchSpec.maxCostUsd,
+            maxHighRiskToolCalls: nonNegativeIntegerOrUndefined(launchSpecSource.maxHighRiskToolCalls)
+              ?? fallbackLaunchSpec.maxHighRiskToolCalls,
             policySummary: typeof launchSpecSource.policySummary === "string" && String(launchSpecSource.policySummary).trim()
               ? String(launchSpecSource.policySummary).trim()
               : fallbackLaunchSpec.policySummary,
@@ -2274,6 +2383,9 @@ export class SubTaskRuntimeStore {
               : undefined,
             worktreeBranch: typeof launchSpecSource.worktreeBranch === "string" && String(launchSpecSource.worktreeBranch).trim()
               ? String(launchSpecSource.worktreeBranch).trim()
+              : undefined,
+            worktreeBaseRef: typeof launchSpecSource.worktreeBaseRef === "string" && String(launchSpecSource.worktreeBaseRef).trim()
+              ? String(launchSpecSource.worktreeBaseRef).trim()
               : undefined,
             worktreeStatus: isWorktreeRuntimeStatus(launchSpecSource.worktreeStatus)
               ? launchSpecSource.worktreeStatus
@@ -2937,6 +3049,25 @@ type SpawnWithCallbacks = OrchestratorSpawnOptions;
 
 type SubAgentSpawner = Pick<SubAgentOrchestrator, "spawn" | "listSessions">;
 
+export async function reattachSubTaskSupervisorRuntime(input: {
+  runtimeStore: Pick<SubTaskRuntimeStore, "listTasks">;
+  supervisorRuntime: Pick<SubTaskSupervisorRuntime, "reattach">;
+}): Promise<void> {
+  const records = await input.runtimeStore.listTasks(undefined, { includeArchived: false });
+  input.supervisorRuntime.reattach(records.flatMap((record) => record.supervisorBinding && isTerminalStatus(record.status)
+    ? [{
+      binding: record.supervisorBinding,
+      role: record.launchSpec.role,
+      taskId: record.id,
+      ...(record.sessionId ? { sessionId: record.sessionId } : {}),
+      status: record.status,
+      admittedAtMs: record.createdAt,
+      updatedAtMs: record.updatedAt,
+      ...(record.finishedAt === undefined ? {} : { finishedAtMs: record.finishedAt }),
+    }]
+    : []));
+}
+
 export function createSubTaskRuntimeEventHandler(
   runtimeStore: SubTaskRuntimeStore,
   logger?: RuntimeLogger,
@@ -3040,6 +3171,14 @@ export function createSubTaskAgentCapabilities(input: {
   agentRegistry?: Pick<AgentRegistry, "getProfile">;
   resolveIdentityAuthorityProfile?: (agentId: string) => import("@belldandy/protocol").IdentityAuthorityProfile | undefined;
   worktreeRuntime?: SubTaskWorktreeRuntime;
+  supervisorRuntime?: Pick<SubTaskSupervisorRuntime, "execute">;
+  supervisorControlRuntime?: {
+    control: (input: SubTaskSupervisorControlInput) => Promise<SubTaskSupervisorControlItem | undefined>;
+  };
+  supervisorFanInRuntime?: {
+    preview: (input: Omit<SubTaskSupervisorFanInCapabilityInput, "action" | "receiptId" | "confirm">) => Promise<SubTaskSupervisorFanInCapabilityResult>;
+    confirm: (input: Omit<SubTaskSupervisorFanInCapabilityInput, "action"> & { receiptId: string; confirm: true }) => Promise<SubTaskSupervisorFanInCapabilityResult>;
+  };
   logger?: RuntimeLogger;
 }): AgentCapabilities {
   const spawnOne = async (opts: SpawnSubAgentOptions): Promise<SubAgentResult> => {
@@ -3048,7 +3187,7 @@ export function createSubTaskAgentCapabilities(input: {
         currentAgentId: opts.profileId ?? opts.agentId,
         resolveAuthorityProfile: (agentId: string) => input.resolveIdentityAuthorityProfile?.(agentId),
       });
-      const launchSpec = normalizeAgentLaunchSpecWithCatalog({
+      const requestedLaunchSpec = normalizeAgentLaunchSpecWithCatalog({
         instruction: opts.instruction,
         parentConversationId: opts.parentConversationId ?? "system",
         agentId: opts.agentId,
@@ -3065,12 +3204,21 @@ export function createSubTaskAgentCapabilities(input: {
         role: opts.role,
         allowedToolFamilies: opts.allowedToolFamilies,
         maxToolRiskLevel: opts.maxToolRiskLevel,
+        maxRunWallTimeMs: opts.maxRunWallTimeMs,
+        toolLoopIterationBudget: opts.toolLoopIterationBudget,
+        maxTotalTokens: opts.maxTotalTokens,
+        maxCostUsd: opts.maxCostUsd,
+        maxHighRiskToolCalls: opts.maxHighRiskToolCalls,
         policySummary: opts.policySummary,
         delegationProtocol: enrichedDelegationProtocol,
         bridgeSubtask: opts.bridgeSubtask,
       }, {
         agentRegistry: input.agentRegistry,
       });
+    const launch = async (
+      launchSpec: AgentLaunchSpec,
+      supervisorObserver: SubTaskSupervisorLaunchObserver,
+    ): Promise<SubAgentResult> => {
     const task = await input.runtimeStore.createTask({
       launchSpec,
       parentOperationId: opts.parentOperation
@@ -3080,8 +3228,10 @@ export function createSubTaskAgentCapabilities(input: {
             toolCallId: opts.parentOperation.toolCallId,
           })
         : undefined,
+      supervisorBinding: supervisorObserver.binding,
     });
 
+    supervisorObserver.bindTask(task.id);
     let attachedSessionId: string | undefined;
     let resolvedLaunchSpec = launchSpec;
     try {
@@ -3140,6 +3290,7 @@ export function createSubTaskAgentCapabilities(input: {
         },
         onSessionCreated: (sessionId: string, resolvedAgentId: string) => {
           attachedSessionId = sessionId;
+          supervisorObserver.bindSession(sessionId);
           void input.runtimeStore.attachSession(
             task.id,
             sessionId,
@@ -3161,6 +3312,7 @@ export function createSubTaskAgentCapabilities(input: {
         sessionId: result.sessionId ?? attachedSessionId,
         output: result.output,
         error: result.error,
+        commandGeneration: 0,
       });
       return {
         ...result,
@@ -3175,6 +3327,7 @@ export function createSubTaskAgentCapabilities(input: {
         sessionId: attachedSessionId,
         output: "",
         error: errorMessage,
+        commandGeneration: 0,
       });
       return {
         success: false,
@@ -3185,12 +3338,55 @@ export function createSubTaskAgentCapabilities(input: {
         outputPath: completed?.outputPath,
       };
     }
+    };
+
+    if (!input.supervisorRuntime) {
+      return launch(requestedLaunchSpec, {
+        bindTask: () => undefined,
+        bindSession: () => undefined,
+      });
+    }
+    try {
+      return await input.supervisorRuntime.execute({
+        launchSpec: requestedLaunchSpec,
+        parentOperation: opts.parentOperation,
+        worktreeIsolationAvailable: Boolean(input.worktreeRuntime),
+        launch,
+      });
+    } catch (error) {
+      return {
+        success: false,
+        output: "",
+        error: error instanceof Error ? error.message : "Subtask Supervisor admission failed.",
+      };
+    }
   };
 
   return {
     spawnSubAgent: (opts: SpawnSubAgentOptions) => spawnOne(opts),
     spawnParallel: (tasks: SpawnSubAgentOptions[]) => Promise.all(tasks.map((task: SpawnSubAgentOptions) => spawnOne(task))),
     listSessions: (parentConversationId?: string) => input.runtimeStore.listSessionInfos(parentConversationId),
+    ...(input.supervisorControlRuntime
+      ? { controlSubTask: (controlInput) => input.supervisorControlRuntime!.control(controlInput) }
+      : {}),
+    ...(input.supervisorFanInRuntime
+      ? {
+          fanInSubTasks: (fanInInput) => {
+            const { action, ...runtimeInput } = fanInInput;
+            if (action === "preview") {
+              return input.supervisorFanInRuntime!.preview(runtimeInput);
+            }
+            if (!runtimeInput.receiptId || runtimeInput.confirm !== true) {
+              throw new Error("Fan-in confirm requires a receipt and explicit confirmation.");
+            }
+            return input.supervisorFanInRuntime!.confirm({
+              ...runtimeInput,
+              receiptId: runtimeInput.receiptId,
+              confirm: true,
+            });
+          },
+        }
+      : {}),
   };
 }
 
@@ -3300,6 +3496,11 @@ function buildResumeLaunchSpec(
     toolSet: record.launchSpec.toolSet ? [...record.launchSpec.toolSet] : undefined,
     allowedToolFamilies: record.launchSpec.allowedToolFamilies ? [...record.launchSpec.allowedToolFamilies] : undefined,
     maxToolRiskLevel: record.launchSpec.maxToolRiskLevel,
+    maxRunWallTimeMs: record.launchSpec.maxRunWallTimeMs,
+    toolLoopIterationBudget: record.launchSpec.toolLoopIterationBudget,
+    maxTotalTokens: record.launchSpec.maxTotalTokens,
+    maxCostUsd: record.launchSpec.maxCostUsd,
+    maxHighRiskToolCalls: record.launchSpec.maxHighRiskToolCalls,
     policySummary: record.launchSpec.policySummary,
     permissionMode: record.launchSpec.permissionMode,
     isolationMode: record.launchSpec.isolationMode,

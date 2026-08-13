@@ -897,6 +897,10 @@ describe("UserWorktreeRuntime", () => {
         status: "blocked",
         retention: { status: "retained", decision: "keep", decidedAtMs: expect.any(Number) },
       });
+      await expect(users.readLifecycleEvidence({ conversationId: "conversation-1", runId: "run-1" }))
+        .resolves.toMatchObject({ lifecycle: "kept", observedAtMs: expect.any(Number) });
+      await expect(users.readLifecycleEvidence({ conversationId: "conversation-1", runId: "run-other" }))
+        .resolves.toBeUndefined();
       await expect(fs.readFile(filePath, "utf-8"))
         .resolves.toSatisfy((content) => content.replace(/\r\n/g, "\n") === "export const demo = false;\n");
       await expect(runGit(["branch", "--show-current"], worktree.worktreePath)).resolves.toBe(worktree.branch);
@@ -917,18 +921,32 @@ describe("UserWorktreeRuntime", () => {
         receipt: { receiptId: expect.any(String) },
       });
 
-      await expect(users.confirm({
+      const result = await users.confirm({
         operation: "discard",
         worktreeId: worktree.id,
         receiptId: preview.receipt?.receiptId ?? "",
         confirm: true,
-      })).resolves.toMatchObject({
+      });
+      expect(result).toMatchObject({
         operation: "discard",
         outcome: "succeeded",
         applied: true,
         audit: { status: "succeeded" },
       });
+      expect(JSON.stringify(result)).not.toContain("ownerBindingHash");
+      const recovered = await new UserWorktreeRuntime(fixture.stateDir).confirm({
+        operation: "discard",
+        worktreeId: worktree.id,
+        receiptId: preview.receipt?.receiptId ?? "",
+        confirm: true,
+      });
+      expect(recovered).toMatchObject({ outcome: "succeeded", applied: true, audit: { status: "succeeded" } });
+      expect(JSON.stringify(recovered)).not.toContain("ownerBindingHash");
       await expect(users.getStatus(worktree.id)).resolves.toBeUndefined();
+      await expect(users.readLifecycleEvidence({ conversationId: "conversation-1", runId: "run-1" }))
+        .resolves.toMatchObject({ lifecycle: "discarded", observedAtMs: expect.any(Number) });
+      await expect(users.readLifecycleEvidence({ conversationId: "conversation-other", runId: "run-1" }))
+        .resolves.toBeUndefined();
       await expect(fs.access(worktree.worktreePath)).rejects.toMatchObject({ code: "ENOENT" });
       await expect(runGit(["branch", "--list", worktree.branch], fixture.repoDir)).resolves.toBe("");
     } finally {
@@ -956,6 +974,10 @@ describe("UserWorktreeRuntime", () => {
       }
       await expect(users.getStatus(worktree.id)).resolves.toMatchObject({
         retention: { decision: "discard", decidedAtMs: expect.any(Number) },
+      });
+      await expect(users.readLifecycleEvidence(owner)).resolves.toMatchObject({
+        lifecycle: "discard_pending",
+        observedAtMs: expect.any(Number),
       });
 
       const readStatusSpy = vi.spyOn(users as any, "readStatus");
@@ -988,6 +1010,10 @@ describe("UserWorktreeRuntime", () => {
         results: [expect.objectContaining({ worktreeId: worktree.id, outcome: "discarded" })],
       });
       await expect(users.getStatus(worktree.id)).resolves.toBeUndefined();
+      await expect(users.readLifecycleEvidence(owner)).resolves.toMatchObject({
+        lifecycle: "discarded",
+        observedAtMs: expect.any(Number),
+      });
       await expect(fs.access(worktree.worktreePath)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await fs.rm(fixture.rootDir, { recursive: true, force: true }).catch(() => {});

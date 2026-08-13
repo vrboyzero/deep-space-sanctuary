@@ -26,6 +26,218 @@ afterEach(async () => {
 });
 
 describe("Gateway coding run subscription session", () => {
+  it("preserves validated exact-bound efficiency evidence from the Gateway response", async () => {
+    const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    servers.push(server);
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected a TCP listener.");
+    const binding = { conversationId: "conversation-evidence", agentRunId: "run-evidence" };
+
+    server.on("connection", (socket) => {
+      socket.send(JSON.stringify({ type: "connect.challenge" }));
+      socket.on("message", (raw) => {
+        const frame = JSON.parse(raw.toString("utf-8")) as Record<string, unknown>;
+        if (frame.type === "connect") {
+          socket.send(JSON.stringify({ type: "hello-ok" }));
+          return;
+        }
+        if (frame.type !== "req" || frame.method !== "coding.run.subscribe" || typeof frame.id !== "string") return;
+        socket.send(JSON.stringify({
+          type: "res",
+          id: frame.id,
+          ok: true,
+          payload: {
+            earliestSeq: 1,
+            latestSeq: 2,
+            efficiencyEvidence: {
+              status: "complete",
+              projectionTimeline: {
+                source: "gateway_event_broker",
+                coverage: "complete",
+                binding,
+                statusCoverage: ["needs_input"],
+                items: [
+                  { status: "running", observedAtMs: 1_000 },
+                  { status: "completed", observedAtMs: 1_500 },
+                ],
+              },
+              humanInterventionEvidence: {
+                source: "human_response",
+                coverage: "complete",
+                binding,
+                count: 0,
+              },
+            },
+          },
+        }));
+      });
+    });
+
+    const session = new GatewayCodingRunSubscriptionSession("state-dir");
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(address.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        await expect(session.subscribe({
+          subscription: { version: CODING_RUN_PROTOCOL_VERSION, binding },
+          onEvent: () => undefined,
+          onInterrupted: () => undefined,
+        })).resolves.toMatchObject({
+          ok: true,
+          payload: {
+            earliestSeq: 1,
+            latestSeq: 2,
+            efficiencyEvidence: {
+              status: "complete",
+              projectionTimeline: { binding },
+              humanInterventionEvidence: { count: 0 },
+            },
+          },
+        });
+      });
+    } finally {
+      session.close();
+    }
+  });
+
+  it.each([
+    {
+      name: "cross-binding evidence",
+      mutate: (evidence: Record<string, any>) => {
+        evidence.projectionTimeline.binding.agentRunId = "other-run";
+      },
+    },
+    {
+      name: "content-bearing evidence",
+      mutate: (evidence: Record<string, any>) => {
+        evidence.projectionTimeline.items[0].prompt = "private prompt";
+      },
+    },
+    {
+      name: "non-monotonic evidence",
+      mutate: (evidence: Record<string, any>) => {
+        evidence.projectionTimeline.items[1].observedAtMs = 999;
+      },
+    },
+  ])("rejects $name from the Gateway", async ({ mutate }) => {
+    const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    servers.push(server);
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected a TCP listener.");
+    const binding = { conversationId: "conversation-invalid", agentRunId: "run-invalid" };
+    const evidence: Record<string, any> = {
+      status: "complete",
+      projectionTimeline: {
+        source: "gateway_event_broker",
+        coverage: "complete",
+        binding: { ...binding },
+        statusCoverage: ["needs_input"],
+        items: [
+          { status: "running", observedAtMs: 1_000 },
+          { status: "completed", observedAtMs: 1_500 },
+        ],
+      },
+      humanInterventionEvidence: {
+        source: "human_response",
+        coverage: "complete",
+        binding: { ...binding },
+        count: 0,
+      },
+    };
+    mutate(evidence);
+
+    server.on("connection", (socket) => {
+      socket.send(JSON.stringify({ type: "connect.challenge" }));
+      socket.on("message", (raw) => {
+        const frame = JSON.parse(raw.toString("utf-8")) as Record<string, unknown>;
+        if (frame.type === "connect") {
+          socket.send(JSON.stringify({ type: "hello-ok" }));
+          return;
+        }
+        if (frame.type !== "req" || frame.method !== "coding.run.subscribe" || typeof frame.id !== "string") return;
+        socket.send(JSON.stringify({
+          type: "res",
+          id: frame.id,
+          ok: true,
+          payload: { earliestSeq: 1, latestSeq: 2, efficiencyEvidence: evidence },
+        }));
+      });
+    });
+
+    const session = new GatewayCodingRunSubscriptionSession("state-dir");
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(address.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        await expect(session.subscribe({
+          subscription: { version: CODING_RUN_PROTOCOL_VERSION, binding },
+          onEvent: () => undefined,
+          onInterrupted: () => undefined,
+        })).resolves.toEqual({
+          ok: false,
+          error: {
+            code: "gateway_unavailable",
+            message: "Gateway returned an invalid coding run subscription response.",
+          },
+        });
+      });
+    } finally {
+      session.close();
+    }
+  });
+
+  it("accepts a legacy Gateway subscription response without additive efficiency evidence", async () => {
+    const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    servers.push(server);
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected a TCP listener.");
+
+    server.on("connection", (socket) => {
+      socket.send(JSON.stringify({ type: "connect.challenge" }));
+      socket.on("message", (raw) => {
+        const frame = JSON.parse(raw.toString("utf-8")) as Record<string, unknown>;
+        if (frame.type === "connect") {
+          socket.send(JSON.stringify({ type: "hello-ok" }));
+          return;
+        }
+        if (frame.type !== "req" || frame.method !== "coding.run.subscribe" || typeof frame.id !== "string") return;
+        socket.send(JSON.stringify({
+          type: "res",
+          id: frame.id,
+          ok: true,
+          payload: { earliestSeq: 1, latestSeq: 2 },
+        }));
+      });
+    });
+
+    const session = new GatewayCodingRunSubscriptionSession("state-dir");
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(address.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        await expect(session.subscribe({
+          subscription: {
+            version: CODING_RUN_PROTOCOL_VERSION,
+            binding: { conversationId: "legacy-conversation", agentRunId: "legacy-run" },
+          },
+          onEvent: () => undefined,
+          onInterrupted: () => undefined,
+        })).resolves.toEqual({ ok: true, payload: { earliestSeq: 1, latestSeq: 2 } });
+      });
+    } finally {
+      session.close();
+    }
+  });
+
   it("retries after pairing.required arrives after the initial pairing_required response", async () => {
     const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
     servers.push(server);

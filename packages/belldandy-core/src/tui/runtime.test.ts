@@ -15,6 +15,24 @@ import { WorkspaceRevisionRuntime } from "../workspace-revision.js";
 
 const execFile = promisify(execFileCallback);
 const temporaryDirectories: string[] = [];
+const taskProjectionConformancePath = path.resolve(
+  "benchmarks/task-projection/v1/consumer-conformance.json",
+);
+
+async function readTaskProjectionConformanceFixture(): Promise<{
+  sequence: Array<{
+    page: Record<string, unknown>;
+    expected: {
+      status: string;
+      reasonCategory: string;
+      reasonCode: string;
+      allowedActions: string[];
+    };
+  }>;
+  contentBearingPage: Record<string, unknown>;
+}> {
+  return JSON.parse(await fs.readFile(taskProjectionConformancePath, "utf8"));
+}
 
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })));
@@ -327,6 +345,9 @@ describe("CodingTuiRuntime", () => {
           "trace", "verifier", "mcp", "plugin", "skill",
         ].map((name) => [name, { required: false, state: "available" as const }])) as Record<string, { required: false; state: "available" }>,
       },
+      supportingEvidence: {
+        worktree: { status: "missing" as const, lifecycle: "discarded" as const, observedAtMs: 11 },
+      },
     };
     const invokeGateway = vi.fn(async (input: {
       method: string;
@@ -360,7 +381,11 @@ describe("CodingTuiRuntime", () => {
       epoch: "gateway-1",
       revision: 4,
       totalCount: 2,
-      items: [expect.objectContaining({ taskId: "task-1", status: "running" })],
+      items: [expect.objectContaining({
+        taskId: "task-1",
+        status: "running",
+        supportingEvidence: { worktree: { status: "missing", lifecycle: "discarded", observedAtMs: 11 } },
+      })],
       nextCursor: { epoch: "gateway-1", revision: 4, offset: 1 },
     });
     expect(invokeGateway).toHaveBeenCalledWith(expect.objectContaining({
@@ -371,16 +396,12 @@ describe("CodingTuiRuntime", () => {
   });
 
   it("fails closed when a TaskProjection page contains prompt content", async () => {
+    const fixture = await readTaskProjectionConformanceFixture();
     const invokeGateway = vi.fn(async (input: {
       parsePayload: (payload: Record<string, unknown>) => unknown;
     }) => ({
       ok: true as const,
-      payload: input.parsePayload({
-        epoch: "gateway-1",
-        revision: 1,
-        totalCount: 1,
-        items: [{ taskId: "task-1", prompt: "secret" }],
-      }),
+      payload: input.parsePayload(fixture.contentBearingPage),
       paired: true,
       wsUrl: "ws://127.0.0.1:28889",
     }));
@@ -392,6 +413,36 @@ describe("CodingTuiRuntime", () => {
     });
 
     await expect(runtime.listTaskProjections()).rejects.toThrow("invalid TaskProjection");
+  });
+
+  it("preserves the fixed TaskProjection event sequence across the TUI consumer", async () => {
+    const fixture = await readTaskProjectionConformanceFixture();
+    let pageIndex = 0;
+    const invokeGateway = vi.fn(async (input: {
+      parsePayload: (payload: Record<string, unknown>) => unknown;
+    }) => ({
+      ok: true as const,
+      payload: input.parsePayload(fixture.sequence[pageIndex++].page),
+      paired: true,
+      wsUrl: "ws://127.0.0.1:28889",
+    }));
+    const runtime = new CodingTuiRuntime({
+      stateDir: "E:\\state",
+      cwd: "E:\\workspace",
+      client: createClient(),
+      invokeGateway,
+    });
+
+    for (const step of fixture.sequence) {
+      const page = await runtime.listTaskProjections();
+      const item = page.items[0];
+      expect({
+        status: item.status,
+        reasonCategory: item.evidence.reasonCategory,
+        reasonCode: item.evidence.reasonCode,
+        allowedActions: item.allowedActions,
+      }).toEqual(step.expected);
+    }
   });
 
   it("lists a bounded safe workspace target projection and switches only after exact revalidation", async () => {

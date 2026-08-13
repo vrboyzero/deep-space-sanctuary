@@ -1,11 +1,34 @@
 import { EventEmitter, once } from "node:events";
+import fs from "node:fs";
 import { PassThrough } from "node:stream";
 import { createRequire } from "node:module";
+import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const { CodingRunStdioClient } = require("./stdio-client.cjs");
+const taskProjectionConformanceFixture = JSON.parse(fs.readFileSync(path.resolve(
+  "benchmarks/task-projection/v1/consumer-conformance.json",
+), "utf8"));
+
+function createTaskProjection() {
+  const capabilities = Object.fromEntries([
+    "tools", "languageToolchain", "sandbox", "approvalChannel", "worktree", "journal", "trace", "verifier", "mcp", "plugin", "skill",
+  ].map((name) => [name, { required: false, state: "available" }]));
+  return {
+    schemaVersion: "task-projection/v1",
+    taskId: "task-1",
+    status: "running",
+    owner: { source: "conversation", binding: { agentRunId: "run-1", conversationId: "conversation-1" } },
+    evidence: { observedAtMs: 1, reasonCategory: "running", reasonCode: "owner_running" },
+    allowedActions: ["observe", "cancel"],
+    capabilityClosure: { schemaVersion: "task-capability-closure/v1", evaluatedAtMs: 1, status: "satisfied", capabilities },
+    supportingEvidence: {
+      worktree: { status: "missing", lifecycle: "discarded", observedAtMs: 2 },
+    },
+  };
+}
 
 function createChildHarness() {
   let child;
@@ -299,12 +322,76 @@ describe("VS Code coding-run stdio client", () => {
       type: "projection.response",
       id: "projection-1",
       ok: true,
-      result: { epoch: "epoch-1", revision: 2, totalCount: 1, items: [] },
+      result: { epoch: "epoch-1", revision: 2, totalCount: 1, items: [createTaskProjection()] },
     })}\n`);
-    await expect(response).resolves.toEqual({
+    await expect(response).resolves.toMatchObject({
       ok: true,
-      result: { epoch: "epoch-1", revision: 2, totalCount: 1, items: [] },
+      result: {
+        epoch: "epoch-1",
+        revision: 2,
+        totalCount: 1,
+        items: [{ supportingEvidence: { worktree: { lifecycle: "discarded" } } }],
+      },
     });
+  });
+
+  it("rejects a content-bearing TaskProjection item from the stdio bridge", async () => {
+    const harness = createChildHarness();
+    const protocolErrors = [];
+    const client = new CodingRunStdioClient({
+      command: "bdd",
+      spawn: harness.spawn,
+      createRequestId: () => "projection-content-error",
+      onProtocolError: (error) => protocolErrors.push(error),
+    });
+
+    const response = client.listTaskProjections();
+    const sent = once(harness.child.stdin, "data");
+    await sent;
+    harness.child.stdout.write(`${JSON.stringify({
+      version: "v1",
+      type: "projection.response",
+      id: "projection-content-error",
+      ok: true,
+      result: taskProjectionConformanceFixture.contentBearingPage,
+    })}\n`);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(protocolErrors).toEqual([{ code: "invalid_frame", message: "Invalid coding run NDJSON frame." }]);
+    client.stop();
+    await expect(response).rejects.toThrow("bridge was stopped");
+  });
+
+  it("preserves the fixed TaskProjection event sequence in the VS Code consumer", async () => {
+    let requestIndex = 0;
+    const harness = createChildHarness();
+    const client = new CodingRunStdioClient({
+      command: "bdd",
+      spawn: harness.spawn,
+      createRequestId: () => `projection-conformance-${requestIndex++}`,
+    });
+
+    for (const [index, step] of taskProjectionConformanceFixture.sequence.entries()) {
+      const response = client.listTaskProjections();
+      const sent = once(harness.child.stdin, "data");
+      await sent;
+      harness.child.stdout.write(`${JSON.stringify({
+        version: "v1",
+        type: "projection.response",
+        id: `projection-conformance-${index}`,
+        ok: true,
+        result: step.page,
+      })}\n`);
+      const result = await response;
+      const item = result.result.items[0];
+      expect({
+        status: item.status,
+        reasonCategory: item.evidence.reasonCategory,
+        reasonCode: item.evidence.reasonCode,
+        allowedActions: item.allowedActions,
+      }).toEqual(step.expected);
+    }
+    client.stop();
   });
 
   it("preserves a structured projection source rejection", async () => {

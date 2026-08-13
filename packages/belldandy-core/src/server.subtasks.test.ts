@@ -199,6 +199,88 @@ test("tools.list resolves launch runtime visibility from subtask taskId", async 
   }
 });
 
+test("task.projection.list exposes a restart-lost subtask as resumable without private child details", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-projection-lost-"));
+  const originalStore = new SubTaskRuntimeStore(stateDir);
+  await originalStore.load();
+  const task = await originalStore.createTask({
+    launchSpec: {
+      parentConversationId: "conversation-child-crash",
+      agentId: "coder",
+      instruction: "private child instruction must not enter the task projection",
+      cwd: path.join(stateDir, "private-child-workspace"),
+    },
+    parentOperationId: `op_${"a".repeat(64)}`,
+  });
+  await originalStore.attachSession(task.id, "subtask-run-before-crash", "coder", "coder");
+
+  const recoveredStore = new SubTaskRuntimeStore(stateDir);
+  await recoveredStore.load();
+  await expect(recoveredStore.getTask(task.id)).resolves.toMatchObject({
+    status: "interrupted",
+    recovery: {
+      state: "runtime_lost",
+      previousStatus: "running",
+      mutationReplay: "forbidden",
+    },
+  });
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    subTaskRuntimeStore: recoveredStore,
+  });
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    frames.length = 0;
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "task-projection-child-crash",
+      method: "task.projection.list",
+      params: {},
+    }));
+    await waitFor(() => frames.some((frame) => frame.type === "res" && frame.id === "task-projection-child-crash"));
+
+    const response = frames.find((frame) => frame.type === "res" && frame.id === "task-projection-child-crash");
+    expect(response).toMatchObject({
+      ok: true,
+      payload: {
+        totalCount: 1,
+        items: [{
+          taskId: `subtask:${task.id}`,
+          status: "interrupted",
+          owner: {
+            source: "subtask",
+            binding: {
+              agentRunId: "subtask-run-before-crash",
+              conversationId: "conversation-child-crash",
+              subtask: { taskId: task.id },
+            },
+          },
+          evidence: {
+            reasonCategory: "owner_interrupted",
+            reasonCode: "owner_runtime_interrupted",
+          },
+          allowedActions: ["observe", "resume"],
+        }],
+      },
+    });
+    expect(JSON.stringify(response)).not.toMatch(/private child instruction|private-child-workspace|op_a{64}|mutationReplay|previousStatus/);
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
 test("tools.list exposes bridge recovery diagnostics for a governed bridge subtask", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
   const toolsConfigManager = new ToolsConfigManager(stateDir);

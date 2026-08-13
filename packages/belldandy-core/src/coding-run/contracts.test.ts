@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   CODING_RUN_CAPABILITIES,
   CODING_RUN_PROTOCOL_VERSION,
+  createAgentRunEventSequencer,
   isAgentRunEventV1,
   isCodingRunCapabilitiesV1,
   isCodingRunUsageCompletenessV1,
@@ -116,6 +117,26 @@ describe("coding-run public protocol boundary", () => {
         },
       },
     })).toBe(true);
+  });
+
+  it("keeps sequenced event timestamps monotonic when the system clock moves backwards", () => {
+    const timestamps = [1_000, 900, 1_100];
+    const events: AgentRunEvent[] = [];
+    const sequencer = createAgentRunEventSequencer({
+      source: "conversation",
+      binding: {
+        conversationId: "conversation-clock",
+        agentRunId: "run-clock",
+      },
+      now: () => timestamps.shift() ?? 1_100,
+      onEvent: (event) => events.push(event),
+    });
+
+    sequencer.emit("run.started", { status: "running" });
+    sequencer.emit("run.status", { status: "running" });
+    sequencer.emit("run.completed", {});
+
+    expect(events.map((event) => event.timestampMs)).toEqual([1_000, 1_000, 1_100]);
   });
 
   it("requires source-scoped control bindings and rejects unknown fields", () => {

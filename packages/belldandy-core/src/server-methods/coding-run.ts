@@ -555,6 +555,7 @@ function respondToToolPermission(
     ...(control.binding.worktreeId ? { worktreeId: control.binding.worktreeId } : {}),
     toolCallId: control.toolCallId,
     decision: control.decision,
+    responderKind: "unknown",
   });
   if (!result.ok) {
     return failure(requestId, result.code, "Tool permission request no longer matches the active worker.");

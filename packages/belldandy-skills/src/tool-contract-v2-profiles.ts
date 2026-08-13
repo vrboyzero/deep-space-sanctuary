@@ -303,6 +303,86 @@ const TOOL_CONTRACT_V2_PROFILES: Record<string, ToolContractV2Profile> = {
     ],
     userVisibleRiskNote: "并行委托的主要风险不是单个任务失败，而是边界不清导致的并发写冲突和集成成本。",
   },
+  subtask_supervisor: {
+    family: "session-orchestration",
+    riskLevel: "medium",
+    needsPermission: false,
+    isReadOnly: false,
+    isConcurrencySafe: false,
+    activityDescription: "Observe, steer, or cancel one exact supervised parallel lane",
+    outputPersistencePolicy: "conversation",
+    channels: ["gateway", "web"] satisfies ToolContract["channels"],
+    safeScopes: ["local-safe", "web-safe"] satisfies ToolContract["safeScopes"],
+    recommendedWhen: [
+      "Need to inspect or control a delegate_parallel child under the current manager Conversation/run",
+      "Need a current session-bound mutation with the existing SubTask command owner",
+    ],
+    avoidWhen: [
+      "The task belongs to another manager run, team, or lane",
+      "The desired action is resume, takeover, fan-in, merge, release, or deployment",
+    ],
+    confirmWhen: [
+      "The lane may currently be performing a write or an external side effect that cancellation will interrupt",
+      "Steering materially changes the accepted ownership or deliverable contract",
+    ],
+    preflightChecks: [
+      "Observe the exact team, lane, task, and current session before steer or cancel",
+      "Provide an idempotency key and expected revision for a retryable mutation",
+    ],
+    fallbackStrategy: [
+      "Use observe again when a binding or revision conflict reports stale state",
+      "Create a new explicit delegation only after a terminal or restart-lost lane cannot be safely controlled",
+    ],
+    expectedOutput: [
+      "Bounded JSON with contentMode none, lane status, mode, exact binding, and timestamps",
+      "No child instruction, steering text, worktree path, output, or error body",
+    ],
+    sideEffectSummary: [
+      "observe is read-only; steer and cancel mutate the existing SubTask command owner",
+      "A successful steer stops the current child session and relaunches the same task under a new session",
+    ],
+    userVisibleRiskNote: "该工具只能控制当前 manager run 精确拥有的并行 lane；steer/cancel 会改变活动 child，必须先核对 current session 与 revision。",
+  },
+  subtask_fan_in: {
+    family: "session-orchestration",
+    riskLevel: "high",
+    needsPermission: false,
+    isReadOnly: false,
+    isConcurrencySafe: false,
+    activityDescription: "Preview or explicitly confirm exact supervised worktree fan-in",
+    outputPersistencePolicy: "conversation",
+    channels: ["gateway", "web"] satisfies ToolContract["channels"],
+    safeScopes: ["local-safe", "web-safe"] satisfies ToolContract["safeScopes"],
+    recommendedWhen: [
+      "Need to combine terminal isolated write lanes from the current manager run",
+      "Every lane has revision-bound passed test evidence and approved read-only reviewer evidence",
+    ],
+    avoidWhen: [
+      "Any lane is still active, stale, untested, shared-workspace, or outside the current manager/team binding",
+      "The desired action includes automatic merge, release, deployment, or remote writes",
+    ],
+    confirmWhen: [
+      "Preview returned a ready short-lived receipt and the authoritative lane/evidence bindings remain current",
+      "The combined workspace mutation has been reviewed and conflicts are empty before receipt confirmation",
+    ],
+    preflightChecks: [
+      "Provide exact task/current-session/revision bindings with passed test evidence for each lane",
+      "Require approved read-only reviewer evidence and run preview before any confirm call",
+    ],
+    fallbackStrategy: [
+      "Observe lanes and regenerate test/reviewer evidence when any binding, revision, or artifact becomes stale",
+      "Resolve conflicts through a new isolated change and request another preview; never force the conflict receipt",
+    ],
+    expectedOutput: [
+      "Bounded JSON with contentMode none, ready/conflict/completed status, receipt metadata, blockers, and optional audit artifact ID",
+      "No patch body, worktree path, source repository path, child output, merge, release, or deployment result",
+    ],
+    sideEffectSummary: [
+      "preview mutates only an internal resolution worktree and receipt state; it does not mutate the source workspace",
+      "explicit confirm applies the receipt-bound result through the existing user-worktree owner and cleans the resolution worktree",
+    ],
+    userVisibleRiskNote: "fan-in confirm 会修改当前本地工作区。必须先 preview，且只能确认仍绑定 exact lane、passed test 与只读 reviewer evidence 的短期 receipt。",
+  },
   file_write: {
     family: "workspace-write",
     riskLevel: "high",

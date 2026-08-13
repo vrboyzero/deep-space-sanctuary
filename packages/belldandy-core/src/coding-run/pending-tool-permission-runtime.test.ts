@@ -3,6 +3,55 @@ import { describe, expect, it, vi } from "vitest";
 import { PendingToolPermissionRuntime } from "./pending-tool-permission-runtime.js";
 
 describe("PendingToolPermissionRuntime", () => {
+  it("reports an exact-bound settlement and distinguishes human from automatic responders", async () => {
+    vi.useFakeTimers();
+    try {
+      const onSettled = vi.fn();
+      const runtime = new PendingToolPermissionRuntime({ timeoutMs: 100, onSettled });
+      const humanDecision = runtime.request({
+        conversationId: "conversation-human",
+        agentRunId: "run-human",
+        toolCallId: "tool-human",
+        toolName: "file_edit",
+      });
+
+      expect(runtime.respond({
+        agentRunId: "run-human",
+        toolCallId: "tool-human",
+        decision: "allow",
+        responderKind: "human",
+      })).toEqual({ ok: true, accepted: true });
+      await expect(humanDecision).resolves.toBe("allow");
+      expect(onSettled).toHaveBeenLastCalledWith({
+        conversationId: "conversation-human",
+        agentRunId: "run-human",
+        toolCallId: "tool-human",
+        decision: "allow",
+        responderKind: "human",
+        reason: "response",
+      });
+
+      const timedOut = runtime.request({
+        conversationId: "conversation-timeout",
+        agentRunId: "run-timeout",
+        toolCallId: "tool-timeout",
+        toolName: "file_edit",
+      });
+      await vi.advanceTimersByTimeAsync(100);
+      await expect(timedOut).resolves.toBe("deny");
+      expect(onSettled).toHaveBeenLastCalledWith({
+        conversationId: "conversation-timeout",
+        agentRunId: "run-timeout",
+        toolCallId: "tool-timeout",
+        decision: "deny",
+        responderKind: "automatic",
+        reason: "timeout",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("lists multiple pending requests as bounded safe owner snapshots", async () => {
     const runtime = new PendingToolPermissionRuntime();
     const first = runtime.request({

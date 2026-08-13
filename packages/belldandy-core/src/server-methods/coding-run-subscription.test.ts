@@ -49,6 +49,46 @@ describe("coding.run.subscribe", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
+  it("returns exact-bound no-content efficiency evidence with a terminal subscription", () => {
+    let now = 1_000;
+    const broker = createCodingRunGatewayEventBroker({ now: () => now });
+    const binding = { conversationId: "conversation-evidence", agentRunId: "run-evidence" };
+    broker.registerConversationRun(binding);
+    now = 1_500;
+    broker.publishGatewayEvent({
+      event: "chat.final",
+      payload: { conversationId: binding.conversationId, runId: binding.agentRunId, text: "private-output" },
+    });
+
+    const response = handleCodingRunSubscriptionMethod({
+      type: "req",
+      id: "subscribe-evidence",
+      method: "coding.run.subscribe",
+      params: { version: CODING_RUN_PROTOCOL_VERSION, binding },
+    }, { readyState: 1, send: vi.fn(), once: vi.fn() } as never, { eventBroker: broker });
+
+    expect(response).toMatchObject({
+      ok: true,
+      payload: {
+        efficiencyEvidence: {
+          status: "complete",
+          projectionTimeline: {
+            source: "gateway_event_broker",
+            coverage: "complete",
+            binding,
+            statusCoverage: ["needs_input"],
+            items: [
+              { status: "running", observedAtMs: 1_000 },
+              { status: "completed", observedAtMs: 1_500 },
+            ],
+          },
+          humanInterventionEvidence: { count: 0 },
+        },
+      },
+    });
+    expect(JSON.stringify(response)).not.toContain("private-output");
+  });
+
   it("拒绝不完整、陈旧或过期 cursor 的订阅请求", () => {
     const broker = createCodingRunGatewayEventBroker({ maxEventsPerRun: 1 });
     broker.registerConversationRun({ conversationId: "conversation-1", agentRunId: "run-1" });

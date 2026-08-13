@@ -46,7 +46,7 @@ git branch --show-current
 ```bash
 # 1. 正常添加并提交代码
 git add .
-git commit -m "推进SS开发能力精进分析与计划，当前完成 P1-A2 第十二切片：gopls OCI admission、故障 Host 失效回收、promotion Gate 接入"
+git commit -m "推进SS开发能力精进分析与计划，P2-A 下一步进入 fault matrix 与双平台 soak"
 
 # 2. 推送当前分支到私有仓库
 # 这里当前分支就是 main，所以这样写没有问题

@@ -1270,6 +1270,70 @@ describe("before_agent_start system prompt overrides", () => {
     expect(items[items.length - 1]).toEqual({ type: "status", status: "done" });
   });
 
+  it("only lets a launch spec tighten the configured high-risk tool budget", async () => {
+    const execute = vi.fn(async (request: { id: string; name: string }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: "written",
+      durationMs: 0,
+    }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(createJsonResponse({
+      choices: [{
+        message: {
+          content: "",
+          tool_calls: [1, 2].map((index) => ({
+            id: `call-high-risk-${index}`,
+            type: "function",
+            function: { name: "workspace_write", arguments: "{}" },
+          })),
+        },
+      }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    }));
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      toolLoopIterationBudget: 0,
+      maxHighRiskToolCalls: 4,
+      toolExecutor: createToolExecutor({
+        getDefinitions: () => [{
+          type: "function" as const,
+          function: {
+            name: "workspace_write",
+            description: "write workspace",
+            parameters: { type: "object", properties: {} },
+          },
+        }],
+        getRegisteredToolContract: () => ({
+          name: "workspace_write",
+          riskLevel: "high",
+        }),
+        execute,
+      }),
+      logger: { error: vi.fn() },
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-launch-high-risk-budget",
+      text: "write twice",
+      meta: {
+        _agentLaunchSpec: {
+          maxHighRiskToolCalls: 1,
+        },
+      },
+    }));
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(items).toContainEqual({
+      type: "budget_exhausted",
+      budget: "high_risk_tool_calls",
+      limit: 1,
+      observed: 2,
+    });
+  });
+
   it("emits usage before the structured terminal event when provider token usage exceeds the run budget", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(createJsonResponse({
       choices: [{

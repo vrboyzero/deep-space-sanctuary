@@ -65,4 +65,40 @@ describe("task.projection.list", () => {
 
     expect(afterRestart).toMatchObject({ ok: false, error: { code: "cursor_stale" } });
   });
+
+  it("reads exact worktree lifecycle evidence through the public projection boundary", async () => {
+    const readLifecycleEvidence = vi.fn(async () => ({
+      lifecycle: "discarded" as const,
+      observedAtMs: 300,
+    }));
+    const response = await handleTaskProjectionMethod({
+      type: "req",
+      id: "worktree-lifecycle",
+      method: "task.projection.list",
+      params: {},
+    }, {
+      collectionRuntime: new TaskProjectionCollectionRuntime({ epoch: "gateway-worktree" }),
+      conversationRunRegistry: {
+        listActiveRuns: () => [{ conversationId: "conversation-1", runId: "run-1", startedAt: 100, state: "running" }],
+      },
+      userWorktreeRuntime: {
+        listStatus: async () => [],
+        readLifecycleEvidence,
+      },
+    });
+
+    expect(readLifecycleEvidence).toHaveBeenCalledWith({ conversationId: "conversation-1", runId: "run-1" });
+    expect(response).toMatchObject({
+      ok: true,
+      payload: {
+        items: [{
+          taskId: "conversation:conversation-1:run-1",
+          supportingEvidence: {
+            worktree: { status: "missing", lifecycle: "discarded", observedAtMs: 300 },
+          },
+        }],
+      },
+    });
+    expect(JSON.stringify(response)).not.toMatch(/ownerBindingHash|receiptId|worktreePath|retention/);
+  });
 });

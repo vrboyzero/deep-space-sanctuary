@@ -27,7 +27,10 @@ import {
   resolveBenchmarkShadowCandidate,
   runStage0BSuite,
 } from "./run-coding-agent-benchmark.mjs";
-import { runCodingRunSubscriptionProbe } from "./coding-agent-process-restart-harness.mjs";
+import {
+  resolveGatewayProcessRestartTimeoutMs,
+  runCodingRunSubscriptionProbe,
+} from "./coding-agent-process-restart-harness.mjs";
 import { createCodingAgentBenchmarkV3SystemHarness } from "./coding-agent-benchmark-system-harness.mjs";
 import { CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V2_ID } from "./run-coding-agent-benchmark-navigation-candidate-v2.mjs";
 import { CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V3_ID } from "./run-coding-agent-benchmark-navigation-candidate-v3.mjs";
@@ -45,6 +48,12 @@ afterEach(async () => {
 });
 
 describe("coding agent benchmark stage 0B runner", () => {
+  it("allows WSL2 v2 cold dist imports without weakening Windows or v1 timeouts", () => {
+    expect(resolveGatewayProcessRestartTimeoutMs("v2", "linux")).toBe(60_000);
+    expect(resolveGatewayProcessRestartTimeoutMs("v2", "win32")).toBe(15_000);
+    expect(resolveGatewayProcessRestartTimeoutMs("v1", "linux")).toBe(15_000);
+  });
+
   it("derives a Windows Gateway workspace without replacing the WSL evaluator workspace", () => {
     const gatewayFixtureRoot = "\\\\wsl.localhost\\Ubuntu-22.04\\var\\tmp\\coding-agent-fixtures";
 
@@ -108,6 +117,41 @@ describe("coding agent benchmark stage 0B runner", () => {
     expect(invocations[0].gatewayWorkspace).toBe(
       `\\\\wsl.localhost\\Ubuntu-22.04\\var\\tmp\\coding-agent-fixtures\\${runId}\\workspace`,
     );
+  });
+
+  it("keeps the WSL process-restart harness on its local evaluator workspace", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-wsl-restart-routing-"));
+    tempRoots.push(root);
+    const runId = "gateway-process-restart-wsl2-linux-a1-routing-test";
+    const invocations = [];
+
+    await runStage0BSuite({
+      platform: "wsl2-linux",
+      manifestRevision: "v2",
+      sourceRoot: path.resolve("."),
+      taskIds: ["gateway.process-restart"],
+      fixtureRoot: path.join(root, "fixtures"),
+      gatewayFixtureRoot: "\\\\wsl.localhost\\Ubuntu-22.04\\var\\tmp\\coding-agent-fixtures",
+      artifactRoot: path.join(root, "artifacts"),
+      stateRoot: path.join(root, "state"),
+      attempt: 1,
+      runIds: { "gateway.process-restart": runId },
+      model: { provider: "fixture", id: "fixture-model", credentialsConfigured: false },
+    }, {
+      runtime: {
+        platform: "linux",
+        osRelease: "6.6.87.2-microsoft-standard-WSL2",
+        env: { WSL_DISTRO_NAME: "Ubuntu-22.04" },
+      },
+      async executeProcessRestartCodingCi(input) {
+        invocations.push(input);
+        return { exitCode: 4, stdout: "", stderr: "restart routing probe" };
+      },
+    });
+
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0].workspace).toBe(path.join(root, "fixtures", runId, "workspace"));
+    expect(invocations[0]).not.toHaveProperty("gatewayWorkspace");
   });
 
   it("requires an explicit source root only for corrected v2 CLI runs", () => {

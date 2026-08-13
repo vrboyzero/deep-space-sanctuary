@@ -18,6 +18,7 @@ import { createCLIContext } from "../../shared/context.js";
 import { compileOutputSchema, resolveOptionalOutputSchema } from "../../shared/output-schema.js";
 import { WorkspaceChangeRecoveryRuntime } from "../../../workspace-change-recovery.js";
 import { WorkspaceChangeSnapshotRuntime } from "../../../workspace-change-snapshot.js";
+import { parseCodingRunCapabilityRequirements } from "../../../coding-run/capability-requirements.js";
 
 type TextWriter = (text: string) => void;
 const MAX_STDIN_PROMPT_BYTES = 1024 * 1024;
@@ -48,6 +49,11 @@ export type AgentRunCliOptionsInput = {
   maxTurns?: unknown;
   maxTokens?: unknown;
   maxCostUsd?: unknown;
+  requireCapability?: unknown;
+  requireTool?: unknown;
+  requireMcpServer?: unknown;
+  requirePlugin?: unknown;
+  requireSkill?: unknown;
 };
 
 type HeadlessChangeCapture = {
@@ -103,6 +109,8 @@ export function resolveAgentRunCliOptions(
   if (!maxTokens.ok) return maxTokens;
   const maxCostUsd = parsePositiveNumberOption(input.maxCostUsd, "--max-cost-usd");
   if (!maxCostUsd.ok) return maxCostUsd;
+  const requiredCapabilities = parseRequiredCapabilitiesOptions(input);
+  if (!requiredCapabilities.ok) return requiredCapabilities;
 
   const codingRun: CodingRunOptions = {
     ...(automationProfile.value ? { automationProfile: automationProfile.value } : {}),
@@ -116,6 +124,7 @@ export function resolveAgentRunCliOptions(
     ...(maxTurns.value === undefined ? {} : { maxTurns: maxTurns.value }),
     ...(maxTokens.value === undefined ? {} : { maxTokens: maxTokens.value }),
     ...(maxCostUsd.value === undefined ? {} : { maxCostUsd: maxCostUsd.value }),
+    ...(requiredCapabilities.value ? { requiredCapabilities: requiredCapabilities.value } : {}),
   };
   return {
     ok: true,
@@ -460,6 +469,41 @@ function parseToolListOption(
   return { ok: true, value: [...new Set(names)] };
 }
 
+function parseRequiredCapabilitiesOptions(
+  input: Pick<AgentRunCliOptionsInput, "requireCapability" | "requireTool" | "requireMcpServer" | "requirePlugin" | "requireSkill">,
+): { ok: true; value?: NonNullable<CodingRunOptions["requiredCapabilities"]> } | { ok: false; message: string } {
+  const declarations = [
+    ["capabilities", input.requireCapability, "--require-capability"],
+    ["tools", input.requireTool, "--require-tool"],
+    ["mcpServers", input.requireMcpServer, "--require-mcp-server"],
+    ["plugins", input.requirePlugin, "--require-plugin"],
+    ["skills", input.requireSkill, "--require-skill"],
+  ] as const;
+  if (declarations.every(([, value]) => value === undefined)) return { ok: true };
+
+  const raw: Record<string, unknown> = { schemaVersion: 1 };
+  for (const [field, value, flag] of declarations) {
+    const parsed = parseCommaSeparatedOption(value, flag);
+    if (!parsed.ok) return parsed;
+    if (parsed.value) raw[field] = parsed.value;
+  }
+  const parsed = parseCodingRunCapabilityRequirements(raw);
+  return parsed.ok
+    ? { ok: true, value: parsed.value }
+    : { ok: false, message: parsed.message.replace("codingRun.requiredCapabilities", "Required capability declaration") };
+}
+
+function parseCommaSeparatedOption(
+  value: unknown,
+  flag: string,
+): { ok: true; value?: string[] } | { ok: false; message: string } {
+  if (value === undefined) return { ok: true };
+  if (typeof value !== "string" || !value.trim()) {
+    return { ok: false, message: `${flag} must be a comma-separated list of exact ids.` };
+  }
+  return { ok: true, value: value.split(",").map((item) => item.trim()) };
+}
+
 function parsePermissionModeOption(
   value: unknown,
 ): { ok: true; value?: CodingRunOptions["permissionMode"] } | { ok: false; message: string } {
@@ -569,6 +613,11 @@ export default defineCommand({
     "max-turns": { type: "string", description: "Maximum model-call turns for this run" },
     "max-tokens": { type: "string", description: "Maximum cumulative tokens for this run" },
     "max-cost-usd": { type: "string", description: "Maximum priced model cost in USD for this run" },
+    "require-capability": { type: "string", description: "Comma-separated required capability categories" },
+    "require-tool": { type: "string", description: "Comma-separated exact required tool names" },
+    "require-mcp-server": { type: "string", description: "Comma-separated exact required MCP server ids" },
+    "require-plugin": { type: "string", description: "Comma-separated exact required plugin ids" },
+    "require-skill": { type: "string", description: "Comma-separated exact required skill names" },
     "output-schema": { type: "string", description: "Path to a JSON Schema for the final output" },
   },
   async run({ args }) {
@@ -591,6 +640,11 @@ export default defineCommand({
       maxTurns: args["max-turns"],
       maxTokens: args["max-tokens"],
       maxCostUsd: args["max-cost-usd"],
+      requireCapability: args["require-capability"],
+      requireTool: args["require-tool"],
+      requireMcpServer: args["require-mcp-server"],
+      requirePlugin: args["require-plugin"],
+      requireSkill: args["require-skill"],
     });
     if (!runOptions.ok) {
       process.stderr.write(`${runOptions.message}\n`);

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
 import path from "node:path";
 
 import type { AgentLaunchSpec } from "@belldandy/agent";
@@ -23,6 +25,7 @@ export type SubTaskWorktreeRuntimeSummary = {
   worktreePath?: string;
   worktreeRepoRoot?: string;
   worktreeBranch?: string;
+  worktreeBaseRef?: string;
   worktreeStatus?: WorktreeRuntimeStatus;
   worktreeError?: string;
 };
@@ -39,6 +42,17 @@ export type PersistedSubTaskWorktreeRuntime = {
   worktreePath?: string;
   worktreeRepoRoot?: string;
   worktreeBranch?: string;
+  worktreeBaseRef?: string;
+};
+
+export type SubTaskWorktreeFanInArtifact = {
+  schemaVersion: "subtask-worktree-fan-in-artifact/v1";
+  taskId: string;
+  status: "complete" | "no_changes" | "incomplete";
+  baseRef: string;
+  patch?: { path: string; sha256: string; byteLength: number };
+  manifest: { path: string; sha256: string };
+  changedPaths: string[];
 };
 
 type RuntimeLogger = {
@@ -154,6 +168,41 @@ export class SubTaskWorktreeRuntime {
     }
   }
 
+  async collectFanInArtifact(record: {
+    id: string;
+    launchSpec: PersistedSubTaskWorktreeRuntime & { worktreeStatus?: WorktreeRuntimeStatus };
+  }): Promise<SubTaskWorktreeFanInArtifact> {
+    const worktree = this.fromPersisted(record.id, record.launchSpec);
+    if (!worktree
+      || record.launchSpec.isolationMode !== "worktree"
+      || record.launchSpec.worktreeStatus !== "created"
+      || !record.launchSpec.worktreeBaseRef) {
+      throw new Error("Subtask fan-in requires a created worktree with a persisted baseRef.");
+    }
+    const artifact = await this.managedWorktrees.collectOrReadArtifact(worktree);
+    if (!artifact.manifestPath) throw new Error("Subtask fan-in artifact manifest is unavailable.");
+    const manifestContent = await fs.readFile(artifact.manifestPath);
+    const patchContent = artifact.patchPath ? await fs.readFile(artifact.patchPath) : undefined;
+    return {
+      schemaVersion: "subtask-worktree-fan-in-artifact/v1",
+      taskId: record.id,
+      status: artifact.status,
+      baseRef: worktree.baseRef,
+      ...(patchContent && patchContent.byteLength > 0 && artifact.patchPath ? {
+        patch: {
+          path: artifact.patchPath,
+          sha256: createHash("sha256").update(patchContent).digest("hex"),
+          byteLength: patchContent.byteLength,
+        },
+      } : {}),
+      manifest: {
+        path: artifact.manifestPath,
+        sha256: createHash("sha256").update(manifestContent).digest("hex"),
+      },
+      changedPaths: [...artifact.trackedChanges, ...artifact.untrackedFiles.map((item) => item.path)],
+    };
+  }
+
   private fromPersisted(taskId: string, runtime: PersistedSubTaskWorktreeRuntime): ManagedWorktree | undefined {
     const worktreePath = runtime.worktreePath ? path.resolve(runtime.worktreePath) : undefined;
     if (!worktreePath) return undefined;
@@ -166,8 +215,7 @@ export class SubTaskWorktreeRuntime {
       worktreePath,
       repoRoot: runtime.worktreeRepoRoot ? path.resolve(runtime.worktreeRepoRoot) : worktreePath,
       branch: runtime.worktreeBranch?.trim() || `belldandy-${taskId}`,
-      // Legacy subtask records predate baseRef. It is not used by subtask cleanup.
-      baseRef: "",
+      baseRef: runtime.worktreeBaseRef?.trim() || "",
       status: "created",
     };
   }
@@ -179,6 +227,7 @@ export class SubTaskWorktreeRuntime {
       worktreePath: worktree.worktreePath,
       worktreeRepoRoot: worktree.repoRoot,
       worktreeBranch: worktree.branch,
+      worktreeBaseRef: worktree.baseRef,
       worktreeStatus: toRuntimeStatus(worktree.status),
       worktreeError: worktree.error,
     };

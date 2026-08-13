@@ -1006,6 +1006,8 @@ test("config.update accepts final cleanup prompt and multimedia env settings", a
           BELLDANDY_SUB_AGENT_MAX_QUEUE_SIZE: "10",
           BELLDANDY_SUB_AGENT_TIMEOUT_MS: "120000",
           BELLDANDY_SUB_AGENT_MAX_DEPTH: "2",
+          BELLDANDY_SUB_AGENT_MAX_VERIFIERS: "1",
+          BELLDANDY_SUB_AGENT_MAX_COST_USD: "0.25",
           BELLDANDY_TTS_MODEL: "qwen3-tts-plus",
           BELLDANDY_IMAGE_ENABLED: "true",
           BELLDANDY_IMAGE_PROVIDER: "openai",
@@ -1068,6 +1070,8 @@ test("config.update accepts final cleanup prompt and multimedia env settings", a
     expect(readRes.payload?.config?.BELLDANDY_MAX_RUN_WALL_TIME_MS).toBe("300000");
     expect(readRes.payload?.config?.BELLDANDY_MAX_TOTAL_TOKENS).toBe("128000");
     expect(readRes.payload?.config?.BELLDANDY_MAX_HIGH_RISK_TOOL_CALLS).toBe("4");
+    expect(readRes.payload?.config?.BELLDANDY_SUB_AGENT_MAX_VERIFIERS).toBe("1");
+    expect(readRes.payload?.config?.BELLDANDY_SUB_AGENT_MAX_COST_USD).toBe("0.25");
     expect(readRes.payload?.config?.BELLDANDY_TOOL_LOOP_WARNING_FRACTION).toBe("0.75");
     expect(readRes.payload?.config?.BELLDANDY_DANGEROUS_TOOLS_ENABLED).toBe("true");
     expect(readRes.payload?.config?.BELLDANDY_TTS_MODEL).toBe("qwen3-tts-plus");
@@ -1101,6 +1105,8 @@ test("config.update accepts final cleanup prompt and multimedia env settings", a
     expect(envLocalContent).toContain('BELLDANDY_MAX_RUN_WALL_TIME_MS="300000"');
     expect(envLocalContent).toContain('BELLDANDY_MAX_TOTAL_TOKENS="128000"');
     expect(envLocalContent).toContain('BELLDANDY_MAX_HIGH_RISK_TOOL_CALLS="4"');
+    expect(envLocalContent).toContain('BELLDANDY_SUB_AGENT_MAX_VERIFIERS="1"');
+    expect(envLocalContent).toContain('BELLDANDY_SUB_AGENT_MAX_COST_USD="0.25"');
     expect(envLocalContent).toContain('BELLDANDY_TOOL_LOOP_WARNING_FRACTION="0.75"');
     expect(envLocalContent).toContain('BELLDANDY_DANGEROUS_TOOLS_ENABLED="true"');
     expect(envLocalContent).toContain('BELLDANDY_TTS_MODEL="qwen3-tts-plus"');

@@ -3,7 +3,11 @@ import type { WorkflowRuntimeCapabilities } from "@belldandy/skills";
 import type { ConversationRunListItem } from "../conversation-run-registry.js";
 import type { GoalStatus } from "../goals/types.js";
 import type { SubTaskKind, SubTaskStatus } from "../task-runtime.js";
-import type { UserWorktreeStatus } from "../user-worktree-runtime.js";
+import type { UserWorktreeLifecycleEvidence, UserWorktreeOwner, UserWorktreeStatus } from "../user-worktree-runtime.js";
+import type { PendingToolPermissionSnapshot } from "./pending-tool-permission-runtime.js";
+import type { TaskCapabilityClosureResolver } from "./task-capability-closure.js";
+import { createUnknownTaskCapabilityClosure } from "./task-capability-closure.js";
+import type { CodingRunReconciliation, CodingRunReconciliationJournalOwner } from "./reconciliation-journal.js";
 import {
   createConversationCodingRunView,
   createGoalCodingRunView,
@@ -11,7 +15,6 @@ import {
   createWorkflowActiveCodingRunView,
 } from "./source-adapters.js";
 import {
-  TASK_CAPABILITY_CLOSURE_SCHEMA_VERSION,
   type TaskCapabilityClosure,
   type TaskProjectionInput,
   type TaskProjectionSupportingEvidence,
@@ -55,7 +58,13 @@ export type TaskProjectionCollectorContext = {
   goalManager?: { listGoals: (options?: { includeArchived?: boolean }) => Promise<GoalListItem[]> };
   subTaskRuntimeStore?: { listTasks: (parentConversationId?: string, options?: { includeArchived?: boolean }) => Promise<SubtaskListItem[]> };
   workflowRuntime?: Pick<WorkflowRuntimeCapabilities, "listActiveRuns" | "getStatusByRunId">;
-  userWorktreeRuntime?: { listStatus: () => Promise<UserWorktreeStatus[]> };
+  userWorktreeRuntime?: {
+    listStatus: () => Promise<UserWorktreeStatus[]>;
+    readLifecycleEvidence?: (owner: UserWorktreeOwner) => Promise<UserWorktreeLifecycleEvidence | undefined>;
+  };
+  reconciliationJournal?: Pick<CodingRunReconciliationJournalOwner, "reconcile">;
+  pendingToolPermissionRuntime?: { list: () => PendingToolPermissionSnapshot[] };
+  taskCapabilityClosureResolver?: TaskCapabilityClosureResolver;
   resolveCapabilityClosure?: (input: {
     taskId: string;
     source: "conversation" | "goal" | "workflow" | "subtask";
@@ -75,16 +84,33 @@ export async function collectTaskProjectionSources(
     ctx.userWorktreeRuntime?.listStatus().catch(() => []) ?? [],
   ]);
   const worktreesByRun = indexWorktrees(worktrees);
+  const pendingApprovalBindings = readPendingApprovalBindings(ctx.pendingToolPermissionRuntime);
   const sources: TaskProjectionInput[] = [];
+  const conversations = ctx.conversationRunRegistry?.listActiveRuns() ?? [];
+  const worktreeLifecycleByRun = await readWorktreeLifecycleEvidence(ctx.userWorktreeRuntime, conversations, now);
 
-  for (const handle of ctx.conversationRunRegistry?.listActiveRuns() ?? []) {
+  for (const handle of conversations) {
     const taskId = `conversation:${handle.conversationId}:${handle.runId}`;
+    const view = createConversationCodingRunView({ handle });
+    if (pendingApprovalBindings.has(`${handle.conversationId}\0${handle.runId}`)) {
+      view.status = "awaiting_review";
+    }
+    const supportingEvidence = {
+      ...toWorktreeEvidence(
+        worktreesByRun.get(`${handle.conversationId}\0${handle.runId}`),
+        worktreeLifecycleByRun.get(`${handle.conversationId}\0${handle.runId}`),
+      ),
+      ...await readJournalEvidence(ctx.reconciliationJournal, {
+        conversationId: handle.conversationId,
+        agentRunId: handle.runId,
+      }, now()),
+    };
     sources.push({
       taskId,
-      view: createConversationCodingRunView({ handle }),
+      view,
       observedAtMs: Math.max(handle.startedAt, handle.stopRequestedAt ?? 0),
       capabilityClosure: resolveClosure(ctx, taskId, "conversation", handle.runId, now()),
-      ...toWorktreeEvidence(worktreesByRun.get(`${handle.conversationId}\0${handle.runId}`)),
+      ...(Object.keys(supportingEvidence).length > 0 ? { supportingEvidence } : {}),
     });
   }
 
@@ -138,30 +164,22 @@ function resolveClosure(
   evaluatedAtMs: number,
 ): TaskCapabilityClosure {
   return ctx.resolveCapabilityClosure?.({ taskId, source, agentRunId })
+    ?? ctx.taskCapabilityClosureResolver?.resolve({ taskId, source, agentRunId })
     ?? createUnknownTaskCapabilityClosure(evaluatedAtMs);
 }
 
-export function createUnknownTaskCapabilityClosure(evaluatedAtMs: number): TaskCapabilityClosure {
-  const capability = { required: false, state: "unknown" as const, reasonCode: "not_evaluated" };
-  return {
-    schemaVersion: TASK_CAPABILITY_CLOSURE_SCHEMA_VERSION,
-    evaluatedAtMs: Math.max(0, Math.trunc(evaluatedAtMs)),
-    status: "unknown",
-    capabilities: {
-      tools: { ...capability },
-      languageToolchain: { ...capability },
-      sandbox: { ...capability },
-      approvalChannel: { ...capability },
-      worktree: { ...capability },
-      journal: { ...capability },
-      trace: { ...capability },
-      verifier: { ...capability },
-      mcp: { ...capability },
-      plugin: { ...capability },
-      skill: { ...capability },
-    },
-  };
+function readPendingApprovalBindings(
+  runtime: { list: () => PendingToolPermissionSnapshot[] } | undefined,
+): Set<string> {
+  if (!runtime) return new Set();
+  try {
+    return new Set(runtime.list().map((item) => `${item.conversationId}\0${item.agentRunId}`));
+  } catch {
+    return new Set();
+  }
 }
+
+export { createUnknownTaskCapabilityClosure } from "./task-capability-closure.js";
 
 function indexWorktrees(items: UserWorktreeStatus[]): Map<string, UserWorktreeStatus> {
   const result = new Map<string, UserWorktreeStatus>();
@@ -176,16 +194,77 @@ function indexWorktrees(items: UserWorktreeStatus[]): Map<string, UserWorktreeSt
   return result;
 }
 
-function toWorktreeEvidence(worktree: UserWorktreeStatus | undefined): {
-  supportingEvidence?: TaskProjectionSupportingEvidence;
-} {
+function toWorktreeEvidence(
+  worktree: UserWorktreeStatus | undefined,
+  lifecycle: UserWorktreeLifecycleEvidence | undefined,
+): TaskProjectionSupportingEvidence {
+  if (lifecycle?.lifecycle === "discarded") {
+    return { worktree: { status: "missing", lifecycle: "discarded", observedAtMs: lifecycle.observedAtMs } };
+  }
+  if (lifecycle?.lifecycle === "discard_pending" || lifecycle?.lifecycle === "uncertain") {
+    return {
+      worktree: {
+        status: "uncertain",
+        observedAtMs: lifecycle.observedAtMs,
+        ...(lifecycle.lifecycle === "discard_pending" ? { lifecycle: "discard_pending" as const } : {}),
+      },
+    };
+  }
   if (!worktree) return {};
   const status = worktree.status === "unavailable"
     ? "missing" as const
-    : worktree.status === "blocked" || (worktree.conflictChanges ?? 0) > 0
+    : (worktree.conflictChanges ?? 0) > 0
       ? "conflicted" as const
-      : worktree.dirty ? "dirty" as const : "ready" as const;
-  return { supportingEvidence: { worktree: { status, observedAtMs: 0 } } };
+      : worktree.dirty
+        ? "dirty" as const
+        : worktree.status === "blocked" ? "conflicted" as const : "ready" as const;
+  return {
+    worktree: {
+      status,
+      observedAtMs: lifecycle?.observedAtMs ?? 0,
+      ...(lifecycle?.lifecycle === "kept" ? { lifecycle: "kept" as const } : {}),
+    },
+  };
+}
+
+async function readWorktreeLifecycleEvidence(
+  runtime: TaskProjectionCollectorContext["userWorktreeRuntime"],
+  conversations: ConversationRunListItem[],
+  now: () => number,
+): Promise<Map<string, UserWorktreeLifecycleEvidence>> {
+  if (!runtime?.readLifecycleEvidence) return new Map();
+  const entries = await Promise.all(conversations.map(async (handle) => {
+    const key = `${handle.conversationId}\0${handle.runId}`;
+    try {
+      return [key, await runtime.readLifecycleEvidence!({
+        conversationId: handle.conversationId,
+        runId: handle.runId,
+      })] as const;
+    } catch {
+      return [key, { lifecycle: "uncertain" as const, observedAtMs: now() }] as const;
+    }
+  }));
+  return new Map(entries.filter((entry): entry is readonly [string, UserWorktreeLifecycleEvidence] => Boolean(entry[1])));
+}
+
+async function readJournalEvidence(
+  journal: Pick<CodingRunReconciliationJournalOwner, "reconcile"> | undefined,
+  binding: { conversationId: string; agentRunId: string },
+  observedAtMs: number,
+): Promise<TaskProjectionSupportingEvidence> {
+  if (!journal) return {};
+  let reconciliation: CodingRunReconciliation;
+  try {
+    reconciliation = await journal.reconcile(binding);
+  } catch {
+    return { journal: { status: "uncertain", observedAtMs } };
+  }
+  const status = reconciliation.journalState === "missing"
+    ? "skipped" as const
+    : reconciliation.journalState !== "available" || reconciliation.state === "uncertain"
+      ? "uncertain" as const
+      : "pending" as const;
+  return { journal: { status, observedAtMs } };
 }
 
 function toTimestamp(value: string): number {

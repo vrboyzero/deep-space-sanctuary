@@ -6,9 +6,11 @@ import {
 } from "../coding-run/task-projection-collection.js";
 import { TaskProjectionCollectionRuntime } from "../coding-run/task-projection-collection-runtime.js";
 import { collectTaskProjectionSources, type TaskProjectionCollectorContext } from "../coding-run/task-projection-collector.js";
+import type { TaskCapabilityClosureResolver } from "../coding-run/task-capability-closure.js";
 
 type TaskProjectionMethodContext = TaskProjectionCollectorContext & {
   collectionRuntime: TaskProjectionCollectionRuntime;
+  taskCapabilityClosureResolver?: TaskCapabilityClosureResolver;
 };
 
 export async function handleTaskProjectionMethod(
@@ -21,7 +23,10 @@ export async function handleTaskProjectionMethod(
   const params = parseParams(req.params);
   if (!params.ok) return failure(req.id, "invalid_params", params.message);
 
-  const sources = await collectTaskProjectionSources(ctx);
+  const sources = await collectTaskProjectionSources({
+    ...ctx,
+    taskCapabilityClosureResolver: ctx.taskCapabilityClosureResolver,
+  });
   const snapshot = ctx.collectionRuntime.refresh({
     observedAtMs: Date.now(),
     sources,

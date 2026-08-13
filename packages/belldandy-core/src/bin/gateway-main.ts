@@ -57,11 +57,16 @@ import {
   createSubTaskRuntimeEventHandler,
   createSubTaskUpdateController,
   createSubTaskWorktreeLifecycleHandler,
+  reattachSubTaskSupervisorRuntime,
   reconcileSubTaskWorktreeRuntimes,
   type SubTaskCommandRequestOptions,
   type SubTaskRecord,
   SubTaskRuntimeStore,
 } from "../task-runtime.js";
+import { SubTaskSupervisorRuntime } from "../subtask-supervisor-runtime.js";
+import { SubTaskSupervisorControlRuntime } from "../subtask-supervisor-control-runtime.js";
+import { SubTaskSupervisorFanInRuntime } from "../subtask-supervisor-fan-in-runtime.js";
+import { SubTaskSupervisorFanInResolutionRuntime } from "../subtask-supervisor-fan-in-resolution-runtime.js";
 import {
   createBridgeAwareStopSubTaskHandler,
   createBridgeSessionGovernanceCapabilities,
@@ -81,7 +86,13 @@ import {
   parseRemoteDeliveryTargets,
 } from "../remote-delivery-runtime.js";
 import { PendingToolPermissionRuntime } from "../coding-run/pending-tool-permission-runtime.js";
+import {
+  createCodingRunGatewayEventBroker,
+  type CodingRunGatewayEventBroker,
+} from "../coding-run/gateway-event-broker.js";
 import { CodingRunRecoveryMarkerStore } from "../coding-run/recovery-marker-store.js";
+import { CodingRunReconciliationJournal } from "../coding-run/reconciliation-journal.js";
+import { createProductionTaskCapabilityClosureOwner } from "../coding-run/production-task-capability-owner.js";
 import { normalizeEmailOutboundDraft } from "../email-outbound-contract.js";
 import { createFileEmailOutboundAuditStore, resolveEmailOutboundAuditStorePath } from "../email-outbound-audit-store.js";
 import { EmailOutboundConfirmationStore } from "../email-outbound-confirmation-store.js";
@@ -161,6 +172,8 @@ import {
   type ToolDiscoveryFamilyDefinition,
   resolveSafeScopesForChannel,
   type ToolContractAccessPolicy,
+  type ToolExecutionRuntimeContext,
+  evaluateCommandSandboxAdmission,
   createToolSearchTool,
   TOOL_SEARCH_NAME,
   TOOL_SETTINGS_CONTROL_NAME,
@@ -286,6 +299,8 @@ import {
   sessionsHistoryTool,
   delegateTaskTool,
   delegateParallelTool,
+  subtaskFanInTool,
+  subtaskSupervisorTool,
   conversationListTool,
   conversationReadTool,
   retrieveToolResultTool,
@@ -1108,6 +1123,8 @@ const gatewayToolPoolAssembler = new ToolPoolAssembler([
       sessionsHistoryTool,
       delegateTaskTool,
       delegateParallelTool,
+      subtaskFanInTool,
+      subtaskSupervisorTool,
       conversationListTool,
       conversationReadTool,
       retrieveToolResultTool,
@@ -1326,15 +1343,34 @@ const remoteDeliveryRuntime = new RemoteDeliveryRuntime({
   targets: parseRemoteDeliveryTargets(readEnv("BELLDANDY_REMOTE_DELIVERY_TARGETS_JSON")),
   pullRequests: new GhPullRequestClient(),
 });
+let codingRunEventBroker: CodingRunGatewayEventBroker | undefined;
 const pendingToolPermissionRuntime = new PendingToolPermissionRuntime({
   onRequested: (request) => {
-    emitConversationToolEvent(request.conversationId, {
+    const detail = {
       kind: "coding_run_permission_requested",
       agentRunId: request.agentRunId,
       ...(request.worktreeId ? { worktreeId: request.worktreeId } : {}),
       toolCallId: request.toolCallId,
       toolName: request.toolName,
       ...(request.commandPreview ? { commandPreview: request.commandPreview } : {}),
+    };
+    emitConversationToolEvent(request.conversationId, detail);
+    codingRunEventBroker?.publishGatewayEvent({
+      event: "tool_event",
+      payload: {
+        conversationId: request.conversationId,
+        runId: request.agentRunId,
+        ...detail,
+      },
+    });
+  },
+  onSettled: (settlement) => {
+    codingRunEventBroker?.observePermissionSettled({
+      conversationId: settlement.conversationId,
+      agentRunId: settlement.agentRunId,
+    }, {
+      toolCallId: settlement.toolCallId,
+      responderKind: settlement.responderKind,
     });
   },
 });
@@ -3033,12 +3069,22 @@ let takeoverSubTask:
 let updateSubTask:
   | ((taskId: string, message: string, options?: SubTaskCommandRequestOptions) => Promise<SubTaskRecord | undefined>)
   | undefined;
+let stopSubTask:
+  | ((taskId: string, reason?: string, options?: SubTaskCommandRequestOptions) => Promise<SubTaskRecord | undefined>)
+  | undefined;
 let workflowRuntime: WorkflowRuntime | undefined;
 if (agentRegistry && toolsEnabled) {
   const subAgentMaxConcurrent = parseInt(readEnv("BELLDANDY_SUB_AGENT_MAX_CONCURRENT") || "3", 10);
   const subAgentTimeoutMs = parseInt(readEnv("BELLDANDY_SUB_AGENT_TIMEOUT_MS") || "120000", 10);
   const subAgentMaxDepth = parseInt(readEnv("BELLDANDY_SUB_AGENT_MAX_DEPTH") || "2", 10);
   const subAgentMaxQueueSize = parseInt(readEnv("BELLDANDY_SUB_AGENT_MAX_QUEUE_SIZE") || "10", 10);
+  const subAgentMaxVerifiers = parseInt(readEnv("BELLDANDY_SUB_AGENT_MAX_VERIFIERS") || "1", 10);
+  const subAgentMaxCostUsdRaw = readEnv("BELLDANDY_SUB_AGENT_MAX_COST_USD");
+  const subAgentMaxCostUsd = (() => {
+    if (!subAgentMaxCostUsdRaw) return undefined;
+    const value = Number(subAgentMaxCostUsdRaw);
+    return Number.isFinite(value) && value > 0 ? value : undefined;
+  })();
   subTaskRuntimeStore = new SubTaskRuntimeStore(stateDir, {
     info: (m, d) => logger.info("task-runtime", m, d),
     warn: (m, d) => logger.warn("task-runtime", m, d),
@@ -3154,17 +3200,21 @@ if (agentRegistry && toolsEnabled) {
       warn: (m, d) => logger.warn("task-runtime", m, d),
     }),
   });
-
-  toolExecutor.setAgentCapabilities(createSubTaskAgentCapabilities({
-    orchestrator: subAgentOrchestrator,
+  const subTaskSupervisorRuntime = new SubTaskSupervisorRuntime({
+    maxActiveChildren: subAgentMaxConcurrent,
+    maxVerifierChildren: subAgentMaxVerifiers,
+    maxDepth: subAgentMaxDepth,
+    maxWallTimeMs: Math.min(subAgentTimeoutMs, maxRunWallTimeMs),
+    toolLoopIterationBudget,
+    maxTotalTokens,
+    maxCostUsd: subAgentMaxCostUsd,
+    maxHighRiskToolCalls,
+  });
+  await reattachSubTaskSupervisorRuntime({
     runtimeStore: subTaskRuntimeStore,
-    agentRegistry,
-    resolveIdentityAuthorityProfile: resolveIdentityAuthorityProfileForAgent,
-    worktreeRuntime: subTaskWorktreeRuntime,
-    logger: {
-      warn: (m, d) => logger.warn("task-runtime", m, d),
-    },
-  }));
+    supervisorRuntime: subTaskSupervisorRuntime,
+  });
+
   toolExecutor.setBridgeSessionGovernance(createBridgeSessionGovernanceCapabilities({
     runtimeStore: subTaskRuntimeStore,
   }));
@@ -3177,6 +3227,38 @@ if (agentRegistry && toolsEnabled) {
       warn: (m, d) => logger.warn("task-runtime", m, d),
     },
   });
+  stopSubTask = createBridgeAwareStopSubTaskHandler({
+    subTaskRuntimeStore,
+    subAgentOrchestrator,
+    toolExecutor,
+    logger: {
+      warn: (m, d) => logger.warn("task-runtime", m, d),
+    },
+  });
+  const subTaskSupervisorControlRuntime = new SubTaskSupervisorControlRuntime({
+    runtimeStore: subTaskRuntimeStore,
+    supervisorRuntime: subTaskSupervisorRuntime,
+    cancelSubTask: stopSubTask,
+    steerSubTask: updateSubTask,
+  });
+  const subTaskSupervisorFanInRuntime = new SubTaskSupervisorFanInRuntime({
+    runtimeStore: subTaskRuntimeStore,
+    worktreeRuntime: subTaskWorktreeRuntime,
+    resolutionRuntime: new SubTaskSupervisorFanInResolutionRuntime({ stateDir }),
+  });
+  toolExecutor.setAgentCapabilities(createSubTaskAgentCapabilities({
+    orchestrator: subAgentOrchestrator,
+    runtimeStore: subTaskRuntimeStore,
+    agentRegistry,
+    resolveIdentityAuthorityProfile: resolveIdentityAuthorityProfileForAgent,
+    worktreeRuntime: subTaskWorktreeRuntime,
+    supervisorRuntime: subTaskSupervisorRuntime,
+    supervisorControlRuntime: subTaskSupervisorControlRuntime,
+    supervisorFanInRuntime: subTaskSupervisorFanInRuntime,
+    logger: {
+      warn: (m, d) => logger.warn("task-runtime", m, d),
+    },
+  }));
   const resumeAgentSubTask = createSubTaskResumeController({
     runtimeStore: subTaskRuntimeStore,
     orchestrator: subAgentOrchestrator,
@@ -3220,6 +3302,7 @@ if (agentRegistry && toolsEnabled) {
   });
 
   logger.info("orchestrator", `Sub-agent orchestrator initialized (maxConcurrent=${subAgentMaxConcurrent}, queue=${subAgentMaxQueueSize}, timeout=${subAgentTimeoutMs}ms, maxDepth=${subAgentMaxDepth})`);
+  logger.info("task-runtime", "Subtask Supervisor initialized for structured parallel lanes.");
   logger.info("task-runtime", "Sub-task runtime initialized for sub-agent orchestration.");
 }
 
@@ -4143,7 +4226,7 @@ const getConversationPromptSnapshot = async ({ conversationId, runId }: {
   conversationId,
   runId,
 });
-const stopSubTask = createBridgeAwareStopSubTaskHandler({
+stopSubTask ??= createBridgeAwareStopSubTaskHandler({
   subTaskRuntimeStore,
   subAgentOrchestrator,
   toolExecutor: toolsEnabled ? toolExecutor : undefined,
@@ -4228,6 +4311,82 @@ const startupConnectivityObservability: {
   invalidTokenCloseCount: 0,
 };
 
+const codingRunReconciliationJournal = new CodingRunReconciliationJournal(stateDir, {
+  delegationTaskStore: subTaskRuntimeStore,
+  workspaceMutationEvidenceStore: workspaceRevisionRuntime,
+});
+codingRunEventBroker = createCodingRunGatewayEventBroker({
+  reconciliationJournal: codingRunReconciliationJournal,
+});
+const codingRunJournalReady = await codingRunReconciliationJournal.checkReadiness();
+const taskCapabilityClosureResolver = createProductionTaskCapabilityClosureOwner({
+  readTool: ({
+    name,
+    conversationId,
+    agentId,
+    agentRunId,
+    requestChannel,
+    automationProfile,
+    permissionMode,
+    toolAllow,
+    toolDeny,
+  }) => {
+    if (!toolsEnabled) return undefined;
+    const launchSpec: NonNullable<ToolExecutionRuntimeContext["launchSpec"]> = {
+      commandSandbox: "required",
+      ...(toolAllow?.length ? { toolSet: [...toolAllow] } : automationProfile === "bare" ? { toolSet: [] } : {}),
+      ...(toolDeny?.length ? { toolDeny: [...toolDeny] } : {}),
+      ...(permissionMode ? { permissionMode } : {}),
+    };
+    const availability = toolExecutor.getToolAvailability(name, agentId, conversationId, {
+      agentRunId,
+      ...(requestChannel ? { channel: requestChannel } : {}),
+      launchSpec,
+    });
+    if (!availability) return undefined;
+    const contract = toolExecutor.getRegisteredToolContract(name);
+    return {
+      available: availability.available,
+      reasonCode: availability.reasonCode,
+      ...(contract?.family ? { family: contract.family } : {}),
+      ...(contract ? { needsPermission: contract.needsPermission } : {}),
+    };
+  },
+  probeCommandSandbox: async () => {
+    const admission = await evaluateCommandSandboxAdmission({
+      family: "command-exec",
+      launchSpec: { commandSandbox: "required" },
+      readEnv,
+    });
+    return admission.allowed
+      ? { available: true, reasonCode: "available" }
+      : { available: false, reasonCode: admission.metadata.commandSandboxReason };
+  },
+  hasApprovalChannel: () => Boolean(pendingToolPermissionRuntime),
+  readWorktree: async ({ conversationId, agentRunId }) => {
+    const matches = (await userWorktreeRuntime.listStatus()).filter((status) => (
+      status.owner.conversationId === conversationId && status.owner.runId === agentRunId
+    ));
+    if (matches.length === 0) return { available: false, reasonCode: "worktree_not_found" };
+    if (matches.length > 1) return { available: false, reasonCode: "worktree_binding_conflict" };
+    return matches[0]?.status === "ready"
+      ? { available: true, reasonCode: "available" }
+      : { available: false, reasonCode: "worktree_unavailable" };
+  },
+  readJournal: () => codingRunJournalReady
+    ? { available: true, reasonCode: "available" }
+    : { available: false, reasonCode: "journal_unavailable" },
+  readTrace: () => ({ available: true, reasonCode: "gateway_event_broker" }),
+  readMcpDiagnostics: getMCPDiagnostics,
+  listPluginIds: () => pluginRegistry.getPluginIds(),
+  readSkill: (name) => {
+    const skill = skillRegistry.getSkill(name);
+    return skill
+      ? { exists: true, eligible: skillRegistry.getEligibilityResult(name)?.eligible }
+      : { exists: false };
+  },
+});
+
 const serverOptions = buildGatewayServerOptions({
   port,
   host,
@@ -4250,6 +4409,9 @@ const serverOptions = buildGatewayServerOptions({
   memoryModelPrivacyRuntime: memoryBackgroundRuntime.modelPrivacyRuntime,
   conversationStore,
   conversationRunRegistry,
+  codingRunEventBroker,
+  codingRunReconciliationJournal,
+  taskCapabilityClosureResolver,
   topLevelConversationLifecycle,
   getCompactionRuntimeReport: () => compactionRuntimeTracker.getReport(),
   getRuntimeResilienceReport: () => runtimeResilienceTracker.getReport(),

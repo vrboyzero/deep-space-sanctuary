@@ -3,6 +3,26 @@ import { describe, expect, it } from "vitest";
 import { normalizeAgentLaunchSpec, normalizeAgentLaunchSpecWithCatalog } from "./launch-spec.js";
 
 describe("normalizeAgentLaunchSpec", () => {
+  it("normalizes per-run resource budgets for the canonical launch contract", () => {
+    const spec = normalizeAgentLaunchSpec({
+      instruction: "Run the bounded verification lane.",
+      parentConversationId: "conv-budget",
+      maxRunWallTimeMs: 12_345.9,
+      toolLoopIterationBudget: 7.8,
+      maxTotalTokens: 9_000.7,
+      maxCostUsd: 0.42,
+      maxHighRiskToolCalls: 0,
+    });
+
+    expect(spec).toMatchObject({
+      maxRunWallTimeMs: 12_345,
+      toolLoopIterationBudget: 7,
+      maxTotalTokens: 9_000,
+      maxCostUsd: 0.42,
+      maxHighRiskToolCalls: 0,
+    });
+  });
+
   it("preserves the commander runtime role for a custom agent id", () => {
     const spec = normalizeAgentLaunchSpec({
       instruction: "Coordinate the delegated work and prepare the final decision.",

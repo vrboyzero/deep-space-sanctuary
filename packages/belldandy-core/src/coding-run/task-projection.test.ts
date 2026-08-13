@@ -239,6 +239,31 @@ describe("task projection v1", () => {
     expect(JSON.stringify(projection)).not.toMatch(/output|error|path|secret/i);
   });
 
+  it("accepts bounded worktree lifecycle evidence and rejects unknown lifecycle fields", () => {
+    const projection = createTaskProjection({
+      taskId: "task-worktree-discarded",
+      view: createGoalSource(),
+      observedAtMs: 1_700_000_000_000,
+      capabilityClosure: satisfiedCapabilities,
+      supportingEvidence: {
+        worktree: { status: "missing", lifecycle: "discarded", observedAtMs: 1_700_000_000_100 },
+      },
+    });
+
+    expect(projection.status).toBe("needs_input");
+    expect(projection.supportingEvidence?.worktree).toEqual({
+      status: "missing",
+      lifecycle: "discarded",
+      observedAtMs: 1_700_000_000_100,
+    });
+    expect(isTaskProjectionV1({
+      ...projection,
+      supportingEvidence: {
+        worktree: { status: "missing", lifecycle: "private-reason", observedAtMs: 1_700_000_000_100 },
+      },
+    })).toBe(false);
+  });
+
   it("treats owner binding drift as uncertain during collection", () => {
     const base = {
       taskId: "task-binding-drift",

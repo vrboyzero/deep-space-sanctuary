@@ -252,6 +252,11 @@ function normalizeLaunchPositiveNumber(value: unknown): number | undefined {
   return Number.isFinite(numeric) && numeric > 0 ? numeric : undefined;
 }
 
+function normalizeLaunchNonNegativeInteger(value: unknown): number | undefined {
+  const numeric = Number(value);
+  return Number.isSafeInteger(numeric) && numeric >= 0 ? numeric : undefined;
+}
+
 function normalizeBridgeSubtaskSemantics(value: unknown): BridgeSubtaskSemantics | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
@@ -295,6 +300,7 @@ function normalizeRuntimeLaunchSpec(value: ToolRuntimeLaunchSpec | undefined): T
     toolLoopIterationBudget: normalizeLaunchPositiveInteger(value.toolLoopIterationBudget),
     maxTotalTokens: normalizeLaunchPositiveInteger(value.maxTotalTokens),
     maxCostUsd: normalizeLaunchPositiveNumber(value.maxCostUsd),
+    maxHighRiskToolCalls: normalizeLaunchNonNegativeInteger(value.maxHighRiskToolCalls),
     parentTaskId: normalizeOptionalString(value.parentTaskId),
     role: normalizeLaunchRole(value.role),
     allowedToolFamilies: normalizeLaunchAllowedToolFamilies(value.allowedToolFamilies),

@@ -24,6 +24,11 @@ export type AgentLaunchSpec = {
   role?: AgentLaunchRole;
   allowedToolFamilies?: string[];
   maxToolRiskLevel?: "low" | "medium" | "high" | "critical";
+  maxRunWallTimeMs?: number;
+  toolLoopIterationBudget?: number;
+  maxTotalTokens?: number;
+  maxCostUsd?: number;
+  maxHighRiskToolCalls?: number;
   policySummary?: string;
   delegationProtocol?: DelegationProtocol;
   bridgeSubtask?: BridgeSubtaskSemantics;
@@ -47,6 +52,11 @@ export type AgentLaunchSpecInput = {
   role?: AgentLaunchRole;
   allowedToolFamilies?: string[];
   maxToolRiskLevel?: "low" | "medium" | "high" | "critical";
+  maxRunWallTimeMs?: number;
+  toolLoopIterationBudget?: number;
+  maxTotalTokens?: number;
+  maxCostUsd?: number;
+  maxHighRiskToolCalls?: number;
   policySummary?: string;
   delegationProtocol?: DelegationProtocol;
   bridgeSubtask?: BridgeSubtaskSemantics;
@@ -112,6 +122,21 @@ function normalizeRiskLevel(value: unknown): AgentLaunchSpec["maxToolRiskLevel"]
     return undefined;
   }
   return value;
+}
+
+function normalizePositiveInteger(value: unknown): number | undefined {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : undefined;
+}
+
+function normalizePositiveNumber(value: unknown): number | undefined {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : undefined;
+}
+
+function normalizeNonNegativeInteger(value: unknown): number | undefined {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? Math.floor(numeric) : undefined;
 }
 
 function normalizeContext(value: unknown): Record<string, unknown> | undefined {
@@ -332,6 +357,13 @@ export function normalizeAgentLaunchSpec(
     role: normalizeRole(input.role) ?? normalizeRole(defaults.role),
     allowedToolFamilies: normalizeToolSet(input.allowedToolFamilies) ?? normalizeToolSet(defaults.allowedToolFamilies),
     maxToolRiskLevel: normalizeRiskLevel(input.maxToolRiskLevel) ?? normalizeRiskLevel(defaults.maxToolRiskLevel),
+    maxRunWallTimeMs: normalizePositiveInteger(input.maxRunWallTimeMs) ?? normalizePositiveInteger(defaults.maxRunWallTimeMs),
+    toolLoopIterationBudget: normalizePositiveInteger(input.toolLoopIterationBudget)
+      ?? normalizePositiveInteger(defaults.toolLoopIterationBudget),
+    maxTotalTokens: normalizePositiveInteger(input.maxTotalTokens) ?? normalizePositiveInteger(defaults.maxTotalTokens),
+    maxCostUsd: normalizePositiveNumber(input.maxCostUsd) ?? normalizePositiveNumber(defaults.maxCostUsd),
+    maxHighRiskToolCalls: normalizeNonNegativeInteger(input.maxHighRiskToolCalls)
+      ?? normalizeNonNegativeInteger(defaults.maxHighRiskToolCalls),
     policySummary: normalizeOptionalString(input.policySummary) ?? normalizeOptionalString(defaults.policySummary),
     delegationProtocol: normalizeDelegationProtocol(input.delegationProtocol)
       ?? normalizeDelegationProtocol(defaults.delegationProtocol),

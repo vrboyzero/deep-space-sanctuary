@@ -248,6 +248,27 @@ export class CodingRunReconciliationJournal {
     }
   }
 
+  /** 启动时验证 journal 目录的创建、写入、fsync 与清理；不创建 run 记录。 */
+  async checkReadiness(): Promise<boolean> {
+    const probePath = path.join(this.journalDirectory, `.readiness-${process.pid}-${Date.now()}.tmp`);
+    let file: fsp.FileHandle | undefined;
+    try {
+      await fsp.mkdir(this.journalDirectory, { recursive: true, mode: 0o700 });
+      file = await fsp.open(probePath, "wx", 0o600);
+      await file.writeFile("ready\n", "utf-8");
+      await file.sync();
+      await file.close();
+      file = undefined;
+      await fsp.unlink(probePath);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      await file?.close().catch(() => undefined);
+      await fsp.unlink(probePath).catch(() => undefined);
+    }
+  }
+
   private resolveJournalPath(binding: ConversationBinding): string {
     const digest = createHash("sha256")
       .update(`conversation\0${binding.conversationId}\0${binding.agentRunId}`)
@@ -314,7 +335,7 @@ export class CodingRunReconciliationJournal {
 export type CodingRunReconciliationJournalOwner = Pick<
   CodingRunReconciliationJournal,
   "record" | "reconcile"
-> & Partial<Pick<CodingRunReconciliationJournal, "remove">>;
+> & Partial<Pick<CodingRunReconciliationJournal, "remove" | "checkReadiness">>;
 
 function createRecordBase(
   event: AgentRunEvent,

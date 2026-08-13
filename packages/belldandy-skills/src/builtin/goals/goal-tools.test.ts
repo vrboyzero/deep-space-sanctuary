@@ -2628,9 +2628,14 @@ describe("goal tools", () => {
     expect(result.output).toContain("recommendation=blocked");
     expect(context.goalCapabilities?.saveCapabilityPlan).toHaveBeenCalledWith("goal_alpha", "node_root", expect.objectContaining({
       orchestration: expect.objectContaining({
+        verifierHandoff: expect.objectContaining({
+          verifierTaskId: "task_verify_1",
+          verifierSessionId: "session_verify_1",
+        }),
         verifierResult: expect.objectContaining({
           status: "failed",
           recommendation: "blocked",
+          evidenceTaskIds: expect.arrayContaining(["task_verify_1"]),
           findings: expect.arrayContaining([
             expect.objectContaining({
               severity: "high",

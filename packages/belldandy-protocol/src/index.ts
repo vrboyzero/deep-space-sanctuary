@@ -153,6 +153,29 @@ export type GatewayFrame =
  * Headless coding-run 对一次 Conversation 运行施加的收紧型限制。
  * 这些字段不会创建新的领域运行状态；Gateway 仅将它们映射为本次 Agent launch 的运行时约束。
  */
+export type CodingRunCapabilityName =
+  | "tools"
+  | "languageToolchain"
+  | "sandbox"
+  | "approvalChannel"
+  | "worktree"
+  | "journal"
+  | "trace"
+  | "verifier"
+  | "mcp"
+  | "plugin"
+  | "skill";
+
+/** 无正文的单次 coding run 能力需求声明。 */
+export type CodingRunCapabilityRequirements = {
+  schemaVersion: 1;
+  capabilities?: CodingRunCapabilityName[];
+  tools?: string[];
+  mcpServers?: string[];
+  plugins?: string[];
+  skills?: string[];
+};
+
 export type CodingRunOptions = {
   /** 确定性自动化运行面；bare 仅使用显式输入并跳过隐式上下文与扩展。 */
   automationProfile?: "bare";
@@ -166,6 +189,8 @@ export type CodingRunOptions = {
   maxTurns?: number;
   maxTokens?: number;
   maxCostUsd?: number;
+  /** 启动前必须由 authoritative runtime 证明的能力；不接受 prompt、参数或文件正文。 */
+  requiredCapabilities?: CodingRunCapabilityRequirements;
   /** Headless structured-output contract; Gateway validates it before trusted Agent injection. */
   outputSchema?: unknown;
 };

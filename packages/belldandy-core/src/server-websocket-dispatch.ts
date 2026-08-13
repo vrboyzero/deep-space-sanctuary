@@ -58,6 +58,7 @@ import type { CodingRunGatewayEventBroker } from "./coding-run/gateway-event-bro
 import type { CodingRunReconciliationJournalOwner } from "./coding-run/reconciliation-journal.js";
 import type { PendingToolPermissionRuntime } from "./coding-run/pending-tool-permission-runtime.js";
 import type { TaskProjectionCollectionRuntime } from "./coding-run/task-projection-collection-runtime.js";
+import type { TaskCapabilityClosureResolver } from "./coding-run/task-capability-closure.js";
 
 type GatewayLog = {
   debug: (module: string, message: string, data?: unknown) => void;
@@ -91,6 +92,7 @@ export type GatewayWebSocketRequestContext = {
   codingRunEventBroker: CodingRunGatewayEventBroker;
   codingRunReconciliationJournal: CodingRunReconciliationJournalOwner;
   taskProjectionCollectionRuntime: TaskProjectionCollectionRuntime;
+  taskCapabilityClosureResolver?: TaskCapabilityClosureResolver;
   pendingToolPermissionRuntime?: PendingToolPermissionRuntime;
   topLevelConversationLifecycle: TopLevelConversationLifecycle;
   durableExtractionRuntime?: DurableExtractionRuntime;
@@ -215,6 +217,7 @@ export function buildGatewayWebSocketRequestContext(
     codingRunEventBroker: options.codingRunEventBroker,
     codingRunReconciliationJournal: options.codingRunReconciliationJournal,
     taskProjectionCollectionRuntime: options.taskProjectionCollectionRuntime,
+    taskCapabilityClosureResolver: options.taskCapabilityClosureResolver,
     pendingToolPermissionRuntime: options.pendingToolPermissionRuntime,
     topLevelConversationLifecycle: options.topLevelConversationLifecycle,
     durableExtractionRuntime: options.durableExtractionRuntime,

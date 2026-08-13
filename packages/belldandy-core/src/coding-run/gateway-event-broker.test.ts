@@ -16,6 +16,170 @@ afterEach(async () => {
 });
 
 describe("CodingRunGatewayEventBroker", () => {
+  it("exports a complete no-content observation for a retained permission wait lifecycle", () => {
+    let now = 1_000;
+    const broker = createCodingRunGatewayEventBroker({ now: () => now });
+    const binding = { conversationId: "conversation-observation", agentRunId: "run-observation" };
+
+    expect(broker.registerConversationRun(binding)).toBe(true);
+    now = 1_100;
+    expect(broker.publishGatewayEvent({
+      event: "tool_event",
+      payload: {
+        conversationId: binding.conversationId,
+        runId: binding.agentRunId,
+        kind: "coding_run_permission_requested",
+        toolCallId: "tool-observation",
+        toolName: "file_edit",
+      },
+    })).toBe(true);
+    now = 1_400;
+    expect(broker.observePermissionSettled(binding, {
+      toolCallId: "tool-observation",
+      responderKind: "human",
+    })).toBe(true);
+    now = 2_000;
+    expect(broker.publishGatewayEvent({
+      event: "chat.final",
+      payload: { conversationId: binding.conversationId, runId: binding.agentRunId, text: "private" },
+    })).toBe(true);
+
+    expect(broker.readEfficiencyEvidence(binding)).toEqual({
+      status: "complete",
+      projectionTimeline: {
+        source: "gateway_event_broker",
+        coverage: "complete",
+        binding,
+        statusCoverage: ["needs_input"],
+        items: [
+          { status: "running", observedAtMs: 1_000 },
+          { status: "needs_input", observedAtMs: 1_100 },
+          { status: "running", observedAtMs: 1_400 },
+          { status: "completed", observedAtMs: 2_000 },
+        ],
+      },
+      humanInterventionEvidence: {
+        source: "human_response",
+        coverage: "complete",
+        binding,
+        count: 1,
+      },
+    });
+    expect(JSON.stringify(broker.readEfficiencyEvidence(binding))).not.toContain("private");
+  });
+
+  it("keeps evidence incomplete when the lifecycle is active, clipped, or cross-bound", () => {
+    let now = 3_000;
+    const binding = { conversationId: "conversation-coverage", agentRunId: "run-coverage" };
+    const broker = createCodingRunGatewayEventBroker({ maxEventsPerRun: 2, now: () => now });
+    broker.registerConversationRun(binding);
+
+    expect(broker.readEfficiencyEvidence(binding)).toEqual({
+      status: "incomplete",
+      reason: "run_not_terminal",
+    });
+    expect(broker.readEfficiencyEvidence({ ...binding, conversationId: "conversation-other" })).toEqual({
+      status: "incomplete",
+      reason: "run_mismatch",
+    });
+
+    now = 3_100;
+    broker.publishGatewayEvent({
+      event: "agent.status",
+      payload: { conversationId: binding.conversationId, runId: binding.agentRunId, status: "running" },
+    });
+    now = 3_200;
+    broker.publishGatewayEvent({
+      event: "chat.final",
+      payload: { conversationId: binding.conversationId, runId: binding.agentRunId, text: "done" },
+    });
+
+    expect(broker.readEfficiencyEvidence(binding)).toEqual({
+      status: "incomplete",
+      reason: "lifecycle_not_retained",
+    });
+  });
+
+  it("counts automatic settlements as non-human and leaves unknown responders incomplete", () => {
+    let now = 4_000;
+    const broker = createCodingRunGatewayEventBroker({ now: () => now });
+    for (const responderKind of ["automatic", "unknown"] as const) {
+      const binding = {
+        conversationId: `conversation-${responderKind}`,
+        agentRunId: `run-${responderKind}`,
+      };
+      const toolCallId = `tool-${responderKind}`;
+      broker.registerConversationRun(binding);
+      now += 100;
+      broker.publishGatewayEvent({
+        event: "tool_event",
+        payload: {
+          conversationId: binding.conversationId,
+          runId: binding.agentRunId,
+          kind: "coding_run_permission_requested",
+          toolCallId,
+          toolName: "file_edit",
+        },
+      });
+      now += 100;
+      expect(broker.observePermissionSettled(binding, { toolCallId, responderKind })).toBe(true);
+      now += 100;
+      broker.publishGatewayEvent({
+        event: "chat.final",
+        payload: { conversationId: binding.conversationId, runId: binding.agentRunId, text: "done" },
+      });
+
+      const evidence = broker.readEfficiencyEvidence(binding);
+      expect(evidence).toMatchObject({ status: "complete" });
+      if (evidence.status !== "complete") throw new Error("expected complete lifecycle evidence");
+      if (responderKind === "automatic") {
+        expect(evidence.humanInterventionEvidence).toMatchObject({ count: 0 });
+      } else {
+        expect(evidence).not.toHaveProperty("humanInterventionEvidence");
+      }
+    }
+  });
+
+  it("settles a pending permission after the terminal event without appending a late running state", () => {
+    let now = 5_000;
+    const binding = { conversationId: "conversation-terminal-settle", agentRunId: "run-terminal-settle" };
+    const broker = createCodingRunGatewayEventBroker({ now: () => now });
+    broker.registerConversationRun(binding);
+    now = 5_100;
+    broker.publishGatewayEvent({
+      event: "tool_event",
+      payload: {
+        conversationId: binding.conversationId,
+        runId: binding.agentRunId,
+        kind: "coding_run_permission_requested",
+        toolCallId: "tool-terminal-settle",
+        toolName: "file_edit",
+      },
+    });
+    now = 5_200;
+    broker.publishGatewayEvent({
+      event: "conversation.run.stopped",
+      payload: { conversationId: binding.conversationId, runId: binding.agentRunId, reason: "cancelled" },
+    });
+    now = 5_300;
+    expect(broker.observePermissionSettled(binding, {
+      toolCallId: "tool-terminal-settle",
+      responderKind: "automatic",
+    })).toBe(true);
+
+    expect(broker.readEfficiencyEvidence(binding)).toMatchObject({
+      status: "complete",
+      projectionTimeline: {
+        items: [
+          { status: "running", observedAtMs: 5_000 },
+          { status: "needs_input", observedAtMs: 5_100 },
+          { status: "cancelled", observedAtMs: 5_200 },
+        ],
+      },
+      humanInterventionEvidence: { count: 0 },
+    });
+  });
+
   it("按精确 Conversation binding 缓冲并从 cursor 续读单调 v1 事件", () => {
     const broker = createCodingRunGatewayEventBroker();
     const binding = { conversationId: "conversation-1", agentRunId: "run-1" };

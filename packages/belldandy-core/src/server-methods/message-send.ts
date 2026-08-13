@@ -14,6 +14,7 @@ import type { ConversationStore } from "@belldandy/agent";
 import type { MemoryRuntimeBudgetGuard, MemoryRuntimeUsageAccounting } from "../memory-runtime-budget.js";
 import {
   CodingRunCapabilityError,
+  TaskCapabilityClosureError,
   MessageSendConfigurationError,
   handleConversationRunStopWithQueryRuntime,
   handleMessageSendWithQueryRuntime,
@@ -38,6 +39,7 @@ type MessageSendMethodContext = Pick<
   | "conversationStore"
   | "conversationRunRegistry"
   | "codingRunEventBroker"
+  | "taskCapabilityClosureResolver"
   | "pendingToolPermissionRuntime"
   | "topLevelConversationLifecycle"
   | "getConversationPromptSnapshot"
@@ -179,6 +181,7 @@ export async function handleMessageSendMethod(
         conversationStore: ctx.conversationStore,
         conversationRunRegistry: ctx.conversationRunRegistry,
         codingRunEventBroker: ctx.codingRunEventBroker,
+        taskCapabilityClosureResolver: ctx.taskCapabilityClosureResolver,
         pendingToolPermissionRuntime: ctx.pendingToolPermissionRuntime,
         topLevelConversationLifecycle: ctx.topLevelConversationLifecycle,
         runtimeObserver: ctx.queryRuntimeTraceStore.createObserver<"message.send">(),
@@ -235,6 +238,14 @@ export async function handleMessageSendMethod(
       },
     });
   } catch (error) {
+    if (error instanceof TaskCapabilityClosureError) {
+      return {
+        type: "res",
+        id: req.id,
+        ok: false,
+        error: { code: "policy_denied", message: error.message },
+      };
+    }
     if (error instanceof CodingRunCapabilityError) {
       return {
         type: "res",

@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -5,6 +8,10 @@ import {
   createWebChatRuntimeContext,
 } from "./webchat-runtime-context.js";
 import { parseTaskProjectionCollectionPage } from "./task-projection-webchat.js";
+
+const taskProjectionConformanceFixture = JSON.parse(fs.readFileSync(path.resolve(
+  "benchmarks/task-projection/v1/consumer-conformance.json",
+), "utf8"));
 
 function createProjection() {
   const capabilities = Object.fromEntries([
@@ -80,8 +87,15 @@ describe("webchat runtime context", () => {
   });
 
   it("keeps page parsing strict for required fields and revision-bound cursors", () => {
-    const page = parseTaskProjectionCollectionPage({ epoch: "epoch-1", revision: 2, totalCount: 1, items: [createProjection()] });
+    const projection = {
+      ...createProjection(),
+      supportingEvidence: {
+        worktree: { status: "missing", lifecycle: "discarded", observedAtMs: 2 },
+      },
+    };
+    const page = parseTaskProjectionCollectionPage({ epoch: "epoch-1", revision: 2, totalCount: 1, items: [projection] });
     expect(page.items[0].taskId).toBe("task-1");
+    expect(page.items[0].supportingEvidence.worktree.lifecycle).toBe("discarded");
     expect(() => parseTaskProjectionCollectionPage({ epoch: "epoch-1", revision: 2, totalCount: 1 }))
       .toThrow("invalid");
     expect(() => parseTaskProjectionCollectionPage({
@@ -91,6 +105,30 @@ describe("webchat runtime context", () => {
       items: [createProjection()],
       nextCursor: { epoch: "epoch-1", revision: 2, offset: 0 },
     })).toThrow("cursor");
+    expect(() => parseTaskProjectionCollectionPage({
+      epoch: "epoch-1",
+      revision: 2,
+      totalCount: 1,
+      items: [{
+        ...projection,
+        supportingEvidence: { worktree: { ...projection.supportingEvidence.worktree, lifecycle: "private-reason" } },
+      }],
+    })).toThrow("invalid");
+  });
+
+  it("preserves the fixed TaskProjection event sequence and rejects content in WebChat", () => {
+    for (const step of taskProjectionConformanceFixture.sequence) {
+      const page = parseTaskProjectionCollectionPage(step.page);
+      const item = page.items[0];
+      expect({
+        status: item.status,
+        reasonCategory: item.evidence.reasonCategory,
+        reasonCode: item.evidence.reasonCode,
+        allowedActions: item.allowedActions,
+      }).toEqual(step.expected);
+    }
+    expect(() => parseTaskProjectionCollectionPage(taskProjectionConformanceFixture.contentBearingPage))
+      .toThrow("invalid TaskProjection");
   });
 
   it("provides deterministic defaults when legacy callbacks are unavailable", async () => {

@@ -26,6 +26,12 @@ export type {
   BridgeSessionLaunchSemantics,
   BridgeSessionGovernanceCapabilities,
   AgentCapabilities,
+  SubTaskSupervisorArtifactReference,
+  SubTaskSupervisorFanInCapabilityInput,
+  SubTaskSupervisorFanInCapabilityResult,
+  SubTaskSupervisorFanInLaneInput,
+  SubTaskSupervisorControlInput,
+  SubTaskSupervisorControlItem,
   ToolRuntimeLaunchSpec,
   ToolExecutionRuntimeContext,
   CommandPermissionPreviewAction,
@@ -106,6 +112,8 @@ export {
   buildCommandPermissionPreview,
   sanitizeCommandPermissionPreview,
 } from "./command-plan.js";
+export { evaluateCommandSandboxAdmission } from "./command-sandbox.js";
+export type { CommandSandboxAdmission } from "./command-sandbox.js";
 export {
   buildFailureToolCallResult,
   inferToolFailureKindFromError,
@@ -289,7 +297,14 @@ export type {
   CameraRuntimeDoctorReport,
   CameraRuntimeDoctorProvider,
 } from "./builtin/multimedia/index.js";
-export { sessionsSpawnTool, sessionsHistoryTool, delegateTaskTool, delegateParallelTool } from "./builtin/session/index.js";
+export {
+  sessionsSpawnTool,
+  sessionsHistoryTool,
+  delegateTaskTool,
+  delegateParallelTool,
+  subtaskFanInTool,
+  subtaskSupervisorTool,
+} from "./builtin/session/index.js";
 export { runWorkflowTool, RUN_WORKFLOW_TOOL_NAME } from "./builtin/run-workflow.js";
 export {
   buildDelegationResultFollowUpStrategy,

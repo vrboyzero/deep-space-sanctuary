@@ -60,6 +60,11 @@ describe("bdd agent run", () => {
       maxTurns: "3",
       maxTokens: "1200",
       maxCostUsd: "0.25",
+      requireCapability: "journal,trace,journal",
+      requireTool: "file_read,file_read",
+      requireMcpServer: "repo-index",
+      requirePlugin: "review-plugin",
+      requireSkill: "review",
     })).toEqual({
       ok: true,
       timeoutMs: 5000,
@@ -75,6 +80,14 @@ describe("bdd agent run", () => {
         maxTurns: 3,
         maxTokens: 1200,
         maxCostUsd: 0.25,
+        requiredCapabilities: {
+          schemaVersion: 1,
+          capabilities: ["journal", "trace"],
+          tools: ["file_read"],
+          mcpServers: ["repo-index"],
+          plugins: ["review-plugin"],
+          skills: ["review"],
+        },
       },
     });
     expect(resolveAgentRunCliOptions({ permissionMode: "bypassPermissions" })).toMatchObject({
@@ -92,6 +105,10 @@ describe("bdd agent run", () => {
     expect(resolveAgentRunCliOptions({ modelLoopBudgetPolicy: "unknown" })).toMatchObject({
       ok: false,
       message: expect.stringContaining("model-loop-budget-policy"),
+    });
+    expect(resolveAgentRunCliOptions({ requireCapability: "tools" })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("tools"),
     });
   });
 

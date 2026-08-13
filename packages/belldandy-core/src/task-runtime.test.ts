@@ -13,11 +13,13 @@ import {
   createSubTaskRuntimeEventHandler,
   createSubTaskUpdateController,
   createSubTaskWorktreeLifecycleHandler,
+  reattachSubTaskSupervisorRuntime,
   reconcileSubTaskWorktreeRuntimes,
   SubTaskRuntimeStore,
 } from "./task-runtime.js";
 import { GoalManager } from "./goals/manager.js";
 import { GoalRuntimeBindingStore } from "./goal-runtime-binding-store.js";
+import { SubTaskSupervisorRuntime } from "./subtask-supervisor-runtime.js";
 
 test("subtask runtime store persists lifecycle, progress, and output artifacts", async () => {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-runtime-"));
@@ -35,6 +37,11 @@ test("subtask runtime store persists lifecycle, progress, and output artifacts",
       role: "coder",
       allowedToolFamilies: ["workspace-read", "workspace-write", "patch"],
       maxToolRiskLevel: "high",
+      maxRunWallTimeMs: 40_000,
+      toolLoopIterationBudget: 5,
+      maxTotalTokens: 18_000,
+      maxCostUsd: 0.35,
+      maxHighRiskToolCalls: 2,
       policySummary: "coder role policy",
     },
   });
@@ -76,6 +83,11 @@ test("subtask runtime store persists lifecycle, progress, and output artifacts",
       role: "coder",
       allowedToolFamilies: ["workspace-read", "workspace-write", "patch"],
       maxToolRiskLevel: "high",
+      maxRunWallTimeMs: 40_000,
+      toolLoopIterationBudget: 5,
+      maxTotalTokens: 18_000,
+      maxCostUsd: 0.35,
+      maxHighRiskToolCalls: 2,
       policySummary: "coder role policy",
     },
   });
@@ -92,6 +104,13 @@ test("subtask runtime store persists lifecycle, progress, and output artifacts",
   });
   expect(persisted?.notifications.some((item) => item.kind === "completed")).toBe(true);
   expect(persisted?.progress.message).toBe("Task completed.");
+  expect(persisted?.launchSpec).toMatchObject({
+    maxRunWallTimeMs: 40_000,
+    toolLoopIterationBudget: 5,
+    maxTotalTokens: 18_000,
+    maxCostUsd: 0.35,
+    maxHighRiskToolCalls: 2,
+  });
 
   await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
 });
@@ -1107,6 +1126,357 @@ test("subtask runtime store persists steering records and ignores stale session 
     }),
   ]);
 
+  await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+});
+
+test("task runtime agent capabilities run parallel admission before task persistence or orchestration", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-supervisor-admission-"));
+  const store = new SubTaskRuntimeStore(stateDir);
+  await store.load();
+  const orchestrator = {
+    spawn: vi.fn(async () => ({ success: true, output: "unexpected", sessionId: "unexpected" })),
+    listSessions: vi.fn(() => []),
+  };
+  const caps = createSubTaskAgentCapabilities({
+    orchestrator: orchestrator as any,
+    runtimeStore: store,
+    supervisorRuntime: new SubTaskSupervisorRuntime({
+      maxActiveChildren: 2,
+      maxDepth: 2,
+      maxWallTimeMs: 60_000,
+    }),
+  });
+
+  const result = await caps.spawnSubAgent!({
+    parentConversationId: "conversation-supervised",
+    parentOperation: { agentRunId: "run-supervised", toolCallId: "tool-supervised" },
+    agentId: "coder",
+    instruction: "Implement a parallel write lane.",
+    timeoutMs: 30_000,
+    cwd: stateDir,
+    delegationProtocol: {
+      source: "delegate_parallel",
+      intent: { kind: "parallel_subtasks", summary: "Implement lane.", role: "coder" },
+      contextPolicy: { includeParentConversation: true, includeStructuredContext: false, contextKeys: [] },
+      expectedDeliverable: { format: "patch", summary: "Return patch." },
+      aggregationPolicy: { mode: "parallel_collect", summarizeFailures: true },
+      launchDefaults: {},
+      ownership: { scopeSummary: "Owned write lane.", writeScope: ["src/**"] },
+      team: {
+        id: "team-admission",
+        mode: "parallel_patch",
+        currentLaneId: "lane_1",
+        memberRoster: [{ laneId: "lane_1", agentId: "coder", role: "coder" }],
+      },
+    },
+  });
+
+  expect(result).toMatchObject({
+    success: false,
+    error: "Parallel write lane requires an available managed worktree owner.",
+  });
+  expect(orchestrator.spawn).not.toHaveBeenCalled();
+  await expect(store.listTasks("conversation-supervised")).resolves.toEqual([]);
+
+  await store.flushAndClose();
+  await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+});
+
+test("task runtime agent capabilities forward Supervisor control to the exact-bound owner", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-supervisor-control-capability-"));
+  const store = new SubTaskRuntimeStore(stateDir);
+  await store.load();
+  const control = vi.fn(async () => ({
+    status: "running" as const,
+    mode: "write" as const,
+    revision: 0,
+    binding: {
+      managerConversationId: "conversation-manager",
+      managerAgentRunId: "run-manager",
+      teamId: "team-parallel",
+      laneId: "lane_1",
+      taskId: "task-lane-1",
+      sessionId: "session-lane-1",
+    },
+    admittedAtMs: 100,
+    updatedAtMs: 200,
+  }));
+  const caps = createSubTaskAgentCapabilities({
+    orchestrator: { spawn: vi.fn(), listSessions: vi.fn(() => []) } as any,
+    runtimeStore: store,
+    supervisorControlRuntime: { control },
+  });
+  const input = {
+    action: "observe" as const,
+    managerConversationId: "conversation-manager",
+    managerAgentRunId: "run-manager",
+    teamId: "team-parallel",
+    laneId: "lane_1",
+    taskId: "task-lane-1",
+    sessionId: "session-lane-1",
+  };
+
+  await expect(caps.controlSubTask?.(input)).resolves.toMatchObject({
+    status: "running",
+    revision: 0,
+    binding: { taskId: "task-lane-1", sessionId: "session-lane-1" },
+  });
+  expect(control).toHaveBeenCalledWith(input);
+
+  await store.flushAndClose();
+  await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+});
+
+test("task runtime agent capabilities route fan-in preview and explicit confirm to the resolution owner", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-supervisor-fan-in-capability-"));
+  const store = new SubTaskRuntimeStore(stateDir);
+  await store.load();
+  const preview = vi.fn(async () => ({
+    schemaVersion: "subtask-supervisor-fan-in/v1" as const,
+    contentMode: "none" as const,
+    status: "ready" as const,
+    receipt: { id: "fan-in-receipt-1", expiresAtMs: 20_000 },
+    conflictPaths: [],
+    lanes: [],
+    reviewer: { mode: "read_only" as const, verdict: "approved" as const, artifactSha256: "c".repeat(64) },
+  }));
+  const confirm = vi.fn(async () => ({
+    schemaVersion: "subtask-supervisor-fan-in/v1" as const,
+    contentMode: "none" as const,
+    status: "completed" as const,
+    applied: true,
+    duplicateSideEffect: false as const,
+    blockers: [],
+  }));
+  const caps = createSubTaskAgentCapabilities({
+    orchestrator: { spawn: vi.fn(), listSessions: vi.fn(() => []) } as any,
+    runtimeStore: store,
+    supervisorFanInRuntime: { preview, confirm },
+  });
+  const common = {
+    managerConversationId: "conversation-manager",
+    managerAgentRunId: "run-manager",
+    teamId: "team-parallel",
+    lanes: [],
+    reviewerEvidence: {
+      schemaVersion: "subtask-supervisor-review-evidence/v1" as const,
+      mode: "read_only" as const,
+      verdict: "approved" as const,
+      artifact: { id: "review-lane-1", sha256: "c".repeat(64) },
+    },
+  };
+
+  await expect(caps.fanInSubTasks?.({ action: "preview", ...common })).resolves.toMatchObject({ status: "ready" });
+  await expect(caps.fanInSubTasks?.({
+    action: "confirm",
+    ...common,
+    receiptId: "fan-in-receipt-1",
+    confirm: true,
+  })).resolves.toMatchObject({ status: "completed", applied: true });
+  expect(preview).toHaveBeenCalledTimes(1);
+  expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ receiptId: "fan-in-receipt-1", confirm: true }));
+
+  await store.flushAndClose();
+  await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+});
+
+test("task runtime agent capabilities isolate an admitted parallel write lane before persistence and spawn", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-supervisor-worktree-"));
+  const store = new SubTaskRuntimeStore(stateDir);
+  await store.load();
+  const resolvedCwd = path.join(stateDir, "managed-worktree");
+  const prepareTaskLaunch = vi.fn(async (_taskId: string, launchSpec: AgentLaunchSpec) => {
+    expect(launchSpec).toMatchObject({
+      isolationMode: "worktree",
+      maxRunWallTimeMs: 20_000,
+      toolLoopIterationBudget: 3,
+      maxTotalTokens: 8_000,
+      maxCostUsd: 0.1,
+      maxHighRiskToolCalls: 1,
+      maxToolRiskLevel: "low",
+    });
+    return {
+      launchSpec: { ...launchSpec, cwd: resolvedCwd },
+      summary: {
+        resolvedCwd,
+        worktreePath: resolvedCwd,
+        worktreeRepoRoot: stateDir,
+        worktreeBranch: "belldandy-supervised-lane",
+        worktreeStatus: "created" as const,
+      },
+    };
+  });
+  const orchestrator = {
+    spawn: vi.fn(async (opts: {
+      launchSpec: AgentLaunchSpec;
+      onSessionCreated?: (sessionId: string, agentId: string) => void;
+    }) => {
+      expect(opts.launchSpec).toMatchObject({
+        isolationMode: "worktree",
+        cwd: resolvedCwd,
+        maxRunWallTimeMs: 20_000,
+        toolLoopIterationBudget: 3,
+        maxTotalTokens: 8_000,
+        maxCostUsd: 0.1,
+        maxHighRiskToolCalls: 1,
+        maxToolRiskLevel: "low",
+      });
+      opts.onSessionCreated?.("session-supervised-write", "coder");
+      return { success: true, output: "completed", sessionId: "session-supervised-write" };
+    }),
+    listSessions: vi.fn(() => []),
+  };
+  const supervisorRuntime = new SubTaskSupervisorRuntime({
+    maxActiveChildren: 2,
+    maxDepth: 2,
+    maxWallTimeMs: 60_000,
+    toolLoopIterationBudget: 4,
+    maxTotalTokens: 10_000,
+    maxCostUsd: 0.2,
+    maxHighRiskToolCalls: 2,
+    maxToolRiskLevel: "medium",
+  });
+  const caps = createSubTaskAgentCapabilities({
+    orchestrator: orchestrator as any,
+    runtimeStore: store,
+    worktreeRuntime: { prepareTaskLaunch } as any,
+    supervisorRuntime,
+  });
+
+  const result = await caps.spawnSubAgent!({
+    parentConversationId: "conversation-supervised-write",
+    parentOperation: { agentRunId: "run-supervised-write", toolCallId: "tool-supervised-write" },
+    agentId: "coder",
+    instruction: "Implement the owned write lane.",
+    timeoutMs: 30_000,
+    cwd: stateDir,
+    isolationMode: "workspace",
+    maxRunWallTimeMs: 20_000,
+    toolLoopIterationBudget: 3,
+    maxTotalTokens: 8_000,
+    maxCostUsd: 0.1,
+    maxHighRiskToolCalls: 1,
+    maxToolRiskLevel: "low",
+    delegationProtocol: {
+      source: "delegate_parallel",
+      intent: { kind: "parallel_subtasks", summary: "Implement write lane.", role: "coder" },
+      contextPolicy: { includeParentConversation: true, includeStructuredContext: false, contextKeys: [] },
+      expectedDeliverable: { format: "patch", summary: "Return patch." },
+      aggregationPolicy: { mode: "parallel_collect", summarizeFailures: true },
+      launchDefaults: {},
+      ownership: { scopeSummary: "Owned write lane.", writeScope: ["src/**"] },
+      team: {
+        id: "team-supervised-write",
+        mode: "parallel_patch",
+        currentLaneId: "lane_1",
+        memberRoster: [{ laneId: "lane_1", agentId: "coder", role: "coder" }],
+      },
+    },
+  });
+
+  expect(result).toMatchObject({ success: true, sessionId: "session-supervised-write" });
+  expect(prepareTaskLaunch).toHaveBeenCalledTimes(1);
+  expect(orchestrator.spawn).toHaveBeenCalledTimes(1);
+  expect(await store.getTask(String(result.taskId))).toMatchObject({
+    status: "done",
+    launchSpec: {
+      isolationMode: "worktree",
+      resolvedCwd,
+      worktreeStatus: "created",
+      maxRunWallTimeMs: 20_000,
+      toolLoopIterationBudget: 3,
+      maxTotalTokens: 8_000,
+      maxCostUsd: 0.1,
+      maxHighRiskToolCalls: 1,
+      maxToolRiskLevel: "low",
+    },
+  });
+  expect(supervisorRuntime.getSnapshot()).toMatchObject({
+    activeCount: 0,
+    retainedTerminalCount: 1,
+    items: [{
+      status: "done",
+      mode: "write",
+      binding: {
+        managerConversationId: "conversation-supervised-write",
+        managerAgentRunId: "run-supervised-write",
+        teamId: "team-supervised-write",
+        laneId: "lane_1",
+        taskId: result.taskId,
+        sessionId: "session-supervised-write",
+      },
+    }],
+  });
+
+  await store.flushAndClose();
+  await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+});
+
+test("subtask runtime store persists no-content Supervisor bindings for restart reattach", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-supervisor-binding-"));
+  const store = new SubTaskRuntimeStore(stateDir);
+  await store.load();
+  const task = await store.createTask({
+    launchSpec: {
+      parentConversationId: "conversation-supervisor-binding",
+      agentId: "coder",
+      instruction: "Private child instruction must not enter the Supervisor binding.",
+      cwd: path.join(stateDir, "private-workspace"),
+    },
+    supervisorBinding: {
+      managerConversationId: "conversation-supervisor-binding",
+      managerAgentRunId: "run-supervisor-binding",
+      teamId: "team-supervisor-binding",
+      laneId: "lane_1",
+      mode: "write",
+    },
+  });
+  await store.attachSession(task.id, "session-supervisor-binding", "coder", "coder");
+  await store.flushAndClose();
+
+  const reloaded = new SubTaskRuntimeStore(stateDir);
+  await reloaded.load();
+  const recovered = await reloaded.getTask(task.id);
+  expect(recovered).toMatchObject({
+    status: "interrupted",
+    sessionId: "session-supervisor-binding",
+    supervisorBinding: {
+      managerConversationId: "conversation-supervisor-binding",
+      managerAgentRunId: "run-supervisor-binding",
+      teamId: "team-supervisor-binding",
+      laneId: "lane_1",
+      mode: "write",
+    },
+  });
+  const serializedBinding = JSON.stringify(recovered?.supervisorBinding);
+  expect(serializedBinding).not.toContain("Private child instruction");
+  expect(serializedBinding).not.toContain("private-workspace");
+
+  const supervisorRuntime = new SubTaskSupervisorRuntime({
+    maxActiveChildren: 1,
+    maxDepth: 2,
+    maxWallTimeMs: 60_000,
+  });
+  await reattachSubTaskSupervisorRuntime({ runtimeStore: reloaded, supervisorRuntime });
+  expect(supervisorRuntime.getSnapshot()).toMatchObject({
+    activeCount: 0,
+    retainedTerminalCount: 1,
+    items: [{
+      status: "interrupted",
+      binding: { taskId: task.id, sessionId: "session-supervisor-binding" },
+    }],
+  });
+  await expect(reloaded.createTask({
+    launchSpec: {
+      parentConversationId: "conversation-supervisor-binding",
+      agentId: "coder",
+      instruction: "A replay must be rejected before persistence.",
+    },
+    supervisorBinding: recovered!.supervisorBinding,
+  })).rejects.toMatchObject({ code: "binding_conflict" });
+  expect(await reloaded.listTasks("conversation-supervisor-binding")).toHaveLength(1);
+
+  await reloaded.flushAndClose();
   await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
 });
 

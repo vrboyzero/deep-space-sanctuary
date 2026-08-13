@@ -144,6 +144,44 @@ const TOOL_BEHAVIOR_CONTRACTS: ToolBehaviorContract[] = [
       "Keep work local when the parallel overhead outweighs the expected speedup",
     ],
   },
+  {
+    name: "subtask_fan_in",
+    useWhen: [
+      "Need to combine one to four terminal isolated write lanes owned by the current manager run",
+      "Passed test evidence and approved read-only reviewer evidence exist for every exact lane revision",
+    ],
+    avoidWhen: [
+      "Any lane is active, stale, untested, not worktree-isolated, or owned by another manager/team",
+      "The intended action is automatic merge, release, deployment, or a reviewer workspace mutation",
+    ],
+    preflightChecks: [
+      "Provide exact team/lane/task/current-session bindings, expected revisions, passed test evidence, and approved read-only review evidence",
+      "Run preview first and inspect conflict status before explicitly confirming the returned short-lived receipt",
+    ],
+    fallbackStrategy: [
+      "Refresh lane observation and evidence when binding, revision, session, artifact, or receipt freshness fails",
+      "Resolve conflicts outside fan-in, produce new evidence, and request a new preview rather than forcing a mutation",
+    ],
+  },
+  {
+    name: "subtask_supervisor",
+    useWhen: [
+      "Need to observe, steer, or cancel one delegate_parallel lane owned by the current manager run",
+      "Need exact task and current session binding before changing an active child",
+    ],
+    avoidWhen: [
+      "The subtask was not created by the current manager run and team lane",
+      "A task-level user action or a new independent delegation is the intended operation",
+    ],
+    preflightChecks: [
+      "Observe the exact team, lane, task, and current session before steer or cancel",
+      "Reuse an idempotency key and expected revision when retrying a mutation",
+    ],
+    fallbackStrategy: [
+      "Use observe again when the session or revision changed before retrying",
+      "Leave terminal or restart-lost lanes untouched unless an explicit new delegation is required",
+    ],
+  },
 ];
 
 export function getToolBehaviorContract(

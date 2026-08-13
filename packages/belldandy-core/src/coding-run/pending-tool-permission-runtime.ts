@@ -27,11 +27,23 @@ type ResolvedPermissionRecord = Pick<
   decision: "allow" | "deny";
 };
 
+export type PendingToolPermissionResponderKind = "human" | "automatic" | "unknown";
+
+export type PendingToolPermissionSettlement = Pick<
+  PendingPermissionRecord,
+  "conversationId" | "agentRunId" | "worktreeId" | "toolCallId"
+> & {
+  decision: "allow" | "deny";
+  responderKind: PendingToolPermissionResponderKind;
+  reason: "response" | "timeout" | "abort" | "cancel";
+};
+
 export type PendingToolPermissionResponse = {
   agentRunId: string;
   worktreeId?: string;
   toolCallId: string;
   decision: "allow" | "deny";
+  responderKind?: PendingToolPermissionResponderKind;
 };
 
 export type PendingToolPermissionSnapshot = Pick<
@@ -59,6 +71,7 @@ export class PendingToolPermissionRuntime implements ToolPermissionController {
   constructor(private readonly options: {
     timeoutMs?: number;
     onRequested?: (request: Omit<PendingToolPermissionRequest, "abortSignal">) => void;
+    onSettled?: (settlement: PendingToolPermissionSettlement) => void;
   } = {}) {
     this.timeoutMs = normalizeTimeout(options.timeoutMs);
   }
@@ -75,11 +88,11 @@ export class PendingToolPermissionRuntime implements ToolPermissionController {
       const record: PendingPermissionRecord = {
         ...request,
         resolve,
-        timeout: setTimeout(() => this.settle(record, "deny"), this.timeoutMs),
+        timeout: setTimeout(() => this.settle(record, "deny", "automatic", "timeout"), this.timeoutMs),
       };
       if (request.abortSignal) {
         record.abortSignal = request.abortSignal;
-        record.abortHandler = () => this.settle(record, "deny");
+        record.abortHandler = () => this.settle(record, "deny", "automatic", "abort");
         request.abortSignal.addEventListener("abort", record.abortHandler, { once: true });
       }
       this.pending.set(key, record);
@@ -125,7 +138,7 @@ export class PendingToolPermissionRuntime implements ToolPermissionController {
     const pending = this.pending.get(key);
     if (pending) {
       if (!matchesResponse(pending, response)) return { ok: false, code: "run_mismatch" };
-      this.settle(pending, response.decision);
+      this.settle(pending, response.decision, response.responderKind ?? "unknown", "response");
       return { ok: true, accepted: true };
     }
 
@@ -144,7 +157,7 @@ export class PendingToolPermissionRuntime implements ToolPermissionController {
     const normalizedRunId = normalizeString(agentRunId);
     if (!normalizedRunId) return;
     for (const record of [...this.pending.values()]) {
-      if (record.agentRunId === normalizedRunId) this.settle(record, "deny");
+      if (record.agentRunId === normalizedRunId) this.settle(record, "deny", "automatic", "cancel");
     }
     for (const [key, record] of this.resolved) {
       if (record.agentRunId === normalizedRunId) this.resolved.delete(key);
@@ -154,7 +167,12 @@ export class PendingToolPermissionRuntime implements ToolPermissionController {
     }
   }
 
-  private settle(record: PendingPermissionRecord, decision: "allow" | "deny"): void {
+  private settle(
+    record: PendingPermissionRecord,
+    decision: "allow" | "deny",
+    responderKind: PendingToolPermissionResponderKind,
+    reason: PendingToolPermissionSettlement["reason"],
+  ): void {
     const key = toKey(record.agentRunId, record.toolCallId);
     if (this.pending.get(key) !== record) return;
     this.pending.delete(key);
@@ -169,6 +187,19 @@ export class PendingToolPermissionRuntime implements ToolPermissionController {
       toolCallId: record.toolCallId,
       decision,
     });
+    try {
+      this.options.onSettled?.({
+        conversationId: record.conversationId,
+        agentRunId: record.agentRunId,
+        ...(record.worktreeId ? { worktreeId: record.worktreeId } : {}),
+        toolCallId: record.toolCallId,
+        decision,
+        responderKind,
+        reason,
+      });
+    } catch {
+      // 观测回调不能改变审批决定或阻塞 worker 收敛。
+    }
     record.resolve(decision);
   }
 }
@@ -204,6 +235,11 @@ function normalizeResponse(input: PendingToolPermissionResponse): PendingToolPer
     ...(worktreeId ? { worktreeId } : {}),
     toolCallId,
     decision: input.decision,
+    responderKind: input.responderKind === "human"
+      || input.responderKind === "automatic"
+      || input.responderKind === "unknown"
+      ? input.responderKind
+      : "unknown",
   };
 }
 

@@ -274,6 +274,11 @@ export type SpawnSubAgentOptions = {
   role?: "default" | "commander" | "coder" | "researcher" | "verifier";
   allowedToolFamilies?: string[];
   maxToolRiskLevel?: "low" | "medium" | "high" | "critical";
+  maxRunWallTimeMs?: number;
+  toolLoopIterationBudget?: number;
+  maxTotalTokens?: number;
+  maxCostUsd?: number;
+  maxHighRiskToolCalls?: number;
   policySummary?: string;
   delegationProtocol?: DelegationProtocol;
   bridgeSubtask?: BridgeSubtaskSemantics;
@@ -303,6 +308,8 @@ export type ToolRuntimeLaunchSpec = {
   toolLoopIterationBudget?: number;
   maxTotalTokens?: number;
   maxCostUsd?: number;
+  /** 0 沿用 ReAct 的不限次数语义；Supervisor team lane 使用正整数收紧。 */
+  maxHighRiskToolCalls?: number;
   parentTaskId?: string;
   role?: "default" | "commander" | "coder" | "researcher" | "verifier";
   allowedToolFamilies?: string[];
@@ -636,6 +643,87 @@ export type AgentCapabilities = {
   spawnSubAgent?: (opts: SpawnSubAgentOptions) => Promise<SubAgentResult>;
   spawnParallel?: (tasks: SpawnSubAgentOptions[]) => Promise<SubAgentResult[]>;
   listSessions?: (parentConversationId?: string) => Promise<SessionInfo[]>;
+  controlSubTask?: (input: SubTaskSupervisorControlInput) => Promise<SubTaskSupervisorControlItem | undefined>;
+  fanInSubTasks?: (input: SubTaskSupervisorFanInCapabilityInput) => Promise<SubTaskSupervisorFanInCapabilityResult>;
+};
+
+export type SubTaskSupervisorArtifactReference = {
+  id: string;
+  sha256: string;
+};
+
+export type SubTaskSupervisorFanInLaneInput = {
+  binding: {
+    managerConversationId: string;
+    managerAgentRunId: string;
+    teamId: string;
+    laneId: string;
+    taskId: string;
+    sessionId: string;
+  };
+  expectedRevision: number;
+  testEvidence: {
+    schemaVersion: "subtask-supervisor-test-evidence/v1";
+    taskId: string;
+    sessionId: string;
+    revision: number;
+    status: "passed";
+    artifact: SubTaskSupervisorArtifactReference;
+  };
+};
+
+export type SubTaskSupervisorFanInCapabilityInput = {
+  action: "preview" | "confirm";
+  managerConversationId: string;
+  managerAgentRunId: string;
+  teamId: string;
+  lanes: SubTaskSupervisorFanInLaneInput[];
+  reviewerEvidence: {
+    schemaVersion: "subtask-supervisor-review-evidence/v1";
+    mode: "read_only";
+    verdict: "approved";
+    artifact: SubTaskSupervisorArtifactReference;
+  };
+  receiptId?: string;
+  confirm?: true;
+};
+
+export type SubTaskSupervisorFanInCapabilityResult = {
+  schemaVersion: "subtask-supervisor-fan-in/v1";
+  contentMode: "none";
+  status: "ready" | "completed" | "failed" | "uncertain" | "conflict";
+  [key: string]: unknown;
+};
+
+export type SubTaskSupervisorControlInput = {
+  action: "observe" | "cancel" | "steer";
+  managerConversationId: string;
+  managerAgentRunId: string;
+  teamId: string;
+  laneId: string;
+  taskId: string;
+  sessionId?: string;
+  reason?: string;
+  message?: string;
+  expectedRevision?: number;
+  idempotencyKey?: string;
+};
+
+export type SubTaskSupervisorControlItem = {
+  status: "admitted" | "running" | "done" | "failed" | "cancelled" | "interrupted";
+  mode: "read" | "write";
+  revision: number;
+  binding: {
+    managerConversationId: string;
+    managerAgentRunId: string;
+    teamId: string;
+    laneId: string;
+    taskId?: string;
+    sessionId?: string;
+  };
+  admittedAtMs: number;
+  updatedAtMs: number;
+  finishedAtMs?: number;
 };
 
 export type GoalRecord = {

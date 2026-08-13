@@ -7,6 +7,13 @@ import type {
   CodingRunUsageCompleteness,
 } from "./contracts.js";
 import { CODING_RUN_TRACE_POLICY } from "./contracts.js";
+import {
+  summarizeTaskEfficiencyMetrics,
+  type HumanInterventionEvidence,
+  type TaskEfficiencyMetrics,
+  type TaskProjectionTimeline,
+  type TaskStatusObservationTimeline,
+} from "./task-efficiency-metrics.js";
 
 export { CODING_RUN_TRACE_POLICY } from "./contracts.js";
 
@@ -94,6 +101,7 @@ export type CodingRunTraceValidation = {
   sourceEventCount: number;
   traceEventCount: number;
   terminal: Extract<AgentRunEventType, "run.completed" | "run.failed" | "run.cancelled" | "run.interrupted">;
+  efficiency: TaskEfficiencyMetrics;
 };
 
 export const codingRunTraceEventV1JsonSchema = {
@@ -393,7 +401,13 @@ export function projectCodingRunTraceEvents(events: AgentRunEvent[]): CodingRunT
   return result;
 }
 
-export function validateCodingRunTraceEvents(events: CodingRunTraceEvent[]): CodingRunTraceValidation {
+export function validateCodingRunTraceEvents(
+  events: CodingRunTraceEvent[],
+  options: {
+    projectionTimeline?: TaskProjectionTimeline | TaskStatusObservationTimeline;
+    humanInterventionEvidence?: HumanInterventionEvidence;
+  } = {},
+): CodingRunTraceValidation {
   if (!Array.isArray(events) || events.length === 0) {
     throw new Error("Coding run trace is empty.");
   }
@@ -403,6 +417,7 @@ export function validateCodingRunTraceEvents(events: CodingRunTraceEvent[]): Cod
   }
   const sourceSequences = new Set<number>();
   let previousSourceSeq = 0;
+  let previousTimestampMs = 0;
   let terminalSourceSeq: number | undefined;
   let terminal: CodingRunTraceValidation["terminal"] | undefined;
   for (let index = 0; index < events.length; index += 1) {
@@ -416,6 +431,9 @@ export function validateCodingRunTraceEvents(events: CodingRunTraceEvent[]): Cod
     if (event.sourceSeq < previousSourceSeq) {
       throw new Error(`Coding run trace source sequence moved backwards at event ${index + 1}.`);
     }
+    if (event.timestampMs < previousTimestampMs) {
+      throw new Error(`Coding run trace timestamp moved backwards at event ${index + 1}.`);
+    }
     if (event.correlation.agentRunId !== first.correlation.agentRunId
       || event.correlation.conversationId !== first.correlation.conversationId
       || event.correlation.promptId !== first.correlation.promptId
@@ -424,6 +442,7 @@ export function validateCodingRunTraceEvents(events: CodingRunTraceEvent[]): Cod
     }
     sourceSequences.add(event.sourceSeq);
     previousSourceSeq = event.sourceSeq;
+    previousTimestampMs = event.timestampMs;
     if (TERMINAL_TRACE_EVENTS.has(event.event)) {
       if (terminal) throw new Error("Coding run trace contains more than one run terminal event.");
       terminal = event.event as CodingRunTraceValidation["terminal"];
@@ -453,6 +472,7 @@ export function validateCodingRunTraceEvents(events: CodingRunTraceEvent[]): Cod
     sourceEventCount: sourceSequences.size,
     traceEventCount: events.length,
     terminal,
+    efficiency: summarizeTaskEfficiencyMetrics({ trace: events, ...options }),
   };
 }
 

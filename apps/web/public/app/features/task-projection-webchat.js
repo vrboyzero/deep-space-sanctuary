@@ -75,9 +75,16 @@ function isCapabilityClosure(value) {
 function isSupportingEvidence(value) {
   if (!isRecord(value) || Object.keys(value).some((key) => !["commandJob", "worktree", "journal", "validation"].includes(key))) return false;
   return (!value.commandJob || isObserved(value.commandJob, ["running", "completed", "cancelled", "failed", "lost"]))
-    && (!value.worktree || isObserved(value.worktree, ["ready", "dirty", "conflicted", "missing", "uncertain"]))
+    && (!value.worktree || isWorktreeEvidence(value.worktree))
     && (!value.journal || isObserved(value.journal, ["pending", "done", "error", "skipped", "uncertain"]))
     && (!value.validation || isObserved(value.validation, ["queued", "running", "passed", "failed", "incomplete", "uncertain"], true));
+}
+
+function isWorktreeEvidence(value) {
+  return isRecord(value) && hasExactKeys(value, ["status", "observedAtMs"], ["lifecycle"])
+    && ["ready", "dirty", "conflicted", "missing", "uncertain"].includes(value.status)
+    && isSafeNonNegativeInteger(value.observedAtMs)
+    && (value.lifecycle === undefined || ["kept", "discard_pending", "discarded"].includes(value.lifecycle));
 }
 
 function isObserved(value, statuses, required = false) {

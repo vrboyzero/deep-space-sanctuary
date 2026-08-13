@@ -463,7 +463,7 @@ export async function runStage0BTask(input, dependencies = {}) {
       }
     : await executeCodingCi({
         workspace,
-        ...(gatewayWorkspace ? { gatewayWorkspace } : {}),
+        ...(gatewayWorkspace && !isProcessRestartTask ? { gatewayWorkspace } : {}),
         artifactDir,
         stateDir,
         conversationId: `coding-benchmark-${input.runId}`,
@@ -1230,6 +1230,10 @@ async function ensureCodingCiArtifacts(artifactDir, runner, options = {}) {
         replacementGateway: null,
         subscription: { exitCode: null, errorCode: null, eventCount: 0, diagnostic: null },
         cancellation: { exitCode: null, accepted: null, state: null },
+        projection: {
+          beforeRestart: { exitCode: null, ok: false, epoch: null, revision: null, totalCount: null, cursor: null, errorCode: null },
+          afterRestart: { exitCode: null, ok: false, errorCode: null },
+        },
         cleanup: { managedGatewayProcessCount: 0, originalGateway: null, replacementGateway: null },
       }, null, 2)}\n`,
     } : {}),

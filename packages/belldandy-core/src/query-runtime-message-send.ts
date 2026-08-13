@@ -50,6 +50,11 @@ import {
 } from "./coding-run-automation-profile.js";
 import { projectToolResultEventOutput } from "./tool-result-event-output.js";
 import { compileOutputSchema } from "./coding-run/output-schema.js";
+import {
+  createConversationTaskCapabilityClosureBinding,
+  evaluateTaskCapabilityClosureForStart,
+  type TaskCapabilityClosureResolver,
+} from "./coding-run/task-capability-closure.js";
 
 type QueryRuntimeLogger = {
   debug: (module: string, message: string, data?: unknown) => void;
@@ -81,6 +86,7 @@ export type MessageSendQueryRuntimeContext = {
     conversationStore: ConversationStore;
     conversationRunRegistry: ConversationRunRegistry;
     codingRunEventBroker?: CodingRunGatewayEventBroker;
+    taskCapabilityClosureResolver?: TaskCapabilityClosureResolver;
     pendingToolPermissionRuntime?: PendingToolPermissionRuntime;
     topLevelConversationLifecycle?: TopLevelConversationLifecycle;
     runtimeObserver?: QueryRuntimeObserver<"message.send">;
@@ -268,6 +274,11 @@ export async function handleMessageSendWithQueryRuntime(
         })
       : undefined;
     let lifecycleLeaseTransferred = false;
+    let capabilitySnapshotOwned = false;
+    const taskCapabilityBinding = createConversationTaskCapabilityClosureBinding({
+      conversationId,
+      agentRunId: runId,
+    });
     try {
     const agent = createAgent({
       agentFactory: runtimeDeps.agentFactory,
@@ -276,6 +287,14 @@ export async function handleMessageSendWithQueryRuntime(
       createOpts,
     });
     assertCodingRunCapabilities(agent, request.params.codingRun);
+    capabilitySnapshotOwned = await assertTaskCapabilityClosure({
+      resolver: runtimeDeps.taskCapabilityClosureResolver,
+      codingRun: request.params.codingRun,
+      conversationId,
+      runId,
+      agentId: requestedAgentId ?? "default",
+      requestChannel: request.requestChannel,
+    });
 
     queryRuntime.mark("agent_created", {
       conversationId,
@@ -561,6 +580,7 @@ export async function handleMessageSendWithQueryRuntime(
           }
           : {}),
       },
+      capabilitySnapshotOwned,
     });
 
     return {
@@ -575,6 +595,9 @@ export async function handleMessageSendWithQueryRuntime(
     };
     } finally {
       if (!lifecycleLeaseTransferred) {
+        if (capabilitySnapshotOwned) {
+          runtimeDeps.taskCapabilityClosureResolver?.release?.(taskCapabilityBinding);
+        }
         await lifecycleLease?.release();
       }
     }
@@ -696,6 +719,7 @@ type MessageSendBackgroundInput = {
   ctx: MessageSendQueryRuntimeContext;
   queryRuntime: QueryRuntime<"message.send">;
   agent: BelldandyAgent;
+  capabilitySnapshotOwned: boolean;
   lifecycleLease?: TopLevelConversationLease;
   abortController: AbortController;
   conversationId: string;
@@ -951,6 +975,13 @@ export class CodingRunCapabilityError extends Error {
   }
 }
 
+export class TaskCapabilityClosureError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TaskCapabilityClosureError";
+  }
+}
+
 function assertCodingRunCapabilities(
   agent: BelldandyAgent,
   codingRun: MessageSendParams["codingRun"],
@@ -960,6 +991,47 @@ function assertCodingRunCapabilities(
   throw new CodingRunCapabilityError(
     "This Agent cannot enforce maxCostUsd because valid model usage pricing is unavailable.",
   );
+}
+
+async function assertTaskCapabilityClosure(input: {
+  resolver?: TaskCapabilityClosureResolver;
+  codingRun: MessageSendParams["codingRun"];
+  conversationId: string;
+  runId: string;
+  agentId: string;
+  requestChannel?: ToolContractChannel;
+}): Promise<boolean> {
+  if (!input.codingRun) return false;
+  const requirements = input.codingRun.requiredCapabilities;
+  if (!input.resolver) {
+    if (!requirements) return false;
+    throw new TaskCapabilityClosureError("Task capability closure rejected the run: capability_closure_unknown.");
+  }
+  if (!requirements && input.resolver.evaluateForStart) return false;
+  const binding = createConversationTaskCapabilityClosureBinding({
+    conversationId: input.conversationId,
+    agentRunId: input.runId,
+  });
+  const closure = requirements && input.resolver.evaluateForStart
+    ? await input.resolver.evaluateForStart({
+      binding,
+      requirements,
+      context: {
+        conversationId: input.conversationId,
+        agentId: input.agentId,
+        ...(input.codingRun.automationProfile ? { automationProfile: input.codingRun.automationProfile } : {}),
+        ...(input.requestChannel ? { requestChannel: input.requestChannel } : {}),
+        ...(input.codingRun.permissionMode ? { permissionMode: input.codingRun.permissionMode } : {}),
+        ...(input.codingRun.toolAllow ? { toolAllow: [...input.codingRun.toolAllow] } : {}),
+        ...(input.codingRun.toolDeny ? { toolDeny: [...input.codingRun.toolDeny] } : {}),
+      },
+    })
+    : input.resolver.resolve(binding);
+  const decision = evaluateTaskCapabilityClosureForStart(closure);
+  if (decision.ok) return Boolean(requirements && input.resolver.evaluateForStart);
+  if (requirements && input.resolver.evaluateForStart) input.resolver.release?.(binding);
+  const unavailable = decision.unavailable.length > 0 ? `:${decision.unavailable.join(",")}` : "";
+  throw new TaskCapabilityClosureError(`Task capability closure rejected the run: ${decision.reasonCode}${unavailable}.`);
 }
 
 function buildCodingRunLaunchSpec(
@@ -2484,6 +2556,12 @@ async function runAgentInBackground(input: MessageSendBackgroundInput): Promise<
       });
     }
     ctx.runtime.conversationRunRegistry.clear(input.conversationId, input.runId);
+    if (input.capabilitySnapshotOwned) {
+      ctx.runtime.taskCapabilityClosureResolver?.release?.(createConversationTaskCapabilityClosureBinding({
+        conversationId: input.conversationId,
+        agentRunId: input.runId,
+      }));
+    }
     await handOffConversationFollowUp(input);
   }
 }

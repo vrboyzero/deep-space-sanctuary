@@ -652,14 +652,17 @@ export function createAgentRunEventSequencer(input: {
   const now = input.now ?? Date.now;
   let sequence = 0;
   let terminated = false;
+  let previousTimestampMs = 0;
 
   return {
     emit: (type, payload) => {
       if (terminated) return undefined;
+      const timestampMs = Math.max(previousTimestampMs, Math.max(0, Math.floor(now())));
+      previousTimestampMs = timestampMs;
       const event: AgentRunEvent = {
         version: CODING_RUN_PROTOCOL_VERSION,
         seq: sequence += 1,
-        timestampMs: Math.max(0, Math.floor(now())),
+        timestampMs,
         source: input.source,
         binding: cloneBinding(input.binding),
         type,

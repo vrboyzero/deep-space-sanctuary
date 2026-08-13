@@ -68,6 +68,33 @@ describe("coding.run.subscribe Gateway integration", () => {
         && frame.payload?.event?.type === "run.completed"
       )));
 
+      const subscriptionResponse = frames.find((frame) => frame.type === "res" && frame.id === "subscribe-exact");
+      expect(subscriptionResponse?.payload?.efficiencyEvidence).toMatchObject({
+        status: "complete",
+        projectionTimeline: {
+          source: "gateway_event_broker",
+          coverage: "complete",
+          binding: { conversationId: "conversation-subscribe", agentRunId: run.runId },
+          statusCoverage: ["needs_input"],
+          items: [
+            { status: "running" },
+            { status: "completed" },
+          ],
+        },
+        humanInterventionEvidence: {
+          source: "human_response",
+          coverage: "complete",
+          binding: { conversationId: "conversation-subscribe", agentRunId: run.runId },
+          count: 0,
+        },
+      });
+      const serializedEvidence = JSON.stringify(subscriptionResponse?.payload?.efficiencyEvidence);
+      expect(serializedEvidence).not.toContain("hello");
+      expect(serializedEvidence).not.toContain("streamed answer");
+      expect(serializedEvidence).not.toContain("prompt");
+      expect(serializedEvidence).not.toContain("output");
+      expect(serializedEvidence).not.toContain("toolArgs");
+
       const replay = frames
         .filter((frame) => frame.type === "event" && frame.event === "coding.run.event")
         .map((frame) => frame.payload.event);

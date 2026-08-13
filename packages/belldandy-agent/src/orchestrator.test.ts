@@ -307,6 +307,42 @@ describe("SubAgentOrchestrator", () => {
       expect(orch.getSession(result.sessionId)?.launchSpec.modelOverride).toBe("claude-opus");
     });
 
+    it("forwards canonical per-run budgets to the spawned agent run", async () => {
+      let observedLaunchSpec: Record<string, unknown> | undefined;
+      const registry = new AgentRegistry(() => ({
+        async *run(input: AgentRunInput): AsyncIterable<AgentStreamItem> {
+          observedLaunchSpec = (input.meta?._agentLaunchSpec ?? undefined) as Record<string, unknown> | undefined;
+          yield { type: "final", text: "bounded response" };
+        },
+      }));
+      registry.register(defaultProfile);
+      const orch = new SubAgentOrchestrator({
+        agentRegistry: registry,
+        conversationStore: new ConversationStore(),
+      });
+
+      const result = await orch.spawn({
+        launchSpec: {
+          parentConversationId: "parent-budget",
+          instruction: "Run within the delegated budget",
+          maxRunWallTimeMs: 45_000,
+          toolLoopIterationBudget: 6,
+          maxTotalTokens: 16_000,
+          maxCostUsd: 0.25,
+          maxHighRiskToolCalls: 2,
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(observedLaunchSpec).toMatchObject({
+        maxRunWallTimeMs: 45_000,
+        toolLoopIterationBudget: 6,
+        maxTotalTokens: 16_000,
+        maxCostUsd: 0.25,
+        maxHighRiskToolCalls: 2,
+      });
+    });
+
     it("stores completed lane summaries in shared compressed context for team runs", async () => {
       const { orchestrator } = setup();
 

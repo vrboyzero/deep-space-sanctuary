@@ -1,6 +1,7 @@
 const { randomUUID } = require("node:crypto");
 const { spawn: spawnChildProcess } = require("node:child_process");
 const path = require("node:path");
+const { isTaskProjectionCollectionPage } = require("./task-projection-validator.cjs");
 
 const PROTOCOL_VERSION = "v1";
 const DEFAULT_MAX_FRAME_BYTES = 1024 * 1024;
@@ -428,20 +429,7 @@ function isProjectionCursor(value) {
 }
 
 function isProjectionPage(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)
-    || Object.keys(value).some((key) => !["epoch", "revision", "totalCount", "items", "nextCursor"].includes(key))
-    || typeof value.epoch !== "string" || !normalizeOptionalString(value.epoch)
-    || !Number.isSafeInteger(value.revision) || value.revision < 0
-    || !Number.isSafeInteger(value.totalCount) || value.totalCount < 0
-    || !Array.isArray(value.items) || value.items.length > 100) return false;
-  if (value.nextCursor !== undefined) {
-    if (!isProjectionCursor(value.nextCursor)
-      || value.nextCursor.epoch.trim() !== value.epoch.trim()
-      || value.nextCursor.revision !== value.revision
-      || value.nextCursor.offset <= 0
-      || value.nextCursor.offset >= value.totalCount) return false;
-  }
-  return true;
+  return isTaskProjectionCollectionPage(value);
 }
 
 function isAgentRunEvent(value) {

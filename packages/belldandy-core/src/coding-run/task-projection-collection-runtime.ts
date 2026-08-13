@@ -61,6 +61,16 @@ function createFingerprint(sources: readonly Omit<TaskProjectionCollectionSource
       ...source,
       observedAtMs: 0,
       capabilityClosure: { ...source.capabilityClosure, evaluatedAtMs: 0 },
+      ...(source.supportingEvidence
+        ? {
+            supportingEvidence: Object.fromEntries(
+              Object.entries(source.supportingEvidence).map(([name, evidence]) => [
+                name,
+                { ...evidence, observedAtMs: 0 },
+              ]),
+            ),
+          }
+        : {}),
     }));
   return createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
 }

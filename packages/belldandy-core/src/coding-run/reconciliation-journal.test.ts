@@ -20,6 +20,28 @@ afterEach(async () => {
 });
 
 describe("CodingRunReconciliationJournal", () => {
+  it("probes journal write readiness without leaving a run record", async () => {
+    const stateDir = await createStateDir();
+    const journal = new CodingRunReconciliationJournal(stateDir);
+
+    await expect(journal.checkReadiness()).resolves.toBe(true);
+    await expect(fs.readdir(path.join(stateDir, "coding-run-reconciliation"))).resolves.toEqual([]);
+  });
+
+  it("fails readiness when the temporary probe cannot be cleaned up", async () => {
+    const stateDir = await createStateDir();
+    const journal = new CodingRunReconciliationJournal(stateDir);
+    const originalUnlink = fs.unlink.bind(fs);
+    vi.spyOn(fs, "unlink").mockImplementation(async (target) => {
+      if (String(target).includes(".readiness-")) {
+        throw Object.assign(new Error("access denied"), { code: "EACCES" });
+      }
+      return originalUnlink(target);
+    });
+
+    await expect(journal.checkReadiness()).resolves.toBe(false);
+  });
+
   it("fails closed when a journal write is partial before ENOSPC", async () => {
     const stateDir = await createStateDir();
     const journal = new CodingRunReconciliationJournal(stateDir);

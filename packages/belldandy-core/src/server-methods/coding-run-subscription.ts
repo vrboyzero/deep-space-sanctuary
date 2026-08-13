@@ -59,6 +59,7 @@ export function handleCodingRunSubscriptionMethod(
       binding: { ...parsed.binding },
       earliestSeq: result.earliestSeq,
       latestSeq: result.latestSeq,
+      efficiencyEvidence: ctx.eventBroker.readEfficiencyEvidence(parsed.binding),
     },
   };
 }

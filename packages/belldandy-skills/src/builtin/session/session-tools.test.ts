@@ -3,6 +3,8 @@ import type { ToolContext } from "../../types.js";
 import { sessionsSpawnTool } from "./spawn.js";
 import { delegateTaskTool } from "./delegate.js";
 import { delegateParallelTool } from "./delegate-parallel.js";
+import { subtaskFanInTool } from "./subtask-fan-in.js";
+import { subtaskSupervisorTool } from "./subtask-supervisor.js";
 
 function createContext(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
@@ -29,6 +31,166 @@ function createContext(overrides: Partial<ToolContext> = {}): ToolContext {
 }
 
 describe("session tools launchSpec wiring", () => {
+  it("subtask_fan_in injects the current manager binding and returns no-content preview/confirm results", async () => {
+    const fanInSubTasks = vi.fn(async (input: { action: "preview" | "confirm" }) => input.action === "preview"
+      ? {
+          schemaVersion: "subtask-supervisor-fan-in/v1" as const,
+          contentMode: "none" as const,
+          status: "ready" as const,
+          receipt: { id: "fan-in-receipt-1", expiresAtMs: 20_000 },
+          conflictPaths: [],
+          lanes: [],
+          reviewer: { mode: "read_only" as const, verdict: "approved" as const, artifactSha256: "c".repeat(64) },
+        }
+      : {
+          schemaVersion: "subtask-supervisor-fan-in/v1" as const,
+          contentMode: "none" as const,
+          status: "completed" as const,
+          applied: true,
+          duplicateSideEffect: false as const,
+          blockers: [],
+          auditArtifactId: "fan-in-audit-1",
+        });
+    const context = createContext({
+      agentRunId: "run-manager",
+      agentCapabilities: { fanInSubTasks },
+    });
+    const evidenceArgs = {
+      team_id: "team-parallel",
+      lanes: [{
+        lane_id: "lane_1",
+        task_id: "task-lane-1",
+        session_id: "session-lane-1",
+        expected_revision: 2,
+        test_evidence: {
+          schema_version: "subtask-supervisor-test-evidence/v1",
+          task_id: "task-lane-1",
+          session_id: "session-lane-1",
+          revision: 2,
+          status: "passed",
+          artifact: { id: "vitest-report-lane-1", sha256: "b".repeat(64) },
+        },
+      }],
+      reviewer_evidence: {
+        schema_version: "subtask-supervisor-review-evidence/v1",
+        mode: "read_only",
+        verdict: "approved",
+        artifact: { id: "review-lane-1", sha256: "c".repeat(64) },
+      },
+    };
+
+    const preview = await subtaskFanInTool.execute({ action: "preview", ...evidenceArgs }, context);
+    const confirm = await subtaskFanInTool.execute({
+      action: "confirm",
+      ...evidenceArgs,
+      receipt_id: "fan-in-receipt-1",
+      confirm: true,
+    }, context);
+
+    expect(preview.success).toBe(true);
+    expect(confirm.success).toBe(true);
+    expect(fanInSubTasks).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      action: "preview",
+      managerConversationId: "conv-session",
+      managerAgentRunId: "run-manager",
+      teamId: "team-parallel",
+      lanes: [expect.objectContaining({
+        binding: expect.objectContaining({
+          managerConversationId: "conv-session",
+          managerAgentRunId: "run-manager",
+          teamId: "team-parallel",
+          laneId: "lane_1",
+        }),
+        expectedRevision: 2,
+      })],
+    }));
+    expect(fanInSubTasks).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      action: "confirm",
+      receiptId: "fan-in-receipt-1",
+      confirm: true,
+    }));
+    expect(JSON.parse(preview.output)).toMatchObject({ contentMode: "none", status: "ready" });
+    expect(JSON.parse(confirm.output)).toEqual({
+      schemaVersion: "subtask-supervisor-fan-in/v1",
+      contentMode: "none",
+      status: "completed",
+      applied: true,
+      duplicateSideEffect: false,
+      blockers: [],
+      auditArtifactId: "fan-in-audit-1",
+    });
+    expect(JSON.stringify(subtaskFanInTool.definition.parameters)).not.toMatch(/repo|worktree|patch|path/i);
+  });
+
+  it("subtask_supervisor derives the manager binding from the current run and returns no-content observation", async () => {
+    const controlSubTask = vi.fn(async () => ({
+      status: "running" as const,
+      mode: "write" as const,
+      revision: 0,
+      binding: {
+        managerConversationId: "conv-session",
+        managerAgentRunId: "run-manager",
+        teamId: "team-parallel",
+        laneId: "lane_1",
+        taskId: "task-lane-1",
+        sessionId: "session-lane-1",
+      },
+      admittedAtMs: 100,
+      updatedAtMs: 200,
+    }));
+    const context = createContext({
+      agentRunId: "run-manager",
+      agentCapabilities: { controlSubTask },
+    });
+
+    const result = await subtaskSupervisorTool.execute({
+      action: "observe",
+      team_id: "team-parallel",
+      lane_id: "lane_1",
+      task_id: "task-lane-1",
+      session_id: "session-lane-1",
+    }, context);
+
+    expect(result.success).toBe(true);
+    expect(controlSubTask).toHaveBeenCalledWith({
+      action: "observe",
+      managerConversationId: "conv-session",
+      managerAgentRunId: "run-manager",
+      teamId: "team-parallel",
+      laneId: "lane_1",
+      taskId: "task-lane-1",
+      sessionId: "session-lane-1",
+    });
+    expect(JSON.parse(result.output)).toEqual({
+      schemaVersion: "subtask-supervisor-control/v1",
+      contentMode: "none",
+      item: {
+        status: "running",
+        mode: "write",
+        revision: 0,
+        binding: {
+          managerConversationId: "conv-session",
+          managerAgentRunId: "run-manager",
+          teamId: "team-parallel",
+          laneId: "lane_1",
+          taskId: "task-lane-1",
+          sessionId: "session-lane-1",
+        },
+        admittedAtMs: 100,
+        updatedAtMs: 200,
+      },
+    });
+
+    const missingRun = await subtaskSupervisorTool.execute({
+      action: "observe",
+      team_id: "team-parallel",
+      lane_id: "lane_1",
+      task_id: "task-lane-1",
+    }, createContext({ agentCapabilities: { controlSubTask } }));
+    expect(missingRun).toMatchObject({ success: false, failureKind: "permission_or_policy" });
+    expect(controlSubTask).toHaveBeenCalledTimes(1);
+  });
+
   it("sessions_spawn should build an explicit launchSpec with inherited runtime defaults", async () => {
     const spawnSubAgent = vi.fn(async () => ({
       success: true,

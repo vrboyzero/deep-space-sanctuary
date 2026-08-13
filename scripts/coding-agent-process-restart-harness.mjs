@@ -10,25 +10,36 @@ import WebSocket, { WebSocketServer } from "ws";
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const gatewayFixturePath = path.join(scriptDir, "coding-agent-process-restart-gateway.mjs");
 const MAX_CAPTURE_BYTES = 256 * 1024;
-const GATEWAY_READY_TIMEOUT_MS = 15_000;
-const PROBE_TIMEOUT_MS = 15_000;
+const DEFAULT_OPERATION_TIMEOUT_MS = 15_000;
+const WSL2_V2_OPERATION_TIMEOUT_MS = 60_000;
 const STOP_TIMEOUT_MS = 5_000;
 
 export async function executeGatewayProcessRestartCodingCi(input) {
   const artifactPath = path.resolve(requireNonEmptyString(input?.artifactPath, "artifactPath"));
+  const manifestRevision = input?.manifestRevision ?? "v1";
+  const operationTimeoutMs = resolveGatewayProcessRestartTimeoutMs(manifestRevision);
   const supervisor = await startGatewayProcessRestartSupervisor({
     stateDir: input?.stateDir,
     workspace: input?.workspace,
     sourceRoot: input?.sourceRoot,
-    manifestRevision: input?.manifestRevision ?? "v1",
+    manifestRevision,
   });
   const proxy = await startGatewayProcessRestartProxy({ supervisor });
   let runner;
   let artifact = createRestartArtifact(input?.manifestRevision ?? "v1");
 
   try {
+    artifact.projection = await runTaskProjectionCursorProbe({
+      bddEntry: input.bddEntry,
+      cwd: input.workspace,
+      stateDir: input.stateDir,
+      env: buildGatewayEnv(input.childEnv, proxy),
+      timeoutMs: operationTimeoutMs,
+    });
     runner = await input.executeCodingCi({
       ...input,
+      // This harness owns a Gateway on the current OS, so its cwd must use the local fixture path.
+      gatewayWorkspace: input.workspace,
       childEnv: {
         ...input.childEnv,
         BELLDANDY_HOST: proxy.host,
@@ -68,6 +79,7 @@ export async function executeGatewayProcessRestartCodingCi(input) {
       stateDir: input.stateDir,
       binding,
       env: buildGatewayEnv(input.childEnv, target),
+      timeoutMs: operationTimeoutMs,
     });
     const cancellation = await runAgentCancelProbe({
       bddEntry: input.bddEntry,
@@ -75,7 +87,19 @@ export async function executeGatewayProcessRestartCodingCi(input) {
       stateDir: input.stateDir,
       binding,
       env: buildGatewayEnv(input.childEnv, target),
+      timeoutMs: operationTimeoutMs,
     });
+    artifact.projection = {
+      ...artifact.projection,
+      afterRestart: await runTaskProjectionCursorProbeAfterRestart({
+        bddEntry: input.bddEntry,
+        cwd: input.workspace,
+        stateDir: input.stateDir,
+        env: buildGatewayEnv(input.childEnv, target),
+        cursor: artifact.projection?.beforeRestart?.cursor,
+        timeoutMs: operationTimeoutMs,
+      }),
+    };
     artifact = {
       ...artifact,
       subscription,
@@ -103,6 +127,15 @@ export async function executeGatewayProcessRestartCodingCi(input) {
     await fs.mkdir(path.dirname(artifactPath), { recursive: true });
     await fs.writeFile(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, "utf-8");
   }
+}
+
+export function resolveGatewayProcessRestartTimeoutMs(
+  manifestRevision = "v1",
+  platform = process.platform,
+) {
+  return manifestRevision === "v2" && platform === "linux"
+    ? WSL2_V2_OPERATION_TIMEOUT_MS
+    : DEFAULT_OPERATION_TIMEOUT_MS;
 }
 
 export async function startGatewayProcessRestartSupervisor(input) {
@@ -293,7 +326,10 @@ async function startFixtureGateway(input) {
     entrypoint: { path: serverRelativePath, sha256: entrypointSha256 },
     launch: { executable: "node", script: "scripts/coding-agent-process-restart-gateway.mjs" },
   } : undefined);
-  const ready = await waitForGatewayReady(record);
+  const ready = await waitForGatewayReady(
+    record,
+    resolveGatewayProcessRestartTimeoutMs(input.manifestRevision),
+  );
   record.port = ready.port;
   return record;
 }
@@ -339,7 +375,7 @@ function createGatewayRecord(child, evidence) {
   return record;
 }
 
-async function waitForGatewayReady(record) {
+async function waitForGatewayReady(record, timeoutMs = DEFAULT_OPERATION_TIMEOUT_MS) {
   return await new Promise((resolve, reject) => {
     let settled = false;
     const finish = (callback, value) => {
@@ -349,8 +385,8 @@ async function waitForGatewayReady(record) {
       callback(value);
     };
     const timeout = setTimeout(() => {
-      finish(reject, new Error(`Gateway fixture did not become ready within ${GATEWAY_READY_TIMEOUT_MS} ms.`));
-    }, GATEWAY_READY_TIMEOUT_MS);
+      finish(reject, new Error(`Gateway fixture did not become ready within ${timeoutMs} ms.`));
+    }, timeoutMs);
     const consume = () => {
       const lines = record.stdoutRemainder.split(/\r?\n/);
       record.stdoutRemainder = lines.pop() ?? "";
@@ -390,6 +426,7 @@ export async function runCodingRunSubscriptionProbe(input) {
     args: ["coding-run", "stdio", "--state-dir", input.stateDir],
     cwd: input.cwd,
     env: input.env,
+    timeoutMs: input.timeoutMs,
     stdin: `${JSON.stringify({
       version: "v1",
       type: "subscription.request",
@@ -425,6 +462,7 @@ async function runAgentCancelProbe(input) {
     ],
     cwd: input.cwd,
     env: input.env,
+    timeoutMs: input.timeoutMs,
   });
   const payload = parseJsonl(result.stdout).at(-1);
   return {
@@ -455,7 +493,7 @@ async function runProcess(input) {
     const timeout = setTimeout(() => {
       timedOut = true;
       child.kill();
-    }, PROBE_TIMEOUT_MS);
+    }, input.timeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS);
     child.stdout.setEncoding("utf-8");
     child.stderr.setEncoding("utf-8");
     child.stdout.on("data", (chunk) => {
@@ -501,7 +539,73 @@ function createRestartArtifact(manifestRevision = "v1") {
     replacementGateway: null,
     subscription: { exitCode: null, errorCode: null, eventCount: 0, diagnostic: null },
     cancellation: { exitCode: null, accepted: null, state: null },
+    projection: {
+      beforeRestart: { exitCode: null, ok: false, epoch: null, revision: null, totalCount: null, cursor: null, errorCode: null },
+      afterRestart: { exitCode: null, ok: false, errorCode: null },
+    },
     cleanup: { managedGatewayProcessCount: 0, originalGateway: null, replacementGateway: null },
+  };
+}
+
+async function runTaskProjectionCursorProbe(input) {
+  const requestId = "coding-benchmark-restart-projection-before";
+  const result = await runProcess({
+    bddEntry: input.bddEntry,
+    args: ["coding-run", "stdio", "--state-dir", input.stateDir],
+    cwd: input.cwd,
+    env: input.env,
+    timeoutMs: input.timeoutMs,
+    stdin: `${JSON.stringify({
+      version: "v1",
+      type: "projection.request",
+      id: requestId,
+      projection: { limit: 1 },
+    })}\n`,
+    closeStdinOnFrame: (frame) => frame?.type === "projection.response" && frame.id === requestId,
+  });
+  const response = parseJsonl(result.stdout).find((frame) => frame?.type === "projection.response" && frame.id === requestId);
+  const payload = response?.ok === true && response.result && typeof response.result === "object"
+    ? response.result
+    : undefined;
+  const epoch = typeof payload?.epoch === "string" && payload.epoch.trim() ? payload.epoch : null;
+  const revision = Number.isSafeInteger(payload?.revision) && payload.revision >= 0 ? payload.revision : null;
+  const cursor = epoch !== null && revision !== null ? { epoch, revision, offset: 0 } : null;
+  return {
+    beforeRestart: {
+      exitCode: result.exitCode,
+      ok: response?.ok === true && cursor !== null,
+      epoch,
+      revision,
+      totalCount: Number.isSafeInteger(payload?.totalCount) ? payload.totalCount : null,
+      cursor,
+      errorCode: response?.ok === false && typeof response.error?.code === "string" ? response.error.code : null,
+    },
+    afterRestart: { exitCode: null, ok: false, errorCode: null },
+  };
+}
+
+async function runTaskProjectionCursorProbeAfterRestart(input) {
+  if (!input.cursor) return { exitCode: null, ok: false, errorCode: "not_run" };
+  const requestId = "coding-benchmark-restart-projection-after";
+  const result = await runProcess({
+    bddEntry: input.bddEntry,
+    args: ["coding-run", "stdio", "--state-dir", input.stateDir],
+    cwd: input.cwd,
+    env: input.env,
+    timeoutMs: input.timeoutMs,
+    stdin: `${JSON.stringify({
+      version: "v1",
+      type: "projection.request",
+      id: requestId,
+      projection: { cursor: input.cursor },
+    })}\n`,
+    closeStdinOnFrame: (frame) => frame?.type === "projection.response" && frame.id === requestId,
+  });
+  const response = parseJsonl(result.stdout).find((frame) => frame?.type === "projection.response" && frame.id === requestId);
+  return {
+    exitCode: result.exitCode,
+    ok: response?.ok === true,
+    errorCode: response?.ok === false && typeof response.error?.code === "string" ? response.error.code : null,
   };
 }
 

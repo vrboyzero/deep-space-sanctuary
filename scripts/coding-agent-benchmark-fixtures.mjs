@@ -1618,6 +1618,13 @@ export async function evaluateStage0CProcessRestartFixture(input) {
     || restart?.subscription?.eventCount !== 0
     || restart?.cancellation?.accepted !== false
     || restart?.cancellation?.state !== "not_found"
+    || restart?.projection?.beforeRestart?.ok !== true
+    || !Number.isSafeInteger(restart?.projection?.beforeRestart?.revision)
+    || typeof restart?.projection?.beforeRestart?.epoch !== "string"
+    || restart?.projection?.beforeRestart?.cursor?.epoch !== restart?.projection?.beforeRestart?.epoch
+    || restart?.projection?.beforeRestart?.cursor?.revision !== restart?.projection?.beforeRestart?.revision
+    || restart?.projection?.afterRestart?.ok !== false
+    || restart?.projection?.afterRestart?.errorCode !== "cursor_stale"
     || restart?.originalGateway?.exited !== true
     || restart?.replacementGateway?.pid === restart?.originalGateway?.pid
     || restart?.cleanup?.managedGatewayProcessCount !== 0

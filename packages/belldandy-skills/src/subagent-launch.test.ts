@@ -26,6 +26,30 @@ function createContext(overrides: Partial<ToolContext> = {}): ToolContext {
 }
 
 describe("buildSubAgentLaunchSpec delegation protocol", () => {
+  it("inherits the parent run resource budgets into the child launch", () => {
+    const spec = buildSubAgentLaunchSpec(createContext({
+      launchSpec: {
+        maxRunWallTimeMs: 40_000,
+        toolLoopIterationBudget: 5,
+        maxTotalTokens: 12_000,
+        maxCostUsd: 0.3,
+        maxHighRiskToolCalls: 1,
+      },
+    }), {
+      instruction: "Run a bounded child lane.",
+      channel: "subtask",
+      delegationSource: "delegate_parallel",
+    });
+
+    expect(spec).toMatchObject({
+      maxRunWallTimeMs: 40_000,
+      toolLoopIterationBudget: 5,
+      maxTotalTokens: 12_000,
+      maxCostUsd: 0.3,
+      maxHighRiskToolCalls: 1,
+    });
+  });
+
   it("threads the parent tool operation into the child launch without changing task content", () => {
     const spec = buildSubAgentLaunchSpec(createContext({
       agentRunId: "run-parent-1",

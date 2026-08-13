@@ -1063,21 +1063,35 @@ function restrictRunLimit(configured: number, requested: unknown): number {
   return Math.min(configured, requestedLimit);
 }
 
+function restrictHighRiskToolCallLimit(configured: number, requested: unknown): number {
+  const requestedLimit = Number(requested);
+  if (!Number.isSafeInteger(requestedLimit) || requestedLimit < 0) return configured;
+  if (configured === 0) return requestedLimit;
+  if (requestedLimit === 0) return configured;
+  return Math.min(configured, requestedLimit);
+}
+
 function resolveRunBudgets(input: {
   launchSpec?: ToolExecutionRuntimeContext["launchSpec"];
   maxRunWallTimeMs: number;
   maxTotalTokens: number;
   toolLoopIterationBudget: number;
+  maxHighRiskToolCalls: number;
 }): {
   maxRunWallTimeMs: number;
   maxTotalTokens: number;
   toolLoopIterationBudget: number;
+  maxHighRiskToolCalls: number;
   maxCostUsd?: number;
 } {
   return {
     maxRunWallTimeMs: restrictRunLimit(input.maxRunWallTimeMs, input.launchSpec?.maxRunWallTimeMs),
     maxTotalTokens: restrictRunLimit(input.maxTotalTokens, input.launchSpec?.maxTotalTokens),
     toolLoopIterationBudget: restrictRunLimit(input.toolLoopIterationBudget, input.launchSpec?.toolLoopIterationBudget),
+    maxHighRiskToolCalls: restrictHighRiskToolCallLimit(
+      input.maxHighRiskToolCalls,
+      input.launchSpec?.maxHighRiskToolCalls,
+    ),
     ...(normalizePositiveCostUsd(input.launchSpec?.maxCostUsd) !== undefined
       ? { maxCostUsd: normalizePositiveCostUsd(input.launchSpec?.maxCostUsd) }
       : {}),
@@ -2030,6 +2044,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
       maxRunWallTimeMs: this.opts.maxRunWallTimeMs,
       maxTotalTokens: this.opts.maxTotalTokens,
       toolLoopIterationBudget: this.opts.toolLoopIterationBudget,
+      maxHighRiskToolCalls: this.opts.maxHighRiskToolCalls,
     });
     if (runBudgets.maxCostUsd !== undefined && !hasUsagePricing(this.opts.usagePricing)) {
       throw new Error("This coding run requested maxCostUsd, but the selected Agent profile has no valid usage pricing.");
@@ -2315,7 +2330,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
       : undefined;
     const runBudget = new ReActRunBudgetTracker({
       maxTotalTokens: runBudgets.maxTotalTokens,
-      maxHighRiskToolCalls: this.opts.maxHighRiskToolCalls,
+      maxHighRiskToolCalls: runBudgets.maxHighRiskToolCalls,
       ...(runBudgets.maxCostUsd === undefined ? {} : { maxCostUsd: runBudgets.maxCostUsd }),
       ...(runtimeContext?.launchSpec?.modelLoopBudgetPolicy
         ? { modelLoopBudgetPolicy: runtimeContext.launchSpec.modelLoopBudgetPolicy }

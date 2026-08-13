@@ -11,6 +11,7 @@ import { CODING_RUN_PROTOCOL_VERSION } from "./contracts.js";
 import { createCodingRunGatewayEventBroker } from "./gateway-event-broker.js";
 import { PendingToolPermissionRuntime } from "./pending-tool-permission-runtime.js";
 import { runCodingRunStdio } from "./stdio-process.js";
+import { ConversationRunRegistry } from "../conversation-run-registry.js";
 import { startGatewayServer } from "../server.js";
 import {
   cleanupGlobalMemoryManagersForTest,
@@ -568,6 +569,34 @@ describe("coding run stdio process bridge", () => {
       },
     });
     expect(JSON.stringify(allow.permissionEvent)).not.toContain("must-not-leak");
+    expect(allow.projectionResponse).toMatchObject({
+      type: "projection.response",
+      ok: true,
+      result: {
+        items: [{
+          taskId: "conversation:conversation-allow:run-allow",
+          status: "needs_input",
+          evidence: {
+            reasonCategory: "awaiting_input",
+            reasonCode: "awaiting_user_review",
+          },
+          allowedActions: ["observe", "respond"],
+        }],
+      },
+    });
+    expect(JSON.stringify(allow.projectionResponse)).not.toMatch(/tool-allow|confirm_write|must-not-leak/);
+    expect(allow.settledProjectionResponse).toMatchObject({
+      type: "projection.response",
+      ok: true,
+      result: {
+        items: [{
+          taskId: "conversation:conversation-allow:run-allow",
+          status: "running",
+          evidence: { reasonCategory: "running", reasonCode: "owner_running" },
+          allowedActions: ["observe", "cancel"],
+        }],
+      },
+    });
 
     const deny = await runGatewayPermissionScenario("deny");
     expect(deny.waitedForPermission).toBe(true);
@@ -635,6 +664,8 @@ describe("coding run stdio process bridge", () => {
 async function runGatewayPermissionScenario(decision: "allow" | "deny"): Promise<{
   waitedForPermission: boolean;
   permissionEvent: Record<string, unknown> | undefined;
+  projectionResponse: Record<string, unknown> | undefined;
+  settledProjectionResponse: Record<string, unknown> | undefined;
   result: Awaited<ReturnType<ToolExecutor["execute"]>>;
 }> {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), `belldandy-coding-run-permission-${decision}-`));
@@ -643,6 +674,14 @@ async function runGatewayPermissionScenario(decision: "allow" | "deny"): Promise
   const agentRunId = `run-${decision}`;
   const toolCallId = `tool-${decision}`;
   broker.registerConversationRun({ conversationId, agentRunId });
+  const conversationRunRegistry = new ConversationRunRegistry();
+  conversationRunRegistry.register({
+    conversationId,
+    runId: agentRunId,
+    startedAt: 1,
+    state: "running",
+    stop: () => true,
+  });
   const pendingPermissions = new PendingToolPermissionRuntime({
     onRequested: (request) => {
       broker.publishGatewayEvent({
@@ -670,12 +709,17 @@ async function runGatewayPermissionScenario(decision: "allow" | "deny"): Promise
     webRoot: resolveWebRoot(),
     stateDir,
     codingRunEventBroker: broker,
+    conversationRunRegistry,
     pendingToolPermissionRuntime: pendingPermissions,
     toolExecutor,
   });
   const frames: Array<Record<string, unknown>> = [];
   let releasePermissionRequest: (() => void) | undefined;
   const permissionRequested = new Promise<void>((resolve) => { releasePermissionRequest = resolve; });
+  let releaseProjectionResponse: (() => void) | undefined;
+  const projectionReceived = new Promise<void>((resolve) => { releaseProjectionResponse = resolve; });
+  let releasePermissionResponse: (() => void) | undefined;
+  const permissionResponded = new Promise<void>((resolve) => { releasePermissionResponse = resolve; });
   let toolExecution: ReturnType<ToolExecutor["execute"]> | undefined;
   let toolFinished = false;
   let waitedForPermission = false;
@@ -702,6 +746,13 @@ async function runGatewayPermissionScenario(decision: "allow" | "deny"): Promise
           await permissionRequested;
           yield `${JSON.stringify({
             version: CODING_RUN_PROTOCOL_VERSION,
+            type: "projection.request",
+            id: `projection-${decision}`,
+            projection: { limit: 10 },
+          })}\n`;
+          await projectionReceived;
+          yield `${JSON.stringify({
+            version: CODING_RUN_PROTOCOL_VERSION,
             type: "control.request",
             id: `permission-${decision}`,
             control: {
@@ -711,6 +762,13 @@ async function runGatewayPermissionScenario(decision: "allow" | "deny"): Promise
               toolCallId,
               decision,
             },
+          })}\n`;
+          await permissionResponded;
+          yield `${JSON.stringify({
+            version: CODING_RUN_PROTOCOL_VERSION,
+            type: "projection.request",
+            id: `projection-settled-${decision}`,
+            projection: { limit: 10 },
           })}\n`;
         })(),
         writeStdout: (line) => {
@@ -739,6 +797,12 @@ async function runGatewayPermissionScenario(decision: "allow" | "deny"): Promise
             waitedForPermission = !toolFinished;
             releasePermissionRequest?.();
           }
+          if (frame.type === "projection.response" && frame.id === `projection-${decision}`) {
+            releaseProjectionResponse?.();
+          }
+          if (frame.type === "control.response" && frame.id === `permission-${decision}`) {
+            releasePermissionResponse?.();
+          }
         },
         writeStderr: () => undefined,
       });
@@ -756,10 +820,17 @@ async function runGatewayPermissionScenario(decision: "allow" | "deny"): Promise
         .map((frame) => frame.event)
         .find((event): event is Record<string, unknown> => Boolean(event)
           && (event as Record<string, unknown>).type === "permission.requested"),
+      projectionResponse: frames.find((frame) => frame.type === "projection.response"
+        && frame.id === `projection-${decision}`),
+      settledProjectionResponse: frames.find((frame) => frame.type === "projection.response"
+        && frame.id === `projection-settled-${decision}`),
       result,
     };
   } finally {
     releasePermissionRequest?.();
+    releaseProjectionResponse?.();
+    releasePermissionResponse?.();
+    conversationRunRegistry.clear(conversationId, agentRunId);
     await gateway.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }

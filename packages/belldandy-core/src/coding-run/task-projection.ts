@@ -85,7 +85,11 @@ export type TaskProjection = {
 
 export type TaskProjectionSupportingEvidence = {
   commandJob?: { status: "running" | "completed" | "cancelled" | "failed" | "lost"; observedAtMs: number };
-  worktree?: { status: "ready" | "dirty" | "conflicted" | "missing" | "uncertain"; observedAtMs: number };
+  worktree?: {
+    status: "ready" | "dirty" | "conflicted" | "missing" | "uncertain";
+    observedAtMs: number;
+    lifecycle?: "kept" | "discard_pending" | "discarded";
+  };
   journal?: { status: "pending" | "done" | "error" | "skipped" | "uncertain"; observedAtMs: number };
   validation?: { status: "queued" | "running" | "passed" | "failed" | "incomplete" | "uncertain"; observedAtMs: number; required: boolean };
 };
@@ -306,8 +310,13 @@ function isTaskProjectionSupportingEvidence(value: unknown): value is TaskProjec
     if (!isRecord(item) || !hasExactKeys(item, required ? ["status", "observedAtMs", "required"] : ["status", "observedAtMs"])) return false;
     return statuses.has(item.status as string) && isNonNegativeInteger(item.observedAtMs) && (!required || typeof item.required === "boolean");
   };
+  const isWorktree = (item: unknown): boolean => isRecord(item)
+    && hasExactKeys(item, ["status", "observedAtMs"], ["lifecycle"])
+    && new Set(["ready", "dirty", "conflicted", "missing", "uncertain"]).has(item.status as string)
+    && isNonNegativeInteger(item.observedAtMs)
+    && (item.lifecycle === undefined || new Set(["kept", "discard_pending", "discarded"]).has(item.lifecycle as string));
   return (!Object.prototype.hasOwnProperty.call(value, "commandJob") || isObserved(value.commandJob, new Set(["running", "completed", "cancelled", "failed", "lost"])))
-    && (!Object.prototype.hasOwnProperty.call(value, "worktree") || isObserved(value.worktree, new Set(["ready", "dirty", "conflicted", "missing", "uncertain"])))
+    && (!Object.prototype.hasOwnProperty.call(value, "worktree") || isWorktree(value.worktree))
     && (!Object.prototype.hasOwnProperty.call(value, "journal") || isObserved(value.journal, new Set(["pending", "done", "error", "skipped", "uncertain"])))
     && (!Object.prototype.hasOwnProperty.call(value, "validation") || isObserved(value.validation, new Set(["queued", "running", "passed", "failed", "incomplete", "uncertain"]), true));
 }
@@ -346,7 +355,9 @@ function mapSourceStatus(status: CodingRunAdapterStatus, evidence?: TaskProjecti
   if (evidence?.journal?.status === "uncertain") {
     return { status: "uncertain", reasonCategory: "evidence_conflict", reasonCode: "journal_evidence_uncertain" };
   }
-  if (evidence?.worktree && ["conflicted", "missing", "uncertain"].includes(evidence.worktree.status)) {
+  if (evidence?.worktree
+    && evidence.worktree.lifecycle !== "discarded"
+    && ["conflicted", "missing", "uncertain"].includes(evidence.worktree.status)) {
     return { status: "uncertain", reasonCategory: "evidence_conflict", reasonCode: "worktree_evidence_uncertain" };
   }
   if (evidence?.commandJob?.status === "lost") {

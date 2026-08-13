@@ -11,12 +11,16 @@ import {
   type CodingRunSubscription,
   type CodingRunSubscriptionErrorCode,
 } from "./contracts.js";
+import {
+  parseTaskEfficiencyEvidence,
+  type TaskEfficiencyEvidence,
+} from "./task-efficiency-metrics.js";
 
 const RECONNECT_DELAYS_MS = [200, 500, 1_000] as const;
 const REQUEST_TIMEOUT_MS = 5_000;
 
 export type GatewayCodingRunSubscriptionResult =
-  | { ok: true; payload: { earliestSeq: number; latestSeq: number } }
+  | { ok: true; payload: { earliestSeq: number; latestSeq: number; efficiencyEvidence?: TaskEfficiencyEvidence } }
   | { ok: false; error: { code: CodingRunSubscriptionErrorCode; message: string } };
 
 type ActiveSubscription = {
@@ -246,12 +250,12 @@ export class GatewayCodingRunSubscriptionSession {
         return;
       }
       const payload = isRecord(frame.payload) ? frame.payload : {};
-      const parsed = parseSubscriptionPayload(payload);
+      const active = this.active;
+      const parsed = parseSubscriptionPayload(payload, active?.binding);
       if (!parsed) {
         input.finish(failure("gateway_unavailable", "Gateway returned an invalid coding run subscription response."));
         return;
       }
-      const active = this.active;
       if (active && active.generation === input.generation && !input.hasExplicitCursor && active.lastSeq === 0) {
         active.lastSeq = parsed.earliestSeq - 1;
       }
@@ -330,9 +334,23 @@ export class GatewayCodingRunSubscriptionSession {
   }
 }
 
-function parseSubscriptionPayload(value: Record<string, unknown>): { earliestSeq: number; latestSeq: number } | undefined {
-  return isNonNegativeSafeInt(value.earliestSeq) && isNonNegativeSafeInt(value.latestSeq) && value.earliestSeq <= value.latestSeq
-    ? { earliestSeq: value.earliestSeq, latestSeq: value.latestSeq }
+function parseSubscriptionPayload(
+  value: Record<string, unknown>,
+  binding: CodingRunSubscription["binding"] | undefined,
+): { earliestSeq: number; latestSeq: number; efficiencyEvidence?: TaskEfficiencyEvidence } | undefined {
+  const evidence = value.efficiencyEvidence === undefined
+    ? undefined
+    : parseTaskEfficiencyEvidence(value.efficiencyEvidence, binding);
+  return binding
+    && isNonNegativeSafeInt(value.earliestSeq)
+    && isNonNegativeSafeInt(value.latestSeq)
+    && value.earliestSeq <= value.latestSeq
+    && (value.efficiencyEvidence === undefined || evidence)
+    ? {
+      earliestSeq: value.earliestSeq,
+      latestSeq: value.latestSeq,
+      ...(evidence ? { efficiencyEvidence: evidence } : {}),
+    }
     : undefined;
 }
 

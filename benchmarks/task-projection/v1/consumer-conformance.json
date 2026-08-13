@@ -1,0 +1,212 @@
+{
+  "schemaVersion": "task-projection-consumer-conformance/v1",
+  "sequence": [
+    {
+      "label": "running",
+      "page": {
+        "epoch": "conformance-epoch-1",
+        "revision": 1,
+        "totalCount": 2,
+        "items": [
+          {
+            "schemaVersion": "task-projection/v1",
+            "taskId": "conversation:conversation-conformance:run-conformance",
+            "status": "running",
+            "owner": {
+              "source": "conversation",
+              "binding": {
+                "agentRunId": "run-conformance",
+                "conversationId": "conversation-conformance"
+              }
+            },
+            "evidence": {
+              "observedAtMs": 1000,
+              "reasonCategory": "running",
+              "reasonCode": "owner_running"
+            },
+            "allowedActions": ["observe", "cancel"],
+            "capabilityClosure": {
+              "schemaVersion": "task-capability-closure/v1",
+              "evaluatedAtMs": 1000,
+              "status": "satisfied",
+              "capabilities": {
+                "tools": { "required": false, "state": "available" },
+                "languageToolchain": { "required": false, "state": "available" },
+                "sandbox": { "required": false, "state": "available" },
+                "approvalChannel": { "required": false, "state": "available" },
+                "worktree": { "required": false, "state": "available" },
+                "journal": { "required": false, "state": "available" },
+                "trace": { "required": false, "state": "available" },
+                "verifier": { "required": false, "state": "available" },
+                "mcp": { "required": false, "state": "available" },
+                "plugin": { "required": false, "state": "available" },
+                "skill": { "required": false, "state": "available" }
+              }
+            },
+            "supportingEvidence": {
+              "worktree": { "status": "ready", "lifecycle": "kept", "observedAtMs": 1000 }
+            }
+          }
+        ],
+        "nextCursor": { "epoch": "conformance-epoch-1", "revision": 1, "offset": 1 }
+      },
+      "expected": {
+        "status": "running",
+        "reasonCategory": "running",
+        "reasonCode": "owner_running",
+        "allowedActions": ["observe", "cancel"]
+      }
+    },
+    {
+      "label": "needs_input",
+      "page": {
+        "epoch": "conformance-epoch-1",
+        "revision": 2,
+        "totalCount": 1,
+        "items": [
+          {
+            "schemaVersion": "task-projection/v1",
+            "taskId": "conversation:conversation-conformance:run-conformance",
+            "status": "needs_input",
+            "owner": {
+              "source": "conversation",
+              "binding": {
+                "agentRunId": "run-conformance",
+                "conversationId": "conversation-conformance"
+              }
+            },
+            "evidence": {
+              "observedAtMs": 2000,
+              "reasonCategory": "awaiting_input",
+              "reasonCode": "awaiting_user_review"
+            },
+            "allowedActions": ["observe", "respond"],
+            "capabilityClosure": {
+              "schemaVersion": "task-capability-closure/v1",
+              "evaluatedAtMs": 2000,
+              "status": "satisfied",
+              "capabilities": {
+                "tools": { "required": false, "state": "available" },
+                "languageToolchain": { "required": false, "state": "available" },
+                "sandbox": { "required": false, "state": "available" },
+                "approvalChannel": { "required": false, "state": "available" },
+                "worktree": { "required": false, "state": "available" },
+                "journal": { "required": false, "state": "available" },
+                "trace": { "required": false, "state": "available" },
+                "verifier": { "required": false, "state": "available" },
+                "mcp": { "required": false, "state": "available" },
+                "plugin": { "required": false, "state": "available" },
+                "skill": { "required": false, "state": "available" }
+              }
+            },
+            "supportingEvidence": {
+              "journal": { "status": "pending", "observedAtMs": 2000 }
+            }
+          }
+        ]
+      },
+      "expected": {
+        "status": "needs_input",
+        "reasonCategory": "awaiting_input",
+        "reasonCode": "awaiting_user_review",
+        "allowedActions": ["observe", "respond"]
+      }
+    },
+    {
+      "label": "failed",
+      "page": {
+        "epoch": "conformance-epoch-1",
+        "revision": 3,
+        "totalCount": 1,
+        "items": [
+          {
+            "schemaVersion": "task-projection/v1",
+            "taskId": "conversation:conversation-conformance:run-conformance",
+            "status": "failed",
+            "owner": {
+              "source": "conversation",
+              "binding": {
+                "agentRunId": "run-conformance",
+                "conversationId": "conversation-conformance"
+              }
+            },
+            "evidence": {
+              "observedAtMs": 3000,
+              "reasonCategory": "owner_failure",
+              "reasonCode": "owner_reported_failure"
+            },
+            "allowedActions": ["observe", "retry"],
+            "capabilityClosure": {
+              "schemaVersion": "task-capability-closure/v1",
+              "evaluatedAtMs": 3000,
+              "status": "satisfied",
+              "capabilities": {
+                "tools": { "required": false, "state": "available" },
+                "languageToolchain": { "required": false, "state": "available" },
+                "sandbox": { "required": false, "state": "available" },
+                "approvalChannel": { "required": false, "state": "available" },
+                "worktree": { "required": false, "state": "available" },
+                "journal": { "required": false, "state": "available" },
+                "trace": { "required": false, "state": "available" },
+                "verifier": { "required": false, "state": "available" },
+                "mcp": { "required": false, "state": "available" },
+                "plugin": { "required": false, "state": "available" },
+                "skill": { "required": false, "state": "available" }
+              }
+            }
+          }
+        ]
+      },
+      "expected": {
+        "status": "failed",
+        "reasonCategory": "owner_failure",
+        "reasonCode": "owner_reported_failure",
+        "allowedActions": ["observe", "retry"]
+      }
+    }
+  ],
+  "contentBearingPage": {
+    "epoch": "conformance-epoch-1",
+    "revision": 3,
+    "totalCount": 1,
+    "items": [
+      {
+        "schemaVersion": "task-projection/v1",
+        "taskId": "conversation:conversation-conformance:run-conformance",
+        "status": "failed",
+        "owner": {
+          "source": "conversation",
+          "binding": {
+            "agentRunId": "run-conformance",
+            "conversationId": "conversation-conformance"
+          }
+        },
+        "evidence": {
+          "observedAtMs": 3000,
+          "reasonCategory": "owner_failure",
+          "reasonCode": "owner_reported_failure"
+        },
+        "allowedActions": ["observe", "retry"],
+        "capabilityClosure": {
+          "schemaVersion": "task-capability-closure/v1",
+          "evaluatedAtMs": 3000,
+          "status": "satisfied",
+          "capabilities": {
+            "tools": { "required": false, "state": "available" },
+            "languageToolchain": { "required": false, "state": "available" },
+            "sandbox": { "required": false, "state": "available" },
+            "approvalChannel": { "required": false, "state": "available" },
+            "worktree": { "required": false, "state": "available" },
+            "journal": { "required": false, "state": "available" },
+            "trace": { "required": false, "state": "available" },
+            "verifier": { "required": false, "state": "available" },
+            "mcp": { "required": false, "state": "available" },
+            "plugin": { "required": false, "state": "available" },
+            "skill": { "required": false, "state": "available" }
+          }
+        },
+        "prompt": "private prompt must be rejected"
+      }
+    ]
+  }
+}

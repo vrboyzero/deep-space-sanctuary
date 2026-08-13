@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const invokeGatewayMethodMock = vi.hoisted(() => vi.fn());
@@ -7,7 +10,23 @@ vi.mock("../../shared/gateway-rpc.js", () => ({
 }));
 
 import { CODING_RUN_EXIT_CODES } from "../../../coding-run/contracts.js";
+import { parseTaskProjectionCollectionPage } from "../../../coding-run/task-projection-consumer.js";
 import { listAgentTaskProjectionsCommand } from "./task-projections.js";
+
+const taskProjectionConformanceFixture = JSON.parse(fs.readFileSync(path.resolve(
+  "benchmarks/task-projection/v1/consumer-conformance.json",
+), "utf8")) as {
+  sequence: Array<{
+    page: Record<string, unknown>;
+    expected: {
+      status: string;
+      reasonCategory: string;
+      reasonCode: string;
+      allowedActions: string[];
+    };
+  }>;
+  contentBearingPage: Record<string, unknown>;
+};
 
 function projection() {
   const capabilities = Object.fromEntries([
@@ -26,6 +45,9 @@ function projection() {
       evaluatedAtMs: 1,
       status: "satisfied",
       capabilities,
+    },
+    supportingEvidence: {
+      worktree: { status: "missing", lifecycle: "discarded", observedAtMs: 2 },
     },
   };
 }
@@ -59,7 +81,11 @@ describe("bdd agent task-projections", () => {
     expect(JSON.parse(stdout.join(""))).toMatchObject({
       epoch: "gateway-1",
       revision: 2,
-      items: [{ taskId: "task-1", status: "blocked" }],
+      items: [{
+        taskId: "task-1",
+        status: "blocked",
+        supportingEvidence: { worktree: { status: "missing", lifecycle: "discarded", observedAtMs: 2 } },
+      }],
     });
     expect(stderr).toEqual([]);
     expect(invokeGatewayMethodMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -87,5 +113,31 @@ describe("bdd agent task-projections", () => {
     })).resolves.toBe(CODING_RUN_EXIT_CODES.invalidInput);
     expect(invokeGatewayMethodMock).not.toHaveBeenCalled();
     expect(stderr.join("")).toMatch(/limit|cursor/);
+  });
+
+  it("preserves the fixed TaskProjection event sequence and rejects content in the Headless consumer", async () => {
+    for (const step of taskProjectionConformanceFixture.sequence) {
+      invokeGatewayMethodMock.mockResolvedValueOnce({
+        ok: true,
+        payload: parseTaskProjectionCollectionPage(step.page),
+        paired: true,
+        wsUrl: "ws://127.0.0.1:28889",
+      });
+      const stdout: string[] = [];
+      await expect(listAgentTaskProjectionsCommand({
+        stateDir: "E:\\state",
+        writeStdout: (text) => stdout.push(text),
+      })).resolves.toBe(CODING_RUN_EXIT_CODES.success);
+      const item = JSON.parse(stdout.join("")).items[0];
+      expect({
+        status: item.status,
+        reasonCategory: item.evidence.reasonCategory,
+        reasonCode: item.evidence.reasonCode,
+        allowedActions: item.allowedActions,
+      }).toEqual(step.expected);
+    }
+
+    expect(() => parseTaskProjectionCollectionPage(taskProjectionConformanceFixture.contentBearingPage))
+      .toThrow(/invalid TaskProjection collection page/i);
   });
 });
