@@ -7,11 +7,11 @@ async function main() {
   const values = parseNamedArgs(process.argv.slice(2));
   const stateDir = path.resolve(requireValue(values, "state-dir"));
   const manifestRevision = values.get("manifest-revision") ?? "v1";
-  if (manifestRevision !== "v1" && manifestRevision !== "v2") {
-    throw new Error("--manifest-revision must be v1 or v2.");
+  if (manifestRevision !== "v1" && manifestRevision !== "v2" && manifestRevision !== "v3") {
+    throw new Error("--manifest-revision must be v1, v2, or v3.");
   }
   const sourceRoot = path.resolve(values.get("source-root") ?? path.join(scriptDir, ".."));
-  const serverRelativePath = manifestRevision === "v2"
+  const serverRelativePath = manifestRevision !== "v1"
     ? "packages/belldandy-core/dist/server.js"
     : "packages/belldandy-core/src/server.ts";
   const { startGatewayServer } = await import(pathToFileURL(path.join(

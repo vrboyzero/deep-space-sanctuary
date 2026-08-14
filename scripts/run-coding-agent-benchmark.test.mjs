@@ -48,9 +48,11 @@ afterEach(async () => {
 });
 
 describe("coding agent benchmark stage 0B runner", () => {
-  it("allows WSL2 v2 cold dist imports without weakening Windows or v1 timeouts", () => {
+  it("allows WSL2 v2/v3 cold dist imports without weakening Windows or v1 timeouts", () => {
     expect(resolveGatewayProcessRestartTimeoutMs("v2", "linux")).toBe(60_000);
+    expect(resolveGatewayProcessRestartTimeoutMs("v3", "linux")).toBe(60_000);
     expect(resolveGatewayProcessRestartTimeoutMs("v2", "win32")).toBe(15_000);
+    expect(resolveGatewayProcessRestartTimeoutMs("v3", "win32")).toBe(15_000);
     expect(resolveGatewayProcessRestartTimeoutMs("v1", "linux")).toBe(15_000);
   });
 
@@ -1484,6 +1486,53 @@ describe("coding agent benchmark stage 0B runner", () => {
       expect(events.map((event) => event.type)).toEqual(["run.started", "run.failed"]);
       expect(events.at(-1)).toMatchObject({ payload: { error: { code: "gateway_unavailable" } } });
       await expect(fs.readFile(path.join(runDir, "changes.patch"), "utf-8")).resolves.toBe("");
+    } finally {
+      if (previousAllowedOrigins === undefined) delete process.env.BELLDANDY_ALLOWED_ORIGINS;
+      else process.env.BELLDANDY_ALLOWED_ORIGINS = previousAllowedOrigins;
+    }
+  }, 30_000);
+
+  windowsIt("records the v3 lost binding through the dist restart Gateway", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-v3-process-restart-integration-"));
+    tempRoots.push(root);
+    const runId = "process-restart-v3-windows-integration";
+    const previousAllowedOrigins = process.env.BELLDANDY_ALLOWED_ORIGINS;
+    process.env.BELLDANDY_ALLOWED_ORIGINS = "http://127.0.0.1:1";
+
+    try {
+      const report = await runStage0BSuite({
+        platform: "windows-native",
+        manifestRevision: "v3",
+        sourceRoot: path.resolve("."),
+        taskIds: ["gateway.process-restart"],
+        fixtureRoot: path.join(root, "fixtures"),
+        artifactRoot: path.join(root, "artifacts"),
+        stateRoot: path.join(root, "state"),
+        attempt: 1,
+        runIds: { "gateway.process-restart": runId },
+        model: { provider: "fixture", id: "gateway-restart-fixture", credentialsConfigured: false },
+        generatedAt: "2026-08-14T00:00:00.000Z",
+      });
+
+      const runDir = path.join(root, "artifacts", runId);
+      const restart = JSON.parse(await fs.readFile(path.join(runDir, "restart-injection.json"), "utf-8"));
+      expect(report.runs).toEqual([expect.objectContaining({
+        taskId: "gateway.process-restart",
+        status: "passed",
+        failureCategory: null,
+      })]);
+      expect(restart).toMatchObject({
+        trigger: "message.send.accepted",
+        status: "confirmed",
+        messageSendRequestCount: 1,
+        cleanup: { managedGatewayProcessCount: 0 },
+      });
+      expect(restart.originalGateway).toMatchObject({
+        entrypoint: { path: "packages/belldandy-core/dist/server.js" },
+      });
+      expect(restart.replacementGateway).toMatchObject({
+        entrypoint: { path: "packages/belldandy-core/dist/server.js" },
+      });
     } finally {
       if (previousAllowedOrigins === undefined) delete process.env.BELLDANDY_ALLOWED_ORIGINS;
       else process.env.BELLDANDY_ALLOWED_ORIGINS = previousAllowedOrigins;

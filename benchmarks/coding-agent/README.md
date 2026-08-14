@@ -501,6 +501,8 @@ corepack pnpm benchmark:coding-agent:stage0c:cancel:wsl --distribution Ubuntu-22
 
 `gateway.process-restart` 启动一个由 harness 管理、只绑定 loopback 的独立 Gateway 子进程；它使用惰性 fixture Agent，不读取本机 `.env.local`、不注册渠道、不会调用真实模型。首次 `message.send` 已接受并使 Headless JSONL 输出同一 binding 的 `run.started` 后，proxy 终止该已知 PID，并以相同 loopback 地址启动新 PID。旧 Headless run 必须只保留一个**成功接受并返回 binding** 的 `message.send`、一个 `run.started` 和一个 `run.failed(gateway_unavailable)`；不得重放 prompt、生成第二个 binding、调用工具/权限或修改工作区。配对尚未完成时被 Gateway 拒绝的协议重试不创建 binding，不计为第二个 run。
 
+v1 保持从 TypeScript source 通过 `tsx` 启动 fixture Gateway；corrected v2 与 external-validity v3 均从所选 source identity 的 `packages/belldandy-core/dist/server.js` 启动，并把该入口路径与 SHA-256 写入旧/新 Gateway evidence。Linux 上 v2/v3 冷加载与 stdio/CLI probe 使用 60 秒单操作上限，Windows 与 v1 保持 15 秒，二者仍受任务 300 秒总预算约束。
+
 重启后，harness 先用既有 `bdd coding-run stdio` 查询旧 binding，要求得到 `not_found`；再用 `bdd agent cancel` 查询同一 binding，要求返回 `{ accepted: false, state: "not_found" }`。两个 probe 顺序执行，避免独立 CLI client 同时写 pairing state。`restart-injection.json` 的 `messageSendRequestCount` 记录成功接受的发送数，并记录精确 binding、旧/新 PID、探测结果和受控子进程收敛状态。它记录的是当前进程内 broker 在进程终止后丢失 run 的失败基线，不是持久化恢复成功，也不代表真实模型工作流已覆盖：
 
 ```powershell

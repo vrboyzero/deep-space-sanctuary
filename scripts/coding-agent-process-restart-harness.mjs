@@ -104,7 +104,7 @@ export async function executeGatewayProcessRestartCodingCi(input) {
       ...artifact,
       subscription,
       cancellation,
-      status: (input?.manifestRevision === "v2" || started?.seq === 1)
+      status: (input?.manifestRevision !== "v1" || started?.seq === 1)
         && injection.messageSendRequestCount === 1
         && subscription.errorCode === "not_found"
         && cancellation.state === "not_found"
@@ -133,7 +133,7 @@ export function resolveGatewayProcessRestartTimeoutMs(
   manifestRevision = "v1",
   platform = process.platform,
 ) {
-  return manifestRevision === "v2" && platform === "linux"
+  return manifestRevision !== "v1" && platform === "linux"
     ? WSL2_V2_OPERATION_TIMEOUT_MS
     : DEFAULT_OPERATION_TIMEOUT_MS;
 }
@@ -296,7 +296,8 @@ export async function startGatewayProcessRestartProxy(input) {
 }
 
 async function startFixtureGateway(input) {
-  const serverRelativePath = input.manifestRevision === "v2"
+  const usesBuiltServer = input.manifestRevision !== "v1";
+  const serverRelativePath = usesBuiltServer
     ? "packages/belldandy-core/dist/server.js"
     : "packages/belldandy-core/src/server.ts";
   const entrypointSha256 = crypto.createHash("sha256").update(await fs.readFile(path.join(
@@ -304,7 +305,7 @@ async function startFixtureGateway(input) {
     ...serverRelativePath.split("/"),
   ))).digest("hex");
   const child = spawn(process.execPath, [
-    ...(input.manifestRevision === "v2" ? [] : ["--import", "tsx"]),
+    ...(usesBuiltServer ? [] : ["--import", "tsx"]),
     gatewayFixturePath,
     "--state-dir", path.resolve(input.stateDir),
     "--port", String(input.port),
@@ -322,7 +323,7 @@ async function startFixtureGateway(input) {
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
-  const record = createGatewayRecord(child, input.manifestRevision === "v2" ? {
+  const record = createGatewayRecord(child, usesBuiltServer ? {
     entrypoint: { path: serverRelativePath, sha256: entrypointSha256 },
     launch: { executable: "node", script: "scripts/coding-agent-process-restart-gateway.mjs" },
   } : undefined);
@@ -530,7 +531,7 @@ function createRestartArtifact(manifestRevision = "v1") {
   return {
     schemaVersion: "coding-agent-restart-injection/v1",
     taskId: "gateway.process-restart",
-    trigger: manifestRevision === "v2" ? "message.send.accepted" : "run.started",
+    trigger: manifestRevision !== "v1" ? "message.send.accepted" : "run.started",
     status: "not_injected",
     observedStartedSeq: null,
     messageSendRequestCount: 0,
