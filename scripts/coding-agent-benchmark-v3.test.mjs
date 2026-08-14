@@ -20,7 +20,11 @@ import {
   summarizeCodingAgentBenchmarkV3Matrix,
   validateCodingAgentBenchmarkScorecardV3,
 } from "./coding-agent-benchmark-v3-contract.mjs";
-import { evaluateBenchmarkContractSourcePreflight } from "./coding-agent-benchmark-preflight.mjs";
+import {
+  createBenchmarkPreflightArtifact,
+  evaluateBenchmarkContractSourcePreflight,
+  evaluateBenchmarkWorkspaceWriteClosurePreflight,
+} from "./coding-agent-benchmark-preflight.mjs";
 
 const workspaceRoot = path.resolve(import.meta.dirname, "..");
 
@@ -379,6 +383,43 @@ describe("coding agent benchmark v3 contract", () => {
         userWorktreeRuntime: {
           path: "packages/belldandy-core/dist/user-worktree-runtime.js",
           sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+      },
+    });
+  });
+
+  it("delegates the C-layer parallel write closure to the native system harness", async () => {
+    const manifest = await loadCodingAgentBenchmarkManifest(resolveCodingAgentBenchmarkManifestPath("v3"));
+    const task = manifest.tasks.find((candidate) => candidate.id === "system.parallel-write-fan-in");
+    const profile = manifest.suite.executionProfiles[task.executionProfile];
+
+    expect(evaluateBenchmarkWorkspaceWriteClosurePreflight({ task, profile })).toEqual({
+      status: "not_applicable",
+      reason: "system_harness_owns_workspace_write_closure",
+    });
+    expect(evaluateBenchmarkWorkspaceWriteClosurePreflight({
+      task: { ...task, id: "workspace-write.without-tests", layer: "B" },
+      profile,
+    })).toEqual({
+      status: "failed",
+      reason: "acceptance_test_commands_missing",
+    });
+
+    const artifact = await createBenchmarkPreflightArtifact({
+      manifest,
+      manifestRevision: "v3",
+      task,
+      runId: "parallel-write-preflight-v3-windows-a1",
+      sourceRoot: workspaceRoot,
+      stateDir: workspaceRoot,
+      pricingRequired: false,
+    });
+    expect(artifact).toMatchObject({
+      status: "passed",
+      checks: {
+        workspaceWriteClosure: {
+          status: "not_applicable",
+          reason: "system_harness_owns_workspace_write_closure",
         },
       },
     });

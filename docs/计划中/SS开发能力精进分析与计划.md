@@ -1931,6 +1931,41 @@ Source / Workspace Revision
 - **为什么先做它**：任何 harness 代码 commit 都会改变 source/harness content identity；`e61a3e4` 的已付费样本只能保留历史证据，不能与修复后的 process-restart 样本续拼。
 - **当前还缺的关键闭环**：新 commit 的 clean identity、双平台输入/OCI/browser preflight、144 项 completed aggregate 与 `--verify`；费用继续同时受 `$3.00` runner 硬上限和用户累计 `40 RMB` 授权限额约束。
 
+#### P0 原生矩阵实现结论：C 层 parallel-write preflight 闭包（2026-08-14）
+
+##### 已完成内容
+
+1. **`coding-agent-benchmark-preflight.mjs` 修改**：
+   - `system.parallel-write-fan-in` 仍先校验 `workspace-write` profile 的 `file_read/file_edit/apply_patch` 能力，再将空 `acceptance.testCommands` 精确标记为 `system_harness_owns_workspace_write_closure`。
+   - 委托仅适用于 `layer=C` 的该任务；A/B 层和其他 workspace-write task 缺少测试命令时继续以 `acceptance_test_commands_missing` 失败关闭。
+   - 实际写入、冲突、preview-confirm fan-in 与清理由 native system harness 的 run-bound machine evidence 验收，不把 fixture Agent 自报当作闭包。
+
+2. **`coding-agent-benchmark-v3.test.mjs` 扩展**：
+   - 新增精确 owner 单元回归，同时构造非 C 层同形任务证明旧失败关闭合同未放宽。
+   - 新增真实 `createBenchmarkPreflightArtifact` 集成断言，绑定冻结 v3 manifest 与当前 dist entrypoints，防止 runner 测试再次用 mock preflight 掩盖缺口。
+
+3. **双平台准备与历史 evidence**：
+   - `cad8fe2` Windows/WSL2 clean harness identity 一致，四仓输入均为 `4/4 ready`、`8/8 preflight passed`；Windows/WSL2 browser、parallel-read、parallel-write、restart-delivery system smoke 各 `4/4 passed`。
+   - `cad8fe2` Windows formal attempt 1 已接受 `22` 个 cell：A 层 `12/12` passed，B 层 `8/8` 为 Provider-reported evaluator failure，前两个 C 层 `2/2` passed；第 23 项在 Provider 前暴露本 preflight 缺口并记录为 infrastructure error。
+   - 该修复再次改变 harness identity；`cad8fe2` artifact 与更早 `e61a3e4` artifact 均原样保留为历史付费证据，不进入下一 identity aggregate。
+
+4. **效果**：
+   - C 层 parallel-write 不再因其有意为空的 Agent 测试命令列表在 system harness 执行前被误拒绝。
+   - 普通 workspace-write 的 edit/test/review 闭包、Provider 定价、OCI、source identity 与 capability Gate 均保持不变。
+   - 当前 Provider-reported 累计为 `$0.17848719`；两次 client-cancel 未知费用储备合计 `$0.062814`，守卫上界 `$0.24130119 = 1.93040952 RMB < 40 RMB`。process-restart 的 `not_reached` 由 `fixture_provider + confirmed restart` 证明不调用真实模型，不写入 Provider-reported 或未知费用字段。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build:incremental` 通过；`verify:coding-benchmark` 已通过全部 v1/v2/v3 静态合同。
+- v3/v2/runner 组合回归 `65/65` 全部通过；新增 v3 artifact 级回归单独复跑 `8/8` 通过。
+- 关键功能验证：真实 preflight artifact 为 `passed`，且 `workspaceWriteClosure={status:not_applicable, reason:system_harness_owns_workspace_write_closure}`；非 C 层空测试命令仍稳定失败。
+
+##### 后续计划
+
+- **下一步准备做什么**：将本修复形成新的 `main` 稳定 commit 并推送 `private/main`，再次重建双平台 clean harness/input 与 system smoke，然后从新 identity 的 attempt 1 重启 144 项矩阵。
+- **为什么先做它**：parallel-write 是冻结 C 层必需 cell；绕过失败 artifact 或与 `cad8fe2` 续拼都会破坏单一 HEAD、单一 harness identity 和可复算 aggregate。
+- **当前还缺的关键闭环**：新 commit、双平台输入、完整 `144/144` source reports、completed aggregate 与 `--verify`；费用仍按 Provider-reported 累加并独立保留未知储备。
+
 ### 6.7 P2-C：9.5 稳定化与最终复核（延后）
 
 **目的与方案**：在两个连续冻结候选版本上运行完整 Benchmark v3、P1/P2 fault matrix、四客户端 conformance 和外部消费者 Gate；比较任务成功率、p95、人工干预、usage、费用、残留和错误 taxonomy；阈值调整必须留痕，不能回写旧 artifact。
@@ -2061,10 +2096,10 @@ Source / Workspace Revision
 - Puppeteer 25 真实 Chrome/MV3 Relay `12/12`、Skills browser/camera `13/13`、distribution/依赖策略 `37/37`、WebChat security/browser benchmark、workspace build 和标准全量测试均通过；portable slim 的 frozen/offline 重复构建、静态依赖/artifact、真实 smoke 与 initial/reuse/upgrade/recovery lifecycle 全部通过。
 - P2-B `ff81a202` clean-checkout 的 `6` 个专项 job 已全绿；Quality/Docker 全量均只剩 resource-soak 两个真实 lifecycle 用例超过默认 `5s`，已按同一证据设置 `30s` 局部测试预算，定向 `4/4` 通过。Settings 两字段配对后读取/编辑、布局与 console 零错误手测已完成。
 - Docker context 修复已形成 `e61a3e4` 并推送 `private/main`，Quality run `31805350871` 全绿；本机无法通过当前 GitHub 凭据读取 Docker run `31805350776` 终态，保留为未验证远端项，本地真实 builder/`verify:build` 证据不变。
-- P0 在 `e61a3e4` Windows formal attempt 1 执行到 `9/144` passed 后暴露 v3 process-restart 只接受 v1/v2 的 harness 漂移；现已完成 dist 兼容修复和 `36/36` runner 回归。该修复将形成新 identity，旧样本不续拼。
-- **下一步准备做什么**：提交并推送 v3 process-restart 修复，基于新 SHA 重备双平台 harness/input，再从 attempt 1 重新启动 144 项矩阵。
-- **为什么先做它**：process-restart 是冻结 144 项中的必需 cell；在旧 identity 上绕过或续拼会破坏单一 HEAD aggregate 与 artifact 可复算性。
-- **当前还缺的关键闭环**：新修复 commit、绑定新 identity 的 Windows/WSL2 input/receipt、完整 Provider usage/未知费用储备账本、completed aggregate 与 `--verify`；已报告加储备的当前费用守卫上界约 `0.5057124 RMB < 40 RMB`。
+- P0 process-restart dist 兼容已由 `cad8fe2` 推送；双平台 clean harness/input 与四类 system smoke 均已闭合。Windows formal attempt 1 到第 `23` 项时暴露 C 层 parallel-write 被通用 Agent test-command closure 误拒绝，现已完成精确 system-harness owner 修复和组合回归 `65/65`。
+- **下一步准备做什么**：提交并推送 C 层 parallel-write preflight 修复，基于新 SHA 重备双平台 harness/input，再从 attempt 1 重启 144 项矩阵。
+- **为什么先做它**：任何 harness 修复都会改变 content identity；`cad8fe2` 已接受的 `22` 个 cell 与第 `23` 个 infrastructure artifact 只能作历史证据，不能与下一 identity 续拼。
+- **当前还缺的关键闭环**：新修复 commit、绑定新 identity 的 Windows/WSL2 input/receipt、完整 Provider usage/未知费用储备账本、completed aggregate 与 `--verify`；当前费用守卫上界为 `1.93040952 RMB < 40 RMB`。
 
 ### Go canary
 
@@ -2080,12 +2115,12 @@ Source / Workspace Revision
 | 项目 | 优先级 | 状态 | 粗略工作量 | 完成边界 |
 | --- | --- | --- | ---: | --- |
 | 本轮 SS 能力复核与 9.5 增强规划 | - | 已完成 | - | 已复核 scorecard、目标向量 `9.510`、C#/Go 投入收益、多语言方案和竞品资料；竞品未做同环境 benchmark |
-| P0：Benchmark v3 与外部有效性 | P0 | 进行中；P0.1-P0.30 已完成；`cost-containment-v1`=`hold_explicit_opt_in`，`taskUplift=not_measured`，candidate v1-v3=`do_not_promote`。历史 v3 aggregate `6/144` 仅作历史证据。`e61a3e4` Windows formal attempt 1 到 `9/144` passed 后暴露 v3 process-restart revision 漂移，已修复为 v2/v3 共用 dist restart 路径并通过 runner `36/36`；因 harness identity 改变，`e61a3e4` 样本不得续拼。当前 Provider-reported 加 client-cancel 未知费用储备守卫上界约 `0.5057124 RMB`，低于累计 `40 RMB` 授权；下一步提交新 identity、重备双平台输入并重启完整矩阵 | 14-22 人日 | A/B/C 三层、至少 4 个固定仓、144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；不含 candidate v4、竞品代跑、公开排行榜 |
+| P0：Benchmark v3 与外部有效性 | P0 | 进行中；P0.1-P0.30 已完成；`cost-containment-v1`=`hold_explicit_opt_in`，candidate v1-v3=`do_not_promote`。process-restart dist 修复已由 `cad8fe2` 推送；该 identity 双平台输入和 system smoke 全绿，Windows formal 已接受 `22` 个 cell，第 `23` 项暴露 C 层 parallel-write preflight owner 漂移并已修复。`cad8fe2` 与更早样本均只作历史证据，不续拼。当前 Provider-reported 加未知储备守卫上界 `1.93040952 RMB`；用户累计授权上限为 `40 RMB`，在当前累计未达到上限且下一次调用预计不会越限时无需再次申请，达到或预计越限即停止。下一步提交新 identity、重备双平台输入并重启完整矩阵 | 14-22 人日 | A/B/C 三层、至少 4 个固定仓、144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；不含 candidate v4、竞品代跑、公开排行榜 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | 已完成；attempt 12 aggregate=`passed`；binary regression/Provider failure=`0/0`；`semantic-live=7/8`；非目标整文件读取 `21 -> 14`；16/16 cell 预算耗尽；candidate task/patch success=`0/8`；累计费用 `1.68214072 RMB` | 8-12 人日 | 公共 contract、TS/JS Provider、Inspector、truth set、resource soak、双平台 native runtime 与真实 uplift Gate；不含外部 LSP、Go/C# GA、SCIP store |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | 已完成；Host、pinned profile、Go Doctor、Adapter/truth/fault、双平台 native/OCI、readiness/progress/monitor、comparator 和 eligibility 已闭合；`goCanaryEligible=true`、`productionEligible=false` | 6-11 人日 | 双平台 identity/truth/lifecycle/OCI evidence、只读 comparator、单一 eligibility owner、Doctor projection；不含 Go 生产默认启用、自动安装、公开发布、扩大 fixture、rollout 观察窗口 |
 | P1-A3：C# 条件接入 | 条件 | 延后，等待真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild 执行面、restore/联网和生命周期；未命中需求不进入生产，也不阻断 9.5 |
 | P1-B：验证 DAG 与 Browser Relay 闭环 | P1 | 已完成；8 场景 `24/24` 影响节点通过；Windows 相关路径 `81` 项；WSL2 Browser producer `12` 项；两端 lifecycle pending/orphan=`0/0` | 10-16 人日 | 验证 DAG 选择/终态、Browser artifact producer/consumer、故障和双平台 evidence；不含自动安装浏览器、云浏览器、无条件多 Agent Review |
 | P1-C：TaskProjection 与 Capability Closure | P1 | 已完成；硬 Gate 全部闭合，广泛回归 `31` 文件 `312/312`、最后切片 `58/58`、Core build/diff check 通过。公共人工 provenance、`blocked/verifying` observation 与 verification DAG 外键缺 authoritative owner，已拆分为 `split_task/defer`，未知指标保持 `incomplete` | 10-15 人日 | 只读跨 owner 投影、exact-binding action、任务启动闭包、六类故障投影和旧客户端兼容；不迁移领域真源，不按客户端身份猜测人工来源 |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | 已完成；admission/worktree Gate、restart reattach、exact-bound control、fan-in、统一预算、fault matrix、跨进程 Git mutation lock 与 failure compensation 均闭合。修复后 Core/Skills build、相关回归 `18` 文件 `138/138` 通过；Windows/WSL2 正式 r3 同 identity 各 `360/360` lane，平台 Gate、Schema、comparator 与 child/worktree/branch/process/receipt/lock/tmp/root 零残留 sweep 全部通过。r2 WSL2 首次失败 artifact 原样保留 | 12-20 人日 | 隔离写入、预算、60 分钟 soak、steer/cancel/reattach、fan-in 和 fault matrix；不含自动 merge/release/deploy |
-| P2-B：生态与运行前置收口 | P2 | 进行中；窄 reference client、两个 Windows/WSL2 仓外 consumer、完整 `17 + 1 + 5` error taxonomy、failure conformance、coding runtime preflight Doctor、Puppeteer `25.7.0`、零发现 audit、真实 Chrome/MV3 Relay、portable lifecycle 与 Settings 手测均已闭合。Docker context 隔离修复已由 `e61a3e4` 推送，Quality `31805350871` 全绿，本地真实 builder/`verify:build` 通过；当前 GitHub 凭据无法读取 Docker run `31805350776` 终态。新发现的 v3 process-restart dist 兼容修复已本地验证，仍需形成新 commit、推送并重新取得双平台 artifact | 8-14 人日 | 两个外部消费者、N-1/N conformance、真实 CI、OCI/语言 Doctor、零发现 dependency Gate；不含公开发布、系统级自动安装、sandbox 替换，未经授权不再升级依赖主版本 |
+| P2-B：生态与运行前置收口 | P2 | 进行中；窄 reference client、两个 Windows/WSL2 仓外 consumer、完整 `17 + 1 + 5` error taxonomy、failure conformance、coding runtime preflight Doctor、Puppeteer `25.7.0`、零发现 audit、真实 Chrome/MV3 Relay、portable lifecycle 与 Settings 手测均已闭合。Docker context 隔离修复已由 `e61a3e4` 推送，Quality `31805350871` 全绿，本地真实 builder/`verify:build` 通过；当前 GitHub 凭据无法读取 Docker run `31805350776` 终态。process-restart dist 修复已由 `cad8fe2` 推送；当前仅待新的 parallel-write preflight 修复 commit 及其双平台 artifact | 8-14 人日 | 两个外部消费者、N-1/N conformance、真实 CI、OCI/语言 Doctor、零发现 dependency Gate；不含公开发布、系统级自动安装、sandbox 替换，未经授权不再升级依赖主版本 |
 | P2-C：9.5 稳定化与最终复核 | P2 | 延后，等待 P0-P2-B | 5-8 人日 + 观察窗口 | 两个连续候选版本原始 `>=9.500`、目标维度和全部硬 Gate 通过；不含竞品联合 benchmark、生产写入 |

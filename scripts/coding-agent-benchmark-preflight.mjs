@@ -82,6 +82,10 @@ export function evaluateBenchmarkWorkspaceWriteClosurePreflight(input = {}) {
     return { status: "failed", reason: "profile_capability_missing", missingTools };
   }
 
+  if (input.task?.id === PARALLEL_WRITE_SYSTEM_TASK_ID && input.task?.layer === "C") {
+    return { status: "not_applicable", reason: "system_harness_owns_workspace_write_closure" };
+  }
+
   const testCommands = input.task?.acceptance?.testCommands;
   if (!Array.isArray(testCommands) || testCommands.length === 0
     || testCommands.some((entry) => typeof entry?.command !== "string" || !entry.command.trim())) {
