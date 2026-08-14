@@ -185,6 +185,92 @@ describe("Gateway Conversation CLI pairing", () => {
     }
   });
 
+  it("ignores duplicate pairing events after the client is approved", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-gateway-pairing-duplicate-"));
+    const server = new WebSocketServer({ port: 0 });
+    await new Promise<void>((resolve, reject) => {
+      server.once("listening", resolve);
+      server.once("error", reject);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Test Gateway did not expose a TCP port.");
+
+    let messageSendCount = 0;
+    server.on("connection", (socket) => {
+      socket.send(JSON.stringify({ type: "connect.challenge" }));
+      socket.on("message", (raw) => {
+        const frame = JSON.parse(raw.toString("utf-8")) as Record<string, unknown>;
+        if (frame.type === "connect") {
+          socket.send(JSON.stringify({ type: "hello-ok" }));
+          return;
+        }
+        if (frame.type !== "req" || frame.method !== "message.send" || typeof frame.id !== "string") return;
+
+        messageSendCount += 1;
+        if (messageSendCount === 1) {
+          const pairingEvent = JSON.stringify({
+            type: "event",
+            event: "pairing.required",
+            payload: { code: "duplicate-pairing-code" },
+          });
+          socket.send(pairingEvent);
+          setTimeout(() => socket.send(pairingEvent), 10);
+          setTimeout(() => {
+            socket.send(JSON.stringify({
+              type: "res",
+              id: frame.id,
+              ok: false,
+              error: { code: "pairing_required", message: "pairing is required" },
+            }));
+          }, 25);
+          return;
+        }
+
+        socket.send(JSON.stringify({
+          type: "res",
+          id: frame.id,
+          ok: true,
+          payload: { conversationId: "duplicate-pairing-conversation", runId: "duplicate-pairing-run-2" },
+        }));
+        socket.send(JSON.stringify({
+          type: "event",
+          event: "chat.final",
+          payload: {
+            conversationId: "duplicate-pairing-conversation",
+            runId: "duplicate-pairing-run-2",
+            text: "done:duplicate-pairing-run-2",
+          },
+        }));
+      });
+    });
+
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(address.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        const result = await runGatewayConversation({
+          stateDir,
+          prompt: "duplicate pairing event",
+          timeoutMs: 2_000,
+          onEvent: () => {},
+        });
+
+        expect(result).toMatchObject({
+          binding: { conversationId: "duplicate-pairing-conversation", agentRunId: "duplicate-pairing-run-2" },
+          terminalType: "run.completed",
+          outputText: "done:duplicate-pairing-run-2",
+        });
+      });
+      expect(approvePairingCode).toHaveBeenCalledTimes(1);
+      expect(messageSendCount).toBe(2);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
   it("clears the scheduled initial request when pairing sends the run first", async () => {
     const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-gateway-pairing-initial-"));
     const server = new WebSocketServer({ port: 0 });

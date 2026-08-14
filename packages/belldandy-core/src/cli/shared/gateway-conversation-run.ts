@@ -207,7 +207,7 @@ export async function runGatewayConversation(input: {
     };
 
     const approvePairingAndRetry = async (payload: unknown) => {
-      if (pairingApprovalInFlight || settled) return;
+      if (pairingApprovalInFlight || pairingApproved || settled) return;
       const code = isRecord(payload) && typeof payload.code === "string" ? payload.code.trim() : "";
       if (!code) {
         failBeforeRun(new GatewayConversationRunError(
