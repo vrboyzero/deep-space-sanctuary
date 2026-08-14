@@ -21,7 +21,7 @@ SS 已从上一轮 `7.4/10` 推进到安全、恢复、编辑、Headless、本�
 | SS 内部硬 Gate | **9.1/10**（原始加权 `9.065`） | corrected v2、类别下限、核心类别、测试、patch、回归、双平台和工程 Gate 均通过；只对既定 benchmark 与环境成立 |
 | 新一轮横向评分 | **9.0/10**（原始加权 `8.955`） | 对真实仓泛化、语义导航、验证控制面、并行和生态成熟度保留折扣；竞品未参加同环境 benchmark |
 
-横向评分不是模型能力排名。当前主要差距是：单一当前 HEAD 原生 aggregate 尚未完成、真实任务外部有效性不足、当前变更的远端 CI 证据尚未取得，以及两个新增 Settings 字段仍待人工可见交互/console 手测。P2-B 本地严格零发现依赖 Gate 已通过；P1-B 验证 DAG、P1-C TaskProjection/Capability Closure 与 P2-A Supervisor fault matrix/双平台长稳/零残留 Gate 均已完成。前部旧切片中的“尚未闭合”只描述当时上下文，不代表当前状态，当前状态以第 11、12 节为准。
+横向评分不是模型能力排名。当前主要差距是：单一当前 HEAD 原生 aggregate 尚未完成、真实任务外部有效性不足，以及最新 resource-soak 局部超时修复的远端全量证据尚未取得。两个新增 Settings 字段的可见交互/console 手测已完成，P2-B 本地严格零发现依赖 Gate 与远端专项 Gate 已通过；P1-B 验证 DAG、P1-C TaskProjection/Capability Closure 与 P2-A Supervisor fault matrix/双平台长稳/零残留 Gate 均已完成。前部旧切片中的“尚未闭合”只描述当时上下文，不代表当前状态，当前状态以第 11、12 节为准。
 
 ### 1.2 下一轮五个闭环
 
@@ -1835,6 +1835,39 @@ Source / Workspace Revision
 - **为什么先做它**：当前缺口只在 clean checkout、hosted Windows 时序和远端全量资源条件；继续在本机高负载下重复同一偶发用例不会增加新证据，也不能替代远端 runner。
 - **当前还缺的关键闭环**：本轮修复 commit SHA、完整远端 Quality Gates、Settings 人工手测、双平台 v3 input/receipt 与 Provider 凭据可用性；P0 费用授权保持累计 `40 RMB` 硬上限。
 
+#### P2-B 远端反馈实现结论：Quality/Docker resource-soak 超时收口（2026-08-14）
+
+##### 已完成内容
+
+1. **`scripts/run-code-intel-resource-soak.test.mjs` 修改**：
+   - 根据私有远端 `31800713018` 与 `31800713142` 的相同失败证据，只为两个真实 bounded lifecycle 用例设置 `30s` 测试预算。
+   - 保留快速 source drift 与 CLI parser 用例的默认超时，不修改 resource-soak 生产实现、断言、全局 Vitest 预算或 CI job 总预算。
+
+2. **Settings 可见交互验证（无源码修改）**：
+   - 使用仅绑定 `127.0.0.1:28890` 的隔离 Gateway/state 完成 pairing 后，两个字段正确读取 `2` 与 `0.50`。
+   - 字段可编辑为 `3` 与 `0.75`，numeric/decimal input mode、中文标签和滚动布局正常；未保存到真实配置，验证后已关闭隔离 Gateway。
+
+3. **远端 Gate 证据复核**：
+   - Quality 的 Ubuntu/Windows coding client、Distribution、B00、dependency audit 与 WebChat 共 `6` 个专项 job 全部成功。
+   - Quality 与 Docker 的全量测试均只在 `run-code-intel-resource-soak.test.mjs` 相同两个用例超过默认 `5s`；两条链分别为 `945` 个测试文件通过、`1` 个文件失败，失败原因一致，不是产品行为或断言回归。
+
+4. **效果**：
+   - hosted runner 全仓负载下的真实 lifecycle 测试获得与 CI `30min` 外层预算相容的局部完成窗口。
+   - 快速失败关闭测试仍保持默认超时，避免用全局放宽掩盖其他 hang。
+   - Settings 两个新增字段的可见性、配置读取、输入交互和 console 闭环已经取得真实浏览器证据。
+
+##### 验证结果
+
+- TypeScript 编译无错误：干净 `ff81a202` harness 在生成 version metadata 后执行 `corepack pnpm build:incremental` 通过；本轮仅修改 MJS 测试预算，不影响 TypeScript 产物。
+- `run-code-intel-resource-soak.test.mjs` 定向 `4/4` 通过，两个真实 lifecycle 用例本机分别约 `2.9s` 与 `2.5s`。
+- Settings 配对后浏览器 console error、page error、failed request 均为 `0`；截图确认两个字段无重叠或截断。
+
+##### 后续计划
+
+- **下一步准备做什么**：将局部测试预算与本结论形成新的 `main` 稳定 commit，推送 `private/main` 并重新读取 Quality/Docker 全量结果；通过后基于新 SHA 重新生成双平台 v3 input/receipt，再启动 Provider 预检与原生矩阵。
+- **为什么先做它**：任何代码或测试合同 commit 都会改变 harness identity；必须先取得新 commit 的 clean-checkout Gate，避免把 `ff81a202` 输入或付费样本误续拼到最终 aggregate。
+- **当前还缺的关键闭环**：新稳定 commit SHA、修复后 Quality/Docker 全绿、绑定新 SHA 的 Windows/WSL2 输入，以及在累计 `40 RMB` 上限内的 Provider usage/cost 闭环；P2-B 保持进行中。
+
 ### 6.7 P2-C：9.5 稳定化与最终复核（延后）
 
 **目的与方案**：在两个连续冻结候选版本上运行完整 Benchmark v3、P1/P2 fault matrix、四客户端 conformance 和外部消费者 Gate；比较任务成功率、p95、人工干预、usage、费用、残留和错误 taxonomy；阈值调整必须留痕，不能回写旧 artifact。
@@ -1934,9 +1967,9 @@ Source / Workspace Revision
 - 保持 `cost-containment-v1` 为 `hold_explicit_opt_in`；不扩展付费矩阵、不创建 candidate v4、不将 `taskUplift=not_measured` 改写为已验证 uplift。
 - 2026-08-14 用户已授权本轮 P0 正式 Provider 矩阵累计实际费用上限为 `40 RMB`；在累计费用未达到上限且下一次调用不会使总额超限时，无需逐次重新申请。每次调用仍须按“全局剩余额度与单 run 上限取较小值”收紧预算；达到或预计超过 `40 RMB` 时必须在下一次 Provider 调用前停止并重新申请授权。该授权不包含竞品代跑、candidate v4、公开发布或任何远端 Git 写入。
 - 历史 v3 partial baseline 已再次离线验证为 `partial 6/144`，但固定 commit `72e916d...` 与本轮审计基线 `6ce8579...`/未提交工作树不同；旧 `6` 项只保留历史证据，禁止续拼到下一轮单一 identity aggregate。
-- **下一步准备做什么**：提交与 `private/main` 推送授权已经取得；先形成稳定提交并闭合绑定该 commit 的 P2-B 私有远端 Gate，再以该 commit 重新准备 v3 双平台输入，并在累计 `40 RMB` 硬上限内启动真实 Provider 矩阵。
-- **为什么先做它**：正式矩阵所有 report 都绑定 source/harness identity，提交前执行会制造无法进入最终分母的付费孤立样本。
-- **当前还缺的关键闭环**：新的稳定 commit SHA、当前提交远端 Gate、双平台 input/receipt 与 Provider 凭据可用性；费用和真实模型执行授权已取得，但不得突破累计 `40 RMB`。
+- **下一步准备做什么**：`ff81a202` 的 P2-B 专项 Gate 已全绿并完成 Settings 手测，但两条全量链命中相同 resource-soak 默认超时；先提交局部预算修复并闭合新 SHA 的私有远端 Gate，再以新 SHA 重备双平台输入，在累计 `40 RMB` 硬上限内启动真实 Provider 矩阵。
+- **为什么先做它**：正式矩阵所有 report 都绑定 source/harness identity；`ff81a202` 的前置输入不能续拼到包含超时修复的新 harness，否则会制造身份漂移的付费孤立样本。
+- **当前还缺的关键闭环**：最新稳定 commit SHA及其远端全量 Gate、绑定新 SHA 的双平台 input/receipt 和 Provider usage/cost 预检；Provider 配置已确认存在，费用和真实模型执行授权已取得，但不得突破累计 `40 RMB`。
 
 ### P1-C（已完成）
 
@@ -1963,10 +1996,10 @@ Source / Workspace Revision
 - P2-B 本地 Quality Gate 基线已收口：补齐两个 Sub Agents Settings 字段、公共审批 `responderKind=unknown` 断言与 CodeIntel source identity；Go 显式启用但 gopls 不可用时已失败关闭，初始 v1/N-1 后继 fixture 规则已机器化。Marketplace/Goals Windows rename、Gateway 长链路和 pairing 可见性均完成有界稳定化；Core build、当前 collect `945` 文件/`5759` 条目并以 4 worker 全量零失败、coding client `41/41`、WebChat module/security、coding CI/benchmark contract 和 diff check 全部通过。
 - P2-B 已按 HITL 授权将 `puppeteer-core 24.43.1` 升至 `25.7.0`，依赖链改为 `@puppeteer/browsers 3.2.0 -> modern-tar 0.8.4` 并移除 `extract-zip`；`pnpm audit --audit-level low` 为零发现，严格 dependency Gate 本地闭合。
 - Puppeteer 25 真实 Chrome/MV3 Relay `12/12`、Skills browser/camera `13/13`、distribution/依赖策略 `37/37`、WebChat security/browser benchmark、workspace build 和标准全量测试均通过；portable slim 的 frozen/offline 重复构建、静态依赖/artifact、真实 smoke 与 initial/reuse/upgrade/recovery lifecycle 全部通过。
-- P2-B 远端 clean-checkout 修复已完成本地定向闭环：coding client `41/41`、Core audit/并发/崩溃恢复 `58/58`、clean-checkout 相关 `19` 项与两个合同 Gate 通过；本机高负载全量仍保留 `1` 个仅在全量并发出现、精确复核通过的 parallel-write cleanup 偶发失败，不改写为全量成功。
-- **下一步准备做什么**：用户已授权在当前 `main` 形成稳定 commit 并执行 `git push private main`；提交后读取绑定本轮修复 identity 的 Windows/Linux Actions 结果，再执行 Settings 两字段人工手测。
-- **为什么先做它**：本轮直接失败反馈环与进程恢复合同已闭合，剩余证据只能由干净 checkout、hosted runner 和人工可见交互产生；继续重复本机同一高负载偶发失败不增加有效证据。
-- **当前还缺的关键闭环**：本轮修复稳定 commit、完整远端 Quality Gates 与双平台 conformance artifact；旧 `9261046` run `31797436011` 已证明原失败反馈环但不能替代修复后证据。Settings 两字段可见交互与 console 人工手测仍未执行。
+- P2-B `ff81a202` clean-checkout 的 `6` 个专项 job 已全绿；Quality/Docker 全量均只剩 resource-soak 两个真实 lifecycle 用例超过默认 `5s`，已按同一证据设置 `30s` 局部测试预算，定向 `4/4` 通过。Settings 两字段配对后读取/编辑、布局与 console 零错误手测已完成。
+- **下一步准备做什么**：将最新局部预算修复形成新的稳定 commit 并执行 `git push private main`，取得绑定新 SHA 的 Quality/Docker 全绿后，以该 SHA 重备双平台 v3 输入并启动 Provider 预检。
+- **为什么先做它**：`ff81a202` 已证明专项合同和 Settings 路径，当前唯一失败是两条 hosted 全量链的相同局部超时；任何新 commit 都会改变 harness identity，必须先完成新 Gate 再付费。
+- **当前还缺的关键闭环**：最新稳定 commit、Quality/Docker 全绿、绑定新 SHA 的 Windows/WSL2 input/receipt 与正式 Provider usage/cost；累计费用不得超过 `40 RMB`。
 
 ### Go canary
 
@@ -1989,5 +2022,5 @@ Source / Workspace Revision
 | P1-B：验证 DAG 与 Browser Relay 闭环 | P1 | 已完成；8 场景 `24/24` 影响节点通过；Windows 相关路径 `81` 项；WSL2 Browser producer `12` 项；两端 lifecycle pending/orphan=`0/0` | 10-16 人日 | 验证 DAG 选择/终态、Browser artifact producer/consumer、故障和双平台 evidence；不含自动安装浏览器、云浏览器、无条件多 Agent Review |
 | P1-C：TaskProjection 与 Capability Closure | P1 | 已完成；硬 Gate 全部闭合，广泛回归 `31` 文件 `312/312`、最后切片 `58/58`、Core build/diff check 通过。公共人工 provenance、`blocked/verifying` observation 与 verification DAG 外键缺 authoritative owner，已拆分为 `split_task/defer`，未知指标保持 `incomplete` | 10-15 人日 | 只读跨 owner 投影、exact-binding action、任务启动闭包、六类故障投影和旧客户端兼容；不迁移领域真源，不按客户端身份猜测人工来源 |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | 已完成；admission/worktree Gate、restart reattach、exact-bound control、fan-in、统一预算、fault matrix、跨进程 Git mutation lock 与 failure compensation 均闭合。修复后 Core/Skills build、相关回归 `18` 文件 `138/138` 通过；Windows/WSL2 正式 r3 同 identity 各 `360/360` lane，平台 Gate、Schema、comparator 与 child/worktree/branch/process/receipt/lock/tmp/root 零残留 sweep 全部通过。r2 WSL2 首次失败 artifact 原样保留 | 12-20 人日 | 隔离写入、预算、60 分钟 soak、steer/cancel/reattach、fan-in 和 fault matrix；不含自动 merge/release/deploy |
-| P2-B：生态与运行前置收口 | P2 | 进行中；窄 reference client、初始 v1 manifest、两个 Windows/WSL2 仓外 consumer、完整 `17 + 1 + 5` error taxonomy、failure conformance 与 coding runtime preflight Doctor 均已完成；Go/gopls required path 已失败关闭，初始 v1 与未来 N-1 fixture 要求已机器化。Puppeteer `25.7.0`、零发现 audit、真实 Chrome/MV3 Relay 与 portable lifecycle 已闭合。2026-08-14 `9261046` 远端 Gate 复现 Windows 仓外 consumer、clean-checkout artifact、Browser sandbox 与全量超时问题；本轮已改为原生 Node 子进程 consumer、clean-checkout 条件证据、显式 Browser CI 分流、30 分钟预算、tag-only Docker publish，并补齐 audit 原子替换/跨进程崩溃恢复。coding client `41/41`、Core audit/并发/崩溃恢复 `58/58`、clean-checkout 相关 `19` 项、coding CI/benchmark contract 与 TypeScript 编译通过；本机高负载全量仍有 `1` 个精确复核通过的 parallel-write cleanup 偶发失败。已取得 `main -> private/main` 授权；仍需提交/推送、取得修复后完整 Actions/双平台 artifact，并完成 Settings 人工手测 | 8-14 人日 | 两个外部消费者、N-1/N conformance、真实 CI、OCI/语言 Doctor、零发现 dependency Gate；不含公开发布、系统级自动安装、sandbox 替换，未经授权不再升级依赖主版本 |
+| P2-B：生态与运行前置收口 | P2 | 进行中；窄 reference client、初始 v1 manifest、两个 Windows/WSL2 仓外 consumer、完整 `17 + 1 + 5` error taxonomy、failure conformance 与 coding runtime preflight Doctor 均已完成；Go/gopls required path 已失败关闭，初始 v1 与未来 N-1 fixture 要求已机器化。Puppeteer `25.7.0`、零发现 audit、真实 Chrome/MV3 Relay 与 portable lifecycle 已闭合。2026-08-14 `9261046` 远端 Gate 复现 Windows 仓外 consumer、clean-checkout artifact、Browser sandbox 与全量超时问题；`ff81a202` 已闭合原生 Node consumer、条件证据、Browser CI 分流、30 分钟 job 预算、tag-only Docker publish 与 audit 并发恢复，后续 Quality 的 `6` 个专项 job 全绿。Quality/Docker 全量均为 `945` 文件通过、仅 `run-code-intel-resource-soak.test.mjs` 两个真实 lifecycle 用例越过默认 `5s`；已只为这两项设置 `30s` 局部预算，定向 `4/4` 通过。Settings 两字段已完成配对后可见读取/编辑与 console 零错误手测。仍需提交/推送最新修复并取得新 SHA 的 Quality/Docker 全绿与双平台 artifact | 8-14 人日 | 两个外部消费者、N-1/N conformance、真实 CI、OCI/语言 Doctor、零发现 dependency Gate；不含公开发布、系统级自动安装、sandbox 替换，未经授权不再升级依赖主版本 |
 | P2-C：9.5 稳定化与最终复核 | P2 | 延后，等待 P0-P2-B | 5-8 人日 + 观察窗口 | 两个连续候选版本原始 `>=9.500`、目标维度和全部硬 Gate 通过；不含竞品联合 benchmark、生产写入 |

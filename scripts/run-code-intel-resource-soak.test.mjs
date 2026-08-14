@@ -17,6 +17,7 @@ import {
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const configPath = path.join(workspaceRoot, "benchmarks/code-intel/v1/resource-soak.json");
 const temporaryRoots = [];
+const RESOURCE_SOAK_TEST_TIMEOUT_MS = 30_000;
 
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
@@ -73,7 +74,7 @@ describe("CodeIntel resource soak", () => {
       passed: false,
       failures: ["identity_mismatch:sourceIdentity"],
     });
-  });
+  }, RESOURCE_SOAK_TEST_TIMEOUT_MS);
 
   it("fails closed when the frozen runtime source identity drifts", async () => {
     const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ss-code-intel-soak-config-"));
@@ -106,7 +107,7 @@ describe("CodeIntel resource soak", () => {
     await writeCodeIntelResourceSoakReport(report, outputPath);
     await expect(writeCodeIntelResourceSoakReport(report, outputPath)).rejects.toThrow(/already exists/u);
     expect(sha256(await fs.readFile(outputPath))).toBe(sha256(`${JSON.stringify(report, null, 2)}\n`));
-  });
+  }, RESOURCE_SOAK_TEST_TIMEOUT_MS);
 
   it("parses only explicit platform, config, and output arguments", () => {
     const platform = currentPlatform();
