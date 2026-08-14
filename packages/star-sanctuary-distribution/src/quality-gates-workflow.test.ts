@@ -48,6 +48,12 @@ function readDockerfile(): string {
   return fs.readFileSync(path.join(workspaceRoot, "Dockerfile"), "utf-8");
 }
 
+function readDockerignore(): string {
+  const currentDir = path.dirname(fileURLToPath(import.meta.url));
+  const workspaceRoot = path.resolve(currentDir, "..", "..", "..");
+  return fs.readFileSync(path.join(workspaceRoot, ".dockerignore"), "utf-8");
+}
+
 function readRootPackageJson(): Record<string, any> {
   const currentDir = path.dirname(fileURLToPath(import.meta.url));
   const workspaceRoot = path.resolve(currentDir, "..", "..", "..");
@@ -242,6 +248,16 @@ test("Docker runtime starts the built CLI without invoking the dev-only asset bu
 
   expect(dockerfile).toContain('CMD ["node", "packages/belldandy-core/dist/bin/bdd.js", "start"]');
   expect(dockerfile).not.toContain('CMD ["pnpm", "start"]');
+});
+
+test("Docker context excludes TypeScript outputs and incremental build state", () => {
+  const patterns = readDockerignore()
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"));
+
+  expect(patterns).toContain("**/dist");
+  expect(patterns).toContain("**/*.tsbuildinfo");
 });
 
 test("Dockerfile pins every external base image to a readable tag and manifest digest", () => {
