@@ -63,6 +63,8 @@ star-sanctuary/
 
 ### Root / Workspace
 - `package.json`: 根脚本入口，`build` / `test` / `start` / distribution 脚本都从这里出发
+- `.github/workflows/quality-gates.yml`: `main`/PR 的 clean-checkout build、全量测试、双平台 coding client、WebChat、distribution、dependency audit 与 report-only benchmark Gate；全量测试显式排除已有独立双平台证据的真实 Browser Relay 用例
+- `.github/workflows/docker.yml`: branch/PR 的 Docker build/test workflow；Docker Hub 发布仅允许显式版本 tag，日常 `private/main` 推送不发布镜像
 - `pnpm-workspace.yaml`: workspace 范围
 - `tsconfig.json`: 各 package 的 TS 编译依赖顺序
 - `vitest.config.ts`: 测试排除项和 Node/forks 配置
@@ -81,7 +83,7 @@ star-sanctuary/
 - `scripts/evaluate-dependency-audit-gate.mjs`: 对依赖扫描报告执行 findings/failure/freshness 的 fail-closed Gate 判定
 - `scripts/run-coding-agent-ci.mjs`: 复用构建后 Headless CLI 的通用 CI 包装器；固定请求并握手确认 `bare` automation profile，强制干净 Git 基线、只读/显式 workspace-write profile、固定 token/turn 预算及可选 `max-cost-usd` 透传，并验证首事件 capability handshake、v1 连续序列、唯一末尾终态、终态 usage completeness 与默认无正文 `coding-run-trace/v1`；可用 `--gateway-workspace` 只替换远端 coding run 的 `--cwd`，本地 child cwd、Git diff、artifact 与 evaluator 仍绑定平台原生 workspace；v3 shadow candidate 保留三代导航 profile，并允许冻结 CodeIntel uplift candidate 在 `workspace-write` / `command-control` 原 profile 尾部唯一追加 `code_intel`；在工作区外输出可审查 patch/result/manifest/trace artifact，usage 或 trace 不完整均显式记录并按各自契约失败关闭；benchmark 可在首个 `run.started` 后使用既有 `agent cancel` 精确注入一次取消，不执行 push、merge 或自动 apply
 - `scripts/verify-coding-ci-contract.mjs`: 对 CI 示例、Core 导出的 AgentRunEvent/metadata trace Schema、输出 Schema、Node/pnpm/协议/capability/trace/automation profile/退出码兼容矩阵与 Windows/Linux Quality Gate 接线执行失败关闭校验
-- `scripts/coding-run-client-conformance.test.mjs` / `scripts/coding-run-client-failure-conformance.test.mjs` / `benchmarks/coding-run-client/v1/`: Core reference client 与 VS Code stdio Adapter 共用的 v1 生命周期及失败模式 conformance；版本化 manifest 固定 unknown fields、脱敏、四类 cursor、invalid/oversized frame、backpressure、abort/cancel、timeout、transport close 与完整 Gateway/subscription/local error taxonomy；当前只有 v1 时将 N-1 明确标记为 `not_applicable_initial_version`，出现后继协议后必须补上一版本 fixture 才能通过
+- `scripts/coding-run-client-conformance.test.mjs` / `scripts/coding-run-client-failure-conformance.test.mjs` / `benchmarks/coding-run-client/v1/`: Core reference client 与 VS Code stdio Adapter 共用的 v1 生命周期及失败模式 conformance；版本化 manifest 固定 unknown fields、脱敏、四类 cursor、invalid/oversized frame、backpressure、abort/cancel、timeout、transport close 与完整 Gateway/subscription/local error taxonomy；`external-consumer.mjs` 与 `typescript-consumer.ts` 由系统临时根中的原生 Node 子进程消费真实 package；当前只有 v1 时将 N-1 明确标记为 `not_applicable_initial_version`，出现后继协议后必须补上一版本 fixture 才能通过
 - `scripts/run-coding-run-client-external-consumer.mjs`: 将构建后的 `@belldandy/core` 打包到系统临时目录，从解包 consumer 根加载窄 `coding-run-client` 入口并执行完整无正文生命周期；不联网、不安装全局依赖，结束后精确删除单一临时根
 - `scripts/run-coding-run-client-typescript-consumer.mjs` / `benchmarks/coding-run-client/v1/typescript-consumer.ts`: 将同一 Core tarball 解包到独立临时 TypeScript 工程，以仓库固定编译器和 `NodeNext + strict` 校验窄 subpath 的 `.d.ts`，再运行编译后的完整生命周期；不依赖 workspace symlink，结束后精确删除单一临时根
 - `scripts/verify-command-sandbox-oci-fixture.mjs`: 显式、非默认的 Docker/Podman OCI isolation/job fixture；只使用已运行 daemon 与预加载的 digest-pinned Node 镜像，验证只读 root/workspace、受限 workspace-write、`network none`、pipe/PTY job 输出与 resize/cancel、lease/container 回收，不启动 daemon 或拉取镜像
@@ -193,6 +195,7 @@ star-sanctuary/
 - `packages/belldandy-core/src/tool-audit-log.ts`: Tool audit 日志级别与无正文 success/failure 摘要格式化；失败只展示稳定 failure kind、字节数与短 hash
 - `packages/belldandy-core/src/tool-audit-runtime-resource.ts`: 将 Tool audit 的无正文 backlog 快照映射为 `tool_audit` 通用资源水位，不向 Doctor 扩散审计正文或 sink 失败详情
 - `packages/belldandy-core/src/file-mutation-lock.ts`: Core 单文件跨进程 mutation 中性 owner；负责 exclusive-create、随机 owner token、live-owner timeout、dead/incomplete stale recovery 与失败 release 标记，由领域 Adapter 保留各自错误契约
+- `packages/belldandy-core/src/atomic-file-replace.ts`: Core 原子替换的有界 rename 重试 helper；仅重试瞬时 `EPERM/EACCES/EBUSY`，由 UserWorktree/RemoteDelivery audit 与 fan-in receipt owner 负责目标级跨进程锁、失败关闭和本轮临时文件清理
 - `packages/belldandy-core/src/tool-agent-streaming-config.ts`: Tool/ReAct Provider streaming 灰度环境变量的严格解析 owner；只有显式 `true` 开启，缺失或非法值保持安全关闭
 
 ### Agent / Runtime

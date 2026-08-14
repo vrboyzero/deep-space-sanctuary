@@ -18,5 +18,5 @@ describe("coding-run client packed external consumer", () => {
       contentMode: "none",
       temporaryRootRemoved: true,
     });
-  }, 20_000);
+  }, 60_000);
 });

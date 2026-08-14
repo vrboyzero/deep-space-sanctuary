@@ -20,5 +20,5 @@ describe("coding-run client packed TypeScript consumer", () => {
       checkedErrorCode: "request_timeout",
       temporaryRootRemoved: true,
     });
-  }, 20_000);
+  }, 60_000);
 });

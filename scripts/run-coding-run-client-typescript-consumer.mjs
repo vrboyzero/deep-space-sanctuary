@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const execFileAsync = promisify(execFile);
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -15,6 +15,7 @@ export async function runCodingRunClientTypeScriptConsumer() {
   const tarballPath = path.join(temporaryRoot, "belldandy-core.tgz");
   const packageRoot = path.join(temporaryRoot, "node_modules", "@belldandy", "core");
   const consumerSource = path.join(temporaryRoot, "consumer.ts");
+  const consumerRunner = path.join(temporaryRoot, "consumer-runner.mjs");
   let result;
   try {
     const corepack = resolveCorepackInvocation();
@@ -51,14 +52,28 @@ export async function runCodingRunClientTypeScriptConsumer() {
         }, null, 2)}\n`,
         { encoding: "utf8", flag: "wx" },
       ),
+      fs.writeFile(
+        consumerRunner,
+        [
+          'import { runTypeScriptConsumer } from "./dist/consumer.js";',
+          "const result = await runTypeScriptConsumer(process.argv[2]);",
+          "process.stdout.write(`${JSON.stringify(result)}\\n`);",
+          "",
+        ].join("\n"),
+        { encoding: "utf8", flag: "wx" },
+      ),
     ]);
 
     await runCommand(process.execPath, [resolveTypeScriptCompiler(), "--project", "tsconfig.json"], {
       cwd: temporaryRoot,
       windowsHide: true,
     });
-    const consumer = await import(pathToFileURL(path.join(temporaryRoot, "dist", "consumer.js")).href);
-    const lifecycle = await consumer.runTypeScriptConsumer(workspaceRoot);
+    const { stdout } = await runCommand(process.execPath, [consumerRunner, workspaceRoot], {
+      cwd: temporaryRoot,
+      windowsHide: true,
+      maxBuffer: 1_048_576,
+    });
+    const lifecycle = parseConsumerResult(stdout);
     assert.equal(lifecycle.protocolVersion, "v1");
     result = {
       schemaVersion: "coding-run-client-typescript-consumer/v1",
@@ -82,6 +97,14 @@ function resolveCorepackInvocation() {
 
 function resolveTypeScriptCompiler() {
   return path.join(workspaceRoot, "node_modules", "typescript", "bin", "tsc");
+}
+
+function parseConsumerResult(stdout) {
+  const text = String(stdout ?? "").trim();
+  if (!text || Buffer.byteLength(text, "utf8") > 1_048_576) {
+    throw new Error("TypeScript consumer returned an empty or oversized result.");
+  }
+  return JSON.parse(text);
 }
 
 async function runCommand(executable, args, options) {

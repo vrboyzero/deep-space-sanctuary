@@ -1795,6 +1795,46 @@ Source / Workspace Revision
 - **为什么先做它**：本地严格依赖、portable、build 与全量测试 Gate 均已闭合，继续增加本地实现不能替代干净 checkout、远端 workflow 接线和真实 runner 证据。
 - **当前还缺的关键闭环**：当前 commit SHA、`private/main` 完整 Actions 成功记录、双平台 conformance artifact，以及 Settings 两字段人工手测。未经授权不 commit、不 push、不触碰 `origin/main`。
 
+#### P2-B 当前切片实现结论：远端 Quality Gates clean-checkout 与 Windows 原生稳定化（2026-08-14）
+
+##### 已完成内容
+
+1. **`.github/workflows/quality-gates.yml` 与 `.github/workflows/docker.yml` 修改**：
+   - 全量测试 job 预算由 `20` 分钟调整为 `30` 分钟，并在已有独立真实 Browser Relay 证据的前提下显式跳过 CI 内重复的真实 Chrome/MV3 用例；纯合同与 fixture 测试仍执行。
+   - Docker build/test 增加同一有界预算与 Browser Relay 分流；Docker Hub publish 从 `main`/tag 收紧为仅显式 `v*` tag，日常 `private/main` 推送不再具备公开镜像发布条件。
+
+2. **coding-run client 两个仓外 consumer 修复**：
+   - 新增 `benchmarks/coding-run-client/v1/external-consumer.mjs`，packed ESM consumer 与 TypeScript 编译产物均改由系统临时根中的原生 Node 子进程加载，不再让 Vitest/Vite 动态 import 工作区外临时模块。
+   - 子进程输出限制为 `1 MiB` 并只接受单一 JSON 结果；两个 hosted runner 测试预算按 Windows 实测从 `20s` 调整为 `60s`，协议、生命周期和临时根清理合同不变。
+
+3. **clean-checkout 测试边界修复**：
+   - CodeIntel CLI parser 测试改用当前原生平台，不再在 Linux checkout 硬编码 `windows-native`。
+   - 两个 model-loop evidence 用例仅在历史 artifact 实际存在时运行；纯构造、预算、解析与失败关闭合同始终执行，不提交或伪造被 `.gitignore` 排除的历史 runtime artifact。
+   - Browser Relay 增加显式 `BELLDANDY_SKIP_REAL_BROWSER_RELAY_TESTS=true` CI 开关，默认本地真实浏览器行为保持不变。
+
+4. **Core audit 原子替换稳定化**：
+   - 新增 `atomic-file-replace.ts` 与测试，对瞬时 `EPERM/EACCES/EBUSY` 执行最多 `3` 次、间隔 `50ms` 的 rename 重试，非瞬时错误立即失败。
+   - UserWorktree 与 RemoteDelivery completion audit 在 target 级跨进程文件锁内替换和清理同 receipt 遗留 `.tmp`；dead PID 可立即接管，活跃 owner 不再互删临时文件，真实 `ENOSPC` 仍保持 applied/uncertain 或 mutation 前失败关闭。
+   - fan-in receipt 更新复用同一 rename 重试，既有 receipt 级 mutation lock 与幂等结果合同不变。
+
+5. **效果**：
+   - Windows packed consumer 不再被 Vite 工作区外模块解析击穿，Linux clean checkout 不再依赖本地历史 artifact 或不可用 Chrome sandbox。
+   - 日常私有分支推送只执行 build/test，不触发 Docker Hub 发布；公开发布边界回到显式版本 tag。
+   - 审计 completion 的短暂文件占用、并发 owner 与真实进程崩溃恢复均有独立可重复证据，持久化失败仍失败关闭。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build:incremental` 通过。
+- coding client `7` 个测试文件 `41/41`；Core audit/并发/进程崩溃恢复 `6` 个测试文件 `58/58`；clean-checkout/Browser Relay 分流 `4` 个测试文件 `19` 通过、`9` 个真实浏览器用例按显式 CI 开关跳过。
+- `corepack pnpm verify:coding-ci` 与 `corepack pnpm verify:coding-benchmark` 均通过；parallel-write fan-in 精确复核 `1/1` 通过。
+- 本机标准全量 Vitest 在第三轮最终运行仍有 `1` 个高负载偶发失败：parallel-write cleanup 一次返回 `operation_status_uncertain`；该用例在前两轮全量与随后精确复核中通过。按 Fix Mode 三轮上限停止在同一证据集继续试错，不将本轮结果表述为全量通过，下一证据源为 clean-checkout 远端 Gate。
+
+##### 后续计划
+
+- **下一步准备做什么**：将本轮聚焦修复形成 `main` 稳定 commit 并推送 `private/main`，跟踪绑定该 SHA 的 Linux/Windows Quality Gates；远端 Gate 通过后执行 Settings 两字段可见交互与 console 验证，再以同一稳定 identity 重备 P0 双平台输入。
+- **为什么先做它**：当前缺口只在 clean checkout、hosted Windows 时序和远端全量资源条件；继续在本机高负载下重复同一偶发用例不会增加新证据，也不能替代远端 runner。
+- **当前还缺的关键闭环**：本轮修复 commit SHA、完整远端 Quality Gates、Settings 人工手测、双平台 v3 input/receipt 与 Provider 凭据可用性；P0 费用授权保持累计 `40 RMB` 硬上限。
+
 ### 6.7 P2-C：9.5 稳定化与最终复核（延后）
 
 **目的与方案**：在两个连续冻结候选版本上运行完整 Benchmark v3、P1/P2 fault matrix、四客户端 conformance 和外部消费者 Gate；比较任务成功率、p95、人工干预、usage、费用、残留和错误 taxonomy；阈值调整必须留痕，不能回写旧 artifact。
@@ -1923,9 +1963,10 @@ Source / Workspace Revision
 - P2-B 本地 Quality Gate 基线已收口：补齐两个 Sub Agents Settings 字段、公共审批 `responderKind=unknown` 断言与 CodeIntel source identity；Go 显式启用但 gopls 不可用时已失败关闭，初始 v1/N-1 后继 fixture 规则已机器化。Marketplace/Goals Windows rename、Gateway 长链路和 pairing 可见性均完成有界稳定化；Core build、当前 collect `945` 文件/`5759` 条目并以 4 worker 全量零失败、coding client `41/41`、WebChat module/security、coding CI/benchmark contract 和 diff check 全部通过。
 - P2-B 已按 HITL 授权将 `puppeteer-core 24.43.1` 升至 `25.7.0`，依赖链改为 `@puppeteer/browsers 3.2.0 -> modern-tar 0.8.4` 并移除 `extract-zip`；`pnpm audit --audit-level low` 为零发现，严格 dependency Gate 本地闭合。
 - Puppeteer 25 真实 Chrome/MV3 Relay `12/12`、Skills browser/camera `13/13`、distribution/依赖策略 `37/37`、WebChat security/browser benchmark、workspace build 和标准全量测试均通过；portable slim 的 frozen/offline 重复构建、静态依赖/artifact、真实 smoke 与 initial/reuse/upgrade/recovery lifecycle 全部通过。
-- **下一步准备做什么**：用户已授权在当前 `main` 形成稳定 commit 并执行 `git push private main`；提交后读取绑定本轮源码 identity 的 Windows/Linux Actions 运行结果，再执行 Settings 两字段人工手测。
-- **为什么先做它**：本地依赖、portable、build 与测试 Gate 已闭合，剩余证据只能由干净 checkout、远端 workflow 和人工可见交互产生。
-- **当前还缺的关键闭环**：授权已取得，仍需形成新的稳定 commit、取得该 commit 的远端 artifact；旧 `6ce8579` run `31686674919` 不含本轮 `verify:coding-run-client`，不能替代当前证据。Settings 两字段的可见交互与 console 人工手测仍未执行。
+- P2-B 远端 clean-checkout 修复已完成本地定向闭环：coding client `41/41`、Core audit/并发/崩溃恢复 `58/58`、clean-checkout 相关 `19` 项与两个合同 Gate 通过；本机高负载全量仍保留 `1` 个仅在全量并发出现、精确复核通过的 parallel-write cleanup 偶发失败，不改写为全量成功。
+- **下一步准备做什么**：用户已授权在当前 `main` 形成稳定 commit 并执行 `git push private main`；提交后读取绑定本轮修复 identity 的 Windows/Linux Actions 结果，再执行 Settings 两字段人工手测。
+- **为什么先做它**：本轮直接失败反馈环与进程恢复合同已闭合，剩余证据只能由干净 checkout、hosted runner 和人工可见交互产生；继续重复本机同一高负载偶发失败不增加有效证据。
+- **当前还缺的关键闭环**：本轮修复稳定 commit、完整远端 Quality Gates 与双平台 conformance artifact；旧 `9261046` run `31797436011` 已证明原失败反馈环但不能替代修复后证据。Settings 两字段可见交互与 console 人工手测仍未执行。
 
 ### Go canary
 
@@ -1948,5 +1989,5 @@ Source / Workspace Revision
 | P1-B：验证 DAG 与 Browser Relay 闭环 | P1 | 已完成；8 场景 `24/24` 影响节点通过；Windows 相关路径 `81` 项；WSL2 Browser producer `12` 项；两端 lifecycle pending/orphan=`0/0` | 10-16 人日 | 验证 DAG 选择/终态、Browser artifact producer/consumer、故障和双平台 evidence；不含自动安装浏览器、云浏览器、无条件多 Agent Review |
 | P1-C：TaskProjection 与 Capability Closure | P1 | 已完成；硬 Gate 全部闭合，广泛回归 `31` 文件 `312/312`、最后切片 `58/58`、Core build/diff check 通过。公共人工 provenance、`blocked/verifying` observation 与 verification DAG 外键缺 authoritative owner，已拆分为 `split_task/defer`，未知指标保持 `incomplete` | 10-15 人日 | 只读跨 owner 投影、exact-binding action、任务启动闭包、六类故障投影和旧客户端兼容；不迁移领域真源，不按客户端身份猜测人工来源 |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | 已完成；admission/worktree Gate、restart reattach、exact-bound control、fan-in、统一预算、fault matrix、跨进程 Git mutation lock 与 failure compensation 均闭合。修复后 Core/Skills build、相关回归 `18` 文件 `138/138` 通过；Windows/WSL2 正式 r3 同 identity 各 `360/360` lane，平台 Gate、Schema、comparator 与 child/worktree/branch/process/receipt/lock/tmp/root 零残留 sweep 全部通过。r2 WSL2 首次失败 artifact 原样保留 | 12-20 人日 | 隔离写入、预算、60 分钟 soak、steer/cancel/reattach、fan-in 和 fault matrix；不含自动 merge/release/deploy |
-| P2-B：生态与运行前置收口 | P2 | 进行中；窄 reference client、初始 v1 manifest、两个 Windows/WSL2 仓外 consumer、完整 `17 + 1 + 5` error taxonomy、failure conformance 与 coding runtime preflight Doctor 均已完成；Go/gopls required path 已失败关闭，初始 v1 与未来 N-1 fixture 要求已机器化。coding client `41/41`，Core/workspace build、当前 collect `945` 文件/`5759` 条目及标准全量测试、WebChat module/security、coding CI/benchmark contract、CodeIntel resource soak 与 diff check 均通过；Marketplace/Goals Windows rename、Gateway 长链路和 pairing 可见性已稳定化。Puppeteer 已按 HITL 授权升级至 `25.7.0`，`extract-zip` 链移除，audit 零发现；真实 Chrome/MV3 Relay、browser/camera 与 portable frozen/offline build、smoke、四场景 lifecycle 均闭合。2026-08-14 已取得在 `main` 形成稳定提交并推送 `private/main` 的授权；仍需执行提交/推送、取得绑定新 SHA 的完整 Actions/双平台 artifact，并完成 Settings 人工手测 | 8-14 人日 | 两个外部消费者、N-1/N conformance、真实 CI、OCI/语言 Doctor、零发现 dependency Gate；不含公开发布、系统级自动安装、sandbox 替换，未经授权不再升级依赖主版本 |
+| P2-B：生态与运行前置收口 | P2 | 进行中；窄 reference client、初始 v1 manifest、两个 Windows/WSL2 仓外 consumer、完整 `17 + 1 + 5` error taxonomy、failure conformance 与 coding runtime preflight Doctor 均已完成；Go/gopls required path 已失败关闭，初始 v1 与未来 N-1 fixture 要求已机器化。Puppeteer `25.7.0`、零发现 audit、真实 Chrome/MV3 Relay 与 portable lifecycle 已闭合。2026-08-14 `9261046` 远端 Gate 复现 Windows 仓外 consumer、clean-checkout artifact、Browser sandbox 与全量超时问题；本轮已改为原生 Node 子进程 consumer、clean-checkout 条件证据、显式 Browser CI 分流、30 分钟预算、tag-only Docker publish，并补齐 audit 原子替换/跨进程崩溃恢复。coding client `41/41`、Core audit/并发/崩溃恢复 `58/58`、clean-checkout 相关 `19` 项、coding CI/benchmark contract 与 TypeScript 编译通过；本机高负载全量仍有 `1` 个精确复核通过的 parallel-write cleanup 偶发失败。已取得 `main -> private/main` 授权；仍需提交/推送、取得修复后完整 Actions/双平台 artifact，并完成 Settings 人工手测 | 8-14 人日 | 两个外部消费者、N-1/N conformance、真实 CI、OCI/语言 Doctor、零发现 dependency Gate；不含公开发布、系统级自动安装、sandbox 替换，未经授权不再升级依赖主版本 |
 | P2-C：9.5 稳定化与最终复核 | P2 | 延后，等待 P0-P2-B | 5-8 人日 + 观察窗口 | 两个连续候选版本原始 `>=9.500`、目标维度和全部硬 Gate 通过；不含竞品联合 benchmark、生产写入 |

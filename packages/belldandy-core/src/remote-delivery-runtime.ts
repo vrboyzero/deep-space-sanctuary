@@ -4,6 +4,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { replaceFileWithRetry } from "./atomic-file-replace.js";
+import { withFileMutationLock } from "./file-mutation-lock.js";
+
 const execFile = promisify(execFileCallback);
 const RECEIPT_VERSION = 1;
 const AUDIT_VERSION = 1;
@@ -1176,14 +1179,16 @@ export class RemoteDeliveryRuntime {
         await this.persistAudit(completed);
         return completed;
       }
-      await fs.writeFile(temporaryPath, `${JSON.stringify({ version: AUDIT_VERSION, ...completed }, null, 2)}\n`, {
-        encoding: "utf-8",
-        mode: 0o600,
-        flag: "wx",
-      });
-      await fs.rename(temporaryPath, targetPath);
-      await this.cleanupAuditTemps(audit.auditId);
-      return completed;
+      return await withFileMutationLock(targetPath, async () => {
+        await fs.writeFile(temporaryPath, `${JSON.stringify({ version: AUDIT_VERSION, ...completed }, null, 2)}\n`, {
+          encoding: "utf-8",
+          mode: 0o600,
+          flag: "wx",
+        });
+        await replaceFileWithRetry(temporaryPath, targetPath);
+        await this.cleanupAuditTemps(audit.auditId);
+        return completed;
+      }, { staleAfterMs: 0 });
     } catch {
       await fs.rm(temporaryPath, { force: true }).catch(() => {});
       return undefined;

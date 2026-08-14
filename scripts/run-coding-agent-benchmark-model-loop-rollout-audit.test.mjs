@@ -19,13 +19,19 @@ const aggregatePath = path.join(
   "artifacts/p0.17-canary-20260809-partial-aggregate/benchmark-report.json",
 );
 const temporaryRoots = [];
+const historicalArtifactPaths = [
+  path.join(p028Root, "windows-native/model-loop-budget-termination.json"),
+  path.join(p028Root, "wsl2-linux/model-loop-budget-termination.json"),
+  aggregatePath,
+];
+const artifactBackedIt = await allPathsExist(historicalArtifactPaths) ? it : it.skip;
 
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
 
 describe("model-loop rollout safety audit", () => {
-  it("audits repair, steer, tool batch, follow-up, Gateway, and ordinary-profile boundaries", async () => {
+  artifactBackedIt("audits repair, steer, tool batch, follow-up, Gateway, and ordinary-profile boundaries", async () => {
     const artifact = await makeArtifact("windows-native");
 
     expect(artifact.rolloutDecision).toEqual({
@@ -96,7 +102,7 @@ describe("model-loop rollout safety audit", () => {
     });
   });
 
-  it("writes one Schema-valid artifact bound to both P0.28 sources and the frozen aggregate", async () => {
+  artifactBackedIt("writes one Schema-valid artifact bound to both P0.28 sources and the frozen aggregate", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "bdd-model-loop-rollout-audit-"));
     temporaryRoots.push(root);
     const outputRoot = path.join(root, "output");
@@ -143,7 +149,7 @@ describe("model-loop rollout safety audit", () => {
     })).rejects.toThrow(/output root.*already exists/i);
   });
 
-  it("fails closed when either P0.28 artifact hash drifts", async () => {
+  artifactBackedIt("fails closed when either P0.28 artifact hash drifts", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "bdd-model-loop-rollout-drift-"));
     temporaryRoots.push(root);
     const windowsRoot = path.join(root, "windows-native");
@@ -171,7 +177,7 @@ describe("model-loop rollout safety audit", () => {
     })).rejects.toThrow(/Windows P0\.28 artifact SHA-256 drifted/i);
   });
 
-  it("publishes a fail-closed rollout decision Schema", async () => {
+  artifactBackedIt("publishes a fail-closed rollout decision Schema", async () => {
     const artifact = await makeArtifact("wsl2-linux");
     const schema = JSON.parse(await fs.readFile(path.join(
       workspaceRoot,
@@ -254,4 +260,17 @@ function makeRuntimeExecutables() {
     "packages/belldandy-core/dist/coding-run/conversation-steer-mailbox.js",
     "packages/belldandy-core/dist/coding-run/gateway-conversation-event-adapter.js",
   ].map((sourcePath, index) => ({ sourcePath, sha256: String(index + 6).repeat(64).slice(0, 64) }));
+}
+
+async function allPathsExist(paths) {
+  const results = await Promise.all(paths.map(async (targetPath) => {
+    try {
+      await fs.access(targetPath);
+      return true;
+    } catch (error) {
+      if (error?.code === "ENOENT") return false;
+      throw error;
+    }
+  }));
+  return results.every(Boolean);
 }

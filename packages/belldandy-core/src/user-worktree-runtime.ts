@@ -4,6 +4,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { replaceFileWithRetry } from "./atomic-file-replace.js";
+import { withFileMutationLock } from "./file-mutation-lock.js";
 import {
   ManagedWorktreeRuntime,
   type ManagedWorktree,
@@ -1665,21 +1667,23 @@ export class UserWorktreeRuntime {
     const targetPath = this.operationAuditPath(receipt.receiptId);
     const temporaryPath = `${targetPath}.${randomUUID()}.tmp`;
     try {
-      await fs.writeFile(temporaryPath, `${JSON.stringify({
-        ...completed,
-        baseCommit: receipt.baseCommit,
-        branch: receipt.branch,
-        patchHash: receipt.patchHash,
-        indexTree: outcome.indexTree ?? receipt.indexTree,
-        commitMessageHash: receipt.commitMessageHash,
-        authorIdentityHash: receipt.authorIdentityHash,
-        committerIdentityHash: receipt.committerIdentityHash,
-        publishedBranchHash: receipt.publishedBranchHash,
-      }, null, 2)}\n`, { encoding: "utf-8", mode: 0o600, flag: "wx" });
-      await fs.rename(temporaryPath, targetPath);
-      await this.cleanupOperationAuditTemps(receipt.receiptId);
-      this.lifecycleAuditCache = undefined;
-      return completed;
+      return await withFileMutationLock(targetPath, async () => {
+        await fs.writeFile(temporaryPath, `${JSON.stringify({
+          ...completed,
+          baseCommit: receipt.baseCommit,
+          branch: receipt.branch,
+          patchHash: receipt.patchHash,
+          indexTree: outcome.indexTree ?? receipt.indexTree,
+          commitMessageHash: receipt.commitMessageHash,
+          authorIdentityHash: receipt.authorIdentityHash,
+          committerIdentityHash: receipt.committerIdentityHash,
+          publishedBranchHash: receipt.publishedBranchHash,
+        }, null, 2)}\n`, { encoding: "utf-8", mode: 0o600, flag: "wx" });
+        await replaceFileWithRetry(temporaryPath, targetPath);
+        await this.cleanupOperationAuditTemps(receipt.receiptId);
+        this.lifecycleAuditCache = undefined;
+        return completed;
+      }, { staleAfterMs: 0 });
     } catch {
       await fs.rm(temporaryPath, { force: true }).catch(() => {});
       return undefined;

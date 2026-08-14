@@ -20,8 +20,9 @@ import {
 
 const workspaceRoot = path.resolve(import.meta.dirname, "..");
 const browserEvidenceSchemaPath = path.join(workspaceRoot, "benchmarks/verification/v1/browser-evidence.schema.json");
-const chromeExecutablePath = await resolveChromeExecutable().catch(() => null);
-const mv3ChromeExecutablePath = await resolveMv3ChromeExecutable().catch(() => null);
+const skipRealBrowserTests = process.env.BELLDANDY_SKIP_REAL_BROWSER_RELAY_TESTS === "true";
+const chromeExecutablePath = skipRealBrowserTests ? null : await resolveChromeExecutable().catch(() => null);
+const mv3ChromeExecutablePath = skipRealBrowserTests ? null : await resolveMv3ChromeExecutable().catch(() => null);
 const realChromeIt = chromeExecutablePath ? it : it.skip;
 const realMv3ChromeIt = mv3ChromeExecutablePath ? it : it.skip;
 const revision = {

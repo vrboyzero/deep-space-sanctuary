@@ -180,12 +180,13 @@ describe("CodeIntel truth set", () => {
   });
 
   it("parses only explicit platform, manifest, and output arguments", () => {
+    const platform = currentPlatform();
     expect(parseCodeIntelTruthSetCliArguments([
-      "--platform", "windows-native",
+      "--platform", platform,
       "--manifest", "benchmarks/code-intel/v1/truth-set.json",
       "--output", "artifacts/code-intel/report.json",
     ])).toEqual({
-      platform: "windows-native",
+      platform,
       manifestPath: path.resolve("benchmarks/code-intel/v1/truth-set.json"),
       outputPath: path.resolve("artifacts/code-intel/report.json"),
     });

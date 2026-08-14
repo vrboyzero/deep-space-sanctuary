@@ -4,10 +4,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const execFileAsync = promisify(execFile);
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const fixturePath = path.join(workspaceRoot, "benchmarks", "coding-run-client", "v1", "external-consumer.mjs");
 
 export async function runCodingRunClientExternalConsumer() {
   const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-coding-run-client-consumer-"));
@@ -32,20 +33,17 @@ export async function runCodingRunClientExternalConsumer() {
       import: "./dist/coding-run-client.js",
       default: "./dist/coding-run-client.js",
     });
-    await fs.writeFile(
-      consumerEntrypoint,
-      'export * from "@belldandy/core/coding-run-client";\n',
-      { encoding: "utf8", flag: "wx" },
-    );
-    const module = await import(pathToFileURL(consumerEntrypoint).href);
-    const operations = await runLifecycle(module.CodingRunClient);
+    await fs.copyFile(fixturePath, consumerEntrypoint, fs.constants.COPYFILE_EXCL);
+    const { stdout } = await execFileAsync(process.execPath, [consumerEntrypoint, workspaceRoot], {
+      cwd: temporaryRoot,
+      windowsHide: true,
+      maxBuffer: 1_048_576,
+    });
+    const consumerResult = parseConsumerResult(stdout);
     result = {
       schemaVersion: "coding-run-client-external-consumer/v1",
       consumer: "packed-core-self-reference",
-      protocolVersion: module.CODING_RUN_PROTOCOL_VERSION,
-      compatibility: module.CODING_RUN_CLIENT_COMPATIBILITY,
-      operations,
-      contentMode: "none",
+      ...consumerResult,
     };
   } finally {
     await fs.rm(temporaryRoot, { recursive: true, force: true });
@@ -53,33 +51,12 @@ export async function runCodingRunClientExternalConsumer() {
   return { ...result, temporaryRootRemoved: !(await pathExists(temporaryRoot)) };
 }
 
-async function runLifecycle(CodingRunClient) {
-  let requestIndex = 0;
-  let client;
-  client = new CodingRunClient({
-    createRequestId: () => `external-${++requestIndex}`,
-    write: async (line) => {
-      const request = JSON.parse(line);
-      queueMicrotask(() => client.consume(`${JSON.stringify(responseFor(request))}\n`));
-    },
-  });
-  const operations = [];
-  await client.start({ prompt: "Inspect the workspace.", cwd: workspaceRoot }); operations.push("start");
-  await client.subscribeRun({ conversationId: "conversation-1", agentRunId: "run-1" }); operations.push("subscribe");
-  await client.respondPermission({ agentRunId: "run-1", toolCallId: "tool-allow", decision: "allow" }); operations.push("respond_allow");
-  await client.respondPermission({ agentRunId: "run-1", toolCallId: "tool-deny", decision: "deny" }); operations.push("respond_deny");
-  await client.cancel({ conversationId: "conversation-1", agentRunId: "run-1" }); operations.push("cancel");
-  await client.readArtifact({ agentRunId: "run-1" }); operations.push("read_artifact");
-  client.close(); operations.push("close");
-  return operations;
-}
-
-function responseFor(request) {
-  const type = request.type.replace("request", "response");
-  if (request.type === "conversation.request") {
-    return { version: "v1", type, id: request.id, ok: true, result: { binding: { conversationId: "conversation-1", agentRunId: "run-1" } } };
+function parseConsumerResult(stdout) {
+  const text = String(stdout ?? "").trim();
+  if (!text || Buffer.byteLength(text, "utf8") > 1_048_576) {
+    throw new Error("External consumer returned an empty or oversized result.");
   }
-  return { version: "v1", type, id: request.id, ok: true, result: { accepted: true, contentMode: "none" } };
+  return JSON.parse(text);
 }
 
 function resolveCorepackInvocation() {

@@ -9,6 +9,7 @@ import type {
   SubTaskSupervisorReviewEvidence,
   SubTaskSupervisorTestEvidence,
 } from "./subtask-supervisor-fan-in-runtime.js";
+import { replaceFileWithRetry } from "./atomic-file-replace.js";
 import { withFileMutationLock } from "./file-mutation-lock.js";
 import type { SubTaskSupervisorExactBinding } from "./subtask-supervisor-runtime.js";
 import { UserWorktreeRuntime } from "./user-worktree-runtime.js";
@@ -299,7 +300,7 @@ export class SubTaskSupervisorFanInResolutionRuntime {
     const temporaryPath = `${receiptPath}.${randomUUID()}.tmp`;
     try {
       await fs.writeFile(temporaryPath, `${JSON.stringify(record, null, 2)}\n`, { encoding: "utf-8", mode: 0o600, flag: "wx" });
-      await fs.rename(temporaryPath, receiptPath);
+      await replaceFileWithRetry(temporaryPath, receiptPath);
     } finally {
       await fs.rm(temporaryPath, { force: true }).catch(() => {});
     }
