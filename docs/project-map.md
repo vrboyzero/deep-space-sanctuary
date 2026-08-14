@@ -199,7 +199,7 @@ star-sanctuary/
 - `packages/belldandy-core/src/tool-agent-streaming-config.ts`: Tool/ReAct Provider streaming 灰度环境变量的严格解析 owner；只有显式 `true` 开启，缺失或非法值保持安全关闭
 
 ### Agent / Runtime
-- `packages/belldandy-agent/src/tool-agent.ts`: 带工具调用的主 Agent runtime，接线 ReAct model-call / tool-call / wall-time / total-token / cost / high-risk-Tool 预算、灰度 Provider streaming 与 `budget_exhausted` / `interrupted` 终态；可信 per-run launch spec 只能收紧全局预算，费用预算缺 pricing profile 时失败关闭；structured run 在校验前缓冲文本并关闭 Provider streaming，repair 调用不暴露或执行 Tool、不消费 steering/deferred Tool，且仍计入同一 run usage 与预算
+- `packages/belldandy-agent/src/tool-agent.ts`: 带工具调用的主 Agent runtime，接线 ReAct model-call / tool-call / wall-time / total-token / cost / high-risk-Tool 预算、灰度 Provider streaming 与 `budget_exhausted` / `interrupted` 终态；Provider 已报告的 usage 在成功和失败模型响应中均进入同一 run 账本，reasoning-only 空内容仍失败且不泄漏 reasoning 正文；可信 per-run launch spec 只能收紧全局预算，费用预算缺 pricing profile 时失败关闭；structured run 在校验前缓冲文本并关闭 Provider streaming，repair 调用不暴露或执行 Tool、不消费 steering/deferred Tool，且仍计入同一 run usage 与预算
 - `packages/belldandy-agent/src/agent-run-automation.ts`: 单次 Agent automation profile 的纯策略 owner；`bare` 只保留显式附件/音频 prompt delta，并用于关闭 Hook、legacy Hook、compaction Hook 与 StarWeaver 主动 MCP 预检，不改变共享 Agent 或后续普通 run
 - `packages/belldandy-agent/src/structured-output.ts`: structured-output 单次 repair session owner；保存首次非法原文、构造不可执行的 schema repair 请求，并在一次修复后接受规范化 JSON 或明确拒绝
 - `packages/belldandy-agent/src/provider-control-frame.ts`: OpenAI-compatible Provider control frame 文本边界 owner；仅在 raw JSON 或单一显式 JSON code block 后识别并移除精确的 `DSML parameter -> invoke -> tool_calls` 三段结束帧，流式候选缓冲固定为 256 字符，普通文本、JSON 字符串、未知或不完整帧均原样保留

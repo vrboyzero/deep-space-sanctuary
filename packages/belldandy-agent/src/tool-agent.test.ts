@@ -5336,6 +5336,13 @@ describe("OpenAI-compatible reasoning config", () => {
       type: "final",
       text: expect.stringMatching(/^模型返回空内容。finish_reason=stop，reasoning_content=present\(\d+\)。$/),
     }));
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "usage",
+      inputTokens: 12,
+      outputTokens: 8,
+      modelCalls: 1,
+      providerReportedModelCalls: 1,
+    }));
     expect(items).toContainEqual({
       type: "status",
       status: "error",

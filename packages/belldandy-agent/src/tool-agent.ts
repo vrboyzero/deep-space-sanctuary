@@ -2921,7 +2921,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
         }
 
         // 记录并累加 usage 信息
-        if (response.ok && response.usage) {
+        if (response.usage) {
           const u = response.usage;
           providerReportedModelCallCount++;
           lastProviderRawUsage = response.rawUsage ? { ...response.rawUsage } : {
@@ -4070,6 +4070,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
     ok: false;
     error: string;
     interrupted?: AgentInterrupted;
+    usage?: AnthropicUsage;
+    rawUsage?: AgentUsage["providerRawUsage"];
   }> {
     let effectiveTimeoutMs = this.opts.timeoutMs;
     const callStartedAt = Date.now();
@@ -4290,6 +4292,15 @@ export class ToolEnabledAgent implements BelldandyAgent {
           prompt_cache_hit_tokens: streamUsage.promptCacheHitTokens ?? 0,
           prompt_cache_miss_tokens: streamUsage.promptCacheMissTokens ?? 0,
         } : undefined;
+        const providerRawUsage: AgentUsage["providerRawUsage"] | undefined = streamUsage ? {
+          inputTokens: streamUsage.inputTokens,
+          outputTokens: streamUsage.outputTokens,
+          totalTokens: streamUsage.totalTokens,
+          cacheCreationInputTokens: streamUsage.cacheCreationInputTokens,
+          cacheReadInputTokens: streamUsage.cacheReadInputTokens,
+          promptCacheHitTokens: streamUsage.promptCacheHitTokens,
+          promptCacheMissTokens: streamUsage.promptCacheMissTokens,
+        } : undefined;
         if (
           !streamedResponse.content.trim()
           && (!toolCalls || toolCalls.length === 0)
@@ -4298,6 +4309,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
           return {
             ok: false,
             error: `模型返回空内容。finish_reason=${streamedResponse.finishReason || "unknown"}，reasoning_content=present(${streamedResponse.reasoningContent.trim().length})。`,
+            usage,
+            rawUsage: providerRawUsage,
           };
         }
         logModelPhase("[model-call] response_extracted", {
@@ -4314,15 +4327,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           toolCalls,
           reasoning_content: streamedResponse.reasoningContent,
           usage,
-          rawUsage: streamUsage ? {
-            inputTokens: streamUsage.inputTokens,
-            outputTokens: streamUsage.outputTokens,
-            totalTokens: streamUsage.totalTokens,
-            cacheCreationInputTokens: streamUsage.cacheCreationInputTokens,
-            cacheReadInputTokens: streamUsage.cacheReadInputTokens,
-            promptCacheHitTokens: streamUsage.promptCacheHitTokens,
-            promptCacheMissTokens: streamUsage.promptCacheMissTokens,
-          } : undefined,
+          rawUsage: providerRawUsage,
         };
       }
 
@@ -4435,14 +4440,6 @@ export class ToolEnabledAgent implements BelldandyAgent {
       const reasoning_content = typeof message?.reasoning_content === "string" ? message.reasoning_content : undefined;
       const finishReason = typeof choice?.finish_reason === "string" ? choice.finish_reason : "";
 
-      if (!content.trim() && (!toolCalls || toolCalls.length === 0) && reasoning_content?.trim()) {
-        const reasoningLength = reasoning_content.trim().length;
-        return {
-          ok: false,
-          error: `模型返回空内容。finish_reason=${finishReason || "unknown"}，reasoning_content=present(${reasoningLength})。`,
-        };
-      }
-
       // 提取 OpenAI usage（prompt_tokens → input_tokens, completion_tokens → output_tokens）
       const rawUsage = json.usage as any;
       const usage: AnthropicUsage | undefined = rawUsage ? {
@@ -4453,6 +4450,35 @@ export class ToolEnabledAgent implements BelldandyAgent {
         prompt_cache_hit_tokens: rawUsage.prompt_cache_hit_tokens ?? 0,
         prompt_cache_miss_tokens: rawUsage.prompt_cache_miss_tokens ?? 0,
       } : undefined;
+      const providerRawUsage: AgentUsage["providerRawUsage"] | undefined = rawUsage ? {
+        promptTokens: typeof rawUsage.prompt_tokens === "number" ? rawUsage.prompt_tokens : undefined,
+        completionTokens: typeof rawUsage.completion_tokens === "number" ? rawUsage.completion_tokens : undefined,
+        totalTokens: typeof rawUsage.total_tokens === "number" ? rawUsage.total_tokens : undefined,
+        inputTokens: typeof rawUsage.input_tokens === "number" ? rawUsage.input_tokens : undefined,
+        outputTokens: typeof rawUsage.output_tokens === "number" ? rawUsage.output_tokens : undefined,
+        cacheCreationInputTokens: typeof rawUsage.cache_creation_input_tokens === "number"
+          ? rawUsage.cache_creation_input_tokens
+          : undefined,
+        cacheReadInputTokens: typeof rawUsage.cache_read_input_tokens === "number"
+          ? rawUsage.cache_read_input_tokens
+          : undefined,
+        promptCacheHitTokens: typeof rawUsage.prompt_cache_hit_tokens === "number"
+          ? rawUsage.prompt_cache_hit_tokens
+          : undefined,
+        promptCacheMissTokens: typeof rawUsage.prompt_cache_miss_tokens === "number"
+          ? rawUsage.prompt_cache_miss_tokens
+          : undefined,
+      } : undefined;
+
+      if (!content.trim() && (!toolCalls || toolCalls.length === 0) && reasoning_content?.trim()) {
+        const reasoningLength = reasoning_content.trim().length;
+        return {
+          ok: false,
+          error: `模型返回空内容。finish_reason=${finishReason || "unknown"}，reasoning_content=present(${reasoningLength})。`,
+          usage,
+          rawUsage: providerRawUsage,
+        };
+      }
       logModelPhase("[model-call] response_extracted", {
         parser: "chat_completions",
         contentLength: content.length,
@@ -4468,25 +4494,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
         toolCalls,
         reasoning_content,
         usage,
-        rawUsage: rawUsage ? {
-          promptTokens: typeof rawUsage.prompt_tokens === "number" ? rawUsage.prompt_tokens : undefined,
-          completionTokens: typeof rawUsage.completion_tokens === "number" ? rawUsage.completion_tokens : undefined,
-          totalTokens: typeof rawUsage.total_tokens === "number" ? rawUsage.total_tokens : undefined,
-          inputTokens: typeof rawUsage.input_tokens === "number" ? rawUsage.input_tokens : undefined,
-          outputTokens: typeof rawUsage.output_tokens === "number" ? rawUsage.output_tokens : undefined,
-          cacheCreationInputTokens: typeof rawUsage.cache_creation_input_tokens === "number"
-            ? rawUsage.cache_creation_input_tokens
-            : undefined,
-          cacheReadInputTokens: typeof rawUsage.cache_read_input_tokens === "number"
-            ? rawUsage.cache_read_input_tokens
-            : undefined,
-          promptCacheHitTokens: typeof rawUsage.prompt_cache_hit_tokens === "number"
-            ? rawUsage.prompt_cache_hit_tokens
-            : undefined,
-          promptCacheMissTokens: typeof rawUsage.prompt_cache_miss_tokens === "number"
-            ? rawUsage.prompt_cache_miss_tokens
-            : undefined,
-        } : undefined,
+        rawUsage: providerRawUsage,
       };
     } catch (err) {
       logModelPhase("[model-call] failed", {

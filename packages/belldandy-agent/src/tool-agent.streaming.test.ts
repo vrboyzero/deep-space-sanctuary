@@ -200,6 +200,42 @@ describe("ToolEnabledAgent Provider streaming", () => {
     expect(JSON.stringify(items)).not.toContain("private chain");
   });
 
+  it("preserves Provider usage when a reasoning-only stream fails visibly", async () => {
+    const provider = await createProvider([
+      (response) => {
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        writeSse(response, {
+          choices: [{ delta: { reasoning_content: "private chain" }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 12, completion_tokens: 8 },
+        });
+        response.end("data: [DONE]\n\n");
+      },
+    ]);
+    const agent = new ToolEnabledAgent({
+      baseUrl: provider.baseUrl,
+      apiKey: "local-test-key",
+      model: "local-test-model",
+      toolExecutor: createToolExecutor(),
+      streamingEnabled: true,
+    } as any);
+
+    const items = await collectItems(agent.run({ conversationId: "stream-reasoning-only", text: "hello" }));
+
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "usage",
+      inputTokens: 12,
+      outputTokens: 8,
+      modelCalls: 1,
+      providerReportedModelCalls: 1,
+    }));
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "final",
+      text: expect.stringMatching(/^模型返回空内容。finish_reason=stop，reasoning_content=present\(\d+\)。$/),
+    }));
+    expect(items).toContainEqual({ type: "status", status: "error" });
+    expect(JSON.stringify(items)).not.toContain("private chain");
+  });
+
   it("assembles fragmented tool arguments and executes the completed tool exactly once", async () => {
     const execute = vi.fn(async (request: { id: string; name: string; arguments: unknown }) => ({
       id: request.id,
