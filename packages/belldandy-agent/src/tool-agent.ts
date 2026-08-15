@@ -129,9 +129,10 @@ import {
   type ReactFinalizationRequest,
 } from "./react-finalization.js";
 import {
-  buildWorkspaceMutationRecoveryRequest,
+  buildWorkspaceMutationRecoveryPlan,
   selectWorkspaceMutationToolDefinitions,
   WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE,
+  type WorkspaceMutationRecoveryPlan,
   type WorkspaceMutationRecoveryRequest,
 } from "./react-workspace-mutation.js";
 import {
@@ -2795,6 +2796,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
           independentBlockText: currentIndependentBlockText,
           messageLayout: this.opts.messageLayout,
         }) as Message[];
+        const mutationRecoverySourceMessages = pendingSteerCommands.length === 0
+          ? preflightRequestMessages
+          : applyStablePrefixSplitMessageLayout(messages, {
+              transientText: currentTransientTailText,
+              independentBlockText: currentIndependentBlockText,
+              messageLayout: this.opts.messageLayout,
+            }) as Message[];
         const boundedStructuredOutputRepairRequest = structuredOutputRepairCall
           ? pendingBoundedStructuredOutputRepairRequest
           : undefined;
@@ -2825,43 +2833,65 @@ export class ToolEnabledAgent implements BelldandyAgent {
             this.opts.maxOutputTokens ?? REACT_FINALIZATION_OUTPUT_TOKEN_RESERVE,
           ),
         );
-        const mutationRecoveryOutputTokens = Math.max(
+        let mutationRecoveryOutputTokens = Math.max(
           1,
           Math.min(
             WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE,
             this.opts.maxOutputTokens ?? WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE,
           ),
         );
-        const buildMutationRecoveryCandidate = (): WorkspaceMutationRecoveryRequest | undefined => {
+        const buildMutationRecoveryCandidate = (): WorkspaceMutationRecoveryPlan | undefined => {
           const mutationTools = selectWorkspaceMutationToolDefinitions(
             tools,
             (name) => this.opts.toolExecutor.getRegisteredToolContract?.(name),
           );
-          const remainingForBothCalls = Math.max(
-            0,
-            runBudget.maxTotalTokens
-              - runBudget.totalTokens
-              - mutationRecoveryOutputTokens
-              - finalizationOutputTokens,
-          );
-          const mutationInputBudget = Math.floor(
-            remainingForBothCalls / 2 / REACT_FINALIZATION_INPUT_SAFETY_FACTOR,
-          );
-          return buildWorkspaceMutationRecoveryRequest({
-            messages: preflightRequestMessages,
+          return buildWorkspaceMutationRecoveryPlan({
+            messages: mutationRecoverySourceMessages,
             tools: mutationTools,
-            maxInputTokens: mutationInputBudget,
+            remainingTokenBudget: runBudget.maxTotalTokens - runBudget.totalTokens,
+            maxOutputTokens: this.opts.maxOutputTokens
+              ?? WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE,
+            finalizationOutputTokens,
+            inputSafetyFactor: REACT_FINALIZATION_INPUT_SAFETY_FACTOR,
             tokenEstimateContext: dispatchTokenEstimateContext,
           });
         };
-        if (workspaceMutationRecoveryRequested) {
-          const candidate = buildMutationRecoveryCandidate();
+        const headroomCandidate = workspaceMutationRequired
+          && !workspaceMutationObserved
+          && !workspaceMutationRecoveryAttempted
+          && modelCallCount > 0
+          ? buildMutationRecoveryCandidate()
+          : undefined;
+        const protectedOutputTokens = headroomCandidate
+          ? finalizationOutputTokens + headroomCandidate.outputTokens + finalizationOutputTokens
+          : 0;
+        const protectedMinimumCost = headroomCandidate
+          ? calculateUsageCostUsd({
+              inputTokens: preflightPromptTokens
+                + headroomCandidate.estimatedInputTokens
+                + headroomCandidate.finalizationInputTokenReserve,
+              outputTokens: protectedOutputTokens,
+              pricing: this.opts.usagePricing,
+            })
+          : undefined;
+        const workspaceMutationRecoveryRequiredByHeadroom = headroomCandidate
+          ? runBudget.checkModelCallPreflight({
+              minimumInputTokens: preflightPromptTokens
+                + headroomCandidate.estimatedInputTokens
+                + headroomCandidate.finalizationInputTokenReserve,
+              minimumOutputTokens: protectedOutputTokens,
+              ...(protectedMinimumCost ? { minimumCostUsd: protectedMinimumCost.totalUsd } : {}),
+            }) !== undefined
+          : false;
+        if (workspaceMutationRecoveryRequested || workspaceMutationRecoveryRequiredByHeadroom) {
+          const candidate = headroomCandidate ?? buildMutationRecoveryCandidate();
           if (!candidate) {
             yield* emitWorkspaceMutationFailure(
               "no bounded mutation-only request can be built from the allowed workspace mutation tools and remaining token budget.",
             );
             return;
           }
+          mutationRecoveryOutputTokens = candidate.outputTokens;
           const candidateMinimumCost = calculateUsageCostUsd({
             inputTokens: candidate.estimatedInputTokens,
             outputTokens: mutationRecoveryOutputTokens + finalizationOutputTokens,
@@ -3094,6 +3124,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
               );
               return;
             }
+            mutationRecoveryOutputTokens = candidate.outputTokens;
             const candidateMinimumCost = calculateUsageCostUsd({
               inputTokens: candidate.estimatedInputTokens,
               outputTokens: mutationRecoveryOutputTokens + finalizationOutputTokens,

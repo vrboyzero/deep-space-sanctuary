@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationRecoveryRequest,
   selectWorkspaceMutationToolDefinitions,
+  WORKSPACE_MUTATION_RECOVERY_MIN_OUTPUT_TOKEN_RESERVE,
   WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE,
 } from "./react-workspace-mutation.js";
 
@@ -53,7 +55,46 @@ describe("ReAct workspace mutation recovery", () => {
     ]);
     expect(request?.messages[1]?.content).toContain("[tool=file_read]");
     expect(request?.messages.some((message) => message.role === ("tool" as string))).toBe(false);
-    expect(WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE).toBe(1_024);
+    expect(WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE).toBe(4_096);
+    expect(WORKSPACE_MUTATION_RECOVERY_MIN_OUTPUT_TOKEN_RESERVE).toBe(1_024);
+  });
+
+  it("prefers reasoning headroom and shrinks output only when the run budget is tight", () => {
+    const input = {
+      messages: [{ role: "user", content: "Change api.go." }],
+      tools: [toolDefinition("apply_patch")],
+      maxOutputTokens: 4_096,
+      finalizationOutputTokens: 1_024,
+      inputSafetyFactor: 1.2,
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+    };
+
+    const preferred = buildWorkspaceMutationRecoveryPlan({
+      ...input,
+      remainingTokenBudget: 10_000,
+    });
+    const tight = buildWorkspaceMutationRecoveryPlan({
+      ...input,
+      remainingTokenBudget: 4_600,
+    });
+
+    expect(preferred?.outputTokens).toBe(4_096);
+    expect(tight?.outputTokens).toBeGreaterThanOrEqual(1_024);
+    expect(tight?.outputTokens).toBeLessThan(4_096);
+  });
+
+  it("keeps an explicitly smaller max output token limit as a hard cap", () => {
+    const plan = buildWorkspaceMutationRecoveryPlan({
+      messages: [{ role: "user", content: "Change api.go." }],
+      tools: [toolDefinition("apply_patch")],
+      remainingTokenBudget: 10_000,
+      maxOutputTokens: 512,
+      finalizationOutputTokens: 512,
+      inputSafetyFactor: 1.2,
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+    });
+
+    expect(plan?.outputTokens).toBe(512);
   });
 
   it("fails closed when no allowed workspace mutation tool is available", () => {

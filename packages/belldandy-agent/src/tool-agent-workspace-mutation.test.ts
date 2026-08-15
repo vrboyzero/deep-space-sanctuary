@@ -75,7 +75,8 @@ describe("ToolEnabledAgent required workspace mutation", () => {
         content: expect.stringContaining("Mutation-only recovery phase"),
       }),
     ]));
-    expect(requests[1]?.max_tokens).toBeLessThanOrEqual(1_024);
+    expect(requests[1]?.max_tokens).toBeGreaterThanOrEqual(1_024);
+    expect(requests[1]?.max_tokens).toBeLessThanOrEqual(4_096);
     expect(requests[2]).not.toHaveProperty("tools");
     expect(execute.mock.calls.map(([request]) => request.name)).toEqual(["file_read", "apply_patch"]);
     expect(items).toContainEqual(expect.objectContaining({
@@ -84,6 +85,118 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       providerReportedModelCalls: 3,
     }));
     expect(items).toContainEqual({ type: "final", text: '{"summary":"fixed"}' });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("reserves enough mutation-only output for a reasoning model to reach its tool call", async () => {
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return response({
+          choices: [{ finish_reason: "stop", message: { content: "I need to change the file." } }],
+          usage: { prompt_tokens: 200, completion_tokens: 30 },
+        });
+      }
+      if (requests.length === 2 && Number(body.max_tokens) <= 1_024) {
+        return response({
+          choices: [{
+            finish_reason: "length",
+            message: { content: null, reasoning_content: "R".repeat(4_112) },
+          }],
+          usage: { prompt_tokens: 300, completion_tokens: Number(body.max_tokens) },
+        });
+      }
+      if (requests.length === 2) {
+        return response(modelToolCall("patch-1", "apply_patch", { input: "bounded patch" }, 300, 1_100));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: "fixed" } }],
+        usage: { prompt_tokens: 200, completion_tokens: 40 },
+      });
+    });
+    const execute = vi.fn(async (request: { id: string; name: string }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: "Patch applied successfully",
+      durationMs: 1,
+    }));
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 3 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-reasoning",
+      text: "Change api.go.",
+      automationProfile: "bare",
+      meta: { _agentLaunchSpec: { workspaceMutationRequirement: "required" } },
+    }));
+
+    expect(requests).toHaveLength(3);
+    expect(requests[1]?.max_tokens).toBeGreaterThan(1_024);
+    expect(execute).toHaveBeenCalledOnce();
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("switches before another ordinary read consumes required-mutation recovery headroom", async () => {
+    const requests: Array<Record<string, any>> = [];
+    let ordinaryCalls = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const mutationOnly = body.messages?.some((message: any) =>
+        message.role === "system" && String(message.content).includes("Mutation-only recovery phase"));
+      if (mutationOnly) {
+        return response(modelToolCall("patch-1", "apply_patch", { input: "bounded patch" }, 2_000, 1_100));
+      }
+      if (!body.tools) {
+        return response({
+          choices: [{ finish_reason: "stop", message: { content: "fixed" } }],
+          usage: { prompt_tokens: 500, completion_tokens: 80 },
+        });
+      }
+      ordinaryCalls++;
+      if (ordinaryCalls === 1) {
+        return response(modelToolCall("read-1", "file_read", { path: "api.go" }, 11_500, 500));
+      }
+      return response(modelToolCall("read-2", "file_read", { path: "api.go" }, 9_000, 641));
+    });
+    const execute = vi.fn(async (request: { id: string; name: string }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: request.name === "file_read" ? "X".repeat(16_000) : "Patch applied successfully",
+      durationMs: 1,
+    }));
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 12 });
+    const consumePending = vi.fn(async () => []);
+    let peekCount = 0;
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-headroom",
+      text: "Change api.go.",
+      automationProfile: "bare",
+      meta: { _agentLaunchSpec: { workspaceMutationRequirement: "required" } },
+      steering: {
+        peekPending: () => (++peekCount === 1
+          ? []
+          : [{ commandId: "steer-pending", prompt: "STEER_MUST_REMAIN_PENDING" }]),
+        consumePending,
+        sealIfIdle: () => true,
+      },
+    }));
+
+    expect(ordinaryCalls).toBe(1);
+    expect(requests[1]?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "system",
+        content: expect.stringContaining("Mutation-only recovery phase"),
+      }),
+    ]));
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual(["file_read", "apply_patch"]);
+    expect(JSON.stringify(requests[1]?.messages)).not.toContain("STEER_MUST_REMAIN_PENDING");
+    expect(consumePending).toHaveBeenCalledTimes(1);
+    expect(consumePending).toHaveBeenCalledWith({ modelCallIndex: 1 });
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 

@@ -1,6 +1,7 @@
 import { estimateTokens, type TokenEstimateOptions } from "./tokenizer.js";
 
-export const WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE = 1_024;
+export const WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE = 4_096;
+export const WORKSPACE_MUTATION_RECOVERY_MIN_OUTPUT_TOKEN_RESERVE = 1_024;
 
 export type WorkspaceMutationToolDefinition = {
   type: "function";
@@ -27,6 +28,11 @@ export type WorkspaceMutationRecoveryRequest = {
   estimatedInputTokens: number;
   evidenceCount: number;
   truncatedEvidenceCount: number;
+};
+
+export type WorkspaceMutationRecoveryPlan = WorkspaceMutationRecoveryRequest & {
+  outputTokens: number;
+  finalizationInputTokenReserve: number;
 };
 
 const MUTATION_RECOVERY_INSTRUCTION = [
@@ -161,6 +167,68 @@ export function buildWorkspaceMutationRecoveryRequest(input: {
     evidenceCount: evidenceSections.length,
     truncatedEvidenceCount,
   };
+}
+
+export function buildWorkspaceMutationRecoveryPlan(input: {
+  messages: WorkspaceMutationSourceMessage[];
+  tools: WorkspaceMutationToolDefinition[];
+  remainingTokenBudget: number;
+  maxOutputTokens: number;
+  finalizationOutputTokens: number;
+  inputSafetyFactor: number;
+  tokenEstimateContext?: TokenEstimateOptions;
+}): WorkspaceMutationRecoveryPlan | undefined {
+  const remainingTokenBudget = normalizePositiveInt(input.remainingTokenBudget);
+  const maxOutputTokens = Math.min(
+    WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE,
+    normalizePositiveInt(input.maxOutputTokens),
+  );
+  const minimumOutputTokens = Math.min(
+    WORKSPACE_MUTATION_RECOVERY_MIN_OUTPUT_TOKEN_RESERVE,
+    maxOutputTokens,
+  );
+  const finalizationOutputTokens = normalizePositiveInt(input.finalizationOutputTokens);
+  const inputSafetyFactor = Number.isFinite(input.inputSafetyFactor) && input.inputSafetyFactor >= 1
+    ? input.inputSafetyFactor
+    : 1;
+  if (remainingTokenBudget <= 0 || maxOutputTokens <= 0 || finalizationOutputTokens <= 0) {
+    return undefined;
+  }
+
+  const buildForOutputTokens = (outputTokens: number): WorkspaceMutationRecoveryPlan | undefined => {
+    const remainingForBothCalls = Math.max(
+      0,
+      remainingTokenBudget - outputTokens - finalizationOutputTokens,
+    );
+    const finalizationInputTokenReserve = Math.floor(remainingForBothCalls / 2);
+    const mutationInputBudget = Math.floor(remainingForBothCalls / 2 / inputSafetyFactor);
+    const request = buildWorkspaceMutationRecoveryRequest({
+      messages: input.messages,
+      tools: input.tools,
+      maxInputTokens: mutationInputBudget,
+      tokenEstimateContext: input.tokenEstimateContext,
+    });
+    return request ? { ...request, outputTokens, finalizationInputTokenReserve } : undefined;
+  };
+
+  const preferred = buildForOutputTokens(maxOutputTokens);
+  if (preferred) {
+    return preferred;
+  }
+  let low = minimumOutputTokens;
+  let high = maxOutputTokens - 1;
+  let best: WorkspaceMutationRecoveryPlan | undefined;
+  while (low <= high) {
+    const outputTokens = Math.floor((low + high) / 2);
+    const candidate = buildForOutputTokens(outputTokens);
+    if (candidate) {
+      best = candidate;
+      low = outputTokens + 1;
+    } else {
+      high = outputTokens - 1;
+    }
+  }
+  return best;
 }
 
 function collectToolNames(messages: WorkspaceMutationSourceMessage[]): Map<string, string> {
