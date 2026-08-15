@@ -137,6 +137,7 @@ import {
   buildWorkspaceMutationNavigationRequest,
   buildWorkspaceMutationRecoveryPlan,
   selectWorkspaceMutationNavigationToolDefinitions,
+  selectRequiredWorkspaceMutationNavigationToolCalls,
   selectWorkspaceMutationToolDefinitions,
   WORKSPACE_MUTATION_NAVIGATION_INPUT_TOKEN_LIMIT,
   WORKSPACE_MUTATION_NAVIGATION_OUTPUT_TOKEN_RESERVE,
@@ -3714,7 +3715,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
         }
 
         // 检查是否有工具调用
-        const toolCalls = response.toolCalls;
+        let toolCalls = response.toolCalls;
         logDebug("[tool-check] model response analyzed", {
           toolCallCount: toolCalls?.length ?? 0,
           responseContentLength: response.content?.length ?? 0,
@@ -3945,6 +3946,31 @@ export class ToolEnabledAgent implements BelldandyAgent {
         }
         if (workspaceMutationNavigationCall) {
           const maxFileReadCalls = workspaceMutationNavigationRequest?.maxFileReadCalls ?? 2;
+          const missingRequiredSourceEvidencePaths = workspaceMutationNavigationRequest
+            ?.missingRequiredSourceEvidencePaths ?? [];
+          if (missingRequiredSourceEvidencePaths.length > 0) {
+            const requiredToolCalls = selectRequiredWorkspaceMutationNavigationToolCalls(
+              toolCalls,
+              missingRequiredSourceEvidencePaths,
+              toolNames,
+              maxFileReadCalls,
+            );
+            if (!requiredToolCalls) {
+              yield* emitWorkspaceMutationFailure(
+                "the bounded source-navigation model call did not request each missing required source path exactly once.",
+              );
+              return;
+            }
+            if (requiredToolCalls.length !== toolCalls.length) {
+              logWarn("[workspace-mutation] dropped non-required source-navigation tool calls", {
+                requestedToolCallCount: toolCalls.length,
+                retainedToolCallCount: requiredToolCalls.length,
+                conversationId: input.conversationId,
+                agentId: resolvedAgentId,
+              });
+              toolCalls = requiredToolCalls;
+            }
+          }
           const requestedNavigationTool = areWorkspaceMutationNavigationToolCallsAllowed(
             toolCalls.map((toolCall) => toolCall.function.name),
             toolNames,

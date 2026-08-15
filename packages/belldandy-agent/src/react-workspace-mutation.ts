@@ -40,6 +40,13 @@ export type WorkspaceMutationNavigationRequest = WorkspaceMutationRecoveryReques
   maxFileReadCalls: number;
 };
 
+export type WorkspaceMutationNavigationToolCall = {
+  function: {
+    name: string;
+    arguments: string;
+  };
+};
+
 export type WorkspaceMutationRecoveryPlan = WorkspaceMutationRecoveryRequest & {
   outputTokens: number;
   finalizationInputTokenReserve: number;
@@ -94,6 +101,47 @@ export function areWorkspaceMutationNavigationToolCallsAllowed(
     && allowedToolNames.includes("file_read");
 }
 
+export function selectRequiredWorkspaceMutationNavigationToolCalls<
+  T extends WorkspaceMutationNavigationToolCall,
+>(
+  requestedToolCalls: readonly T[],
+  missingRequiredPaths: readonly string[],
+  allowedToolNames: readonly string[],
+  maxFileReadCalls: number,
+): T[] | undefined {
+  if (!allowedToolNames.includes("file_read")
+    || missingRequiredPaths.length === 0
+    || missingRequiredPaths.length > maxFileReadCalls) {
+    return undefined;
+  }
+  const requiredPathIdentities = new Set(missingRequiredPaths.map(normalizeSourcePath));
+  if (requiredPathIdentities.size !== missingRequiredPaths.length) {
+    return undefined;
+  }
+
+  const selected: T[] = [];
+  const selectedPathIdentities = new Set<string>();
+  for (const toolCall of requestedToolCalls) {
+    if (toolCall.function.name !== "file_read") {
+      return undefined;
+    }
+    const requestedPath = readFileReadToolCallPath(toolCall.function.arguments);
+    if (!requestedPath) {
+      return undefined;
+    }
+    const requestedPathIdentity = normalizeSourcePath(requestedPath);
+    if (!requiredPathIdentities.has(requestedPathIdentity)) {
+      continue;
+    }
+    if (selectedPathIdentities.has(requestedPathIdentity)) {
+      return undefined;
+    }
+    selectedPathIdentities.add(requestedPathIdentity);
+    selected.push(toolCall);
+  }
+  return selectedPathIdentities.size === requiredPathIdentities.size ? selected : undefined;
+}
+
 export function buildWorkspaceMutationRecoveryRequest(input: {
   messages: WorkspaceMutationSourceMessage[];
   tools: WorkspaceMutationToolDefinition[];
@@ -120,7 +168,7 @@ export function buildWorkspaceMutationNavigationRequest(input: {
   );
   const fileReadLimit = maxFileReadCalls === 2 ? "two" : String(maxFileReadCalls);
   const requiredPathInstruction = input.missingRequiredChangedPaths?.length
-    ? "Request one file_read for every listed missing required path in this same response; do not omit any listed path."
+    ? "Request exactly one file_read for every listed missing required path in this same response, and no other calls or paths; do not omit or duplicate any listed path."
     : "";
   const request = buildBoundedWorkspaceMutationRequest({
     ...input,
@@ -509,6 +557,20 @@ function collectStructuredSourcePaths(value: unknown): string[] {
 
 function normalizeSourcePath(value: string): string {
   return value.trim().replaceAll("\\", "/").replace(/^\.\//, "").toLowerCase();
+}
+
+function readFileReadToolCallPath(argumentsJson: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(argumentsJson);
+  } catch {
+    return undefined;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return undefined;
+  }
+  const requestedPath = (parsed as Record<string, unknown>).path;
+  return typeof requestedPath === "string" && requestedPath.trim() ? requestedPath : undefined;
 }
 
 function clipTextToTokenBudget(

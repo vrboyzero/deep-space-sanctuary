@@ -4,6 +4,7 @@ import {
   buildWorkspaceMutationNavigationRequest,
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationRecoveryRequest,
+  selectRequiredWorkspaceMutationNavigationToolCalls,
   selectWorkspaceMutationNavigationToolDefinitions,
   selectWorkspaceMutationToolDefinitions,
   WORKSPACE_MUTATION_RECOVERY_MIN_OUTPUT_TOKEN_RESERVE,
@@ -11,6 +12,44 @@ import {
 } from "./react-workspace-mutation.js";
 
 describe("ReAct workspace mutation recovery", () => {
+  it("retains exactly one read per required navigation path and drops unrelated reads", () => {
+    const requiredPaths = ["src/api.ts", "src/protocol.ts"];
+    const calls = [
+      fileReadToolCall("read-api", "src/api.ts"),
+      fileReadToolCall("read-extra", "test/frozen.mjs"),
+      fileReadToolCall("read-protocol", "./src/protocol.ts"),
+    ];
+
+    expect(selectRequiredWorkspaceMutationNavigationToolCalls(
+      calls,
+      requiredPaths,
+      ["file_read"],
+      2,
+    )?.map((call) => call.id)).toEqual(["read-api", "read-protocol"]);
+  });
+
+  it.each([
+    {
+      name: "duplicates a required path",
+      calls: [
+        fileReadToolCall("read-api-1", "src/api.ts"),
+        fileReadToolCall("read-api-2", "./src/api.ts"),
+        fileReadToolCall("read-protocol", "src/protocol.ts"),
+      ],
+    },
+    {
+      name: "omits a required path",
+      calls: [fileReadToolCall("read-api", "src/api.ts")],
+    },
+  ])("fails closed when navigation $name", ({ calls }) => {
+    expect(selectRequiredWorkspaceMutationNavigationToolCalls(
+      calls,
+      ["src/api.ts", "src/protocol.ts"],
+      ["file_read"],
+      2,
+    )).toBeUndefined();
+  });
+
   it("builds one bounded mutation-only request from the task and recent read evidence", () => {
     const definitions = [
       toolDefinition("file_read"),
@@ -223,6 +262,16 @@ function toolDefinition(name: string) {
       name,
       description: `${name} description`,
       parameters: { type: "object", properties: {} },
+    },
+  };
+}
+
+function fileReadToolCall(id: string, path: string) {
+  return {
+    id,
+    function: {
+      name: "file_read",
+      arguments: JSON.stringify({ path }),
     },
   };
 }

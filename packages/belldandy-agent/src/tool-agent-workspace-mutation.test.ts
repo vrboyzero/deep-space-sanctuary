@@ -657,9 +657,16 @@ describe("ToolEnabledAgent required workspace mutation", () => {
 
   it.each([
     { name: "reads three required paths", navigationReadCount: 3, completes: true },
+    {
+      name: "drops one extra non-required file read",
+      navigationReadCount: 3,
+      extraNavigationPath: "test/benchmark-v3/real-ts-api-migration.mjs",
+      completes: true,
+    },
     { name: "fails closed when one required path is omitted", navigationReadCount: 2, completes: false },
   ])("$name in one bounded navigation when only a non-target test was read", async ({
     navigationReadCount,
+    extraNavigationPath,
     completes,
   }) => {
     const requiredChangedPaths = [
@@ -694,17 +701,24 @@ describe("ToolEnabledAgent required workspace mutation", () => {
             message: {
               content: null,
               tool_calls: [
-                modelToolCall("read-api", "file_read", {
-                  path: requiredChangedPaths[0],
-                }, 0, 0).choices[0].message.tool_calls[0],
-                modelToolCall("read-connection", "file_read", {
-                  path: requiredChangedPaths[1],
-                }, 0, 0).choices[0].message.tool_calls[0],
-                modelToolCall("read-protocol", "file_read", {
-                  path: requiredChangedPaths[2],
-                  anchor: "trace?: TraceValues;",
-                }, 0, 0).choices[0].message.tool_calls[0],
-              ].slice(0, navigationReadCount),
+                ...[
+                  modelToolCall("read-api", "file_read", {
+                    path: requiredChangedPaths[0],
+                  }, 0, 0).choices[0].message.tool_calls[0],
+                  modelToolCall("read-connection", "file_read", {
+                    path: requiredChangedPaths[1],
+                  }, 0, 0).choices[0].message.tool_calls[0],
+                  modelToolCall("read-protocol", "file_read", {
+                    path: requiredChangedPaths[2],
+                    anchor: "trace?: TraceValues;",
+                  }, 0, 0).choices[0].message.tool_calls[0],
+                ].slice(0, navigationReadCount),
+                ...(extraNavigationPath
+                  ? [modelToolCall("read-extra", "file_read", {
+                      path: extraNavigationPath,
+                    }, 0, 0).choices[0].message.tool_calls[0]]
+                  : []),
+              ],
             },
           }],
           usage: { prompt_tokens: 1_200, completion_tokens: 100 },
@@ -816,7 +830,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
         content: expect.stringContaining("at most 3 file_read calls"),
       }),
     ]));
-    expect(requests[1]?.messages[0]?.content).toContain("do not omit any listed path");
+    expect(requests[1]?.messages[0]?.content).toContain("do not omit or duplicate any listed path");
     if (completes) {
       expect(requests).toHaveLength(4);
       expect(requests[2]?.tools?.map((tool: any) => tool.function.name)).toEqual(["apply_patch"]);
@@ -834,12 +848,10 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
         "list_files",
         "file_read",
-        "file_read",
-        "file_read",
       ]);
       expect(items).toContainEqual(expect.objectContaining({
         type: "final",
-        text: expect.stringContaining("did not produce complete source evidence"),
+        text: expect.stringContaining("did not request each missing required source path exactly once"),
       }));
       expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
     }
