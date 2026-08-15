@@ -342,6 +342,52 @@ describe("ReAct workspace mutation recovery", () => {
     expect(request?.messages[1]?.content).toContain(exportContext);
   });
 
+  it("keeps projected task contexts aligned to complete source lines", () => {
+    const prefixLine = "x".repeat(250);
+    const targetLine = "\tCancellationStrategy, MessageStrategy, TraceValues";
+    const suffixLine = "y".repeat(600);
+    const request = buildWorkspaceMutationRecoveryRequest({
+      maxInputTokens: 1_400,
+      tools: [toolDefinition("apply_patch")],
+      missingRequiredChangedPaths: ["jsonrpc/src/common/api.ts"],
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+      messages: [
+        {
+          role: "user",
+          content: "Remove TraceValues from the public API.",
+        },
+        {
+          role: "assistant",
+          tool_calls: [{
+            id: "read-api",
+            function: { name: "file_read", arguments: "{}" },
+          }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "read-api",
+          content: JSON.stringify({
+            path: "jsonrpc/src/common/api.ts",
+            truncated: false,
+            content: [
+              "const header = true;\n".repeat(220),
+              prefixLine,
+              targetLine,
+              suffixLine,
+              "const tail = true;",
+            ].join("\n"),
+          }),
+        },
+      ],
+    });
+
+    const projectedEvidence = JSON.parse(
+      request?.messages[1]?.content.split("[tool=file_read]\n").at(-1) ?? "{}",
+    ) as { taskRelevantContexts?: Array<{ context: string }> };
+    const context = projectedEvidence.taskRelevantContexts?.[0]?.context ?? "";
+    expect(context).toBe(`${prefixLine}\n${targetLine}\n${suffixLine}\n`);
+  });
+
   it("prefers reasoning headroom and shrinks output only when the run budget is tight", () => {
     const input = {
       messages: [{ role: "user", content: "Change api.go." }],

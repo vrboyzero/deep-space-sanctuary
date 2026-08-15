@@ -544,18 +544,27 @@ function collectTaskRelevantFileContexts(
       if (!hasIdentifierBoundaries(fileContent, matchIndex, identifier.length)) {
         continue;
       }
-      const start = Math.max(0, matchIndex - FILE_READ_TASK_CONTEXT_BEFORE_CHARS);
-      const end = Math.min(
+      const desiredStart = Math.max(0, matchIndex - FILE_READ_TASK_CONTEXT_BEFORE_CHARS);
+      const desiredEnd = Math.min(
         fileContent.length,
         matchIndex + identifier.length + FILE_READ_TASK_CONTEXT_AFTER_CHARS,
       );
+      const remainingChars = FILE_READ_TASK_CONTEXT_MAX_CHARS - retainedChars;
+      let { start, end } = expandToCompleteSourceLines(fileContent, desiredStart, desiredEnd);
+      if (end - start > remainingChars) {
+        ({ start, end } = expandToCompleteSourceLines(
+          fileContent,
+          matchIndex,
+          matchIndex + identifier.length,
+        ));
+      }
+      if (end - start > remainingChars) {
+        continue;
+      }
       if (retainedRanges.some((range) => start < range.end && end > range.start)) {
         continue;
       }
       const context = fileContent.slice(start, end);
-      if (retainedChars + context.length > FILE_READ_TASK_CONTEXT_MAX_CHARS) {
-        return contexts;
-      }
       retainedRanges.push({ start, end });
       retainedChars += context.length;
       contexts.push({ identifier, context });
@@ -565,6 +574,19 @@ function collectTaskRelevantFileContexts(
     }
   }
   return contexts;
+}
+
+function expandToCompleteSourceLines(
+  value: string,
+  start: number,
+  end: number,
+): { start: number; end: number } {
+  const lineStart = start <= 0 ? 0 : value.lastIndexOf("\n", start - 1) + 1;
+  const nextLineBreak = end >= value.length ? -1 : value.indexOf("\n", end);
+  return {
+    start: lineStart,
+    end: nextLineBreak < 0 ? value.length : nextLineBreak + 1,
+  };
 }
 
 function hasIdentifierBoundaries(value: string, start: number, length: number): boolean {
