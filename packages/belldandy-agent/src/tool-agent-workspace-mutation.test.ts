@@ -655,7 +655,13 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
-  it("reads three required paths in one bounded navigation when only a non-target test was read", async () => {
+  it.each([
+    { name: "reads three required paths", navigationReadCount: 3, completes: true },
+    { name: "fails closed when one required path is omitted", navigationReadCount: 2, completes: false },
+  ])("$name in one bounded navigation when only a non-target test was read", async ({
+    navigationReadCount,
+    completes,
+  }) => {
     const requiredChangedPaths = [
       "jsonrpc/src/common/api.ts",
       "jsonrpc/src/common/connection.ts",
@@ -678,7 +684,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
               ],
             },
           }],
-          usage: { prompt_tokens: 6_600, completion_tokens: 180 },
+          usage: { prompt_tokens: 1_000, completion_tokens: 180 },
         });
       }
       if (requests.length === 2) {
@@ -698,7 +704,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
                   path: requiredChangedPaths[2],
                   anchor: "trace?: TraceValues;",
                 }, 0, 0).choices[0].message.tool_calls[0],
-              ],
+              ].slice(0, navigationReadCount),
             },
           }],
           usage: { prompt_tokens: 1_200, completion_tokens: 100 },
@@ -760,7 +766,9 @@ describe("ToolEnabledAgent required workspace mutation", () => {
             ? requiredChangedPaths.join("\n")
             : isProtocolAnchor
               ? "export interface InitializeParams {\n\ttrace?: TraceValues;\n}"
-              : `source context for ${requestPath}`,
+              : requestPath === requiredChangedPaths[1]
+                ? `source context for ${requestPath}\n${"x".repeat(60_000)}`
+                : `source context for ${requestPath}`,
         }),
         durationMs: 1,
       };
@@ -768,7 +776,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     const agent = createAgent({
       execute,
       maxTotalTokens: 24_000,
-      toolLoopIterationBudget: 3,
+      toolLoopIterationBudget: 12,
       mutationToolNames: ["apply_patch"],
       readToolNames: ["file_read", "list_files"],
     });
@@ -781,7 +789,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
         _agentLaunchSpec: {
           workspaceMutationRequirement: "required",
           requiredChangedPaths,
-          toolLoopIterationBudget: 3,
+          toolLoopIterationBudget: 12,
         },
       },
       structuredOutput: {
@@ -792,7 +800,6 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       },
     } as any));
 
-    expect(requests).toHaveLength(4);
     expect(requests[1]?.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({
         role: "system",
@@ -809,16 +816,33 @@ describe("ToolEnabledAgent required workspace mutation", () => {
         content: expect.stringContaining("at most 3 file_read calls"),
       }),
     ]));
-    expect(requests[2]?.tools?.map((tool: any) => tool.function.name)).toEqual(["apply_patch"]);
-    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
-      "list_files",
-      "file_read",
-      "file_read",
-      "file_read",
-      "file_read",
-      "apply_patch",
-    ]);
-    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+    expect(requests[1]?.messages[0]?.content).toContain("do not omit any listed path");
+    if (completes) {
+      expect(requests).toHaveLength(4);
+      expect(requests[2]?.tools?.map((tool: any) => tool.function.name)).toEqual(["apply_patch"]);
+      expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+        "list_files",
+        "file_read",
+        "file_read",
+        "file_read",
+        "file_read",
+        "apply_patch",
+      ]);
+      expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+    } else {
+      expect(requests).toHaveLength(2);
+      expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+        "list_files",
+        "file_read",
+        "file_read",
+        "file_read",
+      ]);
+      expect(items).toContainEqual(expect.objectContaining({
+        type: "final",
+        text: expect.stringContaining("did not produce complete source evidence"),
+      }));
+      expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
+    }
   });
 
   it.each([

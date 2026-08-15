@@ -2640,7 +2640,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
         const workspaceMutationRecoveryRequested = workspaceMutationRequired
           && !workspaceMutationObserved
           && !workspaceMutationRecoveryAttempted
-          && (workspaceMutationRecoveryPending || workspaceMutationRecoveryRequiredByGate);
+          && (
+            workspaceMutationRecoveryPending
+            || workspaceMutationRecoveryRequiredByGate
+            || workspaceMutationNavigationAttempts > 0
+          );
         if (iterationBudget > 0) {
           const warningThreshold = Math.max(1, Math.ceil(iterationBudget * this.opts.toolLoopWarningFraction));
           if (
@@ -2905,7 +2909,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
             })
           : undefined;
         const workspaceMutationRecoveryRequiredByHeadroom = headroomCandidate
-          ? isMutationRecoveryReadyForHeadroom(headroomCandidate) && runBudget.checkModelCallPreflight({
+          ? !requiresRequiredPathSourceNavigation(headroomCandidate)
+            && isMutationRecoveryReadyForHeadroom(headroomCandidate)
+            && runBudget.checkModelCallPreflight({
               minimumInputTokens: preflightPromptTokens
                 + headroomCandidate.estimatedInputTokens
                 + headroomCandidate.finalizationInputTokenReserve,
@@ -2916,7 +2922,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
         const workspaceMutationRecoveryReadyByGate = workspaceMutationRecoveryRequested
           && headroomCandidate !== undefined
           && !requiresRequiredPathSourceNavigation(headroomCandidate);
-        const workspaceMutationNavigationRequiredByGate = workspaceMutationRecoveryRequested
+        const workspaceMutationNavigationRequiredByGate = workspaceMutationRequired
+          && !workspaceMutationObserved
+          && !workspaceMutationRecoveryAttempted
           && headroomCandidate !== undefined
           && requiresRequiredPathSourceNavigation(headroomCandidate);
         if (workspaceMutationRecoveryRequested && headroomCandidate === undefined) {
@@ -3224,7 +3232,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 messages: mutationRecoverySourceMessages,
                 tools: navigationTools,
                 maxInputTokens: remainingNavigationInputTokens,
-                missingRequiredChangedPaths: workspaceMutationPathCoverage.missingPaths(),
+                missingRequiredChangedPaths: candidate.missingRequiredSourceEvidencePaths,
                 tokenEstimateContext: dispatchTokenEstimateContext,
               });
               const navigationMinimumCost = navigationRequest
