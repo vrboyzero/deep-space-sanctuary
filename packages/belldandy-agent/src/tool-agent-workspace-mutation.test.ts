@@ -663,10 +663,17 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       extraNavigationPath: "test/benchmark-v3/real-ts-api-migration.mjs",
       completes: true,
     },
+    {
+      name: "expands an unfocused required read and retains middle edit context",
+      navigationReadCount: 3,
+      omitProtocolAnchor: true,
+      completes: true,
+    },
     { name: "fails closed when one required path is omitted", navigationReadCount: 2, completes: false },
   ])("$name in one bounded navigation when only a non-target test was read", async ({
     navigationReadCount,
     extraNavigationPath,
+    omitProtocolAnchor,
     completes,
   }) => {
     const requiredChangedPaths = [
@@ -710,7 +717,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
                   }, 0, 0).choices[0].message.tool_calls[0],
                   modelToolCall("read-protocol", "file_read", {
                     path: requiredChangedPaths[2],
-                    anchor: "trace?: TraceValues;",
+                    ...(!omitProtocolAnchor ? { anchor: "trace?: TraceValues;" } : {}),
                   }, 0, 0).choices[0].message.tool_calls[0],
                 ].slice(0, navigationReadCount),
                 ...(extraNavigationPath
@@ -766,13 +773,15 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       }
       const isProtocolAnchor = requestPath === requiredChangedPaths[2]
         && request.arguments?.anchor === "trace?: TraceValues;";
+      const isExpandedProtocolRead = requestPath === requiredChangedPaths[2]
+        && request.arguments?.limit === 1_048_576;
       return {
         id: request.id,
         name: request.name,
         success: true,
         output: JSON.stringify({
           path: requestPath,
-          truncated: requestPath === requiredChangedPaths[2],
+          truncated: requestPath === requiredChangedPaths[2] && !isExpandedProtocolRead,
           ...(isProtocolAnchor ? {
             anchor: { text: "trace?: TraceValues;", byteOffset: 82_000 },
           } : {}),
@@ -780,6 +789,8 @@ describe("ToolEnabledAgent required workspace mutation", () => {
             ? requiredChangedPaths.join("\n")
             : isProtocolAnchor
               ? "export interface InitializeParams {\n\ttrace?: TraceValues;\n}"
+              : isExpandedProtocolRead
+                ? `import { TraceValues } from "vscode-jsonrpc";\n${"x".repeat(40_000)}\nexport interface InitializeParams {\n\ttrace?: TraceValues;\n}`
               : requestPath === requiredChangedPaths[1]
                 ? `source context for ${requestPath}\n${"x".repeat(60_000)}`
                 : `source context for ${requestPath}`,
@@ -842,6 +853,13 @@ describe("ToolEnabledAgent required workspace mutation", () => {
         "file_read",
         "apply_patch",
       ]);
+      if (omitProtocolAnchor) {
+        const protocolRead = execute.mock.calls
+          .map(([request]) => request)
+          .find((request) => request.arguments?.path === requiredChangedPaths[2]);
+        expect(protocolRead?.arguments?.limit).toBe(1_048_576);
+        expect(requests[2]?.messages[1]?.content).toContain("trace?: TraceValues;");
+      }
       expect(items.at(-1)).toEqual({ type: "status", status: "done" });
     } else {
       expect(requests).toHaveLength(2);

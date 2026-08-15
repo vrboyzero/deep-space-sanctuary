@@ -3968,8 +3968,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 conversationId: input.conversationId,
                 agentId: resolvedAgentId,
               });
-              toolCalls = requiredToolCalls;
             }
+            toolCalls = requiredToolCalls;
           }
           const requestedNavigationTool = areWorkspaceMutationNavigationToolCallsAllowed(
             toolCalls.map((toolCall) => toolCall.function.name),

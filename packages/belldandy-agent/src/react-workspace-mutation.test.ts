@@ -20,12 +20,18 @@ describe("ReAct workspace mutation recovery", () => {
       fileReadToolCall("read-protocol", "./src/protocol.ts"),
     ];
 
-    expect(selectRequiredWorkspaceMutationNavigationToolCalls(
+    const selected = selectRequiredWorkspaceMutationNavigationToolCalls(
       calls,
       requiredPaths,
       ["file_read"],
       2,
-    )?.map((call) => call.id)).toEqual(["read-api", "read-protocol"]);
+    );
+
+    expect(selected?.map((call) => call.id)).toEqual(["read-api", "read-protocol"]);
+    expect(selected?.map((call) => JSON.parse(call.function.arguments).limit)).toEqual([
+      1_048_576,
+      1_048_576,
+    ]);
   });
 
   it.each([
@@ -48,6 +54,42 @@ describe("ReAct workspace mutation recovery", () => {
       ["file_read"],
       2,
     )).toBeUndefined();
+  });
+
+  it.each([
+    { name: "uses base64 encoding", arguments: { encoding: "base64" } },
+    { name: "uses a cursor", arguments: { cursor: "next-page" } },
+    { name: "uses a positive offset", arguments: { offset: 1 } },
+    { name: "uses a negative offset", arguments: { offset: -1 } },
+    { name: "uses a non-numeric offset", arguments: { offset: "0" } },
+  ])("fails closed before required navigation $name", ({ arguments: extraArguments }) => {
+    const call = fileReadToolCall("read-api", "src/api.ts");
+    call.function.arguments = JSON.stringify({ path: "src/api.ts", ...extraArguments });
+
+    expect(selectRequiredWorkspaceMutationNavigationToolCalls(
+      [call],
+      ["src/api.ts"],
+      ["file_read"],
+      1,
+    )).toBeUndefined();
+  });
+
+  it("accepts an explicit zero offset and expands the required read", () => {
+    const call = fileReadToolCall("read-api", "src/api.ts");
+    call.function.arguments = JSON.stringify({ path: "src/api.ts", offset: 0 });
+
+    const selected = selectRequiredWorkspaceMutationNavigationToolCalls(
+      [call],
+      ["src/api.ts"],
+      ["file_read"],
+      1,
+    );
+
+    expect(JSON.parse(selected?.[0]?.function.arguments ?? "{}")).toEqual({
+      path: "src/api.ts",
+      offset: 0,
+      limit: 1_048_576,
+    });
   });
 
   it("builds one bounded mutation-only request from the task and recent read evidence", () => {
@@ -206,6 +248,41 @@ describe("ReAct workspace mutation recovery", () => {
     const focusedEvidence = request?.messages[1]?.content.split("[tool=file_read]").at(-1);
     expect(focusedEvidence).toContain('"contentTruncatedForMutationRecovery":true');
     expect(focusedEvidence).toContain('"anchorContext":');
+  });
+
+  it("retains task-relevant identifiers from the middle of a complete large required file", () => {
+    const targetContext = "export interface InitializeParams {\n\ttrace?: TraceValues;\n}";
+    const request = buildWorkspaceMutationRecoveryRequest({
+      maxInputTokens: 900,
+      tools: [toolDefinition("apply_patch")],
+      missingRequiredChangedPaths: ["protocol/src/common/protocol.ts"],
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+      messages: [
+        {
+          role: "user",
+          content: "Remove TraceValues from the public API and migrate protocol to TraceValue.",
+        },
+        {
+          role: "assistant",
+          tool_calls: [{
+            id: "read-protocol",
+            function: { name: "file_read", arguments: "{}" },
+          }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "read-protocol",
+          content: JSON.stringify({
+            path: "protocol/src/common/protocol.ts",
+            truncated: false,
+            content: `import { TraceValues } from "vscode-jsonrpc";\n${"x".repeat(40_000)}\n${targetContext}\n${"y".repeat(40_000)}`,
+          }),
+        },
+      ],
+    });
+
+    expect(request?.missingRequiredSourceEvidencePaths).toEqual([]);
+    expect(request?.messages[1]?.content).toContain("trace?: TraceValues;");
   });
 
   it("prefers reasoning headroom and shrinks output only when the run budget is tight", () => {

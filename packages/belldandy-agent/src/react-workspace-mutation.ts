@@ -5,6 +5,7 @@ export const WORKSPACE_MUTATION_RECOVERY_MIN_OUTPUT_TOKEN_RESERVE = 1_024;
 export const WORKSPACE_MUTATION_NAVIGATION_INPUT_TOKEN_LIMIT = 2_048;
 export const WORKSPACE_MUTATION_NAVIGATION_OUTPUT_TOKEN_RESERVE = 1_024;
 export const WORKSPACE_MUTATION_NAVIGATION_MAX_FILE_READ_CALLS = 3;
+export const WORKSPACE_MUTATION_NAVIGATION_REQUIRED_FILE_READ_LIMIT = 1_048_576;
 
 export type WorkspaceMutationToolDefinition = {
   type: "function";
@@ -64,6 +65,11 @@ const MIN_TASK_TOKENS = 48;
 const MIN_EVIDENCE_TOKENS = 48;
 const FILE_READ_ANCHOR_CONTEXT_BEFORE_CHARS = 384;
 const FILE_READ_ANCHOR_CONTEXT_AFTER_CHARS = 1_024;
+const FILE_READ_TASK_CONTEXT_MIN_CONTENT_CHARS = 8_192;
+const FILE_READ_TASK_CONTEXT_BEFORE_CHARS = 192;
+const FILE_READ_TASK_CONTEXT_AFTER_CHARS = 512;
+const FILE_READ_TASK_CONTEXT_MAX_ITEMS = 6;
+const FILE_READ_TASK_CONTEXT_MAX_CHARS = 4_096;
 const MUTATION_SOURCE_EVIDENCE_TOOLS = new Set(["file_read", "text_search", "code_intel"]);
 
 export function selectWorkspaceMutationToolDefinitions(
@@ -119,16 +125,20 @@ export function selectRequiredWorkspaceMutationNavigationToolCalls<
     return undefined;
   }
 
-  const selected: T[] = [];
+  const selected: Array<{ toolCall: T; arguments: Record<string, unknown> }> = [];
   const selectedPathIdentities = new Set<string>();
   for (const toolCall of requestedToolCalls) {
     if (toolCall.function.name !== "file_read") {
       return undefined;
     }
-    const requestedPath = readFileReadToolCallPath(toolCall.function.arguments);
-    if (!requestedPath) {
+    const parsedArguments = readFileReadToolCallArguments(toolCall.function.arguments);
+    if (!parsedArguments
+      || (parsedArguments.encoding !== undefined && parsedArguments.encoding !== "utf-8")
+      || parsedArguments.cursor !== undefined
+      || (parsedArguments.offset !== undefined && parsedArguments.offset !== 0)) {
       return undefined;
     }
+    const requestedPath = parsedArguments.path;
     const requestedPathIdentity = normalizeSourcePath(requestedPath);
     if (!requiredPathIdentities.has(requestedPathIdentity)) {
       continue;
@@ -137,9 +147,28 @@ export function selectRequiredWorkspaceMutationNavigationToolCalls<
       return undefined;
     }
     selectedPathIdentities.add(requestedPathIdentity);
-    selected.push(toolCall);
+    selected.push({ toolCall, arguments: parsedArguments });
   }
-  return selectedPathIdentities.size === requiredPathIdentities.size ? selected : undefined;
+  if (selectedPathIdentities.size !== requiredPathIdentities.size) {
+    return undefined;
+  }
+  return selected.map(({ toolCall, arguments: parsedArguments }) => {
+    const boundedArguments = parsedArguments.anchor !== undefined
+      || parsedArguments.limit !== undefined
+      || parsedArguments.maxBytes !== undefined
+      ? parsedArguments
+      : {
+          ...parsedArguments,
+          limit: WORKSPACE_MUTATION_NAVIGATION_REQUIRED_FILE_READ_LIMIT,
+        };
+    return {
+      ...toolCall,
+      function: {
+        ...toolCall.function,
+        arguments: JSON.stringify(boundedArguments),
+      },
+    } as T;
+  });
 }
 
 export function buildWorkspaceMutationRecoveryRequest(input: {
@@ -271,7 +300,7 @@ function buildBoundedWorkspaceMutationRequest(input: {
       Math.floor(remainingTokens / Math.min(index + 1, 3)),
     );
     const label = `[tool=${item.toolName}]`;
-    const focusedContent = projectFileReadAnchorEvidence(item.toolName, item.content);
+    const focusedContent = projectFileReadEvidence(item.toolName, item.content, taskText);
     const boundedContent = clipTextToTokenBudget(
       focusedContent,
       Math.max(1, itemBudget - estimateTokens(label, input.tokenEstimateContext) - 2),
@@ -437,7 +466,7 @@ function readTextContent(content: unknown): string {
     .join("\n");
 }
 
-function projectFileReadAnchorEvidence(toolName: string, content: string): string {
+function projectFileReadEvidence(toolName: string, content: string, taskText: string): string {
   if (toolName !== "file_read") {
     return content;
   }
@@ -453,35 +482,98 @@ function projectFileReadAnchorEvidence(toolName: string, content: string): strin
   }
 
   const evidence = parsed as Record<string, unknown>;
-  const anchor = evidence.anchor;
   const fileContent = evidence.content;
-  if (!anchor || typeof anchor !== "object" || Array.isArray(anchor) || typeof fileContent !== "string") {
+  if (typeof fileContent !== "string") {
     return content;
   }
-  const anchorText = (anchor as Record<string, unknown>).text;
-  if (typeof anchorText !== "string" || !anchorText) {
-    return content;
-  }
-  const anchorIndex = fileContent.indexOf(anchorText);
-  if (anchorIndex < 0) {
-    return content;
+  const anchor = evidence.anchor;
+  if (anchor && typeof anchor === "object" && !Array.isArray(anchor)) {
+    const anchorText = (anchor as Record<string, unknown>).text;
+    if (typeof anchorText === "string" && anchorText) {
+      const anchorIndex = fileContent.indexOf(anchorText);
+      if (anchorIndex >= 0) {
+        const contextStart = Math.max(0, anchorIndex - FILE_READ_ANCHOR_CONTEXT_BEFORE_CHARS);
+        const contextEnd = Math.min(
+          fileContent.length,
+          anchorIndex + anchorText.length + FILE_READ_ANCHOR_CONTEXT_AFTER_CHARS,
+        );
+        if (contextStart > 0 || contextEnd < fileContent.length) {
+          const { content: _omittedContent, ...metadata } = evidence;
+          return JSON.stringify({
+            ...metadata,
+            contentTruncatedForMutationRecovery: true,
+            anchorContext: fileContent.slice(contextStart, contextEnd),
+          });
+        }
+      }
+    }
   }
 
-  const contextStart = Math.max(0, anchorIndex - FILE_READ_ANCHOR_CONTEXT_BEFORE_CHARS);
-  const contextEnd = Math.min(
-    fileContent.length,
-    anchorIndex + anchorText.length + FILE_READ_ANCHOR_CONTEXT_AFTER_CHARS,
-  );
-  if (contextStart === 0 && contextEnd === fileContent.length) {
+  const taskRelevantContexts = collectTaskRelevantFileContexts(fileContent, taskText);
+  if (taskRelevantContexts.length === 0) {
     return content;
   }
-
   const { content: _omittedContent, ...metadata } = evidence;
   return JSON.stringify({
     ...metadata,
     contentTruncatedForMutationRecovery: true,
-    anchorContext: fileContent.slice(contextStart, contextEnd),
+    taskRelevantContexts,
   });
+}
+
+function collectTaskRelevantFileContexts(
+  fileContent: string,
+  taskText: string,
+): Array<{ identifier: string; context: string }> {
+  if (fileContent.length < FILE_READ_TASK_CONTEXT_MIN_CONTENT_CHARS) {
+    return [];
+  }
+  const identifiers = [...new Set(taskText.match(/[A-Za-z_$][A-Za-z0-9_$]{3,}/g) ?? [])]
+    .filter((identifier) => /[a-z][A-Z]|[_$]/.test(identifier))
+    .sort((left, right) => right.length - left.length || left.localeCompare(right));
+  const contexts: Array<{ identifier: string; context: string }> = [];
+  const retainedRanges: Array<{ start: number; end: number }> = [];
+  let retainedChars = 0;
+
+  for (const identifier of identifiers) {
+    let searchOffset = 0;
+    while (contexts.length < FILE_READ_TASK_CONTEXT_MAX_ITEMS) {
+      const matchIndex = fileContent.indexOf(identifier, searchOffset);
+      if (matchIndex < 0) {
+        break;
+      }
+      searchOffset = matchIndex + identifier.length;
+      if (!hasIdentifierBoundaries(fileContent, matchIndex, identifier.length)) {
+        continue;
+      }
+      const start = Math.max(0, matchIndex - FILE_READ_TASK_CONTEXT_BEFORE_CHARS);
+      const end = Math.min(
+        fileContent.length,
+        matchIndex + identifier.length + FILE_READ_TASK_CONTEXT_AFTER_CHARS,
+      );
+      if (retainedRanges.some((range) => start < range.end && end > range.start)) {
+        continue;
+      }
+      const context = fileContent.slice(start, end);
+      if (retainedChars + context.length > FILE_READ_TASK_CONTEXT_MAX_CHARS) {
+        return contexts;
+      }
+      retainedRanges.push({ start, end });
+      retainedChars += context.length;
+      contexts.push({ identifier, context });
+    }
+    if (contexts.length >= FILE_READ_TASK_CONTEXT_MAX_ITEMS) {
+      break;
+    }
+  }
+  return contexts;
+}
+
+function hasIdentifierBoundaries(value: string, start: number, length: number): boolean {
+  const identifierCharacter = /[A-Za-z0-9_$]/;
+  const before = start > 0 ? value[start - 1] ?? "" : "";
+  const after = start + length < value.length ? value[start + length] ?? "" : "";
+  return !identifierCharacter.test(before) && !identifierCharacter.test(after);
 }
 
 function isMutationReadySourceEvidence(toolName: string, content: string): boolean {
@@ -559,7 +651,7 @@ function normalizeSourcePath(value: string): string {
   return value.trim().replaceAll("\\", "/").replace(/^\.\//, "").toLowerCase();
 }
 
-function readFileReadToolCallPath(argumentsJson: string): string | undefined {
+function readFileReadToolCallArguments(argumentsJson: string): Record<string, unknown> & { path: string } | undefined {
   let parsed: unknown;
   try {
     parsed = JSON.parse(argumentsJson);
@@ -570,7 +662,9 @@ function readFileReadToolCallPath(argumentsJson: string): string | undefined {
     return undefined;
   }
   const requestedPath = (parsed as Record<string, unknown>).path;
-  return typeof requestedPath === "string" && requestedPath.trim() ? requestedPath : undefined;
+  return typeof requestedPath === "string" && requestedPath.trim()
+    ? { ...(parsed as Record<string, unknown>), path: requestedPath }
+    : undefined;
 }
 
 function clipTextToTokenBudget(
