@@ -3014,6 +3014,43 @@ Source / Workspace Revision
 - **为什么先做它**：单元测试已精确覆盖 r12 的转义失败形状，但只有真实 `deepseek-v4-flash` 运行能证明模型生成的三文件 patch 会被修复后的 Tool 接受，并由 required changed paths Gate 可信累计到完成。
 - **当前还缺的关键闭环**：新 identity Windows/WSL2 的三文件 patch、冻结测试、declared/resolved route、usage/cost、artifact SHA-256 与 PID/端口/token 零残留证据；不创建 candidate v4、不启动 P2-C、不重跑完整付费矩阵、不 push。
 
+#### P0 后续能力改进实现结论：required-path source evidence 失败关闭 Gate（2026-08-16）
+
+##### 已完成内容
+
+1. **`a1b8517` Windows `real-ts.api-migration` canary 失败证据保留**：
+   - dry-run artifact=`artifacts/p0-required-mutation-canary-a1b8517-ts-api-windows-dry-run`，source/harness identity、repository snapshot 与 production preflight 全部通过，usage=`not_reached`，未调用 Provider。
+   - formal artifact=`artifacts/p0-required-mutation-canary-a1b8517-ts-api-windows`，run=`real-ts-api-migration-windows-a1-1786822917020`；declared/resolved model 均为 `deepseek-v4-flash`、source=`primary`，usage=`provider_reported`，`2/2` 次模型调用 usage 完整，cost=`$0.00062825`。
+   - formal 唯一终态为 `run.failed`、changed paths=`0`、result=`null`，没有半写入；模型只读了冻结测试后生成与实际源码不匹配的 patch，`apply_patch` 正确失败关闭。Windows 失败后未启动 WSL2，端口、PID 与 token 零残留。
+
+2. **`packages/belldandy-agent/src/react-workspace-mutation.ts` 扩展**：
+   - 从成功且 mutation-ready 的结构化 `file_read` / `text_search` / `code_intel` 证据中提取实际源码路径，并与 required changed paths 规范化匹配；测试正文里出现目标路径字符串不计覆盖。
+   - recovery request 显式投影 `missingRequiredSourceEvidencePaths`；required paths 最多为三条时，单轮 bounded navigation 动态允许最多三个 `file_read`，其他混合多读仍失败关闭。
+   - 导航指令、请求合同与运行时校验共用同一上限；默认及两路径场景继续保持既有最多两个 `file_read`。
+
+3. **`packages/belldandy-agent/src/tool-agent.ts` 修改**：
+   - iteration Gate 仅在“已有结构化 source evidence，但未覆盖 required paths”时强制一次源码导航；没有 source evidence、没有 required paths 或已有成功 mutation 的旧恢复路径保持原语义。
+   - 实际执行过导航时，内部 iteration 有效上限只增加一轮，使 `initial -> navigation -> mutation -> finalization` 可完成；导航仍只允许一次，模型调用硬边界、token/cost preflight、单次 mutation-only recovery 与 changed-path metadata Gate 均未放宽。
+   - 一次导航后仍缺 required-path source evidence 时立即失败关闭，不继续重试或扩大读取。
+
+4. **测试扩展与效果**：
+   - 新增真实失败形状回归：首轮只读非目标冻结测试时，下一轮一次读取三条 required source paths，再进入单次 mutation 和 tool-free finalization。
+   - 首次定向运行稳定暴露 `11` 项旧行为回归；拆分 required-path 导航判定与原有 headroom readiness 后，旧恢复、失败关闭和两读上限场景全部恢复。
+   - Agent 不再把冻结测试内容误当成三文件实际源码证据；只有 required source context 完整时才允许 mutation-only recovery。
+
+##### 验证结果
+
+- TypeScript 编译无错误，workspace build 与 `verify:build` 通过。
+- 定向 `2` 个测试文件 `24/24` 通过；Agent 全包 `56` 个测试文件、`571/571` 个测试通过（含 `1` 个新增 required-path source evidence 回归），另有 `1` 个真实 Provider probe 按设计跳过。
+- `verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 通过；未修改 benchmark manifest、candidate 或 P2-C 状态。
+- 本轮新增 Provider observed=`$0.00062825`；授权窗口累计 observed=`$2.20957720`、reserved=`$0.94221000`，当前无新增预留守卫上界=`25.21429760 RMB < 50 RMB`。
+
+##### 后续计划
+
+- **下一步准备做什么**：本地提交形成新的 clean identity，以该 identity 重建 Windows harness，先执行 dry-run，再执行一次 `real-ts.api-migration` formal canary；Windows 全部 Gate 通过后，才启动 WSL2 同 identity 复核。
+- **为什么先做它**：本地确定性测试已覆盖 `a1b8517` 的错误导航序列，但只有真实 `deepseek-v4-flash` canary 能证明三条 required source path 会在一次有界导航中被读取，并生成可接受的三文件 patch。
+- **当前还缺的关键闭环**：新 identity Windows/WSL2 的 source/harness identity、三文件 patch、冻结测试、declared/resolved route、usage/cost、唯一终态、artifact SHA-256 与 PID/端口/token 零残留证据；不创建 candidate v4、不启动 P2-C、不重跑完整付费矩阵、不 push。
+
 ### P1-C（已完成）
 
 - supporting evidence binding 审计已完成：worktree exact binding 接入可信，command job/validation 延后，journal 保持现有精确边界。
@@ -3060,7 +3097,7 @@ Source / Workspace Revision
 | 项目 | 优先级 | 状态 | 粗略工作量 | 完成边界 |
 | --- | --- | --- | ---: | --- |
 | 本轮 SS 能力复核与 9.5 增强规划 | - | 已完成 | - | 已复核 scorecard、目标向量 `9.510`、C#/Go 投入收益、多语言方案和竞品资料；竞品未做同环境 benchmark |
-| P0：Benchmark v3 与外部有效性 | P0 | 已完成基线、mixed-model 与纯 flash 双平台复核，结果均未晋级。纯 flash identity=`edd1c877`，formal/aggregate=`144/144`、`107 passed + 37 product_workflow failed`、A=`72/72`、B=`12/48`、C=`23/24`，infrastructure error=`0`、usage=`132 provider_reported + 6 unavailable + 6 not_reached`；`138/138` Provider-reaching route 为 declared/resolved flash，dry-run、`--verify`、failure-analysis 重建、`765` 个 Schema 样本与 `144` 份 JSONL 均通过。canonical r2 将新失败收敛为 required-mutation recovery=`30`、length=`5`、schema=`2`、unknown=`0`；output/headroom、required Tool、DeepSeek thinking、no-op mutation、finalization、`file_read` anchor、recovery evidence 与 required changed paths 可信覆盖 Gate 已完成生产修复。新 Gate 的 Windows 前置诊断已证明 model mismatch 正确失败关闭、match 时 route/usage/trace 合同全绿；r12 暴露的 `apply_patch` CRLF 字面量 `\\r` 阻塞已完成 TDD 修复，正式新 identity 双平台 canary 待执行。clean identity `fce9b6a` 的 `real-go.bug-fix` 已在 Windows/WSL2 各一次纯 flash canary 中通过，两端 declared/resolved flash、patch SHA-256 相同、只改 `command.go`、冻结 Go test 与资源零残留 Gate 全绿；Agent `570/570`、Skills `932/932`、workspace build 与合同 Gate 通过。该代表任务转绿不改写原 aggregate，也不证明其余 29 项已改善。aggregate cost=`$0.12215932`；授权窗口 observed=`$2.20894895`、reserved=`$0.94221000`、当前守卫上界=`25.20927160 RMB < 50 RMB`。旧失败 artifacts 原样保留；不创建 candidate v4、不启动 P2-C、不 push | 14-22 人日 | A/B/C 三层、至少 4 个固定仓、144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；不含 candidate v4、竞品代跑、公开排行榜 |
+| P0：Benchmark v3 与外部有效性 | P0 | 已完成基线、mixed-model 与纯 flash 双平台复核，结果均未晋级。纯 flash identity=`edd1c877`，formal/aggregate=`144/144`、`107 passed + 37 product_workflow failed`、A=`72/72`、B=`12/48`、C=`23/24`，infrastructure error=`0`、usage=`132 provider_reported + 6 unavailable + 6 not_reached`；`138/138` Provider-reaching route 为 declared/resolved flash，dry-run、`--verify`、failure-analysis 重建、`765` 个 Schema 样本与 `144` 份 JSONL 均通过。canonical r2 将新失败收敛为 required-mutation recovery=`30`、length=`5`、schema=`2`、unknown=`0`；output/headroom、required Tool、DeepSeek thinking、no-op mutation、finalization、`file_read` anchor、recovery evidence 与 required changed paths 可信覆盖 Gate 已完成生产修复。新 Gate 的 Windows 前置诊断已证明 model mismatch 正确失败关闭、match 时 route/usage/trace 合同全绿；r12 暴露的 `apply_patch` CRLF 字面量 `\\r` 阻塞已完成 TDD 修复。`a1b8517` 的 Windows `real-ts.api-migration` formal 进一步暴露冻结测试被误当源码证据，唯一终态=`run.failed`、changed paths=`0`、usage=`2/2 provider_reported`、cost=`$0.00062825`，未启动 WSL2；required-path source evidence Gate 的生产修复与 Agent `571/571`、workspace build、benchmark/CI 合同 Gate 已通过，正式新 identity 双平台 canary 待执行。clean identity `fce9b6a` 的 `real-go.bug-fix` 已在 Windows/WSL2 各一次纯 flash canary 中通过，两端 declared/resolved flash、patch SHA-256 相同、只改 `command.go`、冻结 Go test 与资源零残留 Gate 全绿；Skills `932/932` 通过。代表任务转绿不改写原 aggregate，也不证明其余 29 项已改善。aggregate cost=`$0.12215932`；授权窗口 observed=`$2.20957720`、reserved=`$0.94221000`、当前守卫上界=`25.21429760 RMB < 50 RMB`。旧失败 artifacts 原样保留；不创建 candidate v4、不启动 P2-C、不 push | 14-22 人日 | A/B/C 三层、至少 4 个固定仓、144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；不含 candidate v4、竞品代跑、公开排行榜 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | 已完成；attempt 12 aggregate=`passed`；binary regression/Provider failure=`0/0`；`semantic-live=7/8`；非目标整文件读取 `21 -> 14`；16/16 cell 预算耗尽；candidate task/patch success=`0/8`；累计费用 `1.68214072 RMB` | 8-12 人日 | 公共 contract、TS/JS Provider、Inspector、truth set、resource soak、双平台 native runtime 与真实 uplift Gate；不含外部 LSP、Go/C# GA、SCIP store |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | 已完成；Host、pinned profile、Go Doctor、Adapter/truth/fault、双平台 native/OCI、readiness/progress/monitor、comparator 和 eligibility 已闭合；`goCanaryEligible=true`、`productionEligible=false` | 6-11 人日 | 双平台 identity/truth/lifecycle/OCI evidence、只读 comparator、单一 eligibility owner、Doctor projection；不含 Go 生产默认启用、自动安装、公开发布、扩大 fixture、rollout 观察窗口 |
 | P1-A3：C# 条件接入 | 条件 | 延后，等待真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild 执行面、restore/联网和生命周期；未命中需求不进入生产，也不阻断 9.5 |

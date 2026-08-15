@@ -74,6 +74,10 @@ describe("ReAct workspace mutation recovery", () => {
     const request = buildWorkspaceMutationNavigationRequest({
       maxInputTokens: 700,
       tools: navigationTools,
+      missingRequiredChangedPaths: [
+        "jsonrpc/src/common/connection.ts",
+        "protocol/src/common/protocol.ts",
+      ],
       tokenEstimateContext: { model: "deepseek-v4-flash" },
       messages: [
         { role: "user", content: "Migrate the deprecated API in every required file." },
@@ -98,6 +102,10 @@ describe("ReAct workspace mutation recovery", () => {
     expect(request?.messages[0]?.content).toContain("Bounded source-navigation phase");
     expect(request?.messages[0]?.content).toContain("at most two file_read calls");
     expect(request?.messages[1]?.content).toContain("protocol/src/common/protocol.ts");
+    expect(request?.missingRequiredSourceEvidencePaths).toEqual([
+      "jsonrpc/src/common/connection.ts",
+      "protocol/src/common/protocol.ts",
+    ]);
   });
 
   it("retains a function from a focused anchor window with the canary evidence budget", () => {

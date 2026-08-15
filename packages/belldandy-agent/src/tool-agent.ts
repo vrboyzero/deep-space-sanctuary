@@ -2393,11 +2393,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let pendingEmptyContentFinalizationError: string | undefined;
     let emptyContentFinalizationAttempted = false;
     const workspaceMutationRequired = runtimeContext?.launchSpec?.workspaceMutationRequirement === "required";
-    const workspaceMutationPathCoverage = createWorkspaceMutationPathCoverage(
-      runtimeContext?.launchSpec?.requiredChangedPaths ?? [],
-    );
+    const requiredChangedPaths = runtimeContext?.launchSpec?.requiredChangedPaths ?? [];
+    const workspaceMutationPathCoverage = createWorkspaceMutationPathCoverage(requiredChangedPaths);
     let workspaceMutationObserved = false;
-    let workspaceMutationNavigationAttempted = false;
+    let workspaceMutationNavigationAttempts = 0;
+    const workspaceMutationNavigationAttemptLimit = 1;
     let workspaceMutationRecoveryPending = false;
     let workspaceMutationRecoveryAttempted = false;
     let workspaceMutationFinalizationPending = false;
@@ -2623,6 +2623,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
         const nextModelCallIndex = modelCallCount + 1;
         const structuredOutputRepairCall = structuredOutputSession?.isRepairCall() ?? false;
         const iterationBudget = runBudgets.toolLoopIterationBudget;
+        const effectiveIterationBudget = iterationBudget > 0
+          ? iterationBudget + workspaceMutationNavigationAttempts
+          : 0;
         const workspaceMutationRecoveryRequiredByGate = workspaceMutationRequired
           && !workspaceMutationObserved
           && !workspaceMutationRecoveryAttempted
@@ -2655,7 +2658,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
               agentId: resolvedAgentId,
             });
           }
-          if (nextModelCallIndex > iterationBudget) {
+          if (nextModelCallIndex > effectiveIterationBudget) {
             try {
               loopCompactionState = await this.compactInLoop(
                 messages,
@@ -2676,9 +2679,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
             }
             yield* emitBudgetExhausted(
               "tool_loop_iterations",
-              iterationBudget,
+              effectiveIterationBudget,
               nextModelCallIndex,
-              `工具调用迭代预算超限（最大 ${iterationBudget} 轮）。已在阻断前尝试压缩当前上下文，请收敛任务、分解问题，或开启新一轮继续。`,
+              `工具调用迭代预算超限（最大 ${effectiveIterationBudget} 轮）。已在阻断前尝试压缩当前上下文，请收敛任务、分解问题，或开启新一轮继续。`,
             );
             return;
           }
@@ -2910,7 +2913,19 @@ export class ToolEnabledAgent implements BelldandyAgent {
               ...(protectedMinimumCost ? { minimumCostUsd: protectedMinimumCost.totalUsd } : {}),
             }) !== undefined
           : false;
-        if (workspaceMutationRecoveryRequested || workspaceMutationRecoveryRequiredByHeadroom) {
+        const workspaceMutationRecoveryReadyByGate = workspaceMutationRecoveryRequested
+          && headroomCandidate !== undefined
+          && !requiresRequiredPathSourceNavigation(headroomCandidate);
+        const workspaceMutationNavigationRequiredByGate = workspaceMutationRecoveryRequested
+          && headroomCandidate !== undefined
+          && requiresRequiredPathSourceNavigation(headroomCandidate);
+        if (workspaceMutationRecoveryRequested && headroomCandidate === undefined) {
+          yield* emitWorkspaceMutationFailure(
+            "no bounded mutation recovery request can be built from the allowed tools and remaining token budget.",
+          );
+          return;
+        }
+        if (workspaceMutationRecoveryReadyByGate || workspaceMutationRecoveryRequiredByHeadroom) {
           const candidate = headroomCandidate ?? buildMutationRecoveryCandidate();
           if (!candidate) {
             yield* emitWorkspaceMutationFailure(
@@ -3142,7 +3157,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             ...(ordinaryMinimumCost ? { minimumCostUsd: ordinaryMinimumCost.totalUsd } : {}),
           });
           if (
-            ordinaryPreflight
+            (ordinaryPreflight || workspaceMutationNavigationRequiredByGate)
             && workspaceMutationRequired
             && !workspaceMutationObserved
             && !workspaceMutationRecoveryAttempted
@@ -3154,7 +3169,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
               );
               return;
             }
-            if (isMutationRecoveryReadyForHeadroom(candidate)) {
+            if (!requiresRequiredPathSourceNavigation(candidate)
+              && isMutationRecoveryReadyForHeadroom(candidate)) {
               mutationRecoveryOutputTokens = candidate.outputTokens;
               const candidateMinimumCost = calculateUsageCostUsd({
                 inputTokens: candidate.estimatedInputTokens,
@@ -3182,9 +3198,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
               tools = candidate.tools;
               toolNames = tools.map((tool) => tool.function.name);
             } else {
-              if (workspaceMutationNavigationAttempted) {
+              if (workspaceMutationNavigationAttempts >= workspaceMutationNavigationAttemptLimit) {
                 yield* emitWorkspaceMutationFailure(
-                  "the bounded source-navigation call did not produce source evidence that is safe for mutation recovery.",
+                  `the ${workspaceMutationNavigationAttemptLimit} bounded source-navigation call(s) did not produce complete source evidence for mutation recovery.`,
                 );
                 return;
               }
@@ -3236,7 +3252,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 return;
               }
               workspaceMutationNavigationCall = true;
-              workspaceMutationNavigationAttempted = true;
+              workspaceMutationNavigationAttempts++;
               workspaceMutationNavigationRequest = navigationRequest;
               tools = navigationRequest.tools;
               toolNames = tools.map((tool) => tool.function.name);
@@ -3920,13 +3936,16 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
         }
         if (workspaceMutationNavigationCall) {
+          const maxFileReadCalls = workspaceMutationNavigationRequest?.maxFileReadCalls ?? 2;
           const requestedNavigationTool = areWorkspaceMutationNavigationToolCallsAllowed(
             toolCalls.map((toolCall) => toolCall.function.name),
             toolNames,
+            maxFileReadCalls,
           );
           if (!requestedNavigationTool) {
+            const fileReadLimit = maxFileReadCalls === 2 ? "two" : String(maxFileReadCalls);
             yield* emitWorkspaceMutationFailure(
-              "the bounded source-navigation model call must request one allowed source-read tool or at most two file_read calls.",
+              `the bounded source-navigation model call must request one allowed source-read tool or at most ${fileReadLimit} file_read calls.`,
             );
             return;
           }
@@ -5503,6 +5522,11 @@ function isMutationRecoveryReadyForHeadroom(candidate: WorkspaceMutationRecovery
     tool.function.name === "apply_patch" || tool.function.name === "file_edit"
   ));
   return !sourceDependentMutationOnly;
+}
+
+function requiresRequiredPathSourceNavigation(candidate: WorkspaceMutationRecoveryPlan): boolean {
+  return candidate.sourceEvidenceItemCount > 0
+    && candidate.missingRequiredSourceEvidencePaths.length > 0;
 }
 
 function mergePromptSnapshotInputMeta(

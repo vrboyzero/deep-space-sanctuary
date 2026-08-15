@@ -655,6 +655,172 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("reads three required paths in one bounded navigation when only a non-target test was read", async () => {
+    const requiredChangedPaths = [
+      "jsonrpc/src/common/api.ts",
+      "jsonrpc/src/common/connection.ts",
+      "protocol/src/common/protocol.ts",
+    ];
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, any>);
+      if (requests.length === 1) {
+        return response({
+          choices: [{
+            finish_reason: "tool_calls",
+            message: {
+              content: null,
+              tool_calls: [
+                modelToolCall("list-1", "list_files", { path: "." }, 0, 0).choices[0].message.tool_calls[0],
+                modelToolCall("read-test", "file_read", {
+                  path: "test/benchmark-v3/real-ts-api-migration.mjs",
+                }, 0, 0).choices[0].message.tool_calls[0],
+              ],
+            },
+          }],
+          usage: { prompt_tokens: 6_600, completion_tokens: 180 },
+        });
+      }
+      if (requests.length === 2) {
+        return response({
+          choices: [{
+            finish_reason: "tool_calls",
+            message: {
+              content: null,
+              tool_calls: [
+                modelToolCall("read-api", "file_read", {
+                  path: requiredChangedPaths[0],
+                }, 0, 0).choices[0].message.tool_calls[0],
+                modelToolCall("read-connection", "file_read", {
+                  path: requiredChangedPaths[1],
+                }, 0, 0).choices[0].message.tool_calls[0],
+                modelToolCall("read-protocol", "file_read", {
+                  path: requiredChangedPaths[2],
+                  anchor: "trace?: TraceValues;",
+                }, 0, 0).choices[0].message.tool_calls[0],
+              ],
+            },
+          }],
+          usage: { prompt_tokens: 1_200, completion_tokens: 100 },
+        });
+      }
+      if (requests.length === 3) {
+        return response(modelToolCall("patch-1", "apply_patch", {
+          input: "multi-file patch",
+        }, 1_200, 100));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: '{"summary":"migrated"}' } }],
+        usage: { prompt_tokens: 500, completion_tokens: 40 },
+      });
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      const requestPath = String(request.arguments?.path ?? "");
+      if (request.name === "list_files") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({ path: ".", entries: ["jsonrpc", "protocol", "test"] }),
+          durationMs: 1,
+        };
+      }
+      if (request.name === "apply_patch") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: "Patch applied successfully",
+          metadata: {
+            workspaceMutation: {
+              schemaVersion: 1,
+              changedPaths: requiredChangedPaths,
+            },
+          },
+          durationMs: 1,
+        };
+      }
+      const isProtocolAnchor = requestPath === requiredChangedPaths[2]
+        && request.arguments?.anchor === "trace?: TraceValues;";
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: JSON.stringify({
+          path: requestPath,
+          truncated: requestPath === requiredChangedPaths[2],
+          ...(isProtocolAnchor ? {
+            anchor: { text: "trace?: TraceValues;", byteOffset: 82_000 },
+          } : {}),
+          content: requestPath.startsWith("test/")
+            ? requiredChangedPaths.join("\n")
+            : isProtocolAnchor
+              ? "export interface InitializeParams {\n\ttrace?: TraceValues;\n}"
+              : `source context for ${requestPath}`,
+        }),
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 3,
+      mutationToolNames: ["apply_patch"],
+      readToolNames: ["file_read", "list_files"],
+    });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-test-only-evidence",
+      text: "Apply the frozen public API migration.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 3,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === '{"summary":"migrated"}'
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(requests).toHaveLength(4);
+    expect(requests[1]?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "system",
+        content: expect.stringContaining("Bounded source-navigation phase"),
+      }),
+      expect.objectContaining({
+        role: "user",
+        content: expect.stringContaining(requiredChangedPaths[0]),
+      }),
+    ]));
+    expect(requests[1]?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "system",
+        content: expect.stringContaining("at most 3 file_read calls"),
+      }),
+    ]));
+    expect(requests[2]?.tools?.map((tool: any) => tool.function.name)).toEqual(["apply_patch"]);
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "list_files",
+      "file_read",
+      "file_read",
+      "file_read",
+      "file_read",
+      "apply_patch",
+    ]);
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it.each([
     {
       name: "mixed source-read tools",
