@@ -26,7 +26,7 @@
     "families": {
       "type": "array",
       "minItems": 1,
-      "maxItems": 6,
+      "maxItems": 7,
       "items": { "$ref": "#/$defs/family" }
     },
     "runs": {
@@ -55,6 +55,7 @@
     "familyId": {
       "enum": [
         "model_empty_content_at_length",
+        "required_mutation_recovery_failed",
         "completed_without_required_mutation",
         "patch_acceptance_failed",
         "token_budget_exhausted",
@@ -144,6 +145,7 @@
         "observationCode": {
           "enum": [
             "provider_length_stop_with_reasoning_and_no_visible_content",
+            "required_workspace_mutation_recovery_failed_before_edit",
             "terminal_completed_without_required_workspace_mutation",
             "edit_attempt_failed_or_workspace_patch_machine_rejected",
             "total_token_budget_exhausted",
@@ -249,7 +251,7 @@
         "familyCounts": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 6,
+          "maxItems": 7,
           "items": { "$ref": "#/$defs/familyCount" }
         },
         "taskBreakdown": {

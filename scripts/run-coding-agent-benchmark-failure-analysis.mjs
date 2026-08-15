@@ -29,6 +29,11 @@ const FAMILY_DEFINITIONS = [
     observationCode: "provider_length_stop_with_reasoning_and_no_visible_content",
   },
   {
+    id: "required_mutation_recovery_failed",
+    priority: 6,
+    observationCode: "required_workspace_mutation_recovery_failed_before_edit",
+  },
+  {
     id: "completed_without_required_mutation",
     priority: 2,
     observationCode: "terminal_completed_without_required_workspace_mutation",
@@ -57,6 +62,10 @@ const FAMILY_DEFINITIONS = [
 const FAMILY_BY_ID = new Map(FAMILY_DEFINITIONS.map((item) => [item.id, item]));
 const EMPTY_CONTENT_AT_LENGTH_PATTERN =
   /^模型返回空内容。finish_reason=length，reasoning_content=present\([0-9]+\)。$/u;
+const REQUIRED_MUTATION_EMPTY_CONTENT_AT_LENGTH_PATTERN =
+  /^required workspace mutation was not completed: the mutation-only model call failed: 模型返回空内容。finish_reason=length，reasoning_content=present\([0-9]+\)。$/u;
+const REQUIRED_MUTATION_BUDGET_GATE_PATTERN =
+  /^required workspace mutation was not completed: the ordinary model loop reached its budget gate before an allowed bounded mutation-only request could be built\.$/u;
 const scriptPath = fileURLToPath(import.meta.url);
 
 export function buildCodingAgentFailureAnalysis(input) {
@@ -239,6 +248,7 @@ function analyzeFailureRun(run, input) {
     errorCode: eventEvidence.errorCode,
     errorMessage: eventEvidence.errorMessage,
     workspaceMutationObserved,
+    editCallCount: eventEvidence.editCallCount,
     failedEditCallCount: eventEvidence.failedEditCallCount,
     patchAccepted: run.evaluation?.patchAccepted,
   });
@@ -354,6 +364,14 @@ function summarizeEvents(events, runId) {
 function classifyFailure(input) {
   if (input.errorCode === "budget_exhausted") return "token_budget_exhausted";
   if (input.errorCode === "output_schema_invalid") return "output_schema_invalid";
+  if (input.terminalType === "run.failed"
+    && input.errorCode === "internal"
+    && input.editCallCount === 0
+    && !input.workspaceMutationObserved
+    && (REQUIRED_MUTATION_EMPTY_CONTENT_AT_LENGTH_PATTERN.test(input.errorMessage)
+      || REQUIRED_MUTATION_BUDGET_GATE_PATTERN.test(input.errorMessage))) {
+    return "required_mutation_recovery_failed";
+  }
   if (input.terminalType === "run.failed"
     && input.errorCode === "internal"
     && EMPTY_CONTENT_AT_LENGTH_PATTERN.test(input.errorMessage)) {

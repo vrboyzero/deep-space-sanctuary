@@ -122,6 +122,54 @@ describe("coding agent benchmark failure analysis", () => {
       .toBe("patch_acceptance_failed");
   });
 
+  it("classifies bounded required-mutation recovery failures without guessing the inner budget", () => {
+    const input = fixture();
+    input.artifactInputs[0] = {
+      ...input.artifactInputs[0],
+      events: [
+        startedEvent("model-empty"),
+        failedEvent(
+          "internal",
+          "required workspace mutation was not completed: the mutation-only model call failed: "
+            + "模型返回空内容。finish_reason=length，reasoning_content=present(4112)。",
+        ),
+      ],
+    };
+    input.artifactInputs[0].eventsText = toJsonl(input.artifactInputs[0].events);
+    input.artifactInputs[1] = {
+      ...input.artifactInputs[1],
+      events: [
+        startedEvent("completed-no-mutation"),
+        failedEvent(
+          "internal",
+          "required workspace mutation was not completed: the ordinary model loop reached its budget gate "
+            + "before an allowed bounded mutation-only request could be built.",
+        ),
+      ],
+    };
+    input.artifactInputs[1].eventsText = toJsonl(input.artifactInputs[1].events);
+    input.artifactInputs[2] = {
+      ...input.artifactInputs[2],
+      events: [
+        startedEvent("patch-rejected"),
+        toolStarted("edit-2", "apply_patch"),
+        toolCompleted("edit-2", "apply_patch", true),
+        failedEvent(
+          "internal",
+          "required workspace mutation was not completed: the mutation-only model call failed: "
+            + "模型返回空内容。finish_reason=length，reasoning_content=present(4112)。",
+        ),
+      ],
+    };
+    input.artifactInputs[2].eventsText = toJsonl(input.artifactInputs[2].events);
+
+    const artifact = buildCodingAgentFailureAnalysis(input);
+    expect(artifact.runs.filter((run) => run.family === "required_mutation_recovery_failed"))
+      .toHaveLength(2);
+    expect(artifact.runs.find((run) => run.runId === "patch-rejected")?.family)
+      .toBe("patch_acceptance_failed");
+  });
+
   it("parses an explicit aggregate/output pair and writes once", async () => {
     expect(parseCodingAgentFailureAnalysisCliArguments([
       "--aggregate-root", "artifacts/aggregate",
