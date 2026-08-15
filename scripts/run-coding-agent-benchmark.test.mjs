@@ -38,6 +38,7 @@ import {
   CODE_INTEL_AGENT_UPLIFT_CANDIDATE_ID,
   CODE_INTEL_AGENT_UPLIFT_TASK_IDS,
 } from "./run-code-intel-agent-uplift-readiness.mjs";
+import { buildAgentRunArgs, resolveCodingCiProfile } from "./run-coding-agent-ci.mjs";
 
 const tempRoots = [];
 const windowsIt = process.platform === "win32" ? it : it.skip;
@@ -651,6 +652,15 @@ describe("coding agent benchmark stage 0B runner", () => {
       createBenchmarkPreflightArtifact: async (input) => createPassedV3RuntimePreflight(input),
       v3SystemHarness: harness,
       async executeCodingCi(input) {
+        const agentArgs = buildAgentRunArgs({
+          workspace: input.workspace,
+          stateDir: input.stateDir,
+          outputSchemaPath: input.outputSchemaPath,
+          profile: resolveCodingCiProfile(input.mode, input.manifestRevision),
+          manifestRevision: input.manifestRevision,
+          taskId: input.taskId,
+        });
+        expect(agentArgs).not.toContain("--require-workspace-mutation");
         await fs.writeFile(
           path.join(input.artifactDir, "result.json"),
           `${JSON.stringify({ summary: "Verified native parallel write fan-in." })}\n`,

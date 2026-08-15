@@ -211,10 +211,12 @@ describe("coding agent CI runner", () => {
       workspace: "C:/fixture/workspace",
       stateDir: "C:/fixture/state",
       outputSchemaPath: "C:/fixture/review-output.schema.json",
-      profile: resolveCodingCiProfile("workspace-write"),
+      profile: resolveCodingCiProfile("workspace-write", "v3"),
       conversationId: "coding-ci-fixture-run",
       modelId: "deepseek-v4-flash",
       maxCostUsd: 3,
+      manifestRevision: "v3",
+      taskId: "real-js.bug-fix",
     });
 
     expect(args).toEqual([
@@ -228,7 +230,7 @@ describe("coding agent CI runner", () => {
       "--expected-resolved-model-id", "deepseek-v4-flash",
       "--require-workspace-mutation",
       "--permission-mode", "accept-edits",
-      "--tool-allow", "file_read,list_files,apply_patch,file_write,file_delete",
+      "--tool-allow", "file_read,list_files,file_edit,apply_patch,file_write,file_delete",
       "--tool-deny", "run_command,spawn_subagent",
       "--timeout", "300000",
       "--max-turns", "12",
@@ -237,6 +239,19 @@ describe("coding agent CI runner", () => {
       "--output-schema", path.resolve("C:/fixture/review-output.schema.json"),
     ]);
     expect(args.join(" ")).not.toMatch(/\b(?:push|merge|apply)\b/);
+  });
+
+  it("delegates v3 parallel-write workspace mutation to the native system harness", () => {
+    const args = buildAgentRunArgs({
+      workspace: "C:/fixture/workspace",
+      stateDir: "C:/fixture/state",
+      outputSchemaPath: "C:/fixture/output.schema.json",
+      profile: resolveCodingCiProfile("workspace-write", "v3"),
+      manifestRevision: "v3",
+      taskId: "system.parallel-write-fan-in",
+    });
+
+    expect(args).not.toContain("--require-workspace-mutation");
   });
 
   it("uses the Gateway-visible workspace only for the remote coding run cwd", () => {
@@ -386,6 +401,7 @@ describe("coding agent CI runner", () => {
       profile,
     });
     expect(args).toEqual(expect.arrayContaining([
+      "--require-workspace-mutation",
       "--permission-mode", "accept-edits",
       "--tool-allow", "file_read,list_files,apply_patch,file_write",
       "--tool-deny", "run_command,spawn_subagent,file_delete",

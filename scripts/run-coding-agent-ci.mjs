@@ -131,6 +131,9 @@ export function resolveCodingCiLimits(manifestRevision = "v1", taskId) {
 
 export function buildAgentRunArgs(input) {
   const limits = input.limits ?? CODING_CI_LIMITS;
+  const delegatesWorkspaceMutationToSystemHarness = input.profile.mode === "workspace-write"
+    && input.manifestRevision === "v3"
+    && input.taskId === "system.parallel-write-fan-in";
   return [
     "agent", "run",
     "--jsonl",
@@ -141,7 +144,8 @@ export function buildAgentRunArgs(input) {
     ...(input.profile.agentId ? ["--agent-id", input.profile.agentId] : []),
     ...(input.modelId ? ["--model-id", input.modelId] : []),
     ...(input.modelId ? ["--expected-resolved-model-id", input.modelId] : []),
-    ...(input.profile.mode === "workspace-write" || input.profile.mode === "recovery-control"
+    ...(!delegatesWorkspaceMutationToSystemHarness
+      && (input.profile.mode === "workspace-write" || input.profile.mode === "recovery-control")
       ? ["--require-workspace-mutation"]
       : []),
     "--permission-mode", input.profile.permissionMode === "acceptEdits" ? "accept-edits" : input.profile.permissionMode,
