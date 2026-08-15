@@ -1366,6 +1366,185 @@ describe("before_agent_start system prompt overrides", () => {
     expect(items[budgetIndex + 2]).toEqual({ type: "status", status: "error" });
   });
 
+  it("uses one bounded finalization-only call before an oversized follow-up can exhaust the token budget", async () => {
+    let modelCallIndex = 0;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const payload = JSON.parse(String(init?.body ?? "{}"));
+      modelCallIndex++;
+      if (modelCallIndex === 1) {
+        return createJsonResponse({
+          choices: [{
+            message: {
+              content: "",
+              tool_calls: [{
+                id: "call-large-read",
+                type: "function",
+                function: {
+                  name: "file_read",
+                  arguments: JSON.stringify({ path: "package-lock.json" }),
+                },
+              }],
+            },
+          }],
+          usage: { prompt_tokens: 1_000, completion_tokens: 50 },
+        });
+      }
+      const hasTools = Array.isArray(payload.tools) && payload.tools.length > 0;
+      return createJsonResponse({
+        choices: [{ message: { content: "dependency diagnosis complete" } }],
+        usage: hasTools
+          ? { prompt_tokens: 4_000, completion_tokens: 100 }
+          : { prompt_tokens: 700, completion_tokens: 100 },
+      });
+    });
+    const execute = vi.fn(async () => ({
+      id: "call-large-read",
+      name: "file_read",
+      success: true,
+      output: JSON.stringify({
+        path: "package-lock.json",
+        content: "X".repeat(30_000),
+      }),
+      durationMs: 0,
+    }));
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      maxTotalTokens: 3_000,
+      maxOutputTokens: 512,
+      streamingEnabled: false,
+      toolExecutor: createToolExecutor({
+        getDefinitions: () => [{
+          type: "function" as const,
+          function: {
+            name: "file_read",
+            description: "read file",
+            parameters: {
+              type: "object",
+              properties: { path: { type: "string" } },
+            },
+          },
+        }],
+        execute,
+      }),
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-token-budget-finalization",
+      text: "diagnose the dependency mismatch",
+    }));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(1);
+    const secondPayload = JSON.parse(String(fetchSpy.mock.calls[1]?.[1]?.body ?? "{}"));
+    expect(secondPayload.tools).toBeUndefined();
+    expect(secondPayload.max_tokens).toBe(512);
+    expect(secondPayload.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "user",
+        content: expect.stringContaining("Finalization-only"),
+      }),
+    ]));
+    expect(secondPayload.messages.some((message: { role?: string }) => message.role === "tool")).toBe(false);
+    expect(items.some((item) => item.type === "budget_exhausted")).toBe(false);
+    expect(items).toContainEqual({ type: "final", text: "dependency diagnosis complete" });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("does not execute a tool returned by the bounded finalization-only call", async () => {
+    let modelCallIndex = 0;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      modelCallIndex++;
+      if (modelCallIndex === 1) {
+        return createJsonResponse({
+          choices: [{
+            message: {
+              content: "",
+              tool_calls: [{
+                id: "call-initial-read",
+                type: "function",
+                function: {
+                  name: "file_read",
+                  arguments: JSON.stringify({ path: "package-lock.json" }),
+                },
+              }],
+            },
+          }],
+          usage: { prompt_tokens: 1_000, completion_tokens: 50 },
+        });
+      }
+      return createJsonResponse({
+        choices: [{
+          message: {
+            content: "",
+            tool_calls: [{
+              id: "call-forbidden-finalization-read",
+              type: "function",
+              function: {
+                name: "file_read",
+                arguments: JSON.stringify({ path: "package.json" }),
+              },
+            }],
+          },
+        }],
+        usage: { prompt_tokens: 700, completion_tokens: 100 },
+      });
+    });
+    const execute = vi.fn(async (call: { id: string; name: string }) => ({
+      id: call.id,
+      name: call.name,
+      success: true,
+      output: "X".repeat(30_000),
+      durationMs: 0,
+    }));
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      maxTotalTokens: 3_000,
+      maxOutputTokens: 1_024,
+      streamingEnabled: false,
+      toolExecutor: createToolExecutor({
+        getDefinitions: () => [{
+          type: "function" as const,
+          function: {
+            name: "file_read",
+            description: "read file",
+            parameters: {
+              type: "object",
+              properties: { path: { type: "string" } },
+            },
+          },
+        }],
+        execute,
+      }),
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-finalization-rejects-tool-call",
+      text: "diagnose the dependency mismatch",
+    }));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ id: "call-initial-read" }));
+    expect(items).not.toContainEqual(expect.objectContaining({
+      type: "tool_result",
+      id: "call-forbidden-finalization-read",
+    }));
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "budget_exhausted",
+      budget: "total_tokens",
+      limit: 3_000,
+    }));
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "final",
+      text: expect.stringContaining("禁止继续执行工具"),
+    }));
+    expect(items.at(-1)).toEqual({ type: "status", status: "error" });
+  });
+
   it("only lets a launch spec tighten the configured token budget", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(createJsonResponse({
       choices: [{

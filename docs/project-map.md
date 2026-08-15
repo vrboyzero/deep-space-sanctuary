@@ -199,13 +199,14 @@ star-sanctuary/
 - `packages/belldandy-core/src/tool-agent-streaming-config.ts`: Tool/ReAct Provider streaming 灰度环境变量的严格解析 owner；只有显式 `true` 开启，缺失或非法值保持安全关闭
 
 ### Agent / Runtime
-- `packages/belldandy-agent/src/tool-agent.ts`: 带工具调用的主 Agent runtime，接线 ReAct model-call / tool-call / wall-time / total-token / cost / high-risk-Tool 预算、灰度 Provider streaming 与 `budget_exhausted` / `interrupted` 终态；Provider 已报告的 usage 在成功和失败模型响应中均进入同一 run 账本，reasoning-only 空内容仍失败且不泄漏 reasoning 正文；可信 per-run launch spec 只能收紧全局预算，费用预算缺 pricing profile 时失败关闭；structured run 在校验前缓冲文本并关闭 Provider streaming，repair 调用不暴露或执行 Tool、不消费 steering/deferred Tool，且仍计入同一 run usage 与预算
+- `packages/belldandy-agent/src/tool-agent.ts`: 带工具调用的主 Agent runtime，接线 ReAct model-call / tool-call / wall-time / total-token / cost / high-risk-Tool 预算、灰度 Provider streaming 与 `budget_exhausted` / `interrupted` 终态；Provider 已报告的 usage 在成功和失败模型响应中均进入同一 run 账本，reasoning-only 空内容仍失败且不泄漏 reasoning 正文；可信 per-run launch spec 只能收紧全局预算，费用预算缺 pricing profile 时失败关闭；普通 profile 的后续请求若预计无法保留终态输出预算，会切换到一次无 Tool、有界输出的 finalization-only 调用；structured run 在校验前缓冲文本并关闭 Provider streaming，repair 调用不暴露或执行 Tool、不消费 steering/deferred Tool，且仍计入同一 run usage 与预算
 - `packages/belldandy-agent/src/agent-run-automation.ts`: 单次 Agent automation profile 的纯策略 owner；`bare` 只保留显式附件/音频 prompt delta，并用于关闭 Hook、legacy Hook、compaction Hook 与 StarWeaver 主动 MCP 预检，不改变共享 Agent 或后续普通 run
 - `packages/belldandy-agent/src/structured-output.ts`: structured-output 单次 repair session owner；保存首次非法原文、构造不可执行的 schema repair 请求，并在一次修复后接受规范化 JSON 或明确拒绝
 - `packages/belldandy-agent/src/provider-control-frame.ts`: OpenAI-compatible Provider control frame 文本边界 owner；仅在 raw JSON 或单一显式 JSON code block 后识别并移除精确的 `DSML parameter -> invoke -> tool_calls` 三段结束帧，流式候选缓冲固定为 256 字符，普通文本、JSON 字符串、未知或不完整帧均原样保留
 - `packages/belldandy-agent/src/model-response-stream.ts` / `model-response-stream-failover.ts`: A07 三协议 Provider SSE 的统一有界解析、commit point 与 body 消费期 failover owner；服务 Tool Agent 和无工具 Agent 的 text/reasoning、Tool argument 增量、usage、completed/error、UTF-8/CRLF framing、累计上限、linked abort/deadline 和 reader cleanup；OpenAI Chat/Responses 流式正文在 completion 前复用 control frame 边界，原始帧字节仍计入响应上限
 - `packages/belldandy-agent/src/model-stream-delivery.ts`: 首段立即发送、后续时间/字符有界合并、单槽背压与跨 chunk Tool 协议屏蔽 owner；不解析 Provider SSE，也不执行 Tool
 - `packages/belldandy-agent/src/react-run-budget.ts`: ReAct 单次运行的无 I/O 预算归一化、Provider usage 优先计量、高风险 Tool 预留、额外 model call 的最小 token/cost preflight 和父级取消/wall-time deadline 合并
+- `packages/belldandy-agent/src/react-finalization.ts`: 普通 ReAct profile 临近 token/cost 上限时的一次性终态上下文 owner；保留 system 与原任务，把最近 Tool 输出收敛为不可信的有界只读证据，应用 `1.2` 输入安全系数与最多 `1024` 输出 token，且不携带 Tool 定义、`tool` 角色或 repair 能力
 - `packages/belldandy-agent/src/agent-profile.ts`: Agent Profile 解析，含 per-profile token、tool-call、tool-loop、wall-time 与 high-risk-Tool 预算覆盖
 - `packages/belldandy-agent/src/agent-end-ledger.ts`: 面向 hook 的有界 Agent 终态账本，保留 usage、预算耗尽、final 与 status 证据
 - `packages/belldandy-agent/src/openai.ts`: 无工具 OpenAI chat agent；流式路径复用统一 `ModelResponseStream` 与 delivery contract，非流式路径保留 JSON 响应解析

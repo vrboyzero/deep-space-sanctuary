@@ -818,6 +818,86 @@ describe("ToolEnabledAgent structured output", () => {
     }));
     expect(items.at(-1)).toEqual({ type: "status", status: "error" });
   });
+
+  it("does not start structured repair after a bounded finalization-only call", async () => {
+    let callIndex = 0;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      callIndex++;
+      if (callIndex === 1) {
+        return jsonResponse({
+          choices: [{
+            message: {
+              content: "",
+              tool_calls: [{
+                id: "call-finalization-read",
+                type: "function",
+                function: { name: "file_read", arguments: "{\"path\":\"large.json\"}" },
+              }],
+            },
+          }],
+          usage: { prompt_tokens: 1_000, completion_tokens: 50 },
+        });
+      }
+      if (callIndex === 2) {
+        return jsonResponse({
+          choices: [{ message: { content: "not-json" } }],
+          usage: { prompt_tokens: 700, completion_tokens: 100 },
+        });
+      }
+      return jsonResponse({
+        choices: [{ message: { content: "{\"status\":\"ok\"}" } }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      });
+    });
+    const execute = vi.fn(async () => ({
+      id: "call-finalization-read",
+      name: "file_read",
+      success: true,
+      output: "X".repeat(30_000),
+      durationMs: 0,
+    }));
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      maxTotalTokens: 3_000,
+      maxOutputTokens: 4_096,
+      toolExecutor: createToolExecutor({
+        getDefinitions: () => [{
+          type: "function",
+          function: {
+            name: "file_read",
+            description: "read file",
+            parameters: { type: "object" },
+          },
+        }],
+        execute,
+      }),
+      streamingEnabled: false,
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "structured-finalization-no-repair",
+      text: "return status",
+      structuredOutput: {
+        schema: { type: "object" },
+        validateOutput: validateStatusOutput,
+      },
+    } as any));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(1);
+    const secondPayload = JSON.parse(String(fetchSpy.mock.calls[1]?.[1]?.body ?? "{}"));
+    expect(secondPayload.tools).toBeUndefined();
+    expect(secondPayload.max_tokens).toBe(1_024);
+    expect(items.some((item) => item.type === "budget_exhausted")).toBe(false);
+    expect(items).toContainEqual({ type: "final", text: "not-json" });
+    expect(items.at(-1)).toEqual(expect.objectContaining({
+      type: "status",
+      status: "error",
+      code: "output_schema_invalid",
+    }));
+  });
 });
 
 function validateStatusOutput(text: string):

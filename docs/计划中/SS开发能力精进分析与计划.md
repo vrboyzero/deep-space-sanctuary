@@ -21,7 +21,7 @@ SS 已从上一轮 `7.4/10` 推进到安全、恢复、编辑、Headless、本�
 | SS 内部硬 Gate | **9.1/10**（原始加权 `9.065`） | corrected v2、类别下限、核心类别、测试、patch、回归、双平台和工程 Gate 均通过；只对既定 benchmark 与环境成立 |
 | 新一轮横向评分 | **9.0/10**（原始加权 `8.955`） | 对真实仓泛化、语义导航、验证控制面、并行和生态成熟度保留折扣；竞品未参加同环境 benchmark |
 
-横向评分不是模型能力排名。当前主要差距是：单一当前 HEAD 原生 aggregate 尚未完成、真实任务外部有效性不足，以及最新 resource-soak 局部超时修复的远端全量证据尚未取得。两个新增 Settings 字段的可见交互/console 手测已完成，P2-B 本地严格零发现依赖 Gate 与远端专项 Gate 已通过；P1-B 验证 DAG、P1-C TaskProjection/Capability Closure 与 P2-A Supervisor fault matrix/双平台长稳/零残留 Gate 均已完成。前部旧切片中的“尚未闭合”只描述当时上下文，不代表当前状态，当前状态以第 11、12 节为准。
+横向评分不是模型能力排名。单一当前 HEAD 原生 aggregate 已完成，但 B 层 `0/48`、C 层 `23/24`，当前主要差距转为真实任务外部有效性、普通 ReAct 终态预算闭环的真实 Provider uplift，以及两个连续 P2-C 候选证据。两个新增 Settings 字段的可见交互/console 手测已完成，P2-B 本地严格零发现依赖 Gate 与远端专项 Gate 已通过；P1-B 验证 DAG、P1-C TaskProjection/Capability Closure 与 P2-A Supervisor fault matrix/双平台长稳/零残留 Gate 均已完成。前部旧切片中的“尚未闭合”只描述当时上下文，不代表当前状态，当前状态以第 11、12 节为准。
 
 ### 1.2 下一轮五个闭环
 
@@ -2068,9 +2068,47 @@ Source / Workspace Revision
 
 ##### 后续计划
 
-- **下一步准备做什么**：离线聚类 48 个 B 层真实仓失败与 1 个 C 层 parallel-read failure，区分模型输出、工具使用、fixture 契约和产品工作流缺口，再把可修复项拆为新的能力开发切片。
-- **为什么先做它**：当前候选远未满足 P2-C 的层级 Gate；直接启动第二个付费候选只会重复失败，且不在本次 P0 矩阵授权范围内。
-- **当前还缺的关键闭环**：基于失败证据的实现改进、新稳定 identity、完整本地/远端 Gate，以及另行明确的 P2-C 候选与观察窗口授权；在此之前不创建 candidate v4、不扩样、不宣称原始加权 `>=9.500`。
+- **下一步准备做什么**：先将 49 项统一失败签名对应的终态预算修复形成 `main` 稳定 commit 并推送 `private/main`，再从新 SHA 重建 Windows/WSL2 clean harness、repository input 与 system smoke；通过后按既有授权从 attempt 1 启动新的 P0 原生 `144/144` 矩阵。
+- **为什么先做它**：49 项均为同一普通 ReAct 终态预算缺口，修复会改变 source/harness identity；只有新稳定 identity 的双平台全量结果才能判断真实仓和 parallel-read uplift，旧 `1523546` 结果不得续拼。
+- **当前还缺的关键闭环**：新 commit/content SHA、双平台输入与 smoke、`144/144` source reports、completed aggregate、`--verify` 和费用/usage/敏感/残留审计；本动作仍不创建 candidate v4、不启动 P2-C 观察窗口，也不预先宣称 Provider uplift 或原始加权 `>=9.500`。
+
+#### P0 失败改进实现结论：普通 ReAct 有界终态预算（2026-08-15）
+
+##### 已完成内容
+
+1. **`react-finalization.ts` 新建**：
+   - 新增普通 ReAct profile 的一次性 finalization-only 请求构造器；保留 system 合同和原任务，把最近 Tool 输出转换为明确标记“不可信数据”的有界只读证据。
+   - 输入估算使用 `1.2` 安全系数，输出上限为 `min(1024, configured maxOutputTokens)`；system 合同无法容纳时失败关闭。
+   - finalization 请求只含 `system/user` 角色，不携带 Tool 定义、`tool` 角色或额外 repair 能力。
+
+2. **`tool-agent.ts` 接入**：
+   - 仅对普通 profile 的第二次及以后模型调用执行终态储备预检；`cost-containment-v1=hold_explicit_opt_in`、首次调用和 structured repair call 行为不变。
+   - 普通后续请求预计无法同时容纳输入和终态输出时，改走一次有界 finalization；关闭 streaming，不执行该阶段意外返回的新 Tool，也不发起第三次模型或 schema repair。
+   - structured finalization 无效时保持 `output_schema_invalid`；Provider 实际 usage 仍超限时继续使用原有后置 `budget_exhausted`，未提高 `24000` token 上限。
+
+3. **回归、测试发现与项目地图更新**：
+   - `react-finalization.test.ts` 覆盖有界证据、system 合同失败关闭和 `1024` reserve 对齐；`tool-agent.test.ts` 覆盖较小显式输出上限、无 Tool 请求及 Provider 违规 Tool call 拒绝。
+   - `structured-output.test.ts` 覆盖 finalization 终态不进入第三次 repair；`project-map.md` 记录新的预算 owner 与 runtime 路由边界。
+   - `vitest.config.ts` 排除根级 `Void/**` 参考目录，避免忽略态外部仓进入全仓测试发现；用户未提交的 `.gitignore` 改动保持独立。
+
+4. **49 项失败归因与效果**：
+   - 离线聚类确认 aggregate 的 `49/49` product workflow failure 均为 `budget_exhausted / total_tokens / limit=24000`，不是 49 种独立 fixture 或 evaluator 缺陷。
+   - 代表样本 `real-web.dependency-diagnosis/windows-a1` 前三次 Provider usage 累计 `18734` token；旧第四次本地请求估算 `56108` token，返回后累计 `73892` 且仍为 Tool call。
+   - 修复后相同保留 trace 会改走 `3535` 输入 + `1024` 输出的无 Tool finalization；这证明路由闭环，不等同于新矩阵的 Provider task uplift。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/agent build` 通过；`corepack pnpm verify:coding-benchmark` 通过。
+- finalization/budget/structured/tool-agent 定向 `4` 个文件、`113/113` 通过；Agent 广泛回归 `51` 个文件、`532` 项通过，另有 `1` 项既有跳过。
+- 标准 `corepack pnpm test` 已不再扫描 `Void/deepseek-harness-master`，但在 `4` worker 全量负载下仍有 `36` 项既有 `5000ms` 超时/级联失败，不能记为全绿；对应 `6` 个失败文件以单 worker 定向复跑 `188/188` 通过，归因为全量并发资源饥饿而非本切片功能回归。
+- 保留真实 prompt snapshot 的零 Provider 离线 replay 通过：普通 preflight=`total_tokens 75866 > 24000`，finalization preflight 通过，角色仅为 `system/user`，有界 evidence=`4` 项，其中 `2` 项截断。
+- 本切片执行 `0` Provider、`0` 凭据读取，费用守卫保持 `17.67402880 RMB / 40 RMB`，没有生成 candidate v4 或 Provider uplift 证据。
+
+##### 后续计划
+
+- **下一步准备做什么**：本修复形成 `main` 稳定 commit 并推送 `private/main` 后，从该新 identity 重新准备双平台输入和 smoke，再启动新的 P0 原生 `144/144` 矩阵。
+- **为什么先做它**：只有冻结的新 source/harness identity 与完整双平台分母能验证 finalization 是否把 B/C 失败转化为可接受终态；离线 replay 不能替代 Provider 结果。
+- **当前还缺的关键闭环**：新 identity 的输入收据、正式 source reports、completed aggregate 与完整费用/usage/敏感/残留 Gate。用户已授权该 P0 重跑链条累计费用硬上限 `40 RMB`；当前守卫上界 `17.67402880 RMB`，在未达到上限前无需重复申请费用授权，但余额本身不构成调用理由，超限、扩展 Provider/任务范围或启动 P2-C 候选观察窗口仍需另行授权。
 
 ### 6.7 P2-C：9.5 稳定化与最终复核（未启动：当前候选未达 Gate）
 
@@ -2169,10 +2207,11 @@ Source / Workspace Revision
 
 - identity `152354642a195da7d067112dd9b6917876431954` 的 Windows/WSL2 原生 aggregate 已完成 `144/144`，`--verify` 可从全部 source report 和声明 artifact 离线复算；旧 identity 仅保留为历史证据。
 - 最终 A=`72/72`、B=`0/48`、C=`23/24`，infrastructure error=`0`；当前结论为“完成但不晋级”，不扩展付费矩阵、不创建 candidate v4、不将 `taskUplift=not_measured` 改写为已验证 uplift。
-- 本轮 P0 费用授权上限为 `40 RMB`，最终跨历史守卫上界为 `17.67402880 RMB`；矩阵已完成，剩余额度不构成继续调用 Provider 的理由。
-- **下一步准备做什么**：离线聚类 49 个 product workflow failure，形成可独立验证的真实仓与 parallel-read 能力改进切片。
-- **为什么先做它**：P2-C 要求两个连续候选均达到层级与原始加权 Gate；当前候选已明确未达标，直接重复付费矩阵不能产生新能力证据。
-- **当前还缺的关键闭环**：失败归因、对应实现改进、新稳定 identity、完整 Gate，以及另行明确的 P2-C 候选/观察窗口授权；P2-C 保持未启动。
+- 49 项 product workflow failure 已离线确认全部为 `budget_exhausted / total_tokens / limit=24000`；普通 ReAct 有界终态预算修复、`113/113` 定向回归、Agent `532` 项广泛回归和真实 trace 零 Provider replay 均已完成，但尚无新 identity 的 Provider uplift 证据。
+- 用户已授权当前 P0 重跑链条累计费用硬上限 `40 RMB`，当前跨历史守卫上界为 `17.67402880 RMB`；未达到上限前无需重复申请费用授权，但剩余额度不构成无证据调用理由，且不覆盖 P2-C 候选观察窗口。
+- **下一步准备做什么**：将 finalization 修复形成稳定 `main` commit 并推送 `private/main`，从新 identity 重建双平台 input/smoke，再启动新的 P0 原生 `144/144` 矩阵。
+- **为什么先做它**：修复已改变公共模型循环，必须以新 source/harness identity 和完整分母验证真实 uplift；旧 aggregate 不续拼，离线 replay 不替代 Provider 结果。
+- **当前还缺的关键闭环**：新 identity、双平台 input/smoke、正式 source reports、completed aggregate 与费用/usage/敏感/残留 Gate；P2-C 保持未启动，不创建 candidate v4。
 
 ### P1-C（已完成）
 
@@ -2220,7 +2259,7 @@ Source / Workspace Revision
 | 项目 | 优先级 | 状态 | 粗略工作量 | 完成边界 |
 | --- | --- | --- | ---: | --- |
 | 本轮 SS 能力复核与 9.5 增强规划 | - | 已完成 | - | 已复核 scorecard、目标向量 `9.510`、C#/Go 投入收益、多语言方案和竞品资料；竞品未做同环境 benchmark |
-| P0：Benchmark v3 与外部有效性 | P0 | 已完成（结果未晋级）；P0.1-P0.30 与 identity `152354642a195da7d067112dd9b6917876431954` 的单一 HEAD 原生 aggregate 均闭合。双平台 input=`4/4 ready`、preflight=`8/8`、system smoke=`4/4`；formal=`144/144`、A=`72/72`、B=`0/48`、C=`23/24`、infrastructure error=`0`、usage=`132 provider_reported + 6 unavailable + 6 not_reached`，`--verify` 通过。aggregate task completion=`95/144`，49 项均为保留在分母内的 product workflow failure；本 identity 成本 `$0.74762737`，跨历史守卫上界 `$2.20925360 = 17.67402880 RMB < 40 RMB`。`cost-containment-v1` 保持 `hold_explicit_opt_in`，candidate v1-v3=`do_not_promote`；下一步离线拆解 B/C failure，完成前缺失败归因、实现改进、新 identity/Gate 与 P2-C 授权，不创建 candidate v4、不扩样 | 14-22 人日 | A/B/C 三层、至少 4 个固定仓、144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；不含 candidate v4、竞品代跑、公开排行榜 |
+| P0：Benchmark v3 与外部有效性 | P0 | 已完成基线（结果未晋级），失败改进切片已实现、待新 identity 复核。identity `152354642a195da7d067112dd9b6917876431954` 已闭合 formal=`144/144`、A=`72/72`、B=`0/48`、C=`23/24`、infrastructure error=`0`、usage=`132 provider_reported + 6 unavailable + 6 not_reached` 与 `--verify`；49 项 product workflow failure 均为 `budget_exhausted/total_tokens/24000`。普通 ReAct 有界终态预算、定向 `113/113`、Agent `532` 项回归和真实 trace 零 Provider replay 已通过，尚无新 Provider uplift。Git 事故中的 `origin`/upstream 与 `react-run-budget.ts` blob 已核实恢复，`Void/**` 测试发现已隔离；DSH 不可达对象永久清理仍待 HITL 确认。当前费用守卫 `$2.20925360 = 17.67402880 RMB < 40 RMB`；本 P0 重跑链条在累计未达上限前无需重复费用授权。`cost-containment-v1` 保持 `hold_explicit_opt_in`，candidate v1-v3=`do_not_promote`；下一步形成稳定 commit、新 identity 双平台 input/smoke 与完整 `144/144` 复核，不创建 candidate v4、不启动 P2-C 观察窗口 | 14-22 人日 | A/B/C 三层、至少 4 个固定仓、144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；不含 candidate v4、竞品代跑、公开排行榜 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | 已完成；attempt 12 aggregate=`passed`；binary regression/Provider failure=`0/0`；`semantic-live=7/8`；非目标整文件读取 `21 -> 14`；16/16 cell 预算耗尽；candidate task/patch success=`0/8`；累计费用 `1.68214072 RMB` | 8-12 人日 | 公共 contract、TS/JS Provider、Inspector、truth set、resource soak、双平台 native runtime 与真实 uplift Gate；不含外部 LSP、Go/C# GA、SCIP store |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | 已完成；Host、pinned profile、Go Doctor、Adapter/truth/fault、双平台 native/OCI、readiness/progress/monitor、comparator 和 eligibility 已闭合；`goCanaryEligible=true`、`productionEligible=false` | 6-11 人日 | 双平台 identity/truth/lifecycle/OCI evidence、只读 comparator、单一 eligibility owner、Doctor projection；不含 Go 生产默认启用、自动安装、公开发布、扩大 fixture、rollout 观察窗口 |
 | P1-A3：C# 条件接入 | 条件 | 延后，等待真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild 执行面、restore/联网和生命周期；未命中需求不进入生产，也不阻断 9.5 |
@@ -2228,4 +2267,4 @@ Source / Workspace Revision
 | P1-C：TaskProjection 与 Capability Closure | P1 | 已完成；硬 Gate 全部闭合，广泛回归 `31` 文件 `312/312`、最后切片 `58/58`、Core build/diff check 通过。公共人工 provenance、`blocked/verifying` observation 与 verification DAG 外键缺 authoritative owner，已拆分为 `split_task/defer`，未知指标保持 `incomplete` | 10-15 人日 | 只读跨 owner 投影、exact-binding action、任务启动闭包、六类故障投影和旧客户端兼容；不迁移领域真源，不按客户端身份猜测人工来源 |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | 已完成；admission/worktree Gate、restart reattach、exact-bound control、fan-in、统一预算、fault matrix、跨进程 Git mutation lock 与 failure compensation 均闭合。修复后 Core/Skills build、相关回归 `18` 文件 `138/138` 通过；Windows/WSL2 正式 r3 同 identity 各 `360/360` lane，平台 Gate、Schema、comparator 与 child/worktree/branch/process/receipt/lock/tmp/root 零残留 sweep 全部通过。r2 WSL2 首次失败 artifact 原样保留 | 12-20 人日 | 隔离写入、预算、60 分钟 soak、steer/cancel/reattach、fan-in 和 fault matrix；不含自动 merge/release/deploy |
 | P2-B：生态与运行前置收口 | P2 | 已完成；窄 reference client、两个 Windows/WSL2 仓外 consumer、完整 `17 + 1 + 5` error taxonomy、failure conformance、coding runtime preflight Doctor、Puppeteer `25.7.0`、零发现 audit、真实 Chrome/MV3 Relay、portable lifecycle、Settings 手测和最终 P0 运行前置均已闭合。Docker context 修复 `e61a3e4` 的 Quality `31805350871` 全绿，本地真实 builder/`verify:build` 通过；Docker run `31805350776` 终态因当前 GitHub 凭据不可读而保留为未验证历史项，不新增实现缺口 | 8-14 人日 | 两个外部消费者、N-1/N conformance、真实 CI、OCI/语言 Doctor、零发现 dependency Gate；不含公开发布、系统级自动安装、sandbox 替换，未经授权不再升级依赖主版本 |
-| P2-C：9.5 稳定化与最终复核 | P2 | 未启动；P0/P2-B 前置已完成，但当前 aggregate 的 B=`0/48`、C=`23/24`，未满足候选进入 Gate。技术债决策=`split_task`：先离线聚类 49 个 product workflow failure 并形成能力改进；没有新实现、新稳定 identity、完整 Gate 和另行候选/观察窗口授权前，不重复付费矩阵、不创建 candidate v4、不宣称 `>=9.500` | 5-8 人日 + 观察窗口 | 两个连续候选版本原始 `>=9.500`、目标维度和全部硬 Gate 通过；不含竞品联合 benchmark、生产写入 |
+| P2-C：9.5 稳定化与最终复核 | P2 | 未启动；当前 aggregate 的 B=`0/48`、C=`23/24`，未满足候选进入 Gate。技术债决策=`split_task`：49 项统一失败签名已归因，首个普通 ReAct finalization 能力改进已实现，但尚缺新稳定 identity 的完整 P0 Provider uplift/Gate；本 P0 重跑费用授权不等同于 P2-C 候选/观察窗口授权，不创建 candidate v4、不宣称 `>=9.500` | 5-8 人日 + 观察窗口 | 两个连续候选版本原始 `>=9.500`、目标维度和全部硬 Gate 通过；不含竞品联合 benchmark、生产写入 |

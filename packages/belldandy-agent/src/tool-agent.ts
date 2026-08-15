@@ -122,6 +122,12 @@ import {
   ReActRunBudgetTracker,
   type ReActRunAbortController,
 } from "./react-run-budget.js";
+import {
+  buildReactFinalizationRequest,
+  REACT_FINALIZATION_INPUT_SAFETY_FACTOR,
+  REACT_FINALIZATION_OUTPUT_TOKEN_RESERVE,
+  type ReactFinalizationRequest,
+} from "./react-finalization.js";
 
 type ApiProtocol = "openai" | "anthropic";
 type CacheSupport = "supported" | "unsupported" | "unknown";
@@ -2720,10 +2726,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
           ? input.steering.peekPending()
           : [];
 
-        const tools = structuredOutputRepairCall
+        let tools = structuredOutputRepairCall
           ? []
           : this.opts.toolExecutor.getDefinitions(resolvedAgentId, input.conversationId, runtimeContext);
-        const toolNames = tools.map((tool) => tool.function.name);
+        let toolNames = tools.map((tool) => tool.function.name);
         const preflightMessages = pendingSteerCommands.length > 0
           ? [
             ...messages,
@@ -2776,17 +2782,100 @@ export class ToolEnabledAgent implements BelldandyAgent {
           );
           return;
         }
+        let finalizationOnlyCall = false;
+        let finalizationRequest: ReactFinalizationRequest | undefined;
+        let finalizationTrigger: ReturnType<ReActRunBudgetTracker["checkModelCallPreflight"]>;
+        const finalizationOutputTokens = Math.max(
+          1,
+          Math.min(
+            REACT_FINALIZATION_OUTPUT_TOKEN_RESERVE,
+            this.opts.maxOutputTokens ?? REACT_FINALIZATION_OUTPUT_TOKEN_RESERVE,
+          ),
+        );
+        if (
+          modelCallCount > 0
+          && !structuredOutputRepairCall
+          && !runBudget.modelLoopBudgetPolicy
+        ) {
+          const ordinaryMinimumCost = calculateUsageCostUsd({
+            inputTokens: preflightPromptTokens,
+            outputTokens: finalizationOutputTokens,
+            pricing: this.opts.usagePricing,
+          });
+          const ordinaryPreflight = runBudget.checkModelCallPreflight({
+            minimumInputTokens: preflightPromptTokens,
+            minimumOutputTokens: finalizationOutputTokens,
+            ...(ordinaryMinimumCost ? { minimumCostUsd: ordinaryMinimumCost.totalUsd } : {}),
+          });
+          if (ordinaryPreflight) {
+            const remainingInputTokens = Math.floor(Math.max(
+              0,
+              runBudget.maxTotalTokens
+                - runBudget.totalTokens
+                - finalizationOutputTokens,
+            ) / REACT_FINALIZATION_INPUT_SAFETY_FACTOR);
+            const candidate = buildReactFinalizationRequest({
+              messages: preflightRequestMessages,
+              maxInputTokens: remainingInputTokens,
+              tokenEstimateContext: dispatchTokenEstimateContext,
+            });
+            const candidateMinimumCost = candidate
+              ? calculateUsageCostUsd({
+                inputTokens: candidate.estimatedInputTokens,
+                outputTokens: finalizationOutputTokens,
+                pricing: this.opts.usagePricing,
+              })
+              : undefined;
+            const candidatePreflight = candidate
+              ? runBudget.checkModelCallPreflight({
+                minimumInputTokens: candidate.estimatedInputTokens,
+                minimumOutputTokens: finalizationOutputTokens,
+                ...(candidateMinimumCost ? { minimumCostUsd: candidateMinimumCost.totalUsd } : {}),
+              })
+              : ordinaryPreflight;
+            if (candidate && !candidatePreflight) {
+              finalizationOnlyCall = true;
+              finalizationRequest = candidate;
+              finalizationTrigger = ordinaryPreflight;
+              tools = [];
+              toolNames = [];
+              logWarn("[model-loop-budget] switching to bounded finalization-only call", {
+                triggerBudget: ordinaryPreflight.budget,
+                triggerObserved: ordinaryPreflight.observed,
+                remainingInputTokens,
+                finalizationInputTokens: candidate.estimatedInputTokens,
+                evidenceCount: candidate.evidenceCount,
+                truncatedEvidenceCount: candidate.truncatedEvidenceCount,
+                conversationId: input.conversationId,
+                agentId: resolvedAgentId,
+              });
+            } else {
+              const error = ordinaryPreflight.budget === "cost_usd"
+                ? `剩余费用预算不足以覆盖有界最终总结（最大 $${ordinaryPreflight.limit.toFixed(8)}，预计累计 $${ordinaryPreflight.observed.toFixed(8)}）。`
+                : `剩余 token 预算不足以覆盖有界最终总结（最大 ${ordinaryPreflight.limit}，预计累计 ${ordinaryPreflight.observed}）。`;
+              yield* emitBudgetExhausted(
+                ordinaryPreflight.budget,
+                ordinaryPreflight.limit,
+                ordinaryPreflight.observed,
+                error,
+              );
+              return;
+            }
+          }
+        }
         const steerCommands = input.steering && !structuredOutputRepairCall
           ? await input.steering.consumePending({ modelCallIndex: nextModelCallIndex })
           : [];
         for (const command of steerCommands) {
           messages.push({ role: "user", content: command.prompt });
         }
-        const requestMessages = applyStablePrefixSplitMessageLayout(messages, {
-          transientText: currentTransientTailText,
-          independentBlockText: currentIndependentBlockText,
-          messageLayout: this.opts.messageLayout,
-        }) as Message[];
+        const requestMessages = finalizationRequest
+          ? finalizationRequest.messages as Message[]
+          : applyStablePrefixSplitMessageLayout(messages, {
+            transientText: currentTransientTailText,
+            independentBlockText: currentIndependentBlockText,
+            messageLayout: this.opts.messageLayout,
+          }) as Message[];
         const dispatchSystemPromptTokens = estimateSystemPromptTokens(
           requestMessages,
           dispatchTokenEstimateContext,
@@ -2824,10 +2913,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
           hasListFiles: toolNames.includes("list_files"),
           hasToolSearch: toolNames.includes("tool_search"),
           textAttachmentChars,
+          finalizationOnly: finalizationOnlyCall,
         });
 
         // 调用模型。流式模式通过相邻单槽 delivery 转发，避免在本文件持有队列和协议状态。
-        const streamDelivery = this.opts.streamingEnabled && !structuredOutputSession
+        const streamDelivery = this.opts.streamingEnabled && !structuredOutputSession && !finalizationOnlyCall
           ? createModelStreamTextDelivery()
           : undefined;
         const responsePromise = this.callModel(
@@ -2875,6 +2965,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             ? undefined
             : providerNativeSystemBlocks,
           streamDelivery,
+          finalizationOnlyCall ? finalizationOutputTokens : undefined,
         );
         modelCallCount++;
         let response: Awaited<typeof responsePromise>;
@@ -3087,6 +3178,23 @@ export class ToolEnabledAgent implements BelldandyAgent {
           toolDefinitionCount: tools.length,
           toolNamesPreview: toolNames.slice(0, 12),
         });
+        if (finalizationOnlyCall && toolCalls && toolCalls.length > 0) {
+          const error = "有界最终总结返回了工具调用；该阶段禁止继续执行工具或发起额外模型调用。";
+          if (structuredOutputSession) {
+            yield* emitStructuredOutputFailure({
+              originalText: contentForDisplay,
+              message: error,
+            });
+          } else if (finalizationTrigger) {
+            yield* emitBudgetExhausted(
+              finalizationTrigger.budget,
+              finalizationTrigger.limit,
+              finalizationTrigger.observed,
+              error,
+            );
+          }
+          return;
+        }
         if (structuredOutputRepairCall && toolCalls && toolCalls.length > 0 && structuredOutputSession) {
           const rejection = structuredOutputSession.rejectRepair(
             "Structured output repair returned a tool call instead of valid JSON.",
@@ -3098,6 +3206,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
           if (structuredOutputSession) {
             const review = structuredOutputSession.reviewFinal(contentForDisplay);
             if (review.action === "repair") {
+              if (finalizationOnlyCall) {
+                const rejection = structuredOutputSession.rejectRepair(
+                  "Structured output repair was not started because the bounded finalization-only call is terminal.",
+                );
+                yield* emitStructuredOutputFailure(rejection);
+                return;
+              }
               const repairWallTimeObserved = Date.now() - runBudgetStartedAt;
               if (repairWallTimeObserved >= maxRunWallTimeMs) {
                 const rejection = structuredOutputSession.rejectRepair(
@@ -3189,7 +3304,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             yield* yieldItem({ type: "status", status: "done" });
             return;
           }
-          if (input.steering && !input.steering.sealIfIdle()) {
+          if (!finalizationOnlyCall && input.steering && !input.steering.sealIfIdle()) {
             messages.push({
               role: "assistant",
               content: response.content || contentForDisplay,
@@ -4059,6 +4174,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     onBeforeRequest?: (messages: Message[], trimDiagnostics?: PromptTrimDiagnostics) => void,
     providerNativeSystemBlocks?: ProviderNativeSystemBlock[],
     streamDelivery?: ModelStreamTextDelivery,
+    maxOutputTokensOverride?: number,
   ): Promise<{
     ok: true;
     content: string;
@@ -4074,6 +4190,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     rawUsage?: AgentUsage["providerRawUsage"];
   }> {
     let effectiveTimeoutMs = this.opts.timeoutMs;
+    const maxOutputTokens = maxOutputTokensOverride ?? this.opts.maxOutputTokens ?? 4096;
     const callStartedAt = Date.now();
     let currentPhase = "preflight";
     let failoverSummary: FailoverExecutionSummary | undefined;
@@ -4149,7 +4266,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             profile,
             messages: messages as any,
             tools: tools as any,
-            maxTokens: this.opts.maxOutputTokens ?? 4096,
+            maxTokens: maxOutputTokens,
             stream: streamDelivery !== undefined,
             enableCaching: true,
             providerNativeSystemBlocks,
@@ -4160,7 +4277,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           const payload: Record<string, unknown> = {
             model: profile.model,
             input: buildResponsesInputFromMessages(messages),
-            max_output_tokens: this.opts.maxOutputTokens ?? 4096,
+            max_output_tokens: maxOutputTokens,
             stream: streamDelivery !== undefined,
           };
           applyOpenAICompatibleReasoningConfig(payload, profile);
@@ -4192,7 +4309,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
         const payload: Record<string, unknown> = {
           model: profile.model,
           messages: cleanMessages,
-          max_tokens: this.opts.maxOutputTokens ?? 4096,
+          max_tokens: maxOutputTokens,
           stream: streamDelivery !== undefined,
         };
         applyOpenAICompatibleReasoningConfig(payload, profile);
