@@ -57,6 +57,48 @@ describe("coding agent benchmark stage 0B runner", () => {
     expect(resolveGatewayProcessRestartTimeoutMs("v1", "linux")).toBe(15_000);
   });
 
+  it("keeps restart projection evidence inside the v1 and corrected v2 schemas", async () => {
+    for (const [revision, trigger] of [
+      ["v1", "run.started"],
+      ["v2", "message.send.accepted"],
+    ]) {
+      const schema = JSON.parse(await fs.readFile(path.resolve(
+        `benchmarks/coding-agent/${revision}/restart-injection.schema.json`,
+      ), "utf-8"));
+      const compiled = compileOutputSchema(schema);
+      expect(compiled.ok, revision).toBe(true);
+      if (!compiled.ok) continue;
+
+      const result = compiled.validator.validateOutput(JSON.stringify({
+        schemaVersion: "coding-agent-restart-injection/v1",
+        taskId: "gateway.process-restart",
+        trigger,
+        status: "not_injected",
+        observedStartedSeq: null,
+        messageSendRequestCount: 0,
+        binding: null,
+        originalGateway: null,
+        replacementGateway: null,
+        subscription: { exitCode: null, errorCode: null, eventCount: 0, diagnostic: null },
+        cancellation: { exitCode: null, accepted: null, state: null },
+        projection: {
+          beforeRestart: {
+            exitCode: null,
+            ok: false,
+            epoch: null,
+            revision: null,
+            totalCount: null,
+            cursor: null,
+            errorCode: null,
+          },
+          afterRestart: { exitCode: null, ok: false, errorCode: null },
+        },
+        cleanup: { managedGatewayProcessCount: 0, originalGateway: null, replacementGateway: null },
+      }));
+      expect(result, revision).toMatchObject({ ok: true });
+    }
+  });
+
   it("derives a Windows Gateway workspace without replacing the WSL evaluator workspace", () => {
     const gatewayFixtureRoot = "\\\\wsl.localhost\\Ubuntu-22.04\\var\\tmp\\coding-agent-fixtures";
 

@@ -514,7 +514,7 @@ corepack pnpm benchmark:coding-agent:stage0c:cancel:wsl --distribution Ubuntu-22
 
 v1 保持从 TypeScript source 通过 `tsx` 启动 fixture Gateway；corrected v2 与 external-validity v3 均从所选 source identity 的 `packages/belldandy-core/dist/server.js` 启动，并把该入口路径与 SHA-256 写入旧/新 Gateway evidence。Linux 上 v2/v3 冷加载与 stdio/CLI probe 使用 60 秒单操作上限，Windows 与 v1 保持 15 秒，二者仍受任务 300 秒总预算约束。
 
-重启后，harness 先用既有 `bdd coding-run stdio` 查询旧 binding，要求得到 `not_found`；再用 `bdd agent cancel` 查询同一 binding，要求返回 `{ accepted: false, state: "not_found" }`。两个 probe 顺序执行，避免独立 CLI client 同时写 pairing state。`restart-injection.json` 的 `messageSendRequestCount` 记录成功接受的发送数，并记录精确 binding、旧/新 PID、探测结果和受控子进程收敛状态。它记录的是当前进程内 broker 在进程终止后丢失 run 的失败基线，不是持久化恢复成功，也不代表真实模型工作流已覆盖：
+重启后，harness 先用既有 `bdd coding-run stdio` 查询旧 binding，要求得到 `not_found`；再用 `bdd agent cancel` 查询同一 binding，要求返回 `{ accepted: false, state: "not_found" }`。两个 probe 顺序执行，避免独立 CLI client 同时写 pairing state。`restart-injection.json` 的 `messageSendRequestCount` 记录成功接受的发送数，并记录精确 binding、旧/新 PID、TaskProjection 重启前 cursor 与重启后 `cursor_stale` 探测、以及受控子进程收敛状态。v1/v2 Schema 将后加的 `projection` 作为可选但内部严格的兼容字段，历史 artifact 不因加法扩展失效；当前 producer 与 evaluator 仍要求本轮 projection evidence 存在且语义正确。该 artifact 记录的是当前进程内 broker 在进程终止后丢失 run 的失败基线，不是持久化恢复成功，也不代表真实模型工作流已覆盖：
 
 ```powershell
 corepack pnpm benchmark:coding-agent:stage0c:restart:windows --fixture-root <fixture-root> --artifact-root <artifact-root> --state-root <state-root> --provider fixture --model-id gateway-restart-fixture --credentials-configured false

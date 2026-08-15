@@ -49,6 +49,37 @@
         "state": { "type": ["string", "null"], "maxLength": 100 }
       }
     },
+    "projection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["beforeRestart", "afterRestart"],
+      "properties": {
+        "beforeRestart": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["exitCode", "ok", "epoch", "revision", "totalCount", "cursor", "errorCode"],
+          "properties": {
+            "exitCode": { "type": ["integer", "null"], "minimum": 0, "maximum": 255 },
+            "ok": { "type": "boolean" },
+            "epoch": { "type": ["string", "null"], "minLength": 1, "maxLength": 500 },
+            "revision": { "type": ["integer", "null"], "minimum": 0 },
+            "totalCount": { "type": ["integer", "null"], "minimum": 0 },
+            "cursor": { "$ref": "#/$defs/projectionCursor" },
+            "errorCode": { "type": ["string", "null"], "maxLength": 100 }
+          }
+        },
+        "afterRestart": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["exitCode", "ok", "errorCode"],
+          "properties": {
+            "exitCode": { "type": ["integer", "null"], "minimum": 0, "maximum": 255 },
+            "ok": { "type": "boolean" },
+            "errorCode": { "type": ["string", "null"], "maxLength": 100 }
+          }
+        }
+      }
+    },
     "cleanup": {
       "type": "object",
       "additionalProperties": false,
@@ -71,6 +102,21 @@
           "properties": {
             "conversationId": { "type": "string", "minLength": 1, "maxLength": 500 },
             "agentRunId": { "type": "string", "minLength": 1, "maxLength": 500 }
+          }
+        }
+      ]
+    },
+    "projectionCursor": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["epoch", "revision", "offset"],
+          "properties": {
+            "epoch": { "type": "string", "minLength": 1, "maxLength": 500 },
+            "revision": { "type": "integer", "minimum": 0 },
+            "offset": { "type": "integer", "minimum": 0 }
           }
         }
       ]
