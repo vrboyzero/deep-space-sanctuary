@@ -386,6 +386,8 @@ function detectRegexReplaceRisk(pattern: string, flags: string): string | null {
 const DEFAULT_FILE_READ_MAX_BYTES = 100 * 1024;
 const MAX_FILE_READ_BYTES = 1024 * 1024;
 const MAX_FILE_READ_CURSOR_CHARS = 2_048;
+const MAX_FILE_READ_ANCHOR_BYTES = 4 * 1024;
+const MAX_FILE_READ_ANCHOR_SCAN_BYTES = 16 * 1024 * 1024;
 const FILE_HASH_CHUNK_BYTES = 64 * 1024;
 
 type FileReadInput = {
@@ -394,6 +396,7 @@ type FileReadInput = {
   limit: number;
   offset?: number;
   cursor?: string;
+  anchor?: string;
 };
 
 type FileReadCursor = {
@@ -432,6 +435,29 @@ function normalizeFileReadInput(args: Record<string, unknown>):
     return { ok: false, error: "参数错误：cursor 与 offset 不能同时指定" };
   }
 
+  const anchor = args.anchor === undefined ? undefined : args.anchor;
+  if (anchor !== undefined) {
+    if (typeof anchor !== "string" || anchor.length === 0) {
+      return { ok: false, error: "参数错误：anchor 必须是非空字符串" };
+    }
+    const anchorBuffer = Buffer.from(anchor, "utf-8");
+    if (anchorBuffer.toString("utf-8") !== anchor) {
+      return { ok: false, error: "参数错误：anchor 必须是有效 UTF-8 文本" };
+    }
+    if (anchorBuffer.length > MAX_FILE_READ_ANCHOR_BYTES) {
+      return { ok: false, error: `参数错误：anchor 不能超过 ${MAX_FILE_READ_ANCHOR_BYTES} 个 UTF-8 字节` };
+    }
+    if (encoding !== "utf-8") {
+      return { ok: false, error: "参数错误：anchor 仅支持 utf-8 encoding" };
+    }
+    if (offset !== undefined || cursor !== undefined) {
+      return { ok: false, error: "参数错误：anchor 不能与 offset 或 cursor 同时指定" };
+    }
+    if (anchorBuffer.length > limit.value) {
+      return { ok: false, error: "参数错误：limit 必须足以完整包含 anchor" };
+    }
+  }
+
   return {
     ok: true,
     value: {
@@ -440,6 +466,7 @@ function normalizeFileReadInput(args: Record<string, unknown>):
       limit: limit.value,
       ...(offset === undefined ? {} : { offset }),
       ...(typeof cursor === "string" ? { cursor: cursor.trim() } : {}),
+      ...(typeof anchor === "string" ? { anchor } : {}),
     },
   };
 }
@@ -511,6 +538,31 @@ async function hashFileHandle(
   return hash.digest("hex");
 }
 
+async function readFileHandle(
+  handle: Awaited<ReturnType<typeof fs.open>>,
+  size: number,
+): Promise<Buffer> {
+  const content = Buffer.alloc(size);
+  let offset = 0;
+  while (offset < size) {
+    const { bytesRead } = await handle.read(content, offset, size - offset, offset);
+    if (bytesRead === 0) break;
+    offset += bytesRead;
+  }
+  return content.subarray(0, offset);
+}
+
+function findUniqueFileReadAnchor(
+  content: Buffer,
+  anchor: Buffer,
+): { ok: true; byteOffset: number } | { ok: false; matchCount: 0 | 2 } {
+  const first = content.indexOf(anchor);
+  if (first < 0) return { ok: false, matchCount: 0 };
+  const second = content.indexOf(anchor, first + 1);
+  if (second >= 0) return { ok: false, matchCount: 2 };
+  return { ok: true, byteOffset: first };
+}
+
 function countLiteralOccurrences(value: string, search: string): number {
   let count = 0;
   let offset = 0;
@@ -557,7 +609,7 @@ function encodeFileReadCursor(input: { fingerprint: string; offset: number }): s
 export const fileReadTool: Tool = withToolContract({
   definition: {
     name: "file_read",
-    description: "读取工作区内文件内容。offset/limit 单位是字节（不是行数）；读取源代码时通常省略 limit 以使用默认 100KB，若返回 truncated=true 则用 nextCursor 继续。路径必须在工作区范围内，禁止读取敏感文件（如 .env、密钥等）。",
+    description: "读取工作区内文件内容。offset/limit 单位是字节（不是行数）；读取大型源码中的已知符号时可用唯一精确 anchor 返回命中点附近窗口；其他读取通常省略 limit 以使用默认 100KB，若返回 truncated=true 则用 nextCursor 继续。路径必须在工作区范围内，禁止读取敏感文件（如 .env、密钥等）。",
     parameters: {
       type: "object",
       properties: {
@@ -567,7 +619,7 @@ export const fileReadTool: Tool = withToolContract({
         },
         encoding: {
           type: "string",
-          description: "编码方式（默认 utf-8）",
+          description: "编码方式（默认 utf-8）；anchor 模式仅支持 utf-8",
           enum: ["utf-8", "base64"],
         },
         maxBytes: {
@@ -576,15 +628,19 @@ export const fileReadTool: Tool = withToolContract({
         },
         offset: {
           type: "number",
-          description: "读取起始字节（不是行数）偏移，默认 0；不能与 cursor 同时指定",
+          description: "读取起始字节（不是行数）偏移，默认 0；不能与 cursor 或 anchor 同时指定",
         },
         limit: {
           type: "number",
-          description: "单段最大读取量，单位为字节（不是行数），默认 102400，最大 1048576；读取源代码时通常省略；不能与 maxBytes 同时指定",
+          description: "单段最大读取量，单位为字节（不是行数），默认 102400，最大 1048576；anchor 模式下是包含命中点的窗口大小；不能与 maxBytes 同时指定",
         },
         cursor: {
           type: "string",
-          description: "返回 truncated=true 时，原样传入上一段的 nextCursor 继续读取；仅可用于同一未变文件和相同 encoding",
+          description: "返回 truncated=true 时，原样传入上一段的 nextCursor 继续读取；仅可用于同一未变文件和相同 encoding，不能与 anchor 同时指定",
+        },
+        anchor: {
+          type: "string",
+          description: "大型源码精确定位模式：在不超过 16 MiB 的文件内查找唯一精确文本，返回包含命中点的有界窗口和真实 UTF-8 字节偏移；不能与 offset、cursor 或 base64 encoding 同时指定",
         },
       },
       required: ["path"],
@@ -657,7 +713,21 @@ export const fileReadTool: Tool = withToolContract({
 
       const handle = await fs.open(absolute, "r");
       try {
-        const contentDigest = await hashFileHandle(handle, stat.size);
+        if (input.value.anchor !== undefined && stat.size > MAX_FILE_READ_ANCHOR_SCAN_BYTES) {
+          return makeError(
+            `参数错误：anchor 模式仅支持不超过 ${MAX_FILE_READ_ANCHOR_SCAN_BYTES} 字节的文件`,
+            "input_error",
+          );
+        }
+        const anchoredFileContent = input.value.anchor === undefined
+          ? undefined
+          : await readFileHandle(handle, stat.size);
+        if (anchoredFileContent && anchoredFileContent.length !== stat.size) {
+          return makeError("读取期间文件大小发生变化，请重试", "input_error");
+        }
+        const contentDigest = anchoredFileContent
+          ? hashFileContent(anchoredFileContent)
+          : await hashFileHandle(handle, stat.size);
         const fingerprint = buildFileReadFingerprint({
           realPath: realFile,
           contentDigest,
@@ -669,14 +739,37 @@ export const fileReadTool: Tool = withToolContract({
         });
         const cursor = decodeFileReadCursor(input.value.cursor, fingerprint);
         if (!cursor.ok) return makeError(cursor.error, "input_error");
-        const offset = cursor.value?.offset ?? input.value.offset ?? 0;
+        let anchorByteOffset: number | undefined;
+        if (input.value.anchor !== undefined && anchoredFileContent) {
+          const anchorBuffer = Buffer.from(input.value.anchor, "utf-8");
+          const match = findUniqueFileReadAnchor(anchoredFileContent, anchorBuffer);
+          if (!match.ok) {
+            return match.matchCount === 0
+              ? makeError("参数错误：anchor 未找到", "input_error")
+              : makeError("参数错误：anchor 至少找到 2 处，必须提供唯一精确文本", "input_error");
+          }
+          anchorByteOffset = match.byteOffset;
+        }
+        const offset = anchorByteOffset === undefined
+          ? cursor.value?.offset ?? input.value.offset ?? 0
+          : Math.min(
+              Math.max(0, anchorByteOffset - Math.floor(
+                (input.value.limit - Buffer.byteLength(input.value.anchor!, "utf-8")) / 2,
+              )),
+              Math.max(0, stat.size - input.value.limit),
+            );
         if (offset > stat.size) {
           return makeError("参数错误：offset 超出文件大小", "input_error");
         }
 
         // 读取文件（限制大小）
-        const buffer = Buffer.alloc(Math.min(stat.size - offset, input.value.limit));
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, offset);
+        const requestedBytes = Math.min(stat.size - offset, input.value.limit);
+        const buffer = anchoredFileContent
+          ? anchoredFileContent.subarray(offset, offset + requestedBytes)
+          : Buffer.alloc(requestedBytes);
+        const bytesRead = anchoredFileContent
+          ? buffer.length
+          : (await handle.read(buffer, 0, buffer.length, offset)).bytesRead;
 
         let content: string;
         if (input.value.encoding === "base64") {
@@ -686,8 +779,10 @@ export const fileReadTool: Tool = withToolContract({
         }
 
         const endOffset = offset + bytesRead;
-        const truncated = endOffset < stat.size;
-        const nextCursor = truncated
+        const truncated = anchoredFileContent
+          ? bytesRead < stat.size
+          : endOffset < stat.size;
+        const nextCursor = truncated && anchoredFileContent === undefined
           ? encodeFileReadCursor({ fingerprint, offset: endOffset })
           : undefined;
 
@@ -717,6 +812,12 @@ export const fileReadTool: Tool = withToolContract({
               offset,
               endOffset,
             },
+            ...(anchorByteOffset === undefined ? {} : {
+              anchor: {
+                text: input.value.anchor,
+                byteOffset: anchorByteOffset,
+              },
+            }),
             ...(nextCursor ? { nextCursor } : {}),
             encoding: input.value.encoding,
             revision,

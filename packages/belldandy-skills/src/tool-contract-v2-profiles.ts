@@ -557,6 +557,7 @@ const TOOL_CONTRACT_V2_PROFILES: Record<string, ToolContractV2Profile> = {
       "Need the exact current contents of a known file before editing, reviewing, or answering from repository context",
       "Need a bounded workspace read with explicit path control instead of executing shell commands",
       "Need to continue a truncated read by passing the returned nextCursor unchanged",
+      "Need one bounded window around a known unique anchor in a large source file",
     ],
     avoidWhen: [
       "You do not yet know the target path and should search or list first",
@@ -569,6 +570,7 @@ const TOOL_CONTRACT_V2_PROFILES: Record<string, ToolContractV2Profile> = {
       "Treat offset and limit as byte counts, never line counts; omit limit for the default 100KB source read unless a smaller byte range is intentional",
       "Confirm the path, expected encoding, and whether offset/limit or maxBytes truncation could hide relevant context",
       "Reuse nextCursor only with the same unchanged file and encoding; otherwise restart from an explicit offset",
+      "For anchor reads, provide unique exact UTF-8 text and a limit large enough to contain the full anchor",
       "Prefer reading a focused file over dumping many large files into the context window",
     ],
     fallbackStrategy: [
@@ -576,8 +578,8 @@ const TOOL_CONTRACT_V2_PROFILES: Record<string, ToolContractV2Profile> = {
       "Use browser or network tools only when the source of truth is not in the workspace",
     ],
     expectedOutput: [
-      "JSON text including path, size, bytesRead, actual byte range, truncation flag, encoding, revision, content, and nextCursor when more bytes remain",
-      "Missing file, denied path, sensitive path, symlink target, stale cursor, or invalid range should return explicit read errors",
+      "JSON text including path, size, bytesRead, actual byte range, truncation flag, encoding, revision, content, anchor metadata when requested, and nextCursor when more bytes remain",
+      "Missing file, denied path, sensitive path, symlink target, stale cursor, invalid range, or a missing or ambiguous anchor should return explicit read errors",
     ],
     sideEffectSummary: [
       "Does not mutate the workspace, but may expose sensitive or high-volume content into the model context",

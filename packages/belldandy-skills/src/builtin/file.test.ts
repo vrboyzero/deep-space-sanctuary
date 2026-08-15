@@ -54,6 +54,9 @@ describe("file tools", () => {
       expect(properties.offset?.description).toContain("字节（不是行数）");
       expect(properties.limit?.description).toContain("字节（不是行数）");
       expect(properties.cursor?.description).toContain("truncated=true");
+      expect(fileReadTool.definition.description).toContain("anchor");
+      expect(properties.anchor?.description).toContain("精确文本");
+      expect(properties.anchor?.description).toContain("大型源码");
     });
 
     it("should read existing file", async () => {
@@ -225,6 +228,84 @@ describe("file tools", () => {
       }, baseContext);
       expect(stale.success).toBe(false);
       expect(stale.error).toContain("cursor");
+    });
+
+    it("should read a bounded window around one exact UTF-8 anchor", async () => {
+      const prefix = `${"前缀".repeat(80)}\n`;
+      const anchor = "func (c *Command) Name() string";
+      const suffix = ` {\n\treturn c.Use\n}\n${"suffix".repeat(80)}`;
+      await fs.writeFile(path.join(tempDir, "anchored.go"), `${prefix}${anchor}${suffix}`, "utf-8");
+
+      const result = await fileReadTool.execute({
+        path: "anchored.go",
+        anchor,
+        limit: 160,
+      }, baseContext);
+
+      expect(result.success).toBe(true);
+      const output = JSON.parse(result.output);
+      expect(output).toMatchObject({
+        anchor: {
+          text: anchor,
+          byteOffset: Buffer.byteLength(prefix, "utf-8"),
+        },
+        bytesRead: 160,
+        truncated: true,
+      });
+      expect(output.range.offset).toBeGreaterThan(0);
+      expect(output.content).toContain(anchor);
+    });
+
+    it("should fail closed when an anchor is absent or ambiguous", async () => {
+      await fs.writeFile(path.join(tempDir, "anchors.txt"), "same\nmiddle\nsame\n", "utf-8");
+
+      const absent = await fileReadTool.execute({
+        path: "anchors.txt",
+        anchor: "missing",
+      }, baseContext);
+      expect(absent).toMatchObject({ success: false, failureKind: "input_error" });
+      expect(absent.error).toContain("anchor");
+      expect(absent.error).toContain("未找到");
+
+      const ambiguous = await fileReadTool.execute({
+        path: "anchors.txt",
+        anchor: "same",
+      }, baseContext);
+      expect(ambiguous).toMatchObject({ success: false, failureKind: "input_error" });
+      expect(ambiguous.error).toContain("anchor");
+      expect(ambiguous.error).toContain("2");
+    });
+
+    it("should reject anchor with offset, cursor, or base64 encoding", async () => {
+      await fs.writeFile(path.join(tempDir, "anchor-input.txt"), "target", "utf-8");
+
+      for (const args of [
+        { path: "anchor-input.txt", anchor: "target", offset: 0 },
+        { path: "anchor-input.txt", anchor: "target", cursor: "cursor" },
+        { path: "anchor-input.txt", anchor: "target", encoding: "base64" },
+        { path: "anchor-input.txt", anchor: "target", limit: 3 },
+        { path: "anchor-input.txt", anchor: "" },
+        { path: "anchor-input.txt", anchor: "\uD800" },
+      ]) {
+        const result = await fileReadTool.execute(args, baseContext);
+        expect(result).toMatchObject({ success: false, failureKind: "input_error" });
+        expect(result.error).toContain("anchor");
+      }
+    });
+
+    it("should reject anchor scans beyond the bounded file size", async () => {
+      const oversizedPath = path.join(tempDir, "oversized-anchor.txt");
+      await fs.writeFile(oversizedPath, "target", "utf-8");
+      await fs.truncate(oversizedPath, (16 * 1024 * 1024) + 1);
+
+      const result = await fileReadTool.execute({
+        path: "oversized-anchor.txt",
+        anchor: "target",
+      }, baseContext);
+
+      expect(result).toMatchObject({ success: false, failureKind: "input_error" });
+      expect(result.error).toContain("anchor");
+      expect(result.error).toContain(String(16 * 1024 * 1024));
     });
 
     it("should reject an offset beyond the file size", async () => {
