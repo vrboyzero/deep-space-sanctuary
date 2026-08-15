@@ -285,6 +285,43 @@ describe("ReAct workspace mutation recovery", () => {
     expect(request?.messages[1]?.content).toContain("trace?: TraceValues;");
   });
 
+  it("retains every task-relevant occurrence from a complete medium required file", () => {
+    const importContext = "import { TraceValue, TraceValues } from './connection';";
+    const exportContext = "export { TraceValue, TraceValues, TraceFormat };";
+    const request = buildWorkspaceMutationRecoveryRequest({
+      maxInputTokens: 900,
+      tools: [toolDefinition("apply_patch")],
+      missingRequiredChangedPaths: ["jsonrpc/src/common/api.ts"],
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+      messages: [
+        {
+          role: "user",
+          content: "Remove every TraceValues import and export from the public API.",
+        },
+        {
+          role: "assistant",
+          tool_calls: [{
+            id: "read-api",
+            function: { name: "file_read", arguments: "{}" },
+          }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "read-api",
+          content: JSON.stringify({
+            path: "jsonrpc/src/common/api.ts",
+            truncated: false,
+            content: `${"const header = true;\n".repeat(130)}${importContext}\n${"const middle = true;\n".repeat(130)}${exportContext}\n${"const tail = true;\n".repeat(20)}`,
+          }),
+        },
+      ],
+    });
+
+    expect(request?.missingRequiredSourceEvidencePaths).toEqual([]);
+    expect(request?.messages[1]?.content).toContain(importContext);
+    expect(request?.messages[1]?.content).toContain(exportContext);
+  });
+
   it("prefers reasoning headroom and shrinks output only when the run budget is tight", () => {
     const input = {
       messages: [{ role: "user", content: "Change api.go." }],
