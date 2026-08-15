@@ -3329,6 +3329,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             : finalizationOnlyCall || boundedStructuredOutputRepairRequest
               ? finalizationOutputTokens
               : undefined,
+          workspaceMutationRecoveryCall ? "required" : undefined,
         );
         if (boundedStructuredOutputRepairRequest) {
           pendingBoundedStructuredOutputRepairRequest = undefined;
@@ -4714,6 +4715,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     providerNativeSystemBlocks?: ProviderNativeSystemBlock[],
     streamDelivery?: ModelStreamTextDelivery,
     maxOutputTokensOverride?: number,
+    toolChoiceOverride?: "auto" | "required",
   ): Promise<{
     ok: true;
     content: string;
@@ -4815,6 +4817,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             stream: streamDelivery !== undefined,
             enableCaching: true,
             providerNativeSystemBlocks,
+            toolChoice: toolChoiceOverride,
           });
         }
 
@@ -4836,6 +4839,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
               description: t.function.description,
               parameters: t.function.parameters,
             }));
+            payload.tool_choice = toolChoiceOverride ?? "auto";
           }
           return {
             url: buildUrl(profile.baseUrl, "/responses"),
@@ -4860,7 +4864,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
         applyOpenAICompatibleReasoningConfig(payload, profile);
         if (tools && tools.length > 0) {
           payload.tools = tools;
-          payload.tool_choice = "auto";
+          payload.tool_choice = toolChoiceOverride ?? "auto";
         }
         return {
           url: buildUrl(profile.baseUrl, "/chat/completions"),

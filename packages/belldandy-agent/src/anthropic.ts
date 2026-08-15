@@ -342,6 +342,7 @@ export function buildAnthropicRequest(params: {
   profile: { baseUrl: string; apiKey: string; model: string };
   messages: OpenAIMessage[];
   tools?: OpenAIToolDef[];
+  toolChoice?: "auto" | "required";
   maxTokens?: number;
   stream?: boolean;
   enableCaching?: boolean;
@@ -351,6 +352,7 @@ export function buildAnthropicRequest(params: {
     profile,
     messages,
     tools,
+    toolChoice = "auto",
     maxTokens = 4096,
     stream = false,
     enableCaching = true,
@@ -378,7 +380,7 @@ export function buildAnthropicRequest(params: {
   // 转换并注入工具
   if (tools && tools.length > 0) {
     payload.tools = convertToolsToAnthropic(tools, { cacheTools: enableCaching });
-    payload.tool_choice = { type: "auto" };
+    payload.tool_choice = { type: toolChoice === "required" ? "any" : "auto" };
   }
 
   // 构建 URL：确保以 /v1/messages 结尾

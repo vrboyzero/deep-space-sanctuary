@@ -75,4 +75,27 @@ describe("anthropic provider-native system blocks", () => {
     ]);
     expect(payload.messages).toEqual([{ role: "user", content: "hello" }]);
   });
+
+  it("maps a required tool choice to Anthropic any semantics", () => {
+    const request = buildAnthropicRequest({
+      profile: {
+        baseUrl: "https://api.anthropic.com",
+        apiKey: "test-key",
+        model: "claude-test",
+      },
+      messages: [{ role: "user", content: "change the file" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "apply_patch",
+          description: "Apply one patch",
+          parameters: { type: "object", properties: {} },
+        },
+      }],
+      toolChoice: "required",
+    });
+
+    const payload = JSON.parse(String(request.init.body));
+    expect(payload.tool_choice).toEqual({ type: "any" });
+  });
 });

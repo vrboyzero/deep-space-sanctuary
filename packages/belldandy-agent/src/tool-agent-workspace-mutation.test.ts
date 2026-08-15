@@ -88,7 +88,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
-  it("reserves enough mutation-only output for a reasoning model to reach its tool call", async () => {
+  it("requires a mutation tool choice before a reasoning model can exhaust its output", async () => {
     const requests: Array<Record<string, any>> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
@@ -99,7 +99,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
           usage: { prompt_tokens: 200, completion_tokens: 30 },
         });
       }
-      if (requests.length === 2 && Number(body.max_tokens) <= 1_024) {
+      if (requests.length === 2 && body.tool_choice !== "required") {
         return response({
           choices: [{
             finish_reason: "length",
@@ -134,6 +134,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
 
     expect(requests).toHaveLength(3);
     expect(requests[1]?.max_tokens).toBeGreaterThan(1_024);
+    expect(requests[1]?.tool_choice).toBe("required");
     expect(execute).toHaveBeenCalledOnce();
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
