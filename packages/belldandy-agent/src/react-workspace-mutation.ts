@@ -45,6 +45,8 @@ const MUTATION_RECOVERY_INSTRUCTION = [
 const MAX_EVIDENCE_ITEMS = 6;
 const MIN_TASK_TOKENS = 48;
 const MIN_EVIDENCE_TOKENS = 48;
+const FILE_READ_ANCHOR_CONTEXT_BEFORE_CHARS = 384;
+const FILE_READ_ANCHOR_CONTEXT_AFTER_CHARS = 1_024;
 
 export function selectWorkspaceMutationToolDefinitions(
   definitions: WorkspaceMutationToolDefinition[],
@@ -125,15 +127,16 @@ export function buildWorkspaceMutationRecoveryRequest(input: {
       Math.floor(remainingTokens / Math.min(index + 1, 3)),
     );
     const label = `[tool=${item.toolName}]`;
+    const focusedContent = projectFileReadAnchorEvidence(item.toolName, item.content);
     const boundedContent = clipTextToTokenBudget(
-      item.content,
+      focusedContent,
       Math.max(1, itemBudget - estimateTokens(label, input.tokenEstimateContext) - 2),
       input.tokenEstimateContext,
     );
     if (!boundedContent) {
       continue;
     }
-    if (boundedContent !== item.content) {
+    if (focusedContent !== item.content || boundedContent !== focusedContent) {
       truncatedEvidenceCount++;
     }
     const section = `${label}\n${boundedContent}`;
@@ -265,6 +268,53 @@ function readTextContent(content: unknown): string {
     })
     .filter(Boolean)
     .join("\n");
+}
+
+function projectFileReadAnchorEvidence(toolName: string, content: string): string {
+  if (toolName !== "file_read") {
+    return content;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return content;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return content;
+  }
+
+  const evidence = parsed as Record<string, unknown>;
+  const anchor = evidence.anchor;
+  const fileContent = evidence.content;
+  if (!anchor || typeof anchor !== "object" || Array.isArray(anchor) || typeof fileContent !== "string") {
+    return content;
+  }
+  const anchorText = (anchor as Record<string, unknown>).text;
+  if (typeof anchorText !== "string" || !anchorText) {
+    return content;
+  }
+  const anchorIndex = fileContent.indexOf(anchorText);
+  if (anchorIndex < 0) {
+    return content;
+  }
+
+  const contextStart = Math.max(0, anchorIndex - FILE_READ_ANCHOR_CONTEXT_BEFORE_CHARS);
+  const contextEnd = Math.min(
+    fileContent.length,
+    anchorIndex + anchorText.length + FILE_READ_ANCHOR_CONTEXT_AFTER_CHARS,
+  );
+  if (contextStart === 0 && contextEnd === fileContent.length) {
+    return content;
+  }
+
+  const { content: _omittedContent, ...metadata } = evidence;
+  return JSON.stringify({
+    ...metadata,
+    contentTruncatedForMutationRecovery: true,
+    anchorContext: fileContent.slice(contextStart, contextEnd),
+  });
 }
 
 function clipTextToTokenBudget(

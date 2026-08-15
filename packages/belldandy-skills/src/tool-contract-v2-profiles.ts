@@ -570,7 +570,7 @@ const TOOL_CONTRACT_V2_PROFILES: Record<string, ToolContractV2Profile> = {
       "Treat offset and limit as byte counts, never line counts; omit limit for the default 100KB source read unless a smaller byte range is intentional",
       "Confirm the path, expected encoding, and whether offset/limit or maxBytes truncation could hide relevant context",
       "Reuse nextCursor only with the same unchanged file and encoding; otherwise restart from an explicit offset",
-      "For anchor reads, provide unique exact UTF-8 text and a limit large enough to contain the full anchor",
+      "For anchor reads, provide unique exact UTF-8 text; omit limit for the focused 4096-byte default or set a value large enough to contain the full anchor",
       "Prefer reading a focused file over dumping many large files into the context window",
     ],
     fallbackStrategy: [

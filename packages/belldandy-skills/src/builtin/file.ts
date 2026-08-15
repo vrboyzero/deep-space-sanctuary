@@ -384,6 +384,7 @@ function detectRegexReplaceRisk(pattern: string, flags: string): string | null {
 // ============ file_read 工具 ============
 
 const DEFAULT_FILE_READ_MAX_BYTES = 100 * 1024;
+const DEFAULT_FILE_READ_ANCHOR_WINDOW_BYTES = 4 * 1024;
 const MAX_FILE_READ_BYTES = 1024 * 1024;
 const MAX_FILE_READ_CURSOR_CHARS = 2_048;
 const MAX_FILE_READ_ANCHOR_BYTES = 4 * 1024;
@@ -419,8 +420,9 @@ function normalizeFileReadInput(args: Record<string, unknown>):
   if (args.limit !== undefined && args.maxBytes !== undefined) {
     return { ok: false, error: "参数错误：limit 与 maxBytes 不能同时指定" };
   }
-  const limit = normalizeFileReadLimit(args.limit, args.maxBytes);
-  if (!limit.ok) return limit;
+  const normalizedLimit = normalizeFileReadLimit(args.limit, args.maxBytes);
+  if (!normalizedLimit.ok) return normalizedLimit;
+  let limit = normalizedLimit.value;
 
   const offset = args.offset === undefined ? undefined : args.offset;
   if (offset !== undefined && (typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0)) {
@@ -453,7 +455,10 @@ function normalizeFileReadInput(args: Record<string, unknown>):
     if (offset !== undefined || cursor !== undefined) {
       return { ok: false, error: "参数错误：anchor 不能与 offset 或 cursor 同时指定" };
     }
-    if (anchorBuffer.length > limit.value) {
+    if (args.limit === undefined && args.maxBytes === undefined) {
+      limit = DEFAULT_FILE_READ_ANCHOR_WINDOW_BYTES;
+    }
+    if (anchorBuffer.length > limit) {
       return { ok: false, error: "参数错误：limit 必须足以完整包含 anchor" };
     }
   }
@@ -463,7 +468,7 @@ function normalizeFileReadInput(args: Record<string, unknown>):
     value: {
       path,
       encoding,
-      limit: limit.value,
+      limit,
       ...(offset === undefined ? {} : { offset }),
       ...(typeof cursor === "string" ? { cursor: cursor.trim() } : {}),
       ...(typeof anchor === "string" ? { anchor } : {}),
@@ -609,7 +614,7 @@ function encodeFileReadCursor(input: { fingerprint: string; offset: number }): s
 export const fileReadTool: Tool = withToolContract({
   definition: {
     name: "file_read",
-    description: "读取工作区内文件内容。offset/limit 单位是字节（不是行数）；读取大型源码中的已知符号时可用唯一精确 anchor 返回命中点附近窗口；其他读取通常省略 limit 以使用默认 100KB，若返回 truncated=true 则用 nextCursor 继续。路径必须在工作区范围内，禁止读取敏感文件（如 .env、密钥等）。",
+    description: "读取工作区内文件内容。offset/limit 单位是字节（不是行数）；读取大型源码中的已知符号时可用唯一精确 anchor 返回命中点附近窗口，省略 limit 时窗口为 4096 字节；其他读取通常省略 limit 以使用默认 100KB，若返回 truncated=true 则用 nextCursor 继续。路径必须在工作区范围内，禁止读取敏感文件（如 .env、密钥等）。",
     parameters: {
       type: "object",
       properties: {
@@ -632,7 +637,7 @@ export const fileReadTool: Tool = withToolContract({
         },
         limit: {
           type: "number",
-          description: "单段最大读取量，单位为字节（不是行数），默认 102400，最大 1048576；anchor 模式下是包含命中点的窗口大小；不能与 maxBytes 同时指定",
+          description: "单段最大读取量，单位为字节（不是行数），普通读取默认 102400，anchor 模式默认 4096，最大 1048576；anchor 模式下是包含命中点的窗口大小；不能与 maxBytes 同时指定",
         },
         cursor: {
           type: "string",

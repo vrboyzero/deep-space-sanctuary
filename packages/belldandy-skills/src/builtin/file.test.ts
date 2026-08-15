@@ -256,6 +256,32 @@ describe("file tools", () => {
       expect(output.content).toContain(anchor);
     });
 
+    it("should use a focused default window when anchor omits limit", async () => {
+      const prefix = `${"before\n".repeat(6_000)}`;
+      const anchor = "func (c *Command) Name() string";
+      const functionBody = `${anchor} {\n\treturn c.Use\n}\n`;
+      const suffix = "after\n".repeat(6_000);
+      await fs.writeFile(path.join(tempDir, "default-anchor.go"), `${prefix}${functionBody}${suffix}`, "utf-8");
+
+      const result = await fileReadTool.execute({
+        path: "default-anchor.go",
+        anchor,
+      }, baseContext);
+
+      expect(result.success).toBe(true);
+      const output = JSON.parse(result.output);
+      expect(output).toMatchObject({
+        bytesRead: 4 * 1024,
+        truncated: true,
+        anchor: {
+          text: anchor,
+          byteOffset: Buffer.byteLength(prefix, "utf-8"),
+        },
+      });
+      expect(output.range.offset).toBeGreaterThan(0);
+      expect(output.content).toContain(functionBody);
+    });
+
     it("should fail closed when an anchor is absent or ambiguous", async () => {
       await fs.writeFile(path.join(tempDir, "anchors.txt"), "same\nmiddle\nsame\n", "utf-8");
 
