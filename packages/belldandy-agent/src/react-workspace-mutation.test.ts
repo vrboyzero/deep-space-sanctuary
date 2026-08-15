@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildWorkspaceMutationNavigationRequest,
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationRecoveryRequest,
+  selectWorkspaceMutationNavigationToolDefinitions,
   selectWorkspaceMutationToolDefinitions,
   WORKSPACE_MUTATION_RECOVERY_MIN_OUTPUT_TOKEN_RESERVE,
   WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE,
@@ -57,6 +59,44 @@ describe("ReAct workspace mutation recovery", () => {
     expect(request?.messages.some((message) => message.role === ("tool" as string))).toBe(false);
     expect(WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE).toBe(4_096);
     expect(WORKSPACE_MUTATION_RECOVERY_MIN_OUTPUT_TOKEN_RESERVE).toBe(1_024);
+  });
+
+  it("builds a bounded source-navigation request with source-read tools only", () => {
+    const definitions = [
+      toolDefinition("file_read"),
+      toolDefinition("text_search"),
+      toolDefinition("list_files"),
+      toolDefinition("apply_patch"),
+    ];
+    const navigationTools = selectWorkspaceMutationNavigationToolDefinitions(definitions, (name) => ({
+      isReadOnly: name !== "apply_patch",
+    }));
+    const request = buildWorkspaceMutationNavigationRequest({
+      maxInputTokens: 700,
+      tools: navigationTools,
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+      messages: [
+        { role: "user", content: "Migrate the deprecated API in every required file." },
+        {
+          role: "assistant",
+          tool_calls: [{ id: "read-1", function: { name: "file_read", arguments: "{}" } }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "read-1",
+          content: JSON.stringify({
+            path: "protocol/src/common/protocol.ts",
+            truncated: true,
+            content: "import { TraceValues } from 'vscode-jsonrpc';",
+          }),
+        },
+      ],
+    });
+
+    expect(navigationTools.map((tool) => tool.function.name)).toEqual(["file_read", "text_search"]);
+    expect(request?.estimatedInputTokens).toBeLessThanOrEqual(700);
+    expect(request?.messages[0]?.content).toContain("Bounded source-navigation phase");
+    expect(request?.messages[1]?.content).toContain("protocol/src/common/protocol.ts");
   });
 
   it("retains a function from a focused anchor window with the canary evidence budget", () => {

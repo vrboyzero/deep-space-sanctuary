@@ -223,6 +223,158 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("retains every required source context for a multi-file mutation recovery", async () => {
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return response(modelToolCall("list-1", "list_files", { path: "." }, 1_700, 100));
+      }
+      if (requests.length === 2) {
+        return response({
+          choices: [{
+            finish_reason: "tool_calls",
+            message: {
+              content: null,
+              tool_calls: [
+                modelToolCall("read-test", "file_read", {
+                  path: "test/benchmark-v3/real-ts-api-migration.mjs",
+                }, 0, 0).choices[0].message.tool_calls[0],
+                modelToolCall("read-connection", "file_read", {
+                  path: "jsonrpc/src/common/connection.ts",
+                }, 0, 0).choices[0].message.tool_calls[0],
+                modelToolCall("read-api", "file_read", {
+                  path: "jsonrpc/src/common/api.ts",
+                }, 0, 0).choices[0].message.tool_calls[0],
+                modelToolCall("read-protocol-start", "file_read", {
+                  path: "protocol/src/common/protocol.ts",
+                }, 0, 0).choices[0].message.tool_calls[0],
+              ],
+            },
+          }],
+          usage: { prompt_tokens: 4_000, completion_tokens: 200 },
+        });
+      }
+      if (requests.length === 3) {
+        return response(modelToolCall("read-protocol-anchor", "file_read", {
+          path: "protocol/src/common/protocol.ts",
+          anchor: "trace?: TraceValues;",
+        }, 4_000, 100));
+      }
+      if (requests.length === 4) {
+        return response(modelToolCall("patch-1", "apply_patch", { input: "multi-file patch" }, 2_000, 100));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: '{"summary":"migrated"}' } }],
+        usage: { prompt_tokens: 500, completion_tokens: 40 },
+      });
+    });
+    const sourceEvidence = {
+      "jsonrpc/src/common/connection.ts": JSON.stringify({
+        path: "jsonrpc/src/common/connection.ts",
+        truncated: false,
+        content: `${"import type { Message } from './messages';\n".repeat(12)}export const TraceValues = TraceValue;\n${"const connection = true;\n".repeat(700)}`,
+      }),
+      "jsonrpc/src/common/api.ts": JSON.stringify({
+        path: "jsonrpc/src/common/api.ts",
+        truncated: false,
+        content: `${"export { Message };\n".repeat(12)}export { TraceValue, TraceValues, TraceFormat };\n${"export { Disposable };\n".repeat(180)}`,
+      }),
+      "protocol/src/common/protocol.ts": JSON.stringify({
+        path: "protocol/src/common/protocol.ts",
+        truncated: true,
+        range: { offset: 0, endOffset: 102_400 },
+        content: `import { ProgressToken, RequestHandler, TraceValues } from 'vscode-jsonrpc';\n${"export interface ProtocolShape {}\n".repeat(3_200)}`,
+      }),
+    } as const;
+    const execute = vi.fn(async (request: { id: string; name: string; arguments?: Record<string, unknown> }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: request.name === "list_files"
+        ? JSON.stringify({ path: ".", entries: ["jsonrpc", "protocol", "test"] })
+        : request.name === "apply_patch"
+          ? "Patch applied successfully"
+          : request.arguments?.anchor
+            ? JSON.stringify({
+              path: "protocol/src/common/protocol.ts",
+              truncated: true,
+              anchor: { text: "trace?: TraceValues;", byteOffset: 82_000 },
+              content: "export interface InitializeParams {\n\ttrace?: TraceValues;\n}",
+            })
+            : request.arguments?.path === "test/benchmark-v3/real-ts-api-migration.mjs"
+              ? JSON.stringify({
+                path: "test/benchmark-v3/real-ts-api-migration.mjs",
+                truncated: false,
+                content: [
+                  "jsonrpc/src/common/api.ts",
+                  "jsonrpc/src/common/connection.ts",
+                  "protocol/src/common/protocol.ts",
+                  "Deprecated TraceValues API migration is incomplete.",
+                ].join("\n"),
+              })
+              : sourceEvidence[request.arguments?.path as keyof typeof sourceEvidence],
+      durationMs: 1,
+    }));
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 6,
+      mutationToolNames: ["file_edit", "apply_patch", "file_write", "file_delete"],
+      readToolNames: ["file_read", "list_files"],
+    });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-multi-file-recovery",
+      text: "Apply the frozen public API migration and preserve the supplied tests.",
+      automationProfile: "bare",
+      meta: { _agentLaunchSpec: { workspaceMutationRequirement: "required" } },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === '{"summary":"migrated"}'
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(requests[2]?.tools?.map((tool: any) => tool.function.name)).toEqual(["file_read"]);
+    expect(requests[2]?.messages).toEqual([
+      expect.objectContaining({
+        role: "system",
+        content: expect.stringContaining("Bounded source-navigation phase"),
+      }),
+      expect.objectContaining({
+        role: "user",
+        content: expect.stringContaining("protocol/src/common/protocol.ts"),
+      }),
+    ]);
+    expect(requests).toHaveLength(5);
+    expect(requests[3]?.tools?.map((tool: any) => tool.function.name)).toEqual([
+      "file_edit",
+      "apply_patch",
+      "file_write",
+      "file_delete",
+    ]);
+    const recoveryEvidence = requests[3]?.messages?.find((message: any) => message.role === "user")?.content;
+    expect(recoveryEvidence).toContain("jsonrpc/src/common/api.ts");
+    expect(recoveryEvidence).toContain("jsonrpc/src/common/connection.ts");
+    expect(recoveryEvidence).toContain("protocol/src/common/protocol.ts");
+    expect(recoveryEvidence).toContain("export const TraceValues = TraceValue");
+    expect(recoveryEvidence).toContain("export { TraceValue, TraceValues, TraceFormat }");
+    expect(recoveryEvidence).toContain("trace?: TraceValues;");
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "list_files",
+      "file_read",
+      "file_read",
+      "file_read",
+      "file_read",
+      "file_read",
+      "apply_patch",
+    ]);
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("requires a mutation tool and disables DeepSeek thinking before it can exhaust output", async () => {
     const requests: Array<Record<string, any>> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
