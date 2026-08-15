@@ -21,7 +21,7 @@ SS 已从上一轮 `7.4/10` 推进到安全、恢复、编辑、Headless、本�
 | SS 内部硬 Gate | **9.1/10**（原始加权 `9.065`） | corrected v2、类别下限、核心类别、测试、patch、回归、双平台和工程 Gate 均通过；只对既定 benchmark 与环境成立 |
 | 新一轮横向评分 | **9.0/10**（原始加权 `8.955`） | 对真实仓泛化、语义导航、验证控制面、并行和生态成熟度保留折扣；竞品未参加同环境 benchmark |
 
-横向评分不是模型能力排名。单一当前 HEAD 原生 aggregate 已完成，但 B 层 `0/48`、C 层 `23/24`，当前主要差距转为真实任务外部有效性、普通 ReAct 终态预算闭环的真实 Provider uplift，以及两个连续 P2-C 候选证据。两个新增 Settings 字段的可见交互/console 手测已完成，P2-B 本地严格零发现依赖 Gate 与远端专项 Gate 已通过；P1-B 验证 DAG、P1-C TaskProjection/Capability Closure 与 P2-A Supervisor fault matrix/双平台长稳/零残留 Gate 均已完成。前部旧切片中的“尚未闭合”只描述当时上下文，不代表当前状态，当前状态以第 11、12 节为准。
+横向评分不是模型能力排名。新 identity `6801ed7ba78c26bdc6b14e31389caf402de627d8` 的单一 HEAD 原生 aggregate 已完成 `144/144`，B 层由旧基线 `0/48` 提升到 `12/48`，C 层保持 `23/24`；但实际路由为 Windows=`deepseek-v4-pro`、WSL2=`deepseek-v4-flash`，只能作为混合模型复核证据，不能宣称纯 flash 双平台 uplift。当前主要差距转为剩余 37 项真实任务失败、实际模型与声明模型的一致性 Gate、Provider 账单核对，以及两个连续 P2-C 候选证据。两个新增 Settings 字段的可见交互/console 手测已完成，P2-B 本地严格零发现依赖 Gate 与远端专项 Gate 已通过；P1-B 验证 DAG、P1-C TaskProjection/Capability Closure 与 P2-A Supervisor fault matrix/双平台长稳/零残留 Gate 均已完成。前部旧切片中的“尚未闭合”只描述当时上下文，不代表当前状态，当前状态以第 11、12 节为准。
 
 ### 1.2 下一轮五个闭环
 
@@ -119,7 +119,7 @@ node .\node_modules\vitest\vitest.mjs run packages/belldandy-core/src/coding-run
 2. r13 两组 `file_edit` 均为 0 次调用，只能证明结果 Gate，不能证明 exact edit 的因果 uplift。
 3. fixture 仍以确定性 Node 为主，独立真实仓、多语言迁移和浏览器 UI 闭环证据不足；P2-A 已补齐受控并行 lane、故障恢复和双平台长稳证据，但不等同于仓外真实任务泛化。
 4. P1-C 已将 Goal/Workflow/Subtask/worktree/journal 闭合为只读 TaskProjection，并完成任务级 Capability Closure；P2-A 已完成多 lane fault matrix、竞争 confirm/crash/restart 对账、双平台 60 分钟 soak 与零残留 Gate。
-5. 产品级 symbol/definition/reference/freshness 统一接口已完成 TS/JS 与 Go canary 闭环；P2-B reference client、两个仓外 consumer、failure conformance、运行前置 Doctor、Puppeteer 25 零发现依赖 Gate、portable 真实启动/恢复、远端 Quality Gate 与 Settings 人工手测均已闭合。P0 单一 HEAD 原生 aggregate 已完成，但 B 层 `0/48`、C 层 `23/24`，当前候选不满足 P2-C 进入 Gate。
+5. 产品级 symbol/definition/reference/freshness 统一接口已完成 TS/JS 与 Go canary 闭环；P2-B reference client、两个仓外 consumer、failure conformance、运行前置 Doctor、Puppeteer 25 零发现依赖 Gate、portable 真实启动/恢复、远端 Quality Gate 与 Settings 人工手测均已闭合。P0 新 identity 的单一 HEAD 原生 aggregate 已完成，B 层 `12/48`、C 层 `23/24`；由于实际模型为 Windows pro/WSL2 flash 且仍有 37 项 product workflow failure，当前候选仍不满足 P2-C 进入 Gate。
 
 ## 4. 横向评分与竞品适配
 
@@ -165,9 +165,9 @@ Source / Workspace Revision
 
 **方案重点**：冻结 24 项任务、Windows/WSL2 各 3 次共 144 项矩阵；固定仓 commit、snapshot receipt、source/harness identity、费用/usage/trace/敏感/残留 Gate；B 层使用 Express、Preact、vscode-languageserver-node、spf13/cobra，C 层覆盖 browser、parallel-read、parallel-write、restart-delivery；所有外部输入在创建运行目录前失败关闭。
 
-**已完成/验证要点**：P0.1-P0.30 合同、fixture、runner、Linux preparation、system harness、cost-containment-v1、三代 navigation shadow 与原生 aggregate 重启边界审计均已形成可复算 evidence。新 identity `152354642a195da7d067112dd9b6917876431954` 已取得 Windows/WSL2 各 `72` 项、合计 `144/144` 的 completed aggregate，source/harness content SHA-256 均为 `967639b7b78ad974cf14f9cba5c8d4357f831ac2e972416a21eb5b154e2c76da`；A=`72/72`、B=`0/48`、C=`23/24`，infrastructure error=`0`，usage=`132 provider_reported + 6 unavailable + 6 not_reached`。`cost-containment-v1` 继续为 `hold_explicit_opt_in`，candidate v1-v3 均 `do_not_promote`，navigation candidate line 保持停止。
+**已完成/验证要点**：P0.1-P0.30 合同、fixture、runner、Linux preparation、system harness、cost-containment-v1、三代 navigation shadow 与原生 aggregate 重启边界审计均已形成可复算 evidence。当前 identity `6801ed7ba78c26bdc6b14e31389caf402de627d8` 已取得 Windows/WSL2 各 `72` 项、合计 `144/144` 的 completed aggregate，source/harness content SHA-256 均为 `a20e96e26301b1cd6bed320171da449ece9eb32847791d7b367a479077167a50`；A=`72/72`、B=`12/48`、C=`23/24`，infrastructure error=`0`，usage=`132 provider_reported + 6 unavailable + 6 not_reached`。实际模型为 Windows pro/WSL2 flash，报告中的 `51 pro + 93 flash` 仅是 runner 声明元数据，不能替代 Gateway resolved-route 证据。`cost-containment-v1` 继续为 `hold_explicit_opt_in`，candidate v1-v3 均 `do_not_promote`，navigation candidate line 保持停止。
 
-**关闭边界**：单一 HEAD 原生 completed aggregate、固定真实仓、重复 Provider 子集、费用/usage/identity/敏感/残留审计均已闭合，P0 按“完成但不晋级”关闭。B 层 48 项和 WSL2 第三轮 parallel-read 的 product workflow failure 是本次外部有效性结论，不重试、不从分母剔除；后续能力改进拆为独立任务，禁止 candidate v4、竞品代跑、公开排行榜和无新证据的付费扩样。
+**关闭边界**：单一 HEAD 原生 completed aggregate、固定真实仓、usage/identity/敏感/残留审计均已闭合，本轮 P0 复核按“混合模型结果完成但不晋级”收口。37 项 product workflow failure 与两份已恢复的 WSL2 基础设施失败报告均原样保留，不从分母或证据链剔除；纯 flash 双平台复核、Provider 实际账单核对和 effective-model 前置 Gate 尚未闭合。后续能力改进与模型一致性 Gate 拆为独立任务，禁止 candidate v4、竞品代跑、公开排行榜和无新证据的付费扩样。
 
 **风险/工作量**：中高风险，主要是费用越界、identity 漂移、无效 Provider 结果进入分母和 artifact 覆盖；估算 `14-22 人日`，不含 Provider 费用和观察窗口。
 
@@ -2110,6 +2110,43 @@ Source / Workspace Revision
 - **为什么先做它**：只有冻结的新 source/harness identity 与完整双平台分母能验证 finalization 是否把 B/C 失败转化为可接受终态；离线 replay 不能替代 Provider 结果。
 - **当前还缺的关键闭环**：新 identity 的输入收据、正式 source reports、completed aggregate 与完整费用/usage/敏感/残留 Gate。用户已授权该 P0 重跑链条累计费用硬上限 `40 RMB`；当前守卫上界 `17.67402880 RMB`，在未达到上限前无需重复申请费用授权，但余额本身不构成调用理由，超限、扩展 Provider/任务范围或启动 P2-C 候选观察窗口仍需另行授权。
 
+#### P0 原生矩阵复核结论：`6801ed7` mixed-model 144 项 completed aggregate（2026-08-15）
+
+##### 已完成内容
+
+1. **`artifacts/p0-native-6801ed7/aggregate/` 生成**：
+   - 按 Windows/WSL2 费用账本的 `taskId + platform + attempt + status` 精确选择各 `72` 份单-run source report，形成 `completed 144/144` baseline；dry-run 为 `missing=0`，正式输出的 `--verify` 可从 `144` 份 source report 和声明 artifact 离线复算。
+   - source/harness 均绑定 clean commit `6801ed7ba78c26bdc6b14e31389caf402de627d8` 与 content SHA-256 `a20e96e26301b1cd6bed320171da449ece9eb32847791d7b367a479077167a50`；aggregate 共 `1347` 个文件，`benchmark-report.json` SHA-256 为 `8ac7cd5802161b790b80ae0a539a79250e9249e4bf23e2ac5b3a47e723867c8b`。
+   - Windows=`54 passed + 18 failed`，WSL2=`53 passed + 19 failed`；aggregate=`107 passed + 37 product_workflow failed`，infrastructure error=`0`，A=`72/72`、B=`12/48`、C=`23/24`。
+
+2. **模型路由事故与正式分母核清**：
+   - source report 元数据记录 Windows=`51 pro + 21 flash`、WSL2=`72 flash`；但 Gateway resolved-route 日志确认 Windows `69` 个正式 Provider-reaching Conversation 及 `1` 个中断后未入分母的 Conversation 全部实际使用 `deepseek-v4-pro`，三个 process-restart fixture 为 `not_reached`。Windows 后 `21` 项只修改了 runner 声明，未覆盖 Gateway 的 primary model。
+   - 隔离 Gateway 重启并强制 `BELLDANDY_OPENAI_MODEL=deepseek-v4-flash` 后，WSL2 `69` 个正式 Provider-reaching Conversation 全部 resolved 为 `deepseek-v4-flash`，另三个 process-restart fixture 为 `not_reached`；因此本 aggregate 的实际模型边界是 Windows=pro、WSL2=flash。
+   - WSL2 首项 loopback 恢复前的 `rules.nested-precedence/a1` 与配对时序失败的 `feature.cross-file/a2` 两份报告均为 `usage=not_reached`，原 artifact 保留；对应 retry 通过后才按账本进入正式 `144` 项分母。总计发现 `146` 份报告，只聚合 `144` 份正式报告。
+
+3. **费用、敏感与资源审计**：
+   - 正式 aggregate usage=`132 provider_reported + 6 unavailable + 6 not_reached`；按运行时配置费率估值为 `$0.28421362`，其中 Windows=`$0.20905756`、WSL2=`$0.07515606`。跨历史本地账本为 observed=`$2.02236222`、reserved=`$0.69095400`，保守守卫上界=`$2.71331622 = 21.70652976 RMB < 40 RMB`；reserve 包含六次 cancel 未知用量和一次 Windows 中断 Conversation 的未知用量。
+   - 由于 Windows 实际 pro 路由与后 `21` 项 flash 声明/费率不一致，上述金额只代表本地 usage 估值与授权守卫，不能替代 Provider 的实际 pro 账单；Provider 账单在本机不可读取，按 `record_only` 保留为外部核对项。矩阵完成后未再调用 Provider。
+   - aggregate `1347` 个文件的通用凭据模式为 `0`；本机 `8` 个实际敏感值对 artifact/runtime 的 `17494` 个当时可读文件为 `0` 命中，另有 `7` 个 Gateway 持锁文件待停止后复扫。24 份 system evidence 的 sensitive/orphan/duplicate 合计均为 `0`。
+   - 隔离 Gateway、auth token、WSL loopback forwarder、`28891` listener 和活动 PID 指针均已清理；最终 `14045` 个 runtime 文件全部可读，停止后对 `7` 个仍可取得的环境敏感值及扩展 token/authorization/secret 模式复扫为 `0`。auth token 已删除，无法对原先七个锁定文件做该值的精确二次比对，但扩展凭据模式为 `0`；无匹配容器或项目矩阵进程残留。
+
+4. **效果与边界**：
+   - 相较 `1523546` 基线，task completion 从 `95/144 = 65.9722%` 提升到 `107/144 = 74.3056%`，增加 `12` 个通过项；B 层从 `0/48` 提升到 `12/48`，其中 `real-js.failed-test-fix=5/6`、`real-web.ui-regression=1/6`、`real-web.dependency-diagnosis=6/6`，其余五个真实仓任务仍为 `0/30`。
+   - Windows/pro 与 WSL2/flash 各自均取得 B=`6/24`；C 层总数仍为 `23/24`，本轮唯一失败转为 WSL2 attempt 1 的 restart-delivery reconciliation。37 项失败中 `11` 项完成模型循环但未满足 evaluator，`26` 项 runner 失败，`33` 项没有形成变更路径，仍需后续离线聚类和能力改进。
+   - 本结果证明旧 `49/49` 统一预算失败已被部分打破，但模型事故使其不能作为纯 flash 双平台 uplift 或模型横向比较证据。effective-model resolved-route 前置断言按 `split_task` 处理；未闭合前不再启动付费矩阵，也不创建 candidate v4 或启动 P2-C 观察窗口。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm --filter @belldandy/agent build` 通过；`corepack pnpm verify:coding-benchmark` 通过。
+- 本环节未新增产品测试；Windows/WSL2 source reports 各 `72/72`，aggregate dry-run 返回 `completed 144/144`，正式输出后 `--verify` 返回 `verified completed 144 run(s)`。
+- 敏感扫描、24 份 system evidence 审计和停止后的进程/端口/auth token/PID/容器残留 sweep 通过；`.gitignore` 的用户未提交改动保持独立。
+
+##### 后续计划
+
+- **下一步准备做什么**：按用户要求在本结论回写后暂停，不自动重跑 Windows 或启动新的 Provider 调用；恢复开发时，先为正式 runner 增加“声明模型必须等于 Gateway resolved effective model”的失败关闭 Gate，并由用户在 Provider 侧核对本轮实际账单，再离线聚类剩余 37 项失败。
+- **为什么先做它**：模型一致性缺口已经造成 pro 误调用和 report 元数据漂移；在该 Gate 与账单边界未闭合前继续付费样本，会重复成本风险并产生不可比较证据。
+- **当前还缺的关键闭环**：纯 `deepseek-v4-flash` 双平台证据、Provider 实际账单核对、effective-model 前置 Gate，以及剩余 B=`36`、C=`1` 的产品能力改进。现有 `40 RMB` 授权仍是硬上限且未撤销，但余额不构成自动调用理由；P2-C 保持未启动。
+
 ### 6.7 P2-C：9.5 稳定化与最终复核（未启动：当前候选未达 Gate）
 
 **目的与方案**：在两个连续冻结候选版本上运行完整 Benchmark v3、P1/P2 fault matrix、四客户端 conformance 和外部消费者 Gate；比较任务成功率、p95、人工干预、usage、费用、残留和错误 taxonomy；阈值调整必须留痕，不能回写旧 artifact。
@@ -2205,13 +2242,14 @@ Source / Workspace Revision
 
 ### P0（已完成）
 
-- identity `152354642a195da7d067112dd9b6917876431954` 的 Windows/WSL2 原生 aggregate 已完成 `144/144`，`--verify` 可从全部 source report 和声明 artifact 离线复算；旧 identity 仅保留为历史证据。
-- 最终 A=`72/72`、B=`0/48`、C=`23/24`，infrastructure error=`0`；当前结论为“完成但不晋级”，不扩展付费矩阵、不创建 candidate v4、不将 `taskUplift=not_measured` 改写为已验证 uplift。
-- 49 项 product workflow failure 已离线确认全部为 `budget_exhausted / total_tokens / limit=24000`；普通 ReAct 有界终态预算修复、`113/113` 定向回归、Agent `532` 项广泛回归和真实 trace 零 Provider replay 均已完成，但尚无新 identity 的 Provider uplift 证据。
-- 用户已授权当前 P0 重跑链条累计费用硬上限 `40 RMB`，当前跨历史守卫上界为 `17.67402880 RMB`；未达到上限前无需重复申请费用授权，但剩余额度不构成无证据调用理由，且不覆盖 P2-C 候选观察窗口。
-- **下一步准备做什么**：将 finalization 修复形成稳定 `main` commit 并推送 `private/main`，从新 identity 重建双平台 input/smoke，再启动新的 P0 原生 `144/144` 矩阵。
-- **为什么先做它**：修复已改变公共模型循环，必须以新 source/harness identity 和完整分母验证真实 uplift；旧 aggregate 不续拼，离线 replay 不替代 Provider 结果。
-- **当前还缺的关键闭环**：新 identity、双平台 input/smoke、正式 source reports、completed aggregate 与费用/usage/敏感/残留 Gate；P2-C 保持未启动，不创建 candidate v4。
+- identity `6801ed7ba78c26bdc6b14e31389caf402de627d8` 的 Windows/WSL2 原生 aggregate 已完成 `144/144`，`--verify` 可从全部 source report 和声明 artifact 离线复算；source/harness content SHA-256 均为 `a20e96e26301b1cd6bed320171da449ece9eb32847791d7b367a479077167a50`。
+- 最终 aggregate=`107 passed + 37 product_workflow failed`，A=`72/72`、B=`12/48`、C=`23/24`，infrastructure error=`0`；相较旧基线增加 `12` 个 B 层通过项，但实际模型为 Windows pro/WSL2 flash，当前结论为“混合模型结果完成但不晋级”。
+- report 元数据的 Windows `51 pro + 21 flash` 不代表实际路由；Gateway 日志确认所有 Windows Provider-reaching Conversation 均为 pro，WSL2 均为 flash。两份 WSL2 `not_reached` 基础设施失败报告原样保留，retry 通过后才进入正式分母。
+- 正式 aggregate 本地 usage 估值=`$0.28421362`；跨历史账本 observed=`$2.02236222`、reserved=`$0.69095400`，守卫上界=`21.70652976 RMB < 40 RMB`。Windows 后 `21` 项模型/费率声明与实际 pro 路由不一致，因此该本地估值不能替代 Provider 实际账单，外部账单核对保持 `record_only`。
+- 敏感、system evidence 与资源残留 Gate 已完成；Git 事故中的 `origin`/upstream 与 `react-run-budget.ts` blob 已核实恢复，`Void/**` 测试发现已隔离，DSH 不可达对象永久清理仍待 HITL 确认。effective-model 前置断言按 `split_task` 处理。
+- **下一步准备做什么**：本轮按用户要求暂停，不自动重跑 Windows 或调用 Provider；恢复时先闭合 effective-model resolved-route Gate 和 Provider 账单核对，再离线聚类剩余 37 项失败。
+- **为什么先做它**：先消除声明模型与实际路由漂移，才能避免再次误用 pro、守住费用边界并产生可比较的纯 flash 证据。
+- **当前还缺的关键闭环**：纯 flash 双平台复核、Provider 实际账单、effective-model 前置 Gate，以及 B=`36`、C=`1` 的剩余能力缺口；现有 `40 RMB` 上限仍有效，但余额不构成自动调用理由，P2-C 保持未启动且不创建 candidate v4。
 
 ### P1-C（已完成）
 
@@ -2259,7 +2297,7 @@ Source / Workspace Revision
 | 项目 | 优先级 | 状态 | 粗略工作量 | 完成边界 |
 | --- | --- | --- | ---: | --- |
 | 本轮 SS 能力复核与 9.5 增强规划 | - | 已完成 | - | 已复核 scorecard、目标向量 `9.510`、C#/Go 投入收益、多语言方案和竞品资料；竞品未做同环境 benchmark |
-| P0：Benchmark v3 与外部有效性 | P0 | 已完成基线（结果未晋级），失败改进切片已实现、待新 identity 复核。identity `152354642a195da7d067112dd9b6917876431954` 已闭合 formal=`144/144`、A=`72/72`、B=`0/48`、C=`23/24`、infrastructure error=`0`、usage=`132 provider_reported + 6 unavailable + 6 not_reached` 与 `--verify`；49 项 product workflow failure 均为 `budget_exhausted/total_tokens/24000`。普通 ReAct 有界终态预算、定向 `113/113`、Agent `532` 项回归和真实 trace 零 Provider replay 已通过，尚无新 Provider uplift。Git 事故中的 `origin`/upstream 与 `react-run-budget.ts` blob 已核实恢复，`Void/**` 测试发现已隔离；DSH 不可达对象永久清理仍待 HITL 确认。当前费用守卫 `$2.20925360 = 17.67402880 RMB < 40 RMB`；本 P0 重跑链条在累计未达上限前无需重复费用授权。`cost-containment-v1` 保持 `hold_explicit_opt_in`，candidate v1-v3=`do_not_promote`；下一步形成稳定 commit、新 identity 双平台 input/smoke 与完整 `144/144` 复核，不创建 candidate v4、不启动 P2-C 观察窗口 | 14-22 人日 | A/B/C 三层、至少 4 个固定仓、144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；不含 candidate v4、竞品代跑、公开排行榜 |
+| P0：Benchmark v3 与外部有效性 | P0 | 已完成基线与 `6801ed7` 复核（结果均未晋级）。新 identity formal=`144/144`、aggregate=`107 passed + 37 product_workflow failed`、A=`72/72`、B=`12/48`、C=`23/24`、infrastructure error=`0`、usage=`132 provider_reported + 6 unavailable + 6 not_reached`，dry-run 与 `--verify` 通过；实际模型为 Windows pro/WSL2 flash，不能宣称纯 flash 双平台 uplift。跨历史本地账本 observed=`$2.02236222`、reserved=`$0.69095400`，守卫=`21.70652976 RMB < 40 RMB`，但 Windows 后 `21` 项声明费率与实际 pro 路由不一致，Provider 实际账单仍待外部核对。敏感/system evidence/资源残留 Gate 已闭合；effective-model 前置断言=`split_task`，账单核对=`record_only`。Git 事故修复保持有效，DSH 不可达对象永久清理仍待 HITL 确认。按用户要求当前暂停，不自动重跑、不调用 Provider、不创建 candidate v4、不启动 P2-C 观察窗口 | 14-22 人日 | A/B/C 三层、至少 4 个固定仓、144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；不含 candidate v4、竞品代跑、公开排行榜 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | 已完成；attempt 12 aggregate=`passed`；binary regression/Provider failure=`0/0`；`semantic-live=7/8`；非目标整文件读取 `21 -> 14`；16/16 cell 预算耗尽；candidate task/patch success=`0/8`；累计费用 `1.68214072 RMB` | 8-12 人日 | 公共 contract、TS/JS Provider、Inspector、truth set、resource soak、双平台 native runtime 与真实 uplift Gate；不含外部 LSP、Go/C# GA、SCIP store |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | 已完成；Host、pinned profile、Go Doctor、Adapter/truth/fault、双平台 native/OCI、readiness/progress/monitor、comparator 和 eligibility 已闭合；`goCanaryEligible=true`、`productionEligible=false` | 6-11 人日 | 双平台 identity/truth/lifecycle/OCI evidence、只读 comparator、单一 eligibility owner、Doctor projection；不含 Go 生产默认启用、自动安装、公开发布、扩大 fixture、rollout 观察窗口 |
 | P1-A3：C# 条件接入 | 条件 | 延后，等待真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild 执行面、restore/联网和生命周期；未命中需求不进入生产，也不阻断 9.5 |
@@ -2267,4 +2305,4 @@ Source / Workspace Revision
 | P1-C：TaskProjection 与 Capability Closure | P1 | 已完成；硬 Gate 全部闭合，广泛回归 `31` 文件 `312/312`、最后切片 `58/58`、Core build/diff check 通过。公共人工 provenance、`blocked/verifying` observation 与 verification DAG 外键缺 authoritative owner，已拆分为 `split_task/defer`，未知指标保持 `incomplete` | 10-15 人日 | 只读跨 owner 投影、exact-binding action、任务启动闭包、六类故障投影和旧客户端兼容；不迁移领域真源，不按客户端身份猜测人工来源 |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | 已完成；admission/worktree Gate、restart reattach、exact-bound control、fan-in、统一预算、fault matrix、跨进程 Git mutation lock 与 failure compensation 均闭合。修复后 Core/Skills build、相关回归 `18` 文件 `138/138` 通过；Windows/WSL2 正式 r3 同 identity 各 `360/360` lane，平台 Gate、Schema、comparator 与 child/worktree/branch/process/receipt/lock/tmp/root 零残留 sweep 全部通过。r2 WSL2 首次失败 artifact 原样保留 | 12-20 人日 | 隔离写入、预算、60 分钟 soak、steer/cancel/reattach、fan-in 和 fault matrix；不含自动 merge/release/deploy |
 | P2-B：生态与运行前置收口 | P2 | 已完成；窄 reference client、两个 Windows/WSL2 仓外 consumer、完整 `17 + 1 + 5` error taxonomy、failure conformance、coding runtime preflight Doctor、Puppeteer `25.7.0`、零发现 audit、真实 Chrome/MV3 Relay、portable lifecycle、Settings 手测和最终 P0 运行前置均已闭合。Docker context 修复 `e61a3e4` 的 Quality `31805350871` 全绿，本地真实 builder/`verify:build` 通过；Docker run `31805350776` 终态因当前 GitHub 凭据不可读而保留为未验证历史项，不新增实现缺口 | 8-14 人日 | 两个外部消费者、N-1/N conformance、真实 CI、OCI/语言 Doctor、零发现 dependency Gate；不含公开发布、系统级自动安装、sandbox 替换，未经授权不再升级依赖主版本 |
-| P2-C：9.5 稳定化与最终复核 | P2 | 未启动；当前 aggregate 的 B=`0/48`、C=`23/24`，未满足候选进入 Gate。技术债决策=`split_task`：49 项统一失败签名已归因，首个普通 ReAct finalization 能力改进已实现，但尚缺新稳定 identity 的完整 P0 Provider uplift/Gate；本 P0 重跑费用授权不等同于 P2-C 候选/观察窗口授权，不创建 candidate v4、不宣称 `>=9.500` | 5-8 人日 + 观察窗口 | 两个连续候选版本原始 `>=9.500`、目标维度和全部硬 Gate 通过；不含竞品联合 benchmark、生产写入 |
+| P2-C：9.5 稳定化与最终复核 | P2 | 未启动；当前 mixed-model aggregate 的 B=`12/48`、C=`23/24`，仍未满足候选进入 Gate。普通 ReAct finalization 已取得部分真实任务改善，但实际 Windows=pro、WSL2=flash，尚缺纯 flash 双平台可比较证据、effective-model Gate、Provider 账单核对和剩余 37 项能力闭环；本 P0 费用授权不等同于 P2-C 候选/观察窗口授权，不创建 candidate v4、不宣称 `>=9.500` | 5-8 人日 + 观察窗口 | 两个连续候选版本原始 `>=9.500`、目标维度和全部硬 Gate 通过；不含竞品联合 benchmark、生产写入 |
