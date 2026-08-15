@@ -1037,6 +1037,11 @@ function assertCodingRunCapabilities(
       "This Agent cannot enforce the required workspace mutation contract.",
     );
   }
+  if (codingRun?.requiredChangedPaths && capabilities?.requiredChangedPaths !== true) {
+    throw new CodingRunCapabilityError(
+      "This Agent cannot enforce the required changed-path coverage contract.",
+    );
+  }
 }
 
 async function assertTaskCapabilityClosure(input: {
@@ -1096,6 +1101,9 @@ function buildCodingRunLaunchSpec(
     ...(codingRun.modelLoopBudgetPolicy ? { modelLoopBudgetPolicy: codingRun.modelLoopBudgetPolicy } : {}),
     ...(codingRun.workspaceMutationRequirement
       ? { workspaceMutationRequirement: codingRun.workspaceMutationRequirement }
+      : {}),
+    ...(codingRun.requiredChangedPaths?.length
+      ? { requiredChangedPaths: [...codingRun.requiredChangedPaths] }
       : {}),
     ...(codingRun.maxWallTimeMs ? { maxRunWallTimeMs: codingRun.maxWallTimeMs } : {}),
     ...(codingRun.maxTurns ? { toolLoopIterationBudget: codingRun.maxTurns } : {}),

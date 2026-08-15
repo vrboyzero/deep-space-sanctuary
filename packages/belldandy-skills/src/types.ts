@@ -303,6 +303,8 @@ export type ToolRuntimeLaunchSpec = {
   modelLoopBudgetPolicy?: "cost-containment-v1";
   /** 本次运行成功前必须至少执行一次成功的 workspace mutation。 */
   workspaceMutationRequirement?: "required";
+  /** required mutation 必须由可信 Tool 结果覆盖的规范 workspace-relative 路径。 */
+  requiredChangedPaths?: string[];
   /** Coding runs may require an OS command sandbox; absence of a backend must fail closed. */
   commandSandbox?: "required";
   /** 以下预算仅用于收紧本次运行，调用方不得以此提升 Profile 上限。 */

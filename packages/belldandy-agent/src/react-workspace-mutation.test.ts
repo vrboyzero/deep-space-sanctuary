@@ -96,6 +96,7 @@ describe("ReAct workspace mutation recovery", () => {
     expect(navigationTools.map((tool) => tool.function.name)).toEqual(["file_read", "text_search"]);
     expect(request?.estimatedInputTokens).toBeLessThanOrEqual(700);
     expect(request?.messages[0]?.content).toContain("Bounded source-navigation phase");
+    expect(request?.messages[0]?.content).toContain("at most two file_read calls");
     expect(request?.messages[1]?.content).toContain("protocol/src/common/protocol.ts");
   });
 

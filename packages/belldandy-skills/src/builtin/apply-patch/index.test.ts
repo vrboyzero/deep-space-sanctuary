@@ -49,7 +49,37 @@ describe("apply_patch tool", () => {
     );
 
     expect(result.success).toBe(true);
+    expect(result.metadata).toEqual({
+      workspaceMutation: {
+        schemaVersion: 1,
+        changedPaths: ["TOOLS.md"],
+      },
+    });
     await expect(fs.readFile(path.join(tempDir, "TOOLS.md"), "utf-8")).resolves.toBe("hello from root\n");
+  });
+
+  it("reports every changed path from a multi-file patch", async () => {
+    const result = await applyPatchTool.execute(
+      {
+        input: [
+          "*** Begin Patch",
+          "*** Add File: src/api.ts",
+          "+export const api = true;",
+          "*** Add File: src/connection.ts",
+          "+export const connection = true;",
+          "*** End Patch",
+        ].join("\n"),
+      },
+      baseContext,
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.metadata).toEqual({
+      workspaceMutation: {
+        schemaVersion: 1,
+        changedPaths: ["src/api.ts", "src/connection.ts"],
+      },
+    });
   });
 
   it("should unwrap an apply_patch wrapper around raw patch text", async () => {
@@ -337,6 +367,12 @@ describe("apply_patch tool", () => {
     );
 
     expect(result.success).toBe(true);
+    expect(result.metadata).toEqual({
+      workspaceMutation: {
+        schemaVersion: 1,
+        changedPaths: ["source.txt", "moved.txt"],
+      },
+    });
     expect(workspaceMutationObserver.prepareMutations).toHaveBeenCalledWith(expect.objectContaining({
       workspaceRevisionId: "gateway-run-patch",
       toolName: "apply_patch",

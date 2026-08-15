@@ -8,6 +8,7 @@ import { withToolContract } from "../../tool-contract.js";
 import { resolveRuntimeFilesystemScope } from "../../runtime-policy.js";
 import { readAbortReason, throwIfAborted } from "../../abort-utils.js";
 import { buildFailureToolCallResult } from "../../failure-kind.js";
+import { buildWorkspaceMutationResultMetadata } from "../../workspace-mutation-result.js";
 import { resolvePrivilegedWorkspaceWriteChannels } from "../privileged-workspace-write-contract.js";
 
 // ============ Helper Functions ============
@@ -383,6 +384,12 @@ export const applyPatchTool: Tool = withToolContract({
                 );
             }
 
+            const mutationMetadata = buildWorkspaceMutationResultMetadata(operations.flatMap((operation) => (
+                operation.kind === "update" && operation.move
+                    ? [operation.relative, operation.move.relative]
+                    : [operation.relative]
+            )));
+
             throwIfAborted(context.abortSignal);
             await prepareWorkspaceMutations(context, collectMutationGroups(operations, context));
 
@@ -426,6 +433,7 @@ export const applyPatchTool: Tool = withToolContract({
                     summary,
                     details: "Patch applied successfully",
                 }),
+                metadata: mutationMetadata,
                 durationMs: Date.now() - start,
             };
 

@@ -21,7 +21,7 @@ SS 已从上一轮 `7.4/10` 推进到安全、恢复、编辑、Headless、本�
 | SS 内部硬 Gate | **9.1/10**（原始加权 `9.065`） | corrected v2、类别下限、核心类别、测试、patch、回归、双平台和工程 Gate 均通过；只对既定 benchmark 与环境成立 |
 | 新一轮横向评分 | **9.0/10**（原始加权 `8.955`） | 对真实仓泛化、语义导航、验证控制面、并行和生态成熟度保留折扣；竞品未参加同环境 benchmark |
 
-横向评分不是模型能力排名。纯 `deepseek-v4-flash` identity `edd1c8779d928879c1d3e0669f725c79fd0ebf97` 的单一 HEAD 原生 aggregate 已完成 `144/144`，A=`72/72`、B=`12/48`、C=`23/24`，结果为 `107 passed + 37 product_workflow failed`；相较上一份 Windows pro/WSL2 flash 的 mixed-model aggregate 为 `2` 项改善、`2` 项回退、净值 `0`，因此复核完成但不宣称整体 uplift。声明模型与 Gateway resolved effective model 的前置失败关闭 Gate 已闭合，`138/138` 个 Provider-reaching manifest 均为 flash 到 flash；canonical 分析已将 37 项收敛为 required-mutation recovery=`30`、length=`5`、schema=`2`、unknown=`0`。29 项 length stop 已定位为 mutation-only `1024` output cap，另 1 项定位为普通 read loop 未提前保护恢复 headroom；后续 canary 依次收敛 required Tool、DeepSeek thinking、no-op mutation、finalization、大文件导航、anchor evidence 与恢复时机。clean identity `fce9b6aa5356a75316b8c24df98d481aa7451e4a` 的 `real-go.bug-fix` 已在 Windows/WSL2 各一次纯 flash canary 中通过：两端 declared/resolved 均为 flash、patch SHA-256 同为 `9cd9fd1bb6ec8af60516e5cd94f4676d386669949ede3084625218eb5ad9d4e8`、只修改 `command.go`、冻结 Go test 通过且资源零残留。该结果证明代表任务转绿，但不能外推为 30 项全部改善，也不改变原 aggregate。aggregate Provider-reported cost=`$0.12215932`；授权窗口 observed=`$2.20573999`、reserved=`$0.94221000`，当前守卫上界=`25.18359992 RMB < 50 RMB`。Provider 外部账单核对、剩余 required-mutation 改善范围、真实 B/C 改善和两个连续 P2-C 候选证据仍缺。两个新增 Settings 字段的可见交互/console 手测已完成，P2-B 本地严格零发现依赖 Gate 与远端专项 Gate 已通过；P1-B 验证 DAG、P1-C TaskProjection/Capability Closure 与 P2-A Supervisor fault matrix/双平台长稳/零残留 Gate 均已完成。前部旧切片中的“尚未闭合”只描述当时上下文，不代表当前状态，当前状态以第 11、12 节为准。
+横向评分不是模型能力排名。纯 `deepseek-v4-flash` identity `edd1c8779d928879c1d3e0669f725c79fd0ebf97` 的单一 HEAD 原生 aggregate 已完成 `144/144`，A=`72/72`、B=`12/48`、C=`23/24`，结果为 `107 passed + 37 product_workflow failed`；相较上一份 Windows pro/WSL2 flash 的 mixed-model aggregate 为 `2` 项改善、`2` 项回退、净值 `0`，因此复核完成但不宣称整体 uplift。声明模型与 Gateway resolved effective model 的前置失败关闭 Gate 已闭合，`138/138` 个 Provider-reaching manifest 均为 flash 到 flash；canonical 分析已将 37 项收敛为 required-mutation recovery=`30`、length=`5`、schema=`2`、unknown=`0`。29 项 length stop 已定位为 mutation-only `1024` output cap，另 1 项定位为普通 read loop 未提前保护恢复 headroom；后续 canary 依次收敛 required Tool、DeepSeek thinking、no-op mutation、finalization、大文件导航、anchor evidence 与恢复时机。clean identity `fce9b6aa5356a75316b8c24df98d481aa7451e4a` 的 `real-go.bug-fix` 已在 Windows/WSL2 各一次纯 flash canary 中通过：两端 declared/resolved 均为 flash、patch SHA-256 同为 `9cd9fd1bb6ec8af60516e5cd94f4676d386669949ede3084625218eb5ad9d4e8`、只修改 `command.go`、冻结 Go test 通过且资源零残留。该结果证明代表任务转绿，但不能外推为 30 项全部改善，也不改变原 aggregate。aggregate Provider-reported cost=`$0.12215932`；授权窗口 observed=`$2.20780517`、reserved=`$0.94221000`，当前守卫上界=`25.20012136 RMB < 50 RMB`。Provider 外部账单核对、剩余 required-mutation 改善范围、真实 B/C 改善和两个连续 P2-C 候选证据仍缺。两个新增 Settings 字段的可见交互/console 手测已完成，P2-B 本地严格零发现依赖 Gate 与远端专项 Gate 已通过；P1-B 验证 DAG、P1-C TaskProjection/Capability Closure 与 P2-A Supervisor fault matrix/双平台长稳/零残留 Gate 均已完成。前部旧切片中的“尚未闭合”只描述当时上下文，不代表当前状态，当前状态以第 11、12 节为准。
 
 ### 1.2 下一轮五个闭环
 
@@ -2931,13 +2931,52 @@ Source / Workspace Revision
 - Agent 全包 `56` 个测试文件、`560/560` 个测试通过，另有 `1` 项既有跳过；required-mutation 定向 `2` 个文件、`14/14` 个测试通过。
 - WSL launcher/benchmark 定向 `54/54` 通过；Windows canary usage input/output=`13573/504`、cost=`$0.00066230`，WSL2=`12768/560`、cost=`$0.00114017`。
 - 两端 trace/artifact contract、模型 route、usage completeness 与 frozen test 均通过；Windows listener/token/pid/Gateway 和 WSL fixture/node/go/compile/link 进程均为零残留。
-- 授权窗口累计 observed=`$2.20573999`、reserved=`$0.94221000`，当前守卫上界=`25.18359992 RMB < 50 RMB`；Provider 外部账单仍待控制台核对。
+- 授权窗口累计 observed=`$2.20780517`、reserved=`$0.94221000`，当前守卫上界=`25.20012136 RMB < 50 RMB`；Provider 外部账单仍待控制台核对。
 
 ##### 后续计划
 
 - **下一步准备做什么**：先对 canonical 30 项 required-mutation failure 做只读分层，选择一个与 Go anchor 修复不同的独立失败形状，优先构造无 Provider 的确定性回放；只有回放证明存在新产品缺口时，才使用现有授权执行最小双平台 canary。
 - **为什么先做它**：当前双平台结果只证明一个 Go 代表任务，直接重跑完整付费矩阵既不能隔离变量，也会把模型随机性误当成产品能力；第二个不同形状的证据能更有效界定改善范围。
 - **当前还缺的关键闭环**：其余 29 项 required-mutation 改善范围、B=`36` 与 C=`1` 改善、Preact evaluator 等价表达独立任务、Provider 外部账单，以及两个连续 P2-C 候选版本；不创建 candidate v4、不启动 P2-C、不重跑完整付费矩阵、不 push。
+
+#### P0 后续能力改进实现结论：required changed paths 可信覆盖 Gate（2026-08-16）
+
+##### 已完成内容
+
+1. **`required-changed-paths.ts` 与 CLI/Gateway/Protocol launch spec 修改**：
+   - 新增有界 required changed paths 合同，统一 `\` 为 `/`，拒绝空项、绝对路径、`.` / `..`、控制字符、超长和大小写重复路径。
+   - `coding.run`、Headless CLI 与 Agent capability handshake 全链投影该合同；旧 Agent 在运行前失败关闭。
+
+2. **`workspace-mutation-result.ts` 与四类 mutation Tool 修改**：
+   - `apply_patch`、`file_write`、`file_edit`、`file_delete` 成功时返回 schema v1 的可信 changed-path metadata；多文件 patch 和 move 同时报告全部路径。
+   - metadata 合同在写入前构造；no-op write/edit 不报告 mutation，也不触发 mutation observer。
+
+3. **`workspace-mutation-coverage.ts`、`tool-agent.ts` 与 recovery 修改**：
+   - Agent 只信任成功 mutation Tool 的 schema v1 metadata，按大小写不敏感 identity 跨调用单调累积覆盖，正文、总结和无 metadata mutation 均不能伪造或重置完成状态。
+   - 普通轮部分覆盖后进入唯一 mutation-only recovery；missing paths 以可信 JSON 数组投影，恢复后仍缺路径立即失败并列出缺失项，不进入 finalization。
+   - bounded navigation 允许一次已注册 source-read 调用，或最多两个 `file_read`；混合调用和三个以上调用在 Tool 执行前失败关闭。
+
+4. **Coding CI/benchmark 接入修改**：
+   - benchmark 将 task acceptance paths 传入 required changed paths Gate；system harness 代管 mutation 时不向 Agent 重复注入该参数。
+   - 未增加 turn、token、cost、high-risk 或 mutation Tool 上限，未改变没有 required paths 声明的既有任一成功 mutation 语义。
+
+5. **效果**：
+   - `real-ts.api-migration` 要求的三个文件不能再由单文件 mutation 或自然语言自报完成绕过，Gateway launch spec、Tool evidence 与 Agent 终态形成同一失败关闭链。
+   - `0846299` Windows artifact 中两个 `file_read` 被旧 bounded navigation 合同拒绝的确定性失败已由回归测试覆盖，双读取能继续到后续 mutation，超量或混合读取仍被拦截。
+   - 本切片只闭合产品合同与离线 Gate；尚未把真实双平台 canary 写为成功，也不改写原 aggregate。
+
+##### 验证结果
+
+- TypeScript 编译无错误，workspace build、`verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 通过。
+- Agent 全包 `56` 个测试文件、`570/570` 个测试通过，另有 `1` 项既有跳过；Skills 全包 `110` 个测试文件、`930/930` 个测试通过，另有 `2` 项既有跳过。
+- CLI/Gateway 定向 `18/18`、Coding CI `22/22`、benchmark runner `37/37`、最终 required-path 定向 `5` 个文件 `53/53` 通过。
+- 本切片截至本地提交前执行 `0` 次新增 Provider 调用；授权窗口 observed=`$2.20780517`、reserved=`$0.94221000`，费用守卫上界=`25.20012136 RMB < 50 RMB`。
+
+##### 后续计划
+
+- **下一步准备做什么**：本地提交形成 clean identity，先为该 identity 执行 Windows `real-ts.api-migration` dry-run/canary；只有真实三文件 patch、冻结测试、唯一终态和资源回收全部通过后，才执行同 identity WSL2 canary。
+- **为什么先做它**：`0846299` Windows 真实失败已收敛为 bounded navigation 返回两个 `file_read` 被旧合同拒绝；同任务单端复核能以最低新增费用直接验证本轮 Gate 是否关闭该生产缺口。
+- **当前还缺的关键闭环**：同一 clean identity 的 Windows/WSL2 三文件 patch、冻结测试、declared/resolved effective model、usage/cost、唯一终态与 PID/端口/token 零残留证据；不创建 candidate v4、不启动 P2-C、不重跑完整付费矩阵、不 push。
 
 ### P1-C（已完成）
 
@@ -2985,7 +3024,7 @@ Source / Workspace Revision
 | 项目 | 优先级 | 状态 | 粗略工作量 | 完成边界 |
 | --- | --- | --- | ---: | --- |
 | 本轮 SS 能力复核与 9.5 增强规划 | - | 已完成 | - | 已复核 scorecard、目标向量 `9.510`、C#/Go 投入收益、多语言方案和竞品资料；竞品未做同环境 benchmark |
-| P0：Benchmark v3 与外部有效性 | P0 | 已完成基线、mixed-model 与纯 flash 双平台复核，结果均未晋级。纯 flash identity=`edd1c877`，formal/aggregate=`144/144`、`107 passed + 37 product_workflow failed`、A=`72/72`、B=`12/48`、C=`23/24`，infrastructure error=`0`、usage=`132 provider_reported + 6 unavailable + 6 not_reached`；`138/138` Provider-reaching route 为 declared/resolved flash，dry-run、`--verify`、failure-analysis 重建、`765` 个 Schema 样本与 `144` 份 JSONL 均通过。canonical r2 将新失败收敛为 required-mutation recovery=`30`、length=`5`、schema=`2`、unknown=`0`；output/headroom、required Tool、DeepSeek thinking、no-op mutation、finalization、`file_read` anchor 与 recovery evidence 已完成生产修复。clean identity `fce9b6a` 的 `real-go.bug-fix` 已在 Windows/WSL2 各一次纯 flash canary 中通过，两端 declared/resolved flash、patch SHA-256 相同、只改 `command.go`、冻结 Go test 与资源零残留 Gate 全绿；Agent `560/560`、workspace/WSL build 与合同 Gate 通过。该代表任务转绿不改写原 aggregate，也不证明其余 29 项已改善。aggregate cost=`$0.12215932`；授权窗口 observed=`$2.20573999`、reserved=`$0.94221000`、当前守卫上界=`25.18359992 RMB < 50 RMB`。旧失败 artifacts 原样保留；不创建 candidate v4、不启动 P2-C、不 push | 14-22 人日 | A/B/C 三层、至少 4 个固定仓、144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；不含 candidate v4、竞品代跑、公开排行榜 |
+| P0：Benchmark v3 与外部有效性 | P0 | 已完成基线、mixed-model 与纯 flash 双平台复核，结果均未晋级。纯 flash identity=`edd1c877`，formal/aggregate=`144/144`、`107 passed + 37 product_workflow failed`、A=`72/72`、B=`12/48`、C=`23/24`，infrastructure error=`0`、usage=`132 provider_reported + 6 unavailable + 6 not_reached`；`138/138` Provider-reaching route 为 declared/resolved flash，dry-run、`--verify`、failure-analysis 重建、`765` 个 Schema 样本与 `144` 份 JSONL 均通过。canonical r2 将新失败收敛为 required-mutation recovery=`30`、length=`5`、schema=`2`、unknown=`0`；output/headroom、required Tool、DeepSeek thinking、no-op mutation、finalization、`file_read` anchor、recovery evidence 与 required changed paths 可信覆盖 Gate 已完成生产修复；新 Gate 的双平台 canary 待执行。clean identity `fce9b6a` 的 `real-go.bug-fix` 已在 Windows/WSL2 各一次纯 flash canary 中通过，两端 declared/resolved flash、patch SHA-256 相同、只改 `command.go`、冻结 Go test 与资源零残留 Gate 全绿；Agent `570/570`、Skills `930/930`、workspace build 与合同 Gate 通过。该代表任务转绿不改写原 aggregate，也不证明其余 29 项已改善。aggregate cost=`$0.12215932`；授权窗口 observed=`$2.20780517`、reserved=`$0.94221000`、当前守卫上界=`25.20012136 RMB < 50 RMB`。旧失败 artifacts 原样保留；不创建 candidate v4、不启动 P2-C、不 push | 14-22 人日 | A/B/C 三层、至少 4 个固定仓、144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；不含 candidate v4、竞品代跑、公开排行榜 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | 已完成；attempt 12 aggregate=`passed`；binary regression/Provider failure=`0/0`；`semantic-live=7/8`；非目标整文件读取 `21 -> 14`；16/16 cell 预算耗尽；candidate task/patch success=`0/8`；累计费用 `1.68214072 RMB` | 8-12 人日 | 公共 contract、TS/JS Provider、Inspector、truth set、resource soak、双平台 native runtime 与真实 uplift Gate；不含外部 LSP、Go/C# GA、SCIP store |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | 已完成；Host、pinned profile、Go Doctor、Adapter/truth/fault、双平台 native/OCI、readiness/progress/monitor、comparator 和 eligibility 已闭合；`goCanaryEligible=true`、`productionEligible=false` | 6-11 人日 | 双平台 identity/truth/lifecycle/OCI evidence、只读 comparator、单一 eligibility owner、Doctor projection；不含 Go 生产默认启用、自动安装、公开发布、扩大 fixture、rollout 观察窗口 |
 | P1-A3：C# 条件接入 | 条件 | 延后，等待真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild 执行面、restore/联网和生命周期；未命中需求不进入生产，也不阻断 9.5 |

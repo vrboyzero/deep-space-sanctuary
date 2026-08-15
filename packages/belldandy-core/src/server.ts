@@ -96,6 +96,7 @@ import { loadExtensionMarketplaceState } from "./extension-marketplace-state.js"
 import { buildExtensionRuntimeReport } from "./extension-runtime.js";
 import { compileOutputSchema } from "./coding-run/output-schema.js";
 import { parseCodingRunCapabilityRequirements } from "./coding-run/capability-requirements.js";
+import { parseRequiredChangedPaths } from "./coding-run/required-changed-paths.js";
 import type { ExtensionHostState } from "./extension-host.js";
 import { handleMessageSendWithQueryRuntime, MessageSendConfigurationError } from "./query-runtime-message-send.js";
 import {
@@ -2591,6 +2592,7 @@ function parseCodingRunOptions(
     "automationProfile",
     "expectedResolvedModelId",
     "workspaceMutationRequirement",
+    "requiredChangedPaths",
     "cwd",
     "toolAllow",
     "toolDeny",
@@ -2656,6 +2658,14 @@ function parseCodingRunOptions(
   const workspaceMutationRequirement = value.workspaceMutationRequirement;
   if (workspaceMutationRequirement !== undefined && workspaceMutationRequirement !== "required") {
     return { ok: false, message: "codingRun.workspaceMutationRequirement must be required" };
+  }
+  const requiredChangedPaths = parseRequiredChangedPaths(value.requiredChangedPaths);
+  if (!requiredChangedPaths.ok) return requiredChangedPaths;
+  if (requiredChangedPaths.value && workspaceMutationRequirement !== "required") {
+    return {
+      ok: false,
+      message: "codingRun.requiredChangedPaths requires workspaceMutationRequirement required",
+    };
   }
   if (workspaceMutationRequirement === "required") {
     if (automationProfile !== "bare") {
@@ -2732,6 +2742,7 @@ function parseCodingRunOptions(
       ...(automationProfile ? { automationProfile } : {}),
       ...(expectedResolvedModelId ? { expectedResolvedModelId } : {}),
       ...(workspaceMutationRequirement ? { workspaceMutationRequirement } : {}),
+      ...(requiredChangedPaths.value ? { requiredChangedPaths: requiredChangedPaths.value } : {}),
       ...(cwd ? { cwd } : {}),
       ...(toolAllow.value ? { toolAllow: toolAllow.value } : {}),
       ...(toolDeny.value ? { toolDeny: toolDeny.value } : {}),

@@ -482,6 +482,8 @@ export type CodingRunCapabilities = {
   maxCostUsd: boolean;
   /** 运行时是否支持成功 mutation 前失败关闭及受控 mutation 恢复轮。 */
   workspaceMutationRequirement?: boolean;
+  /** 运行时是否能按可信 Tool 结果强制 required changed-path 全集覆盖。 */
+  requiredChangedPaths?: boolean;
   /** 仅表示可在下一次模型调用前注入，不表示可修改已发出的 Provider stream。 */
   steerAtModelBoundary?: boolean;
 };

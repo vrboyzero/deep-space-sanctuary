@@ -7,6 +7,7 @@ import { parseSkillMd } from "../skill-loader.js";
 import { withToolContract } from "../tool-contract.js";
 import { resolveRuntimeFilesystemScope } from "../runtime-policy.js";
 import { buildFailureToolCallResult } from "../failure-kind.js";
+import { buildWorkspaceMutationResultMetadata } from "../workspace-mutation-result.js";
 import { resolvePrivilegedWorkspaceWriteChannels } from "./privileged-workspace-write-contract.js";
 
 /** 敏感文件模式（禁止读取） */
@@ -995,6 +996,9 @@ export const fileWriteTool: Tool = withToolContract({
     if (encoding === "base64" && fileWritePolicy.allowBinary !== true) {
       return makeError("禁止写入二进制内容（base64）", "permission_or_policy");
     }
+    const contentBuffer = encoding === "base64"
+      ? Buffer.from(content, "base64")
+      : Buffer.from(content, "utf-8");
 
     // 写入文件
     const mode = (args.mode as "overwrite" | "append" | "replace" | "insert") || "overwrite";
@@ -1061,6 +1065,9 @@ export const fileWriteTool: Tool = withToolContract({
               return makeError("未匹配到正则内容，未做替换");
             }
             const next = text.replace(re, content);
+            if (next === text) {
+              return makeError("写入未产生实际内容变化", "business_logic_error");
+            }
             await prepareWorkspaceMutation(context, mutationWorkspaceRoot, name, { absolute, relative });
             await fs.writeFile(absolute, next, "utf-8");
           } else {
@@ -1080,6 +1087,9 @@ export const fileWriteTool: Tool = withToolContract({
             const insertLines = content.split(/\r?\n/);
             lines.splice(startIdx, endIdx - startIdx + 1, ...insertLines);
             const next = lines.join(newline);
+            if (next === text) {
+              return makeError("写入未产生实际内容变化", "business_logic_error");
+            }
             await prepareWorkspaceMutation(context, mutationWorkspaceRoot, name, { absolute, relative });
             await fs.writeFile(absolute, next, "utf-8");
           }
@@ -1096,6 +1106,9 @@ export const fileWriteTool: Tool = withToolContract({
           const insertLines = content.split(/\r?\n/);
           lines.splice(index, 0, ...insertLines);
           const next = lines.join(newline);
+          if (next === text) {
+            return makeError("写入未产生实际内容变化", "business_logic_error");
+          }
           await prepareWorkspaceMutation(context, mutationWorkspaceRoot, name, { absolute, relative });
           await fs.writeFile(absolute, next, "utf-8");
         }
@@ -1115,11 +1128,23 @@ export const fileWriteTool: Tool = withToolContract({
             encoding,
             totalSize: updatedStat.size,
           }),
+          metadata: buildWorkspaceMutationResultMetadata([relative]),
           durationMs: Date.now() - start,
         };
       }
 
-      const writeBuffer = encoding === "base64" ? Buffer.from(content, "base64") : null;
+      const existingStat = await fs.stat(absolute).catch(() => null);
+      if (mode === "append") {
+        if (existingStat?.isFile() && contentBuffer.length === 0) {
+          return makeError("写入未产生实际内容变化", "business_logic_error");
+        }
+      } else if (existingStat?.isFile() && existingStat.size === contentBuffer.length) {
+        const existingContent = await fs.readFile(absolute);
+        if (existingContent.equals(contentBuffer)) {
+          return makeError("写入未产生实际内容变化", "business_logic_error");
+        }
+      }
+      const writeBuffer = encoding === "base64" ? contentBuffer : null;
       await prepareWorkspaceMutation(context, mutationWorkspaceRoot, name, { absolute, relative });
 
       if (mode === "append") {
@@ -1153,6 +1178,7 @@ export const fileWriteTool: Tool = withToolContract({
           encoding,
           totalSize: finalStat.size,
         }),
+        metadata: buildWorkspaceMutationResultMetadata([relative]),
         durationMs: Date.now() - start,
       };
     } catch (err) {
@@ -1405,6 +1431,14 @@ export const fileEditTool: Tool = withToolContract({
 
     const matchIndex = currentText.indexOf(oldText);
     const nextText = `${currentText.slice(0, matchIndex)}${newText}${currentText.slice(matchIndex + oldText.length)}`;
+    if (nextText === currentText) {
+      return makeError(
+        "编辑未产生实际内容变化",
+        "no_content_change",
+        "business_logic_error",
+        "no_content_change",
+      );
+    }
 
     try {
       const finalRaw = await fs.readFile(absolute);
@@ -1437,6 +1471,7 @@ export const fileEditTool: Tool = withToolContract({
           bytesWritten: Buffer.byteLength(nextText, "utf-8"),
           totalSize: updatedStat.size,
         }),
+        metadata: buildWorkspaceMutationResultMetadata([relative]),
         durationMs: Date.now() - start,
       };
     } catch (error) {
@@ -1553,6 +1588,7 @@ export const fileDeleteTool: Tool = withToolContract({
           path: relative,
           status: "deleted",
         }),
+        metadata: buildWorkspaceMutationResultMetadata([relative]),
         durationMs: Date.now() - start,
       };
     } catch (err) {

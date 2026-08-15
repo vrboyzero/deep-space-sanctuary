@@ -133,6 +133,7 @@ import {
   type ReactFinalizationRequest,
 } from "./react-finalization.js";
 import {
+  areWorkspaceMutationNavigationToolCallsAllowed,
   buildWorkspaceMutationNavigationRequest,
   buildWorkspaceMutationRecoveryPlan,
   selectWorkspaceMutationNavigationToolDefinitions,
@@ -148,6 +149,7 @@ import {
   buildBoundedStructuredOutputRepairRequest,
   type BoundedStructuredOutputRepairRequest,
 } from "./react-structured-output-repair.js";
+import { createWorkspaceMutationPathCoverage } from "./workspace-mutation-coverage.js";
 
 type ApiProtocol = "openai" | "anthropic";
 type CacheSupport = "supported" | "unsupported" | "unknown";
@@ -2055,11 +2057,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
   getCodingRunCapabilities(): {
     maxCostUsd: boolean;
     workspaceMutationRequirement: true;
+    requiredChangedPaths: true;
     steerAtModelBoundary: true;
   } {
     return {
       maxCostUsd: hasUsagePricing(this.opts.usagePricing),
       workspaceMutationRequirement: true,
+      requiredChangedPaths: true,
       steerAtModelBoundary: true,
     };
   }
@@ -2389,6 +2393,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let pendingEmptyContentFinalizationError: string | undefined;
     let emptyContentFinalizationAttempted = false;
     const workspaceMutationRequired = runtimeContext?.launchSpec?.workspaceMutationRequirement === "required";
+    const workspaceMutationPathCoverage = createWorkspaceMutationPathCoverage(
+      runtimeContext?.launchSpec?.requiredChangedPaths ?? [],
+    );
     let workspaceMutationObserved = false;
     let workspaceMutationNavigationAttempted = false;
     let workspaceMutationRecoveryPending = false;
@@ -2872,6 +2879,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
               ?? WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE,
             finalizationOutputTokens,
             inputSafetyFactor: REACT_FINALIZATION_INPUT_SAFETY_FACTOR,
+            missingRequiredChangedPaths: workspaceMutationPathCoverage.missingPaths(),
             tokenEstimateContext: dispatchTokenEstimateContext,
           });
         };
@@ -3200,6 +3208,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 messages: mutationRecoverySourceMessages,
                 tools: navigationTools,
                 maxInputTokens: remainingNavigationInputTokens,
+                missingRequiredChangedPaths: workspaceMutationPathCoverage.missingPaths(),
                 tokenEstimateContext: dispatchTokenEstimateContext,
               });
               const navigationMinimumCost = navigationRequest
@@ -3911,11 +3920,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
         }
         if (workspaceMutationNavigationCall) {
-          const requestedNavigationTool = toolCalls.length === 1
-            && toolNames.includes(toolCalls[0]?.function.name ?? "");
+          const requestedNavigationTool = areWorkspaceMutationNavigationToolCallsAllowed(
+            toolCalls.map((toolCall) => toolCall.function.name),
+            toolNames,
+          );
           if (!requestedNavigationTool) {
             yield* emitWorkspaceMutationFailure(
-              "the bounded source-navigation model call must request exactly one allowed source-read tool.",
+              "the bounded source-navigation model call must request one allowed source-read tool or at most two file_read calls.",
             );
             return;
           }
@@ -4747,7 +4758,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
             && resultContract?.isReadOnly === false
             && (resultContract.family === "workspace-write" || resultContract.family === "patch");
           if (successfulWorkspaceMutation) {
-            workspaceMutationObserved = true;
+            workspaceMutationObserved = workspaceMutationObserved
+              || workspaceMutationPathCoverage.observeSuccessfulMutation(result.metadata);
           }
           if (workspaceMutationRecoveryCall) {
             if (!successfulWorkspaceMutation) {
@@ -4755,6 +4767,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 result.success
                   ? `tool ${request.name} did not satisfy the trusted workspace mutation contract.`
                   : `tool ${request.name} failed: ${result.error || "unknown tool failure"}`,
+              );
+              return;
+            }
+            if (!workspaceMutationObserved) {
+              yield* emitWorkspaceMutationFailure(
+                `the one mutation-only model call did not cover every required changed path; still missing ${JSON.stringify(workspaceMutationPathCoverage.missingPaths())}.`,
               );
               return;
             }

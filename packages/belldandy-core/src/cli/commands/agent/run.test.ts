@@ -62,6 +62,10 @@ describe("bdd agent run", () => {
       maxCostUsd: "0.25",
       expectedResolvedModelId: "deepseek-v4-flash",
       requireWorkspaceMutation: true,
+      requiredChangedPaths: JSON.stringify([
+        "jsonrpc\\src\\common\\api.ts",
+        "protocol/src/common/protocol.ts",
+      ]),
       requireCapability: "journal,trace,journal",
       requireTool: "file_read,file_read",
       requireMcpServer: "repo-index",
@@ -84,6 +88,10 @@ describe("bdd agent run", () => {
         maxCostUsd: 0.25,
         expectedResolvedModelId: "deepseek-v4-flash",
         workspaceMutationRequirement: "required",
+        requiredChangedPaths: [
+          "jsonrpc/src/common/api.ts",
+          "protocol/src/common/protocol.ts",
+        ],
         requiredCapabilities: {
           schemaVersion: 1,
           capabilities: ["journal", "trace"],
@@ -109,6 +117,19 @@ describe("bdd agent run", () => {
     expect(resolveAgentRunCliOptions({ modelLoopBudgetPolicy: "unknown" })).toMatchObject({
       ok: false,
       message: expect.stringContaining("model-loop-budget-policy"),
+    });
+    expect(resolveAgentRunCliOptions({
+      requiredChangedPaths: JSON.stringify(["src/api.ts"]),
+    })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("requires --require-workspace-mutation"),
+    });
+    expect(resolveAgentRunCliOptions({
+      requireWorkspaceMutation: true,
+      requiredChangedPaths: "not-json",
+    })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("JSON array"),
     });
     expect(resolveAgentRunCliOptions({ requireWorkspaceMutation: true })).toMatchObject({
       ok: false,
@@ -462,6 +483,7 @@ describe("bdd agent run", () => {
       getCodingRunCapabilities: () => ({
         maxCostUsd: false,
         workspaceMutationRequirement: true,
+        requiredChangedPaths: true,
       }),
       async *run(input) {
         observedInputs.push(input);
@@ -506,6 +528,7 @@ describe("bdd agent run", () => {
               toolDeny: ["run_command"],
               permissionMode: "acceptEdits",
               workspaceMutationRequirement: "required",
+              requiredChangedPaths: ["src\\api.ts", "src/connection.ts"],
               maxTurns: 2,
               maxTokens: 800,
             },
@@ -537,6 +560,7 @@ describe("bdd agent run", () => {
         toolDeny: ["run_command"],
         permissionMode: "acceptEdits",
         workspaceMutationRequirement: "required",
+        requiredChangedPaths: ["src/api.ts", "src/connection.ts"],
         toolLoopIterationBudget: 2,
         maxTotalTokens: 800,
       });
@@ -626,6 +650,62 @@ describe("bdd agent run", () => {
         })).toBe(4);
       });
       expect(stderr.join(" ")).toContain("cannot enforce the required workspace mutation contract");
+      expect(runCalled).toBe(false);
+    } finally {
+      await server.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("fails before starting when the selected Agent cannot enforce required changed paths", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-path-capability-"));
+    const cwd = path.join(stateDir, "workspace");
+    let runCalled = false;
+    const agent: BelldandyAgent = {
+      getCodingRunCapabilities: () => ({
+        maxCostUsd: false,
+        workspaceMutationRequirement: true,
+        steerAtModelBoundary: true,
+      }),
+      async *run() {
+        runCalled = true;
+        yield { type: "final", text: "unexpected" };
+      },
+    };
+    await fs.promises.mkdir(cwd, { recursive: true });
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+      agentFactory: () => agent,
+    });
+    const stderr: string[] = [];
+
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(server.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        expect(await runAgentRunCommand({
+          stateDir,
+          prompt: "change every declared path",
+          jsonl: true,
+          codingRun: {
+            automationProfile: "bare",
+            cwd,
+            permissionMode: "acceptEdits",
+            toolAllow: ["apply_patch"],
+            workspaceMutationRequirement: "required",
+            requiredChangedPaths: ["src/api.ts"],
+            maxTurns: 2,
+          },
+          writeStdout: () => {},
+          writeStderr: (text) => stderr.push(text),
+        })).toBe(4);
+      });
+      expect(stderr.join(" ")).toContain("cannot enforce the required changed-path coverage contract");
       expect(runCalled).toBe(false);
     } finally {
       await server.close();

@@ -1639,13 +1639,18 @@ describe("coding agent benchmark stage 0B runner", () => {
     let writeCount = 0;
     const agent = {
       getCodingRunCapabilities() {
-        return { maxCostUsd: false, workspaceMutationRequirement: true };
+        return {
+          maxCostUsd: false,
+          workspaceMutationRequirement: true,
+          requiredChangedPaths: true,
+        };
       },
       async *run(input) {
         expect(input.meta?._agentLaunchSpec).toMatchObject({
           permissionMode: "acceptEdits",
           toolDeny: ["run_command", "spawn_subagent", "file_delete"],
           workspaceMutationRequirement: "required",
+          requiredChangedPaths: ["src/recovery-target.txt"],
         });
         yield { type: "status", status: "running" };
         yield {
@@ -1755,7 +1760,11 @@ describe("coding agent benchmark stage 0B runner", () => {
     const invocationPrompts = [];
     const agent = {
       getCodingRunCapabilities() {
-        return { maxCostUsd: false, workspaceMutationRequirement: true };
+        return {
+          maxCostUsd: false,
+          workspaceMutationRequirement: true,
+          requiredChangedPaths: true,
+        };
       },
       async *run(input) {
         invocationPrompts.push({
@@ -1777,6 +1786,7 @@ describe("coding agent benchmark stage 0B runner", () => {
         }
         expect(input.meta?._agentLaunchSpec).toMatchObject({
           workspaceMutationRequirement: "required",
+          requiredChangedPaths: ["src/calculate.mjs"],
         });
         await fs.writeFile(
           path.join(fixtureRoot, runIds["bug.reproducible-fix"], "workspace", "src/calculate.mjs"),

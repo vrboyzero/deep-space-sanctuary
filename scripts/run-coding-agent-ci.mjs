@@ -148,6 +148,9 @@ export function buildAgentRunArgs(input) {
       && (input.profile.mode === "workspace-write" || input.profile.mode === "recovery-control")
       ? ["--require-workspace-mutation"]
       : []),
+    ...(!delegatesWorkspaceMutationToSystemHarness && input.requiredChangedPaths?.length
+      ? ["--required-changed-paths", JSON.stringify(input.requiredChangedPaths)]
+      : []),
     "--permission-mode", input.profile.permissionMode === "acceptEdits" ? "accept-edits" : input.profile.permissionMode,
     "--tool-allow", input.profile.toolAllow.join(","),
     "--tool-deny", (input.profile.toolDeny ?? (input.profile.toolAllow.includes("run_command")
@@ -585,6 +588,7 @@ function resolveMainOptions(argv) {
     conversationId: values.get("conversation-id"),
     modelId: values.get("model-id"),
     maxCostUsd: resolveOptionalPositiveNumber(values, "max-cost-usd"),
+    requiredChangedPaths: resolveOptionalRequiredChangedPaths(values),
     outputSchemaPath: path.resolve(
       values.get("output-schema") ?? path.join(workspaceRoot, "examples", "ci", "review-output.schema.json"),
     ),
@@ -652,6 +656,23 @@ function resolveOptionalPositiveNumber(values, key) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) {
     throw new Error(`--${key} must be a positive finite number.`);
+  }
+  return parsed;
+}
+
+function resolveOptionalRequiredChangedPaths(values) {
+  if (!values.has("required-changed-paths")) return undefined;
+  const raw = requireValue(values, "required-changed-paths");
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("--required-changed-paths must be a valid JSON array.");
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0 || parsed.some((value) => (
+    typeof value !== "string" || !value.trim()
+  ))) {
+    throw new Error("--required-changed-paths must be a non-empty JSON string array.");
   }
   return parsed;
 }

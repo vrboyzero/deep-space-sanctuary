@@ -190,6 +190,8 @@ export type CodingRunOptions = {
   expectedResolvedModelId?: string;
   /** 运行成功前必须至少执行一次成功的 workspace mutation。 */
   workspaceMutationRequirement?: "required";
+  /** required mutation 必须由可信 Tool 结果覆盖的规范 workspace-relative 路径。 */
+  requiredChangedPaths?: string[];
   cwd?: string;
   toolAllow?: string[];
   toolDeny?: string[];

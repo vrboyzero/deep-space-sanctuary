@@ -471,6 +471,9 @@ export async function runStage0BTask(input, dependencies = {}) {
         promptPath,
         outputSchemaPath,
         mode: task.executionProfile,
+        ...(task.acceptance.requiredChangedPaths.length > 0
+          ? { requiredChangedPaths: [...task.acceptance.requiredChangedPaths] }
+          : {}),
         ...(input.shadowCandidateId ? { shadowCandidateId: input.shadowCandidateId } : {}),
         taskId: task.id,
         manifestRevision: input.manifestRevision ?? "v1",
@@ -985,6 +988,9 @@ async function executeCodingCiProcess(input) {
       "--prompt-file", input.promptPath,
       "--output-schema", input.outputSchemaPath,
       "--mode", input.mode,
+      ...(input.requiredChangedPaths?.length
+        ? ["--required-changed-paths", JSON.stringify(input.requiredChangedPaths)]
+        : []),
       ...(input.shadowCandidateId
         ? ["--shadow-candidate-id", input.shadowCandidateId]
         : []),

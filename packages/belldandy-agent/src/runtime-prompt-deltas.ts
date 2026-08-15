@@ -18,6 +18,10 @@ export function buildLaunchSpecPromptDeltas(
   }
 
   const deltas: AgentPromptDelta[] = [];
+  const requiredChangedPathsDelta = buildRequiredChangedPathsPromptDelta(launchSpec);
+  if (requiredChangedPathsDelta) {
+    deltas.push(requiredChangedPathsDelta);
+  }
   const roleDelta = buildLaunchRolePromptDelta(launchSpec);
   if (roleDelta) {
     deltas.push(roleDelta);
@@ -34,6 +38,31 @@ export function buildLaunchSpecPromptDeltas(
   }
 
   return deltas;
+}
+
+function buildRequiredChangedPathsPromptDelta(
+  launchSpec: ToolRuntimeLaunchSpec,
+): AgentPromptDelta | undefined {
+  if (
+    launchSpec.workspaceMutationRequirement !== "required"
+    || !launchSpec.requiredChangedPaths?.length
+  ) {
+    return undefined;
+  }
+  return {
+    id: "launch-required-workspace-mutation-paths",
+    deltaType: "required-workspace-mutation-paths",
+    role: "system",
+    source: "launch-spec",
+    text: [
+      "## Required Changed Paths",
+      "",
+      "This run succeeds only after all paths in the following trusted JSON array are covered by trusted mutation Tool result metadata:",
+      JSON.stringify(launchSpec.requiredChangedPaths),
+      "Do not claim completion while any path remains uncovered.",
+    ].join("\n"),
+    metadata: { pathCount: launchSpec.requiredChangedPaths.length },
+  };
 }
 
 export function collectSystemPromptDeltaTexts(

@@ -66,6 +66,10 @@ export type {
 export {
   buildDelegationProtocol,
 } from "./delegation-protocol.js";
+export {
+  buildWorkspaceMutationResultMetadata,
+  readWorkspaceMutationChangedPaths,
+} from "./workspace-mutation-result.js";
 export type {
   DelegationAggregationMode,
   DelegationAcceptance,

@@ -554,6 +554,25 @@ description: 通过额外根目录读取
       expect(content).toBe("new content");
     });
 
+    it("rejects an overwrite that would not change existing content", async () => {
+      await fs.writeFile(path.join(tempDir, "unchanged.txt"), "same content", "utf-8");
+      const workspaceMutationObserver = {
+        prepareMutations: vi.fn(async () => {}),
+        commitMutations: vi.fn(async () => {}),
+      };
+
+      const result = await fileWriteTool.execute(
+        { path: "unchanged.txt", content: "same content" },
+        { ...baseContext, workspaceRevisionId: "gateway-run-noop-write", workspaceMutationObserver },
+      );
+
+      expect(result).toMatchObject({ success: false, failureKind: "business_logic_error" });
+      expect(result.error).toContain("未产生实际内容变化");
+      expect(result.metadata).toBeUndefined();
+      expect(workspaceMutationObserver.prepareMutations).not.toHaveBeenCalled();
+      expect(workspaceMutationObserver.commitMutations).not.toHaveBeenCalled();
+    });
+
     it("prepares a workspace revision before writing and commits the resulting hash after success", async () => {
       await fs.writeFile(path.join(tempDir, "tracked.txt"), "before", "utf-8");
       const workspaceMutationObserver = {
@@ -573,6 +592,9 @@ description: 通过额外根目录读取
       );
 
       expect(result.success).toBe(true);
+      expect(result.metadata).toEqual({
+        workspaceMutation: { schemaVersion: 1, changedPaths: ["tracked.txt"] },
+      });
       expect(workspaceMutationObserver.prepareMutations).toHaveBeenCalledWith(expect.objectContaining({
         workspaceRevisionId: "gateway-run-1",
         toolName: "file_write",
@@ -979,6 +1001,9 @@ description: 通过额外根目录读取
       });
 
       expect(result.success).toBe(true);
+      expect(result.metadata).toEqual({
+        workspaceMutation: { schemaVersion: 1, changedPaths: ["successful-edit.txt"] },
+      });
       expect(JSON.parse(result.output)).toEqual({
         path: "successful-edit.txt",
         replacements: 1,
@@ -1022,6 +1047,30 @@ description: 通过额外根目录读取
         matchCount: 2,
       });
       await expect(fs.readFile(targetPath, "utf-8")).resolves.toBe("aaa");
+    });
+
+    it("rejects a replacement that would not change existing content", async () => {
+      const targetPath = path.join(tempDir, "unchanged-edit.txt");
+      await fs.writeFile(targetPath, "alpha old omega\n", "utf-8");
+      const readResult = await fileReadTool.execute({ path: "unchanged-edit.txt" }, baseContext);
+      const revision = JSON.parse(readResult.output).revision;
+      const workspaceMutationObserver = {
+        prepareMutations: vi.fn(async () => {}),
+        commitMutations: vi.fn(async () => {}),
+      };
+
+      const result = await fileEditTool.execute({
+        path: "unchanged-edit.txt",
+        oldText: "old",
+        newText: "old",
+        revision,
+      }, { ...baseContext, workspaceRevisionId: "gateway-run-noop-edit", workspaceMutationObserver });
+
+      expect(result).toMatchObject({ success: false, failureKind: "business_logic_error" });
+      expect(result.error).toContain("未产生实际内容变化");
+      expect(result.metadata).toBeUndefined();
+      expect(workspaceMutationObserver.prepareMutations).not.toHaveBeenCalled();
+      expect(workspaceMutationObserver.commitMutations).not.toHaveBeenCalled();
     });
 
     it("rejects invalid UTF-8 before preparing a mutation", async () => {
@@ -1161,6 +1210,9 @@ description: 通过额外根目录读取
       );
 
       expect(result.success).toBe(true);
+      expect(result.metadata).toEqual({
+        workspaceMutation: { schemaVersion: 1, changedPaths: ["tracked-delete.txt"] },
+      });
       expect(workspaceMutationObserver.prepareMutations).toHaveBeenCalledTimes(1);
       expect(workspaceMutationObserver.commitMutations).toHaveBeenCalledTimes(1);
     });

@@ -9,6 +9,29 @@ import {
 } from "./runtime-prompt-deltas.js";
 
 describe("buildLaunchSpecPromptDeltas", () => {
+  it("adds the trusted required changed-path contract as one system delta", () => {
+    const deltas = buildLaunchSpecPromptDeltas({
+      workspaceMutationRequirement: "required",
+      requiredChangedPaths: [
+        "jsonrpc/src/common/api.ts",
+        "protocol/src/common/protocol.ts",
+      ],
+    });
+
+    expect(deltas).toEqual([
+      expect.objectContaining({
+        deltaType: "required-workspace-mutation-paths",
+        role: "system",
+        text: expect.stringContaining(JSON.stringify([
+          "jsonrpc/src/common/api.ts",
+          "protocol/src/common/protocol.ts",
+        ])),
+      }),
+    ]);
+    expect(deltas[0]?.text).toContain("all paths");
+    expect(deltas[0]?.text).toContain("trusted mutation Tool result metadata");
+  });
+
   it("builds role and tool-selection deltas from a launch spec", () => {
     const deltas = buildLaunchSpecPromptDeltas({
       profileId: "coder",

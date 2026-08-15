@@ -16,6 +16,7 @@ export type AgentPromptDeltaType =
   | "attachment"
   | "audio-transcript"
   | "tool-selection-policy"
+  | "required-workspace-mutation-paths"
   | "team-topology-and-ownership"
   | "team-handoff-review"
   | "team-fan-in-triage"

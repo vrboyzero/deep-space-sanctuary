@@ -216,7 +216,12 @@ describe("coding agent CI runner", () => {
       modelId: "deepseek-v4-flash",
       maxCostUsd: 3,
       manifestRevision: "v3",
-      taskId: "real-js.bug-fix",
+      taskId: "real-ts.api-migration",
+      requiredChangedPaths: [
+        "jsonrpc/src/common/api.ts",
+        "jsonrpc/src/common/connection.ts",
+        "protocol/src/common/protocol.ts",
+      ],
     });
 
     expect(args).toEqual([
@@ -229,6 +234,11 @@ describe("coding agent CI runner", () => {
       "--model-id", "deepseek-v4-flash",
       "--expected-resolved-model-id", "deepseek-v4-flash",
       "--require-workspace-mutation",
+      "--required-changed-paths", JSON.stringify([
+        "jsonrpc/src/common/api.ts",
+        "jsonrpc/src/common/connection.ts",
+        "protocol/src/common/protocol.ts",
+      ]),
       "--permission-mode", "accept-edits",
       "--tool-allow", "file_read,list_files,file_edit,apply_patch,file_write,file_delete",
       "--tool-deny", "run_command,spawn_subagent",
@@ -249,9 +259,11 @@ describe("coding agent CI runner", () => {
       profile: resolveCodingCiProfile("workspace-write", "v3"),
       manifestRevision: "v3",
       taskId: "system.parallel-write-fan-in",
+      requiredChangedPaths: ["src/worker-a.ts", "src/worker-b.ts"],
     });
 
     expect(args).not.toContain("--require-workspace-mutation");
+    expect(args).not.toContain("--required-changed-paths");
   });
 
   it("uses the Gateway-visible workspace only for the remote coding run cwd", () => {

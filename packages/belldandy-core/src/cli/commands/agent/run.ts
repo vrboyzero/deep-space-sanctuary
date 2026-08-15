@@ -19,6 +19,7 @@ import { compileOutputSchema, resolveOptionalOutputSchema } from "../../shared/o
 import { WorkspaceChangeRecoveryRuntime } from "../../../workspace-change-recovery.js";
 import { WorkspaceChangeSnapshotRuntime } from "../../../workspace-change-snapshot.js";
 import { parseCodingRunCapabilityRequirements } from "../../../coding-run/capability-requirements.js";
+import { parseRequiredChangedPaths } from "../../../coding-run/required-changed-paths.js";
 
 type TextWriter = (text: string) => void;
 const MAX_STDIN_PROMPT_BYTES = 1024 * 1024;
@@ -48,6 +49,7 @@ export type AgentRunCliOptionsInput = {
   automationProfile?: unknown;
   expectedResolvedModelId?: unknown;
   requireWorkspaceMutation?: unknown;
+  requiredChangedPaths?: unknown;
   cwd?: unknown;
   toolAllow?: unknown;
   toolDeny?: unknown;
@@ -113,6 +115,14 @@ export function resolveAgentRunCliOptions(
   const permissionMode = parsePermissionModeOption(input.permissionMode);
   if (!permissionMode.ok) return permissionMode;
   const requireWorkspaceMutation = input.requireWorkspaceMutation === true;
+  const requiredChangedPaths = parseRequiredChangedPathsOption(input.requiredChangedPaths);
+  if (!requiredChangedPaths.ok) return requiredChangedPaths;
+  if (requiredChangedPaths.value && !requireWorkspaceMutation) {
+    return {
+      ok: false,
+      message: "--required-changed-paths requires --require-workspace-mutation.",
+    };
+  }
   if (requireWorkspaceMutation) {
     if (automationProfile.value !== "bare") {
       return { ok: false, message: "--require-workspace-mutation requires --automation-profile bare." };
@@ -154,6 +164,7 @@ export function resolveAgentRunCliOptions(
     ...(automationProfile.value ? { automationProfile: automationProfile.value } : {}),
     ...(expectedResolvedModelId.value ? { expectedResolvedModelId: expectedResolvedModelId.value } : {}),
     ...(requireWorkspaceMutation ? { workspaceMutationRequirement: "required" as const } : {}),
+    ...(requiredChangedPaths.value ? { requiredChangedPaths: requiredChangedPaths.value } : {}),
     ...(cwd.value ? { cwd: cwd.value } : {}),
     ...(toolAllow.value ? { toolAllow: toolAllow.value } : {}),
     ...(toolDeny.value ? { toolDeny: toolDeny.value } : {}),
@@ -589,6 +600,22 @@ function parseToolArgumentPolicyOption(
   return { ok: false, message: "--tool-argument-policy must be bounded-navigation-v1." };
 }
 
+function parseRequiredChangedPathsOption(
+  value: unknown,
+): ReturnType<typeof parseRequiredChangedPaths> {
+  if (value === undefined) return { ok: true };
+  if (typeof value !== "string" || !value.trim()) {
+    return { ok: false, message: "--required-changed-paths must be a non-empty JSON array." };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return { ok: false, message: "--required-changed-paths must be a valid JSON array." };
+  }
+  return parseRequiredChangedPaths(parsed, "--required-changed-paths");
+}
+
 function parseModelLoopBudgetPolicyOption(
   value: unknown,
 ): { ok: true; value?: CodingRunOptions["modelLoopBudgetPolicy"] } | { ok: false; message: string } {
@@ -655,6 +682,7 @@ export default defineCommand({
     "model-id": { type: "string", description: "Optional Model ID" },
     "expected-resolved-model-id": { type: "string", description: "Fail unless Gateway resolves this exact model ID" },
     "require-workspace-mutation": { type: "boolean", description: "Fail unless this run successfully mutates the workspace" },
+    "required-changed-paths": { type: "string", description: "JSON array of workspace-relative paths that must be changed" },
     timeout: { type: "string", description: "Run timeout in milliseconds (minimum: 1000)" },
     cwd: { type: "string", description: "Filesystem scope for this local Gateway run" },
     "tool-allow": { type: "string", description: "Comma-separated tool allowlist" },
@@ -685,6 +713,7 @@ export default defineCommand({
       automationProfile: args["automation-profile"],
       expectedResolvedModelId: args["expected-resolved-model-id"],
       requireWorkspaceMutation: args["require-workspace-mutation"],
+      requiredChangedPaths: args["required-changed-paths"],
       cwd: args.cwd,
       toolAllow: args["tool-allow"],
       toolDeny: args["tool-deny"],
