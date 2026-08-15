@@ -557,7 +557,7 @@ const TOOL_CONTRACT_V2_PROFILES: Record<string, ToolContractV2Profile> = {
       "Need the exact current contents of a known file before editing, reviewing, or answering from repository context",
       "Need a bounded workspace read with explicit path control instead of executing shell commands",
       "Need to continue a truncated read by passing the returned nextCursor unchanged",
-      "Need one bounded window around a known unique anchor in a large source file",
+      "Need one bounded window around a named function or type in a large source file; prefer an inferred shortest unique declaration anchor over probing from offset 0",
     ],
     avoidWhen: [
       "You do not yet know the target path and should search or list first",
@@ -570,6 +570,7 @@ const TOOL_CONTRACT_V2_PROFILES: Record<string, ToolContractV2Profile> = {
       "Treat offset and limit as byte counts, never line counts; omit limit for the default 100KB source read unless a smaller byte range is intentional",
       "Confirm the path, expected encoding, and whether offset/limit or maxBytes truncation could hide relevant context",
       "Reuse nextCursor only with the same unchanged file and encoding; otherwise restart from an explicit offset",
+      "When the task or test names a function or type in a large source file, use the shortest inferable unique declaration as anchor instead of probing from offset 0 with a small limit",
       "For anchor reads, provide unique exact UTF-8 text; omit limit for the focused 4096-byte default or set a value large enough to contain the full anchor",
       "Prefer reading a focused file over dumping many large files into the context window",
     ],

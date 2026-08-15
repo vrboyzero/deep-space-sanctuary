@@ -614,7 +614,7 @@ function encodeFileReadCursor(input: { fingerprint: string; offset: number }): s
 export const fileReadTool: Tool = withToolContract({
   definition: {
     name: "file_read",
-    description: "读取工作区内文件内容。offset/limit 单位是字节（不是行数）；读取大型源码中的已知符号时可用唯一精确 anchor 返回命中点附近窗口，省略 limit 时窗口为 4096 字节；其他读取通常省略 limit 以使用默认 100KB，若返回 truncated=true 则用 nextCursor 继续。路径必须在工作区范围内，禁止读取敏感文件（如 .env、密钥等）。",
+    description: "读取工作区内文件内容。offset/limit 单位是字节（不是行数）；当任务或测试已给出目标函数或类型名且源码较大时，优先传入可推断的最短唯一精确 anchor，不要从 offset=0 用小 limit 试探；anchor 省略 limit 时返回命中点附近 4096 字节窗口。其他读取通常省略 limit 以使用默认 100KB，若返回 truncated=true 则用 nextCursor 继续。路径必须在工作区范围内，禁止读取敏感文件（如 .env、密钥等）。",
     parameters: {
       type: "object",
       properties: {
@@ -645,7 +645,7 @@ export const fileReadTool: Tool = withToolContract({
         },
         anchor: {
           type: "string",
-          description: "大型源码精确定位模式：在不超过 16 MiB 的文件内查找唯一精确文本，返回包含命中点的有界窗口和真实 UTF-8 字节偏移；不能与 offset、cursor 或 base64 encoding 同时指定",
+          description: "大型源码精确定位模式：目标函数或类型名已知时，传入可推断的最短唯一声明片段；在不超过 16 MiB 的文件内查找唯一精确文本，返回包含命中点的有界窗口和真实 UTF-8 字节偏移；不能与 offset、cursor 或 base64 encoding 同时指定",
         },
       },
       required: ["path"],

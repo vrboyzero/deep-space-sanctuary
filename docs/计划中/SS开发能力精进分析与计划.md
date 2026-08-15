@@ -2,7 +2,7 @@
 
 > 当前计划版（精简维护版）
 >
-> 评估日期：2026-08-05；最新进度复核：2026-08-15
+> 评估日期：2026-08-05；最新进度复核：2026-08-16
 >
 > 评估对象：Star Sanctuary（下文简称 SS）、Grok Build、OpenAI Codex、Claude Code
 >
@@ -21,7 +21,7 @@ SS 已从上一轮 `7.4/10` 推进到安全、恢复、编辑、Headless、本�
 | SS 内部硬 Gate | **9.1/10**（原始加权 `9.065`） | corrected v2、类别下限、核心类别、测试、patch、回归、双平台和工程 Gate 均通过；只对既定 benchmark 与环境成立 |
 | 新一轮横向评分 | **9.0/10**（原始加权 `8.955`） | 对真实仓泛化、语义导航、验证控制面、并行和生态成熟度保留折扣；竞品未参加同环境 benchmark |
 
-横向评分不是模型能力排名。纯 `deepseek-v4-flash` identity `edd1c8779d928879c1d3e0669f725c79fd0ebf97` 的单一 HEAD 原生 aggregate 已完成 `144/144`，A=`72/72`、B=`12/48`、C=`23/24`，结果为 `107 passed + 37 product_workflow failed`；相较上一份 Windows pro/WSL2 flash 的 mixed-model aggregate 为 `2` 项改善、`2` 项回退、净值 `0`，因此复核完成但不宣称整体 uplift。声明模型与 Gateway resolved effective model 的前置失败关闭 Gate 已闭合，`138/138` 个 Provider-reaching manifest 均为 flash 到 flash；canonical 分析已将 37 项收敛为 required-mutation recovery=`30`、length=`5`、schema=`2`、unknown=`0`。29 项 length stop 已定位为 mutation-only `1024` output cap，另 1 项定位为普通 read loop 未提前保护恢复 headroom；五次 Windows canary 又依次暴露 `4096 + auto` length stop、DeepSeek thinking/forced Tool 协议冲突、no-op mutation 与 finalization length、大文件目标未定位，以及 anchor 整文件证据在 recovery 中丢失函数体。现已保留 mutation-only required Tool choice，仅在 DeepSeek forced Tool/finalization 请求中关闭 thinking，并为 `file_read` anchor 设置 4 KiB 默认窗口、在 recovery 中结构化保留 anchor 命中上下文；本地测试与合同 Gate 通过，仍等待新 clean identity 双平台任务复核，不能宣称真实任务转绿。aggregate Provider-reported cost=`$0.12215932`，授权窗口 observed=`$2.20042339`、reserved=`$0.94221000`、双平台预留守卫=`26.74106712 RMB < 50 RMB`；Provider 外部账单核对、纯 flash 双平台 canary、真实 B/C 改善和两个连续 P2-C 候选证据仍缺。两个新增 Settings 字段的可见交互/console 手测已完成，P2-B 本地严格零发现依赖 Gate 与远端专项 Gate 已通过；P1-B 验证 DAG、P1-C TaskProjection/Capability Closure 与 P2-A Supervisor fault matrix/双平台长稳/零残留 Gate 均已完成。前部旧切片中的“尚未闭合”只描述当时上下文，不代表当前状态，当前状态以第 11、12 节为准。
+横向评分不是模型能力排名。纯 `deepseek-v4-flash` identity `edd1c8779d928879c1d3e0669f725c79fd0ebf97` 的单一 HEAD 原生 aggregate 已完成 `144/144`，A=`72/72`、B=`12/48`、C=`23/24`，结果为 `107 passed + 37 product_workflow failed`；相较上一份 Windows pro/WSL2 flash 的 mixed-model aggregate 为 `2` 项改善、`2` 项回退、净值 `0`，因此复核完成但不宣称整体 uplift。声明模型与 Gateway resolved effective model 的前置失败关闭 Gate 已闭合，`138/138` 个 Provider-reaching manifest 均为 flash 到 flash；canonical 分析已将 37 项收敛为 required-mutation recovery=`30`、length=`5`、schema=`2`、unknown=`0`。29 项 length stop 已定位为 mutation-only `1024` output cap，另 1 项定位为普通 read loop 未提前保护恢复 headroom；六次 Windows canary 又依次暴露 `4096 + auto` length stop、DeepSeek thinking/forced Tool 协议冲突、no-op mutation 与 finalization length、大文件目标未定位、anchor 整文件证据在 recovery 中丢失函数体，以及已知目标符号仍从 offset 0 小窗口试探。现已保留 mutation-only required Tool choice，仅在 DeepSeek forced Tool/finalization 请求中关闭 thinking，并为 `file_read` anchor 设置 4 KiB 默认窗口、在 recovery 中结构化保留 anchor 命中上下文、在模型可见合同中明确已知函数/类型应优先 anchor；本地测试与合同 Gate 通过，仍等待新 clean identity 双平台任务复核，不能宣称真实任务转绿。aggregate Provider-reported cost=`$0.12215932`，授权窗口 observed=`$2.20105251`、reserved=`$0.94221000`、双平台预留守卫=`26.74610008 RMB < 50 RMB`；Provider 外部账单核对、纯 flash 双平台 canary、真实 B/C 改善和两个连续 P2-C 候选证据仍缺。两个新增 Settings 字段的可见交互/console 手测已完成，P2-B 本地严格零发现依赖 Gate 与远端专项 Gate 已通过；P1-B 验证 DAG、P1-C TaskProjection/Capability Closure 与 P2-A Supervisor fault matrix/双平台长稳/零残留 Gate 均已完成。前部旧切片中的“尚未闭合”只描述当时上下文，不代表当前状态，当前状态以第 11、12 节为准。
 
 ### 1.2 下一轮五个闭环
 
@@ -2857,6 +2857,42 @@ Source / Workspace Revision
 - **为什么先做它**：本地回归已精确覆盖第五次失败形状，但只有同一真实任务能确认 `deepseek-v4-flash` 收到 anchor 函数体后会生成有效 mutation；Windows 单端仍是最低成本的外部 Gate。
 - **当前还缺的关键闭环**：新 identity Windows/WSL2 转绿、双端资源残留审计、30 项真实改善范围、B=`36` 与 C=`1` 改善、Provider 外部账单和两个连续 P2-C 候选版本；不创建 candidate v4、不启动 P2-C、不重跑完整付费矩阵、不 push。
 
+#### P0 后续能力改进实现结论：第六次 canary 与已知符号 anchor 导航合同（2026-08-16）
+
+##### 已完成内容
+
+1. **`artifacts/p0-required-mutation-canary-d2321b1/windows-native/` 新建**：
+   - clean identity 固定为 commit=`d2321b15b10e691069f93e25dbafc30729b9d879`、content SHA-256=`80f69b1cc5ef0e47951ec24c027731e53c7b6bf3b774f00b598d4de575b56abc`，Windows/WSL2 预检一致，declared/resolved route 均为 `deepseek-v4-flash`。
+   - 模型读取 frozen test 后，没有使用 anchor，而是显式读取 `command.go offset=0 limit=4096`；目标 `Command.Name` 函数不可见，mutation recovery 保留的 `3` 条 evidence 均未被裁剪，但仍缺实际函数体。
+   - mutation-only 生成空 `command.go` hunk 与非法 `../../../dev/null` update，`apply_patch` 以 `input_error` 失败关闭；frozen test 未通过、changed paths=`0`、patch 长度=`0`、result=`null`。usage 完整为 input=`7386`、output=`266`、cost=`$0.00062912`。
+   - Windows 未转绿，因此未调用 WSL2 Provider；Gateway 端口 listener=`0`，auth token/pid 残留=`0`。
+
+2. **`packages/belldandy-skills/src/builtin/file.ts` 修改**：
+   - 模型可见 `file_read` description 明确：任务或测试已给出大型源码内的目标函数/类型名时，优先用可推断的最短唯一声明 anchor，不要从 `offset=0` 用小 limit 试探。
+   - `anchor` 参数说明同步“最短唯一声明片段”策略；执行语义、4 KiB 默认窗口、16 MiB 扫描上限和失败关闭规则不变。
+
+3. **`packages/belldandy-skills/src/tool-contract-v2-profiles.ts` / `file.test.ts` 修改**：
+   - v2 recommended use 与 preflight 同步已知符号导航规则，使治理合同与实际 Tool schema 一致。
+   - 既有公开定义接缝新增回归，确保该导航规则实际进入模型可见合同。
+
+4. **效果**：
+   - 第六次失败被收敛为工具选择策略，而不是 anchor 实现、recovery 投影、Provider 路由或 patch Gate 回归。
+   - 本轮选择 `fix_now` 收紧现有工具合同，不增加模型调用、Tool set、token/cost/turn 上限，也不加入 benchmark 专用目标或模糊 patch。
+   - 模型遵循合同仍具有不确定性，真实改善继续以新 clean identity canary 为唯一判据。
+
+##### 验证结果
+
+- TypeScript 编译无错误，workspace build 通过。
+- Skills 全包 `109` 个测试文件、`920/920` 个测试通过，另有 `2` 项既有跳过；`file.test.ts + tool-contract-v2.test.ts` 定向 `61/61` 通过。
+- `verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 通过；冻结 evaluator、aggregate、Tool set 和旧 artifacts 未修改。
+- 第六次 Windows canary identity、route、usage、trace/artifact contract 与失败关闭均有效；授权窗口累计 observed=`$2.20105251`、reserved=`$0.94221000`，下一次 Windows/双平台预留守卫分别为 `25.94610008/26.74610008 RMB < 50 RMB`。
+
+##### 后续计划
+
+- **下一步准备做什么**：本地提交形成新的 clean identity，为该 identity 创建全新 wrapper 与 WSL2 harness，先执行 Windows dry-run 和同一 `real-go.bug-fix` canary；只有 anchor 读取、有效 patch、frozen test、terminal result 与资源回收全部通过后才调用 WSL2 Provider。
+- **为什么先做它**：第六次 artifact 已排除 recovery 投影裁剪，当前唯一新增变量是模型可见的已知符号导航合同；同任务 Windows 单端能以最低成本验证模型是否改用 anchor。
+- **当前还缺的关键闭环**：新 identity Windows/WSL2 转绿、双端资源残留审计、30 项真实改善范围、B=`36` 与 C=`1` 改善、Provider 外部账单和两个连续 P2-C 候选版本；不创建 candidate v4、不启动 P2-C、不重跑完整付费矩阵、不 push。
+
 ### P1-C（已完成）
 
 - supporting evidence binding 审计已完成：worktree exact binding 接入可信，command job/validation 延后，journal 保持现有精确边界。
@@ -2903,7 +2939,7 @@ Source / Workspace Revision
 | 项目 | 优先级 | 状态 | 粗略工作量 | 完成边界 |
 | --- | --- | --- | ---: | --- |
 | 本轮 SS 能力复核与 9.5 增强规划 | - | 已完成 | - | 已复核 scorecard、目标向量 `9.510`、C#/Go 投入收益、多语言方案和竞品资料；竞品未做同环境 benchmark |
-| P0：Benchmark v3 与外部有效性 | P0 | 已完成基线、mixed-model 与纯 flash 双平台复核，结果均未晋级。纯 flash identity=`edd1c877`，formal/aggregate=`144/144`、`107 passed + 37 product_workflow failed`、A=`72/72`、B=`12/48`、C=`23/24`，infrastructure error=`0`、usage=`132 provider_reported + 6 unavailable + 6 not_reached`；`138/138` Provider-reaching route 为 declared/resolved flash，dry-run、`--verify`、failure-analysis 重建、`765` 个 Schema 样本与 `144` 份 JSONL 均通过。fan-in `6/6` 证明 owner 修复生效，但整体相较 mixed-model 为 `2` 改善、`2` 回退、净值 `0`；canonical r2 已将新失败收敛为 required-mutation recovery=`30`、length=`5`、schema=`2`、unknown=`0`。五次 Windows canary 依次暴露 mutation-only length、DeepSeek forced Tool HTTP 400、no-op patch + mutation finalization length、大文件目标未定位，以及 anchor 整文件 evidence 丢失函数体；各次均按真实结果失败关闭。当前已为 `file_read` 增加 16 MiB 有界唯一精确 anchor 与 4 KiB 默认 anchor 窗口，并在 mutation recovery 中结构化保留 anchor 上下文，不增加 Tool/模型调用/预算；Skills `920/920`、Agent `559/559`、workspace build 与合同 Gate 已通过，尚待新 clean identity Windows/WSL2 转绿，不能宣称真实改善。aggregate cost=`$0.12215932`；授权窗口 observed=`$2.20042339`、reserved=`$0.94221000`、新双平台预留守卫=`26.74106712 RMB < 50 RMB`。首次 WSL launcher 在 Provider 前因路径映射失败；五次 Windows 失败均原样保留且未改写为成功。不创建 candidate v4、不启动 P2-C、不 push | 14-22 人日 | A/B/C 三层、至少 4 个固定仓、144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；不含 candidate v4、竞品代跑、公开排行榜 |
+| P0：Benchmark v3 与外部有效性 | P0 | 已完成基线、mixed-model 与纯 flash 双平台复核，结果均未晋级。纯 flash identity=`edd1c877`，formal/aggregate=`144/144`、`107 passed + 37 product_workflow failed`、A=`72/72`、B=`12/48`、C=`23/24`，infrastructure error=`0`、usage=`132 provider_reported + 6 unavailable + 6 not_reached`；`138/138` Provider-reaching route 为 declared/resolved flash，dry-run、`--verify`、failure-analysis 重建、`765` 个 Schema 样本与 `144` 份 JSONL 均通过。fan-in `6/6` 证明 owner 修复生效，但整体相较 mixed-model 为 `2` 改善、`2` 回退、净值 `0`；canonical r2 已将新失败收敛为 required-mutation recovery=`30`、length=`5`、schema=`2`、unknown=`0`。六次 Windows canary 依次暴露 mutation-only length、DeepSeek forced Tool HTTP 400、no-op patch + mutation finalization length、大文件目标未定位、anchor 整文件 evidence 丢失函数体，以及已知符号仍从 offset 0 小窗口试探；各次均按真实结果失败关闭。当前已为 `file_read` 增加 16 MiB 有界唯一精确 anchor 与 4 KiB 默认 anchor 窗口，在 mutation recovery 中结构化保留 anchor 上下文，并收紧模型可见的已知符号导航合同，不增加 Tool/模型调用/预算；Skills `920/920`、Agent `559/559`、workspace build 与合同 Gate 已通过，尚待新 clean identity Windows/WSL2 转绿，不能宣称真实改善。aggregate cost=`$0.12215932`；授权窗口 observed=`$2.20105251`、reserved=`$0.94221000`、新双平台预留守卫=`26.74610008 RMB < 50 RMB`。首次 WSL launcher 在 Provider 前因路径映射失败；六次 Windows 失败均原样保留且未改写为成功。不创建 candidate v4、不启动 P2-C、不 push | 14-22 人日 | A/B/C 三层、至少 4 个固定仓、144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；不含 candidate v4、竞品代跑、公开排行榜 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | 已完成；attempt 12 aggregate=`passed`；binary regression/Provider failure=`0/0`；`semantic-live=7/8`；非目标整文件读取 `21 -> 14`；16/16 cell 预算耗尽；candidate task/patch success=`0/8`；累计费用 `1.68214072 RMB` | 8-12 人日 | 公共 contract、TS/JS Provider、Inspector、truth set、resource soak、双平台 native runtime 与真实 uplift Gate；不含外部 LSP、Go/C# GA、SCIP store |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | 已完成；Host、pinned profile、Go Doctor、Adapter/truth/fault、双平台 native/OCI、readiness/progress/monitor、comparator 和 eligibility 已闭合；`goCanaryEligible=true`、`productionEligible=false` | 6-11 人日 | 双平台 identity/truth/lifecycle/OCI evidence、只读 comparator、单一 eligibility owner、Doctor projection；不含 Go 生产默认启用、自动安装、公开发布、扩大 fixture、rollout 观察窗口 |
 | P1-A3：C# 条件接入 | 条件 | 延后，等待真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild 执行面、restore/联网和生命周期；未命中需求不进入生产，也不阻断 9.5 |
@@ -2911,4 +2947,4 @@ Source / Workspace Revision
 | P1-C：TaskProjection 与 Capability Closure | P1 | 已完成；硬 Gate 全部闭合，广泛回归 `31` 文件 `312/312`、最后切片 `58/58`、Core build/diff check 通过。公共人工 provenance、`blocked/verifying` observation 与 verification DAG 外键缺 authoritative owner，已拆分为 `split_task/defer`，未知指标保持 `incomplete` | 10-15 人日 | 只读跨 owner 投影、exact-binding action、任务启动闭包、六类故障投影和旧客户端兼容；不迁移领域真源，不按客户端身份猜测人工来源 |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | 已完成；admission/worktree Gate、restart reattach、exact-bound control、fan-in、统一预算、fault matrix、跨进程 Git mutation lock 与 failure compensation 均闭合。修复后 Core/Skills build、相关回归 `18` 文件 `138/138` 通过；Windows/WSL2 正式 r3 同 identity 各 `360/360` lane，平台 Gate、Schema、comparator 与 child/worktree/branch/process/receipt/lock/tmp/root 零残留 sweep 全部通过。r2 WSL2 首次失败 artifact 原样保留 | 12-20 人日 | 隔离写入、预算、60 分钟 soak、steer/cancel/reattach、fan-in 和 fault matrix；不含自动 merge/release/deploy |
 | P2-B：生态与运行前置收口 | P2 | 已完成；窄 reference client、两个 Windows/WSL2 仓外 consumer、完整 `17 + 1 + 5` error taxonomy、failure conformance、coding runtime preflight Doctor、Puppeteer `25.7.0`、零发现 audit、真实 Chrome/MV3 Relay、portable lifecycle、Settings 手测和最终 P0 运行前置均已闭合。Docker context 修复 `e61a3e4` 的 Quality `31805350871` 全绿，本地真实 builder/`verify:build` 通过；Docker run `31805350776` 终态因当前 GitHub 凭据不可读而保留为未验证历史项，不新增实现缺口 | 8-14 人日 | 两个外部消费者、N-1/N conformance、真实 CI、OCI/语言 Doctor、零发现 dependency Gate；不含公开发布、系统级自动安装、sandbox 替换，未经授权不再升级依赖主版本 |
-| P2-C：9.5 稳定化与最终复核 | P2 | 未启动；纯 flash 双平台可比较证据已完成，但 B=`12/48`、C=`23/24` 与 mixed-model 净值相同，仍未满足候选进入 Gate。required-mutation recovery=`30` 已完成 canonical 归因、output/headroom、required Tool / DeepSeek thinking、no-op mutation evidence、`file_read` 字节/anchor 契约、mutation finalization 与 anchor recovery evidence 本地修复；五次 Windows canary 分别以 mutation-only length、HTTP 400、no-op patch + finalization length、错误 patch 上下文、anchor evidence 中段丢失函数体失败关闭，当前先提交第六个 clean identity 并复跑最小 Windows/WSL2 canary，保留 Provider 外部账单、Preact evaluator 独立任务、B=`36`/C=`1` 改善和两个连续候选版本缺口；本 P0 费用授权不等同于 P2-C 候选/观察窗口授权，不创建 candidate v4、不宣称 `>=9.500` | 5-8 人日 + 观察窗口 | 两个连续候选版本原始 `>=9.500`、目标维度和全部硬 Gate 通过；不含竞品联合 benchmark、生产写入 |
+| P2-C：9.5 稳定化与最终复核 | P2 | 未启动；纯 flash 双平台可比较证据已完成，但 B=`12/48`、C=`23/24` 与 mixed-model 净值相同，仍未满足候选进入 Gate。required-mutation recovery=`30` 已完成 canonical 归因、output/headroom、required Tool / DeepSeek thinking、no-op mutation evidence、`file_read` 字节/anchor 契约、mutation finalization、anchor recovery evidence 与已知符号导航合同本地修复；六次 Windows canary 分别以 mutation-only length、HTTP 400、no-op patch + finalization length、错误 patch 上下文、anchor evidence 中段丢失函数体、未选择 anchor 失败关闭，当前先提交第七个 clean identity 并复跑最小 Windows/WSL2 canary，保留 Provider 外部账单、Preact evaluator 独立任务、B=`36`/C=`1` 改善和两个连续候选版本缺口；本 P0 费用授权不等同于 P2-C 候选/观察窗口授权，不创建 candidate v4、不宣称 `>=9.500` | 5-8 人日 + 观察窗口 | 两个连续候选版本原始 `>=9.500`、目标维度和全部硬 Gate 通过；不含竞品联合 benchmark、生产写入 |

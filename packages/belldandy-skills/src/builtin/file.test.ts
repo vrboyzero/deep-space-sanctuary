@@ -55,6 +55,8 @@ describe("file tools", () => {
       expect(properties.limit?.description).toContain("字节（不是行数）");
       expect(properties.cursor?.description).toContain("truncated=true");
       expect(fileReadTool.definition.description).toContain("anchor");
+      expect(fileReadTool.definition.description).toContain("目标函数或类型名");
+      expect(fileReadTool.definition.description).toContain("不要从 offset=0");
       expect(properties.anchor?.description).toContain("精确文本");
       expect(properties.anchor?.description).toContain("大型源码");
     });
