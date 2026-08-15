@@ -557,7 +557,7 @@ function encodeFileReadCursor(input: { fingerprint: string; offset: number }): s
 export const fileReadTool: Tool = withToolContract({
   definition: {
     name: "file_read",
-    description: "读取工作区内文件内容。支持 offset/limit 分段读取与稳定 cursor；路径必须在工作区范围内，禁止读取敏感文件（如 .env、密钥等）。",
+    description: "读取工作区内文件内容。offset/limit 单位是字节（不是行数）；读取源代码时通常省略 limit 以使用默认 100KB，若返回 truncated=true 则用 nextCursor 继续。路径必须在工作区范围内，禁止读取敏感文件（如 .env、密钥等）。",
     parameters: {
       type: "object",
       properties: {
@@ -576,15 +576,15 @@ export const fileReadTool: Tool = withToolContract({
         },
         offset: {
           type: "number",
-          description: "读取起始字节偏移，默认 0；不能与 cursor 同时指定",
+          description: "读取起始字节（不是行数）偏移，默认 0；不能与 cursor 同时指定",
         },
         limit: {
           type: "number",
-          description: "单段最大读取字节数，默认 102400，最大 1048576；不能与 maxBytes 同时指定",
+          description: "单段最大读取量，单位为字节（不是行数），默认 102400，最大 1048576；读取源代码时通常省略；不能与 maxBytes 同时指定",
         },
         cursor: {
           type: "string",
-          description: "上一段返回的 nextCursor；仅可用于同一未变文件和相同 encoding",
+          description: "返回 truncated=true 时，原样传入上一段的 nextCursor 继续读取；仅可用于同一未变文件和相同 encoding",
         },
       },
       required: ["path"],

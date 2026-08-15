@@ -2714,6 +2714,48 @@ Source / Workspace Revision
 - **为什么先做它**：协议探针只证明 Provider 接受请求并返回 Tool call，不能证明模型会生成正确 patch；Windows 单任务是验证生产 evidence、Tool 执行和 evaluator 的最短闭环。
 - **当前还缺的关键闭环**：新 identity Windows/WSL2 任务转绿、双端资源残留审计、30 项真实改善范围、B=`36` 与 C=`1` 改善、Provider 外部账单和两个连续 P2-C 候选版本；不创建 candidate v4、不启动 P2-C、不 push。
 
+#### P0 后续能力改进实现结论：mutation evidence 与 DeepSeek finalization 收敛（2026-08-15）
+
+##### 已完成内容
+
+1. **`artifacts/p0-required-mutation-canary-d569100/windows-native/` 新建**：
+   - clean identity 固定为 commit=`d5691006fbbc727f7a8e51e7f440d8c6953b3efc`、content SHA-256=`8566f67f88cfa27ef3787a2b262eeb77afca585104e52678068407ba035c390b`，declared/resolved route 均为 `deepseek-v4-flash`。
+   - 前四次普通调用完成 frozen test 与源文件读取，第五次 mutation-only 只暴露 `apply_patch`、使用 `tool_choice=required + thinking=disabled + max_tokens=4096`，Provider 返回 HTTP 200 与 Tool call，证明前一轮协议 400 已修复。
+   - 模型只把 `command.go` 读取到 byte offset=`1300`，未见 byte offset=`1541` 的目标函数；随后生成只有上下文、没有增删行的 patch。旧 `apply_patch` 将其报告为成功，但最终 `changedFileCount=0`、patch 长度=`0`、result=`null`。
+   - 第六次 tool-free mutation finalization 仍使用 thinking，`max_tokens=1024` 被 reasoning 消耗后以 `finish_reason=length`、reasoning=`4897` chars 失败；usage 完整为 input=`15371`、output=`1558`、cost=`$0.00132305`，Windows 未转绿，因此未调用 WSL2 Provider。
+
+2. **`apply-patch/index.ts` / `match.ts` 修改**：
+   - update 预计算同时保留同一读取快照的原内容与新内容，内容和路径均未变化的 operation 不进入 mutation prepare/commit。
+   - 全部 operation 均为 no-op 时返回带 `apply_patch_input_invalid` repair metadata 的 `input_error`，不再报告 mutation 成功。
+   - 同路径 `Move to` 且内容变化时按普通 update 提交，避免写入后再删除同一路径。
+
+3. **`file.ts` / `tool-contract-v2-profiles.ts` 修改**：
+   - `file_read` 直传 Tool schema 明确 `offset/limit` 是字节而不是行数，源码读取通常省略 `limit` 以使用默认 100KB。
+   - 明确 `truncated=true` 后应原样传入 `nextCursor` 继续读取，并在 v2 contract 同步 byte-count 与 cursor 指引。
+
+4. **`openai-tool-choice.ts` / `tool-agent.ts` 修改**：
+   - 复用既有 DeepSeek profile 判定，仅对 `workspaceMutationFinalizationCall` 额外覆盖 `thinking={type:"disabled"}`。
+   - mutation-only 继续保持 required Tool，普通调用和其他 finalization 的 thinking 策略不变；不增加模型调用、output、total-token、cost、turn 或 Tool 预算。
+
+5. **效果**：
+   - no-op patch 现在失败关闭，required mutation 不会再因“写回相同内容”取得虚假成功证据。
+   - DeepSeek 专用 mutation finalization 将 1024 token 留给可见结果，不再被 hidden reasoning 独占。
+   - 当前只是本地生产路径与回归闭环，尚未获得新 clean identity 的真实任务转绿证据；冻结 aggregate/evaluator/旧 artifacts 保持不变。
+
+##### 验证结果
+
+- TypeScript 编译无错误，workspace build 通过。
+- Skills 全包 `109` 个测试文件、`915/915` 个测试通过，另有 `2` 项既有跳过；`apply_patch` 定向 `13/13` 通过。
+- Agent 全包 `56` 个测试文件、`558/558` 个测试通过，另有 `1` 项既有跳过；三项核心定向在边界扩展前 `75/75` 通过。
+- `verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 通过。
+- 授权窗口累计 observed=`$2.19869574`、reserved=`$0.94221000`；下一次 Windows 单端预留守卫=`25.92724592 RMB < 50 RMB`，Windows 转绿后的双端预留守卫=`26.72724592 RMB < 50 RMB`。
+
+##### 后续计划
+
+- **下一步准备做什么**：提交 no-op/read/finalization 修复形成新 clean identity，重建该 identity 的独立 WSL harness，并先执行 Windows `real-go.bug-fix`；只有真实 patch、frozen test 与 terminal result 全部通过后才执行 WSL2。
+- **为什么先做它**：`d569100` 已证明 required Tool 协议可用，剩余三个失败点都有直接生产证据；同任务 Windows 复跑能以最低成本验证这些闭环是否足以让模型读到目标、生成真实 mutation 并完成可见 finalization。
+- **当前还缺的关键闭环**：新 identity Windows/WSL2 转绿、双端资源残留审计、30 项真实改善范围、B=`36` 与 C=`1` 改善、Provider 外部账单和两个连续 P2-C 候选版本；不创建 candidate v4、不启动 P2-C、不重跑完整付费矩阵、不 push。
+
 ### P1-C（已完成）
 
 - supporting evidence binding 审计已完成：worktree exact binding 接入可信，command job/validation 延后，journal 保持现有精确边界。
@@ -2760,7 +2802,7 @@ Source / Workspace Revision
 | 项目 | 优先级 | 状态 | 粗略工作量 | 完成边界 |
 | --- | --- | --- | ---: | --- |
 | 本轮 SS 能力复核与 9.5 增强规划 | - | 已完成 | - | 已复核 scorecard、目标向量 `9.510`、C#/Go 投入收益、多语言方案和竞品资料；竞品未做同环境 benchmark |
-| P0：Benchmark v3 与外部有效性 | P0 | 已完成基线、mixed-model 与纯 flash 双平台复核，结果均未晋级。纯 flash identity=`edd1c877`，formal/aggregate=`144/144`、`107 passed + 37 product_workflow failed`、A=`72/72`、B=`12/48`、C=`23/24`，infrastructure error=`0`、usage=`132 provider_reported + 6 unavailable + 6 not_reached`；`138/138` Provider-reaching route 为 declared/resolved flash，dry-run、`--verify`、failure-analysis 重建、`765` 个 Schema 样本与 `144` 份 JSONL 均通过。fan-in `6/6` 证明 owner 修复生效，但整体相较 mixed-model 为 `2` 改善、`2` 回退、净值 `0`；canonical r2 已将新失败收敛为 required-mutation recovery=`30`、length=`5`、schema=`2`、unknown=`0`。`e437352` Windows canary 在 `4096 + auto` 下 length stop，`b2d7977` 又在 DeepSeek thinking + forced Tool choice 下 HTTP 400；现保留 required Tool choice，并仅对 DeepSeek forced Tool 关闭 thinking。协议探针与 Agent `558/558` 通过，但该修复尚待新 clean identity Windows/WSL2 任务复核，不能宣称真实改善。aggregate cost=`$0.12215932`；两次 canary/本轮探针后授权窗口 observed=`$2.19737269`、reserved=`$0.94221000`、新双平台预留守卫=`26.71666152 RMB < 50 RMB`。首次 WSL launcher 在 Provider 前因路径映射失败；`b2d7977` Windows 第三次请求 usage 缺失并正确失败关闭，均未改写为成功。不创建 candidate v4、不启动 P2-C、不 push | 14-22 人日 | A/B/C 三层、至少 4 个固定仓、144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；不含 candidate v4、竞品代跑、公开排行榜 |
+| P0：Benchmark v3 与外部有效性 | P0 | 已完成基线、mixed-model 与纯 flash 双平台复核，结果均未晋级。纯 flash identity=`edd1c877`，formal/aggregate=`144/144`、`107 passed + 37 product_workflow failed`、A=`72/72`、B=`12/48`、C=`23/24`，infrastructure error=`0`、usage=`132 provider_reported + 6 unavailable + 6 not_reached`；`138/138` Provider-reaching route 为 declared/resolved flash，dry-run、`--verify`、failure-analysis 重建、`765` 个 Schema 样本与 `144` 份 JSONL 均通过。fan-in `6/6` 证明 owner 修复生效，但整体相较 mixed-model 为 `2` 改善、`2` 回退、净值 `0`；canonical r2 已将新失败收敛为 required-mutation recovery=`30`、length=`5`、schema=`2`、unknown=`0`。三次 Windows canary 依次暴露 mutation-only length、DeepSeek forced Tool HTTP 400，以及 no-op patch + mutation finalization length；`d569100` 已证明 `required + thinking=disabled` 能取得真实 Tool call，但未产生实际 mutation。当前已在本地加入 no-op 失败关闭、`file_read` 字节/cursor 契约和仅 mutation finalization 关闭 DeepSeek thinking，Skills `915/915`、Agent `558/558`、workspace build 与合同 Gate 通过，尚待新 clean identity Windows/WSL2 转绿，不能宣称真实改善。aggregate cost=`$0.12215932`；授权窗口 observed=`$2.19869574`、reserved=`$0.94221000`、新双平台预留守卫=`26.72724592 RMB < 50 RMB`。首次 WSL launcher 在 Provider 前因路径映射失败；三次 Windows 失败均原样保留且未改写为成功。不创建 candidate v4、不启动 P2-C、不 push | 14-22 人日 | A/B/C 三层、至少 4 个固定仓、144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；不含 candidate v4、竞品代跑、公开排行榜 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | 已完成；attempt 12 aggregate=`passed`；binary regression/Provider failure=`0/0`；`semantic-live=7/8`；非目标整文件读取 `21 -> 14`；16/16 cell 预算耗尽；candidate task/patch success=`0/8`；累计费用 `1.68214072 RMB` | 8-12 人日 | 公共 contract、TS/JS Provider、Inspector、truth set、resource soak、双平台 native runtime 与真实 uplift Gate；不含外部 LSP、Go/C# GA、SCIP store |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | 已完成；Host、pinned profile、Go Doctor、Adapter/truth/fault、双平台 native/OCI、readiness/progress/monitor、comparator 和 eligibility 已闭合；`goCanaryEligible=true`、`productionEligible=false` | 6-11 人日 | 双平台 identity/truth/lifecycle/OCI evidence、只读 comparator、单一 eligibility owner、Doctor projection；不含 Go 生产默认启用、自动安装、公开发布、扩大 fixture、rollout 观察窗口 |
 | P1-A3：C# 条件接入 | 条件 | 延后，等待真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild 执行面、restore/联网和生命周期；未命中需求不进入生产，也不阻断 9.5 |
@@ -2768,4 +2810,4 @@ Source / Workspace Revision
 | P1-C：TaskProjection 与 Capability Closure | P1 | 已完成；硬 Gate 全部闭合，广泛回归 `31` 文件 `312/312`、最后切片 `58/58`、Core build/diff check 通过。公共人工 provenance、`blocked/verifying` observation 与 verification DAG 外键缺 authoritative owner，已拆分为 `split_task/defer`，未知指标保持 `incomplete` | 10-15 人日 | 只读跨 owner 投影、exact-binding action、任务启动闭包、六类故障投影和旧客户端兼容；不迁移领域真源，不按客户端身份猜测人工来源 |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | 已完成；admission/worktree Gate、restart reattach、exact-bound control、fan-in、统一预算、fault matrix、跨进程 Git mutation lock 与 failure compensation 均闭合。修复后 Core/Skills build、相关回归 `18` 文件 `138/138` 通过；Windows/WSL2 正式 r3 同 identity 各 `360/360` lane，平台 Gate、Schema、comparator 与 child/worktree/branch/process/receipt/lock/tmp/root 零残留 sweep 全部通过。r2 WSL2 首次失败 artifact 原样保留 | 12-20 人日 | 隔离写入、预算、60 分钟 soak、steer/cancel/reattach、fan-in 和 fault matrix；不含自动 merge/release/deploy |
 | P2-B：生态与运行前置收口 | P2 | 已完成；窄 reference client、两个 Windows/WSL2 仓外 consumer、完整 `17 + 1 + 5` error taxonomy、failure conformance、coding runtime preflight Doctor、Puppeteer `25.7.0`、零发现 audit、真实 Chrome/MV3 Relay、portable lifecycle、Settings 手测和最终 P0 运行前置均已闭合。Docker context 修复 `e61a3e4` 的 Quality `31805350871` 全绿，本地真实 builder/`verify:build` 通过；Docker run `31805350776` 终态因当前 GitHub 凭据不可读而保留为未验证历史项，不新增实现缺口 | 8-14 人日 | 两个外部消费者、N-1/N conformance、真实 CI、OCI/语言 Doctor、零发现 dependency Gate；不含公开发布、系统级自动安装、sandbox 替换，未经授权不再升级依赖主版本 |
-| P2-C：9.5 稳定化与最终复核 | P2 | 未启动；纯 flash 双平台可比较证据已完成，但 B=`12/48`、C=`23/24` 与 mixed-model 净值相同，仍未满足候选进入 Gate。required-mutation recovery=`30` 已完成 canonical 归因、output/headroom 与 required Tool / DeepSeek thinking 本地修复；两次 Windows canary 分别以 length stop 和 HTTP 400 失败关闭，当前先以第三个 clean identity 复跑最小 Windows/WSL2 canary，并保留 Provider 外部账单、Preact evaluator 独立任务、B=`36`/C=`1` 改善和两个连续候选版本缺口；本 P0 费用授权不等同于 P2-C 候选/观察窗口授权，不创建 candidate v4、不宣称 `>=9.500` | 5-8 人日 + 观察窗口 | 两个连续候选版本原始 `>=9.500`、目标维度和全部硬 Gate 通过；不含竞品联合 benchmark、生产写入 |
+| P2-C：9.5 稳定化与最终复核 | P2 | 未启动；纯 flash 双平台可比较证据已完成，但 B=`12/48`、C=`23/24` 与 mixed-model 净值相同，仍未满足候选进入 Gate。required-mutation recovery=`30` 已完成 canonical 归因、output/headroom、required Tool / DeepSeek thinking、no-op mutation evidence、`file_read` 字节契约与 mutation finalization 本地修复；三次 Windows canary 分别以 mutation-only length、HTTP 400、no-op patch + finalization length 失败关闭，当前先以第四个 clean identity 复跑最小 Windows/WSL2 canary，并保留 Provider 外部账单、Preact evaluator 独立任务、B=`36`/C=`1` 改善和两个连续候选版本缺口；本 P0 费用授权不等同于 P2-C 候选/观察窗口授权，不创建 candidate v4、不宣称 `>=9.500` | 5-8 人日 + 观察窗口 | 两个连续候选版本原始 `>=9.500`、目标维度和全部硬 Gate 通过；不含竞品联合 benchmark、生产写入 |

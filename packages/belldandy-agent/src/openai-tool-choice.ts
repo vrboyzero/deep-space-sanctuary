@@ -12,9 +12,15 @@ export function applyOpenAICompatibleToolChoice(input: {
 
   // DeepSeek thinking mode rejects non-auto tool_choice. Recovery requests trade
   // hidden reasoning for the stronger guarantee that a mutation Tool runs.
-  if (isDeepSeekProfile(input.profile)) {
-    input.payload.thinking = { type: "disabled" };
-  }
+  disableDeepSeekThinking(input);
+}
+
+export function disableDeepSeekThinking(input: {
+  payload: Record<string, unknown>;
+  profile: Pick<ModelProfile, "id" | "baseUrl" | "model">;
+}): void {
+  if (!isDeepSeekProfile(input.profile)) return;
+  input.payload.thinking = { type: "disabled" };
 }
 
 function isDeepSeekProfile(profile: Pick<ModelProfile, "id" | "baseUrl" | "model">): boolean {

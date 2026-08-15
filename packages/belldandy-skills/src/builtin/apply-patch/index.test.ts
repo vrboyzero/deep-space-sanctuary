@@ -134,6 +134,55 @@ describe("apply_patch tool", () => {
     await expect(fs.readFile(path.join(tempDir, "source.txt"), "utf-8")).resolves.toBe("before\n");
   });
 
+  it("should fail closed when an update hunk contains only unchanged context", async () => {
+    await fs.writeFile(path.join(tempDir, "source.txt"), "before\nafter\n", "utf-8");
+
+    const result = await applyPatchTool.execute(
+      {
+        input: [
+          "*** Begin Patch",
+          "*** Update File: source.txt",
+          "@@",
+          " before",
+          "*** End Patch",
+        ].join("\n"),
+      },
+      baseContext,
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      failureKind: "input_error",
+      metadata: {
+        repairAction: "apply_patch_input_invalid",
+      },
+    });
+    expect(result.error).toContain("未产生任何实际内容变化");
+    await expect(fs.readFile(path.join(tempDir, "source.txt"), "utf-8")).resolves.toBe("before\nafter\n");
+  });
+
+  it("should treat a same-path move with content changes as a regular update", async () => {
+    await fs.writeFile(path.join(tempDir, "source.txt"), "before\n", "utf-8");
+
+    const result = await applyPatchTool.execute(
+      {
+        input: [
+          "*** Begin Patch",
+          "*** Update File: source.txt",
+          "*** Move to: source.txt",
+          "@@",
+          "-before",
+          "+after",
+          "*** End Patch",
+        ].join("\n"),
+      },
+      baseContext,
+    );
+
+    expect(result.success).toBe(true);
+    await expect(fs.readFile(path.join(tempDir, "source.txt"), "utf-8")).resolves.toBe("after\n");
+  });
+
   it("should still reject files outside whitelist", async () => {
     const result = await applyPatchTool.execute(
       {

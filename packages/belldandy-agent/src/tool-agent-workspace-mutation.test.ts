@@ -114,6 +114,15 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       if (requests.length === 2) {
         return response(modelToolCall("patch-1", "apply_patch", { input: "bounded patch" }, 300, 1_100));
       }
+      if ((body.thinking as { type?: unknown } | undefined)?.type !== "disabled") {
+        return response({
+          choices: [{
+            finish_reason: "length",
+            message: { content: null, reasoning_content: "R".repeat(Number(body.max_tokens)) },
+          }],
+          usage: { prompt_tokens: 200, completion_tokens: Number(body.max_tokens) },
+        });
+      }
       return response({
         choices: [{ finish_reason: "stop", message: { content: "fixed" } }],
         usage: { prompt_tokens: 200, completion_tokens: 40 },
@@ -151,6 +160,8 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       "apply_patch",
       "file_write",
     ]);
+    expect(requests[2]?.thinking).toEqual({ type: "disabled" });
+    expect(requests[2]).not.toHaveProperty("tools");
     expect(execute).toHaveBeenCalledOnce();
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });

@@ -43,6 +43,19 @@ describe("file tools", () => {
   });
 
   describe("file_read", () => {
+    it("describes ranges as bytes and directs truncated reads to nextCursor", () => {
+      const properties = fileReadTool.definition.parameters.properties as Record<
+        string,
+        { description?: string }
+      >;
+
+      expect(fileReadTool.definition.description).toContain("字节（不是行数）");
+      expect(fileReadTool.definition.description).toContain("truncated=true");
+      expect(properties.offset?.description).toContain("字节（不是行数）");
+      expect(properties.limit?.description).toContain("字节（不是行数）");
+      expect(properties.cursor?.description).toContain("truncated=true");
+    });
+
     it("should read existing file", async () => {
       const testFile = path.join(tempDir, "test.txt");
       await fs.writeFile(testFile, "Hello, Belldandy!", "utf-8");

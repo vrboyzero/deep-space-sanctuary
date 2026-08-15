@@ -556,6 +556,7 @@ const TOOL_CONTRACT_V2_PROFILES: Record<string, ToolContractV2Profile> = {
     recommendedWhen: [
       "Need the exact current contents of a known file before editing, reviewing, or answering from repository context",
       "Need a bounded workspace read with explicit path control instead of executing shell commands",
+      "Need to continue a truncated read by passing the returned nextCursor unchanged",
     ],
     avoidWhen: [
       "You do not yet know the target path and should search or list first",
@@ -565,6 +566,7 @@ const TOOL_CONTRACT_V2_PROFILES: Record<string, ToolContractV2Profile> = {
       "The file may contain secrets, credentials, or personal data even if the path itself is not blocked",
     ],
     preflightChecks: [
+      "Treat offset and limit as byte counts, never line counts; omit limit for the default 100KB source read unless a smaller byte range is intentional",
       "Confirm the path, expected encoding, and whether offset/limit or maxBytes truncation could hide relevant context",
       "Reuse nextCursor only with the same unchanged file and encoding; otherwise restart from an explicit offset",
       "Prefer reading a focused file over dumping many large files into the context window",

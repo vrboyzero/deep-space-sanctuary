@@ -185,7 +185,7 @@ function applyReplacements(
 export async function applyUpdateChunks(
     filePath: string,
     chunks: UpdateFileChunk[]
-): Promise<string> {
+): Promise<{ originalContent: string; newContent: string }> {
     const originalContents = await fs.readFile(filePath, "utf8").catch((err) => {
         throw new Error(`Failed to read file to update ${filePath}: ${err}`);
     });
@@ -205,5 +205,8 @@ export async function applyUpdateChunks(
         newLines.push("");
     }
 
-    return newLines.join(newline);
+    return {
+        originalContent: originalContents,
+        newContent: newLines.join(newline),
+    };
 }

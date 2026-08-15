@@ -32,7 +32,10 @@ import {
   type ModelStreamTextDelivery,
 } from "./model-stream-delivery.js";
 import { applyOpenAICompatibleReasoningConfig } from "./openai-reasoning.js";
-import { applyOpenAICompatibleToolChoice } from "./openai-tool-choice.js";
+import {
+  applyOpenAICompatibleToolChoice,
+  disableDeepSeekThinking,
+} from "./openai-tool-choice.js";
 import { buildUrl, preprocessMultimodalContent, type VideoUploadConfig } from "./multimodal.js";
 import {
   buildAnthropicRequest,
@@ -3331,6 +3334,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
               ? finalizationOutputTokens
               : undefined,
           workspaceMutationRecoveryCall ? "required" : undefined,
+          workspaceMutationFinalizationCall,
         );
         if (boundedStructuredOutputRepairRequest) {
           pendingBoundedStructuredOutputRepairRequest = undefined;
@@ -4717,6 +4721,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     streamDelivery?: ModelStreamTextDelivery,
     maxOutputTokensOverride?: number,
     toolChoiceOverride?: "auto" | "required",
+    disableDeepSeekThinkingOverride = false,
   ): Promise<{
     ok: true;
     content: string;
@@ -4830,6 +4835,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
             stream: streamDelivery !== undefined,
           };
           applyOpenAICompatibleReasoningConfig(payload, profile);
+          if (disableDeepSeekThinkingOverride) {
+            disableDeepSeekThinking({ payload, profile });
+          }
           if (tools && tools.length > 0) {
             const responseTools = this.opts.sanitizeResponsesToolSchema
               ? sanitizeResponsesToolDefinitions(tools)
@@ -4867,6 +4875,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
           stream: streamDelivery !== undefined,
         };
         applyOpenAICompatibleReasoningConfig(payload, profile);
+        if (disableDeepSeekThinkingOverride) {
+          disableDeepSeekThinking({ payload, profile });
+        }
         if (tools && tools.length > 0) {
           payload.tools = tools;
           applyOpenAICompatibleToolChoice({

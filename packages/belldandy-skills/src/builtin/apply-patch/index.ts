@@ -335,11 +335,22 @@ export const applyPatchTool: Tool = withToolContract({
                 }
 
                 if (hunk.kind === "update") {
-                    const newContent = await applyUpdateChunks(absolute, hunk.chunks);
+                    const { originalContent, newContent } = await applyUpdateChunks(absolute, hunk.chunks);
 
                     if (hunk.movePath) {
                         const moveCheck = validateWritablePath(hunk.movePath, context);
                         if (!moveCheck.ok) throw new Error(moveCheck.error);
+                        if (moveCheck.absolute === absolute) {
+                            if (newContent !== originalContent) {
+                                operations.push({
+                                    kind: "update",
+                                    absolute,
+                                    relative,
+                                    newContent,
+                                });
+                            }
+                            continue;
+                        }
                         operations.push({
                             kind: "update",
                             absolute,
@@ -351,6 +362,9 @@ export const applyPatchTool: Tool = withToolContract({
                             },
                         });
                     } else {
+                        if (newContent === originalContent) {
+                            continue;
+                        }
                         operations.push({
                             kind: "update",
                             absolute,
@@ -359,6 +373,14 @@ export const applyPatchTool: Tool = withToolContract({
                         });
                     }
                 }
+            }
+
+            if (operations.length === 0) {
+                return makeError(
+                    "补丁未产生任何实际内容变化；请提供会改变文件内容或路径的更新",
+                    "input_error",
+                    buildApplyPatchInputRepairMetadata(),
+                );
             }
 
             throwIfAborted(context.abortSignal);
