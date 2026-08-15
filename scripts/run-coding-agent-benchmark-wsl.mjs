@@ -14,6 +14,7 @@ const WSL_BENCHMARK_PRICING_ENV_KEYS = [
   "BELLDANDY_MODEL_OUTPUT_USD_PER_1M",
   "BELLDANDY_MODEL_CACHE_READ_USD_PER_1M",
 ];
+const WSL_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 export function buildWslBenchmarkInvocation(input, dependencies = {}) {
   const distribution = requireInput(input, "distribution");
@@ -54,6 +55,7 @@ export function buildWslBenchmarkInvocation(input, dependencies = {}) {
   const shadowCandidateId = input.shadowCandidateId === undefined
     ? undefined
     : requireInput(input, "shadowCandidateId");
+  const toolchainBin = resolveWslToolchainBin(input.toolchainBin);
   const authMode = input.authMode ?? "none";
   if (authMode !== "none" && authMode !== "token") {
     throw new Error("authMode must be none or token.");
@@ -86,6 +88,7 @@ export function buildWslBenchmarkInvocation(input, dependencies = {}) {
       `BELLDANDY_PORT=${input.port ?? "28889"}`,
       `BELLDANDY_AUTH_MODE=${authMode}`,
       ...pricingEnvArgs,
+      ...(toolchainBin ? [`PATH=${toolchainBin}:${WSL_SYSTEM_PATH}`] : []),
       ...(manifestRevision === "v2" || manifestRevision === "v3"
         ? ["BELLDANDY_TOOL_RESULT_EVENT_OUTPUT_CHAR_LIMIT=2048"]
         : []),
@@ -147,6 +150,15 @@ function requireInput(input, key) {
   return value.trim();
 }
 
+function resolveWslToolchainBin(value) {
+  if (value === undefined) return undefined;
+  const toolchainBin = requireInput({ toolchainBin: value }, "toolchainBin").replace(/\/+$/, "");
+  if (!toolchainBin.startsWith("/") || toolchainBin === "" || /[:\0\r\n]/.test(toolchainBin)) {
+    throw new Error("toolchainBin must be a single absolute Linux directory.");
+  }
+  return toolchainBin;
+}
+
 function parseNamedArgs(argv) {
   const values = new Map();
   for (let index = 0; index < argv.length; index += 2) {
@@ -193,6 +205,7 @@ async function main() {
     manifestRevision: values.get("manifest-revision") ?? "v1",
     sourceRoot: values.get("source-root"),
     v3RepositoryConfig: values.get("v3-repository-config"),
+    toolchainBin: values.get("toolchain-bin"),
     ...(values.has("prior-observed-cost-usd") ? {
       priorObservedCostUsd: Number(requireValue(values, "prior-observed-cost-usd")),
     } : {}),

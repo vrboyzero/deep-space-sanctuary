@@ -116,6 +116,35 @@ describe("coding agent benchmark WSL launcher", () => {
     ]));
   });
 
+  it("prepends one explicit WSL toolchain bin without accepting PATH-list injection", () => {
+    const baseInput = {
+      distribution: "Ubuntu-22.04",
+      workspaceRoot: "E:/project/star-sanctuary",
+      fixtureRoot: "E:/project/star-sanctuary/.tmp/coding-agent-fixtures-wsl",
+      artifactRoot: "E:/project/star-sanctuary/artifacts/coding-agent-wsl",
+      stateRoot: "E:/project/star-sanctuary/artifacts/coding-agent-state-wsl",
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      credentialsConfigured: true,
+    };
+    const invocation = buildWslBenchmarkInvocation({
+      ...baseInput,
+      toolchainBin: "/var/tmp/star-sanctuary/toolchains/go/bin/",
+    }, windowsPathDependencies());
+
+    expect(invocation.args).toContain(
+      "PATH=/var/tmp/star-sanctuary/toolchains/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    );
+    expect(() => buildWslBenchmarkInvocation({
+      ...baseInput,
+      toolchainBin: "/trusted/bin:/untrusted/bin",
+    }, windowsPathDependencies())).toThrow(/single absolute Linux directory/i);
+    expect(() => buildWslBenchmarkInvocation({
+      ...baseInput,
+      toolchainBin: "relative/bin",
+    }, windowsPathDependencies())).toThrow(/single absolute Linux directory/i);
+  });
+
   it("translates and forwards a v3 repository config without requiring a source root", () => {
     const invocation = buildWslBenchmarkInvocation({
       distribution: "Ubuntu-22.04",
