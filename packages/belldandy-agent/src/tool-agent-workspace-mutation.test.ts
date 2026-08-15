@@ -88,7 +88,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
-  it("requires a mutation tool choice before a reasoning model can exhaust its output", async () => {
+  it("requires a mutation tool and disables DeepSeek thinking before it can exhaust output", async () => {
     const requests: Array<Record<string, any>> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
@@ -99,7 +99,10 @@ describe("ToolEnabledAgent required workspace mutation", () => {
           usage: { prompt_tokens: 200, completion_tokens: 30 },
         });
       }
-      if (requests.length === 2 && body.tool_choice !== "required") {
+      if (requests.length === 2 && (
+        body.tool_choice !== "required"
+        || (body.thinking as { type?: unknown } | undefined)?.type !== "disabled"
+      )) {
         return response({
           choices: [{
             finish_reason: "length",
@@ -123,7 +126,13 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       output: "Patch applied successfully",
       durationMs: 1,
     }));
-    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 3 });
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 3,
+      thinking: { type: "enabled" },
+      mutationToolNames: ["apply_patch", "file_write"],
+    });
 
     const items = await collect(agent.run({
       conversationId: "conv-required-mutation-reasoning",
@@ -134,7 +143,14 @@ describe("ToolEnabledAgent required workspace mutation", () => {
 
     expect(requests).toHaveLength(3);
     expect(requests[1]?.max_tokens).toBeGreaterThan(1_024);
+    expect(requests[0]?.thinking).toEqual({ type: "enabled" });
+    expect(requests[0]?.tool_choice).toBe("auto");
+    expect(requests[1]?.thinking).toEqual({ type: "disabled" });
     expect(requests[1]?.tool_choice).toBe("required");
+    expect(requests[1]?.tools?.map((tool: any) => tool.function.name)).toEqual([
+      "apply_patch",
+      "file_write",
+    ]);
     expect(execute).toHaveBeenCalledOnce();
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
@@ -389,12 +405,16 @@ function createAgent(input: {
   maxTotalTokens: number;
   toolLoopIterationBudget: number;
   toolCallRepairLevel?: "off" | "dedupe" | "full";
+  thinking?: Record<string, unknown>;
+  mutationToolNames?: string[];
 }) {
-  const definitions = [toolDefinition("file_read"), toolDefinition("apply_patch")];
+  const mutationToolNames = input.mutationToolNames ?? ["apply_patch"];
+  const definitions = [toolDefinition("file_read"), ...mutationToolNames.map(toolDefinition)];
   return new ToolEnabledAgent({
     baseUrl: "https://api.openai.com/v1",
     apiKey: "test-key",
     model: "deepseek-v4-flash",
+    thinking: input.thinking,
     maxTotalTokens: input.maxTotalTokens,
     maxOutputTokens: 4_096,
     toolLoopIterationBudget: input.toolLoopIterationBudget,
@@ -402,8 +422,13 @@ function createAgent(input: {
     streamingEnabled: false,
     toolExecutor: {
       getDefinitions: () => definitions,
-      getRegisteredToolContract: (name: string) => name === "apply_patch"
-        ? { name, family: "patch", isReadOnly: false, riskLevel: "high" as const }
+      getRegisteredToolContract: (name: string) => mutationToolNames.includes(name)
+        ? {
+          name,
+          family: name === "apply_patch" ? "patch" : "workspace-write",
+          isReadOnly: false,
+          riskLevel: "high" as const,
+        }
         : { name, family: "workspace-read", isReadOnly: true, riskLevel: "low" as const },
       consumeLoadedDeferredToolsForNextTurn: vi.fn(async () => []),
       setTokenCounter: vi.fn(),

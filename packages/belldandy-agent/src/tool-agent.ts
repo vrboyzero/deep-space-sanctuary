@@ -32,6 +32,7 @@ import {
   type ModelStreamTextDelivery,
 } from "./model-stream-delivery.js";
 import { applyOpenAICompatibleReasoningConfig } from "./openai-reasoning.js";
+import { applyOpenAICompatibleToolChoice } from "./openai-tool-choice.js";
 import { buildUrl, preprocessMultimodalContent, type VideoUploadConfig } from "./multimodal.js";
 import {
   buildAnthropicRequest,
@@ -4839,7 +4840,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
               description: t.function.description,
               parameters: t.function.parameters,
             }));
-            payload.tool_choice = toolChoiceOverride ?? "auto";
+            applyOpenAICompatibleToolChoice({
+              payload,
+              profile,
+              toolChoice: toolChoiceOverride ?? "auto",
+            });
           }
           return {
             url: buildUrl(profile.baseUrl, "/responses"),
@@ -4864,7 +4869,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
         applyOpenAICompatibleReasoningConfig(payload, profile);
         if (tools && tools.length > 0) {
           payload.tools = tools;
-          payload.tool_choice = toolChoiceOverride ?? "auto";
+          applyOpenAICompatibleToolChoice({
+            payload,
+            profile,
+            toolChoice: toolChoiceOverride ?? "auto",
+          });
         }
         return {
           url: buildUrl(profile.baseUrl, "/chat/completions"),
