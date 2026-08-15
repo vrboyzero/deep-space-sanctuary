@@ -121,6 +121,7 @@ export function buildWorkspaceMutationRecoveryRequest(input: {
   );
   const evidenceSections: string[] = [];
   let sourceEvidenceCount = 0;
+  let latestSourceEvidenceIncluded = false;
   let truncatedEvidenceCount = 0;
 
   for (let index = evidence.length - 1; index >= 0 && remainingTokens >= MIN_EVIDENCE_TOKENS; index--) {
@@ -148,8 +149,11 @@ export function buildWorkspaceMutationRecoveryRequest(input: {
       continue;
     }
     evidenceSections.unshift(section);
-    if (MUTATION_SOURCE_EVIDENCE_TOOLS.has(item.toolName)) {
-      sourceEvidenceCount++;
+    if (!latestSourceEvidenceIncluded && MUTATION_SOURCE_EVIDENCE_TOOLS.has(item.toolName)) {
+      latestSourceEvidenceIncluded = true;
+      if (isMutationReadySourceEvidence(item.toolName, item.content)) {
+        sourceEvidenceCount++;
+      }
     }
     remainingTokens -= sectionTokens;
   }
@@ -322,6 +326,33 @@ function projectFileReadAnchorEvidence(toolName: string, content: string): strin
     contentTruncatedForMutationRecovery: true,
     anchorContext: fileContent.slice(contextStart, contextEnd),
   });
+}
+
+function isMutationReadySourceEvidence(toolName: string, content: string): boolean {
+  if (toolName !== "file_read") {
+    return toolName === "text_search" || toolName === "code_intel";
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return true;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return true;
+  }
+
+  const evidence = parsed as Record<string, unknown>;
+  const anchor = evidence.anchor;
+  if (anchor && typeof anchor === "object" && !Array.isArray(anchor)) {
+    const anchorText = (anchor as Record<string, unknown>).text;
+    if (typeof anchorText === "string" && anchorText
+      && typeof evidence.content === "string" && evidence.content.includes(anchorText)) {
+      return true;
+    }
+  }
+  return evidence.truncated !== true;
 }
 
 function clipTextToTokenBudget(

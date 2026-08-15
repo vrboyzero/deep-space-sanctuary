@@ -109,12 +109,32 @@ describe("ToolEnabledAgent required workspace mutation", () => {
         });
       }
       if (requests.length === 2) {
-        return response(modelToolCall("read-1", "file_read", {
-          path: "command.go",
-          anchor: "func (c *Command) Name() string",
-        }, 3_000, 120));
+        return response({
+          choices: [{
+            finish_reason: "tool_calls",
+            message: {
+              content: null,
+              tool_calls: [
+                modelToolCall("read-test", "file_read", {
+                  path: "benchmark_v3_bug_fix_test.go",
+                }, 0, 0).choices[0].message.tool_calls[0],
+                modelToolCall("read-command-start", "file_read", {
+                  path: "command.go",
+                  limit: 8_192,
+                }, 0, 0).choices[0].message.tool_calls[0],
+              ],
+            },
+          }],
+          usage: { prompt_tokens: 3_000, completion_tokens: 120 },
+        });
       }
       if (requests.length === 3) {
+        return response(modelToolCall("read-anchor", "file_read", {
+          path: "command.go",
+          anchor: "func (c *Command) Name() string",
+        }, 1_500, 80));
+      }
+      if (requests.length === 4) {
         return response(modelToolCall("patch-1", "apply_patch", { input: "bounded patch" }, 2_000, 100));
       }
       return response({
@@ -131,18 +151,32 @@ describe("ToolEnabledAgent required workspace mutation", () => {
         size: 63_218 + index,
       })),
     });
-    const execute = vi.fn(async (request: { id: string; name: string }) => ({
+    const execute = vi.fn(async (request: { id: string; name: string; arguments?: Record<string, unknown> }) => ({
       id: request.id,
       name: request.name,
       success: true,
       output: request.name === "list_files"
         ? largeDirectoryEvidence
         : request.name === "file_read"
-          ? JSON.stringify({
-            path: "command.go",
-            anchor: { text: "func (c *Command) Name() string", byteOffset: 46_089 },
-            content: "func (c *Command) Name() string {\n\treturn strings.LastIndex(c.Use, \" \" )\n}",
-          })
+          ? request.arguments?.anchor
+            ? JSON.stringify({
+              path: "command.go",
+              truncated: true,
+              anchor: { text: "func (c *Command) Name() string", byteOffset: 46_089 },
+              content: "func (c *Command) Name() string {\n\treturn strings.LastIndex(c.Use, \" \" )\n}",
+            })
+            : request.arguments?.path === "command.go"
+              ? JSON.stringify({
+                path: "command.go",
+                truncated: true,
+                range: { offset: 0, endOffset: 8_192 },
+                content: "package cobra\n// Command.Name is outside this bounded window.",
+              })
+              : JSON.stringify({
+                path: "benchmark_v3_bug_fix_test.go",
+                truncated: false,
+                content: "func TestBenchmarkV3CommandNameUsesFirstToken(t *testing.T) {}",
+              })
           : "Patch applied successfully",
       durationMs: 1,
     }));
@@ -166,16 +200,23 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       },
     } as any));
 
-    expect(requests).toHaveLength(4);
+    expect(requests).toHaveLength(5);
     expect(requests[1]?.tools?.map((tool: any) => tool.function.name)).toEqual([
       "file_read",
       "list_files",
       "apply_patch",
     ]);
-    expect(requests[2]?.tools?.map((tool: any) => tool.function.name)).toEqual(["apply_patch"]);
+    expect(requests[2]?.tools?.map((tool: any) => tool.function.name)).toEqual([
+      "file_read",
+      "list_files",
+      "apply_patch",
+    ]);
+    expect(requests[3]?.tools?.map((tool: any) => tool.function.name)).toEqual(["apply_patch"]);
     expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
       "list_files",
       "list_files",
+      "file_read",
+      "file_read",
       "file_read",
       "apply_patch",
     ]);
