@@ -2879,7 +2879,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             })
           : undefined;
         const workspaceMutationRecoveryRequiredByHeadroom = headroomCandidate
-          ? runBudget.checkModelCallPreflight({
+          ? isMutationRecoveryReadyForHeadroom(headroomCandidate) && runBudget.checkModelCallPreflight({
               minimumInputTokens: preflightPromptTokens
                 + headroomCandidate.estimatedInputTokens
                 + headroomCandidate.finalizationInputTokenReserve,
@@ -5354,6 +5354,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
 
     return result.state;
   }
+}
+
+function isMutationRecoveryReadyForHeadroom(candidate: WorkspaceMutationRecoveryPlan): boolean {
+  const sourceDependentMutationOnly = candidate.tools.every((tool) => (
+    tool.function.name === "apply_patch" || tool.function.name === "file_edit"
+  ));
+  return !sourceDependentMutationOnly || candidate.sourceEvidenceCount > 0;
 }
 
 function mergePromptSnapshotInputMeta(

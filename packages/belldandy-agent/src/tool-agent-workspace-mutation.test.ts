@@ -88,6 +88,100 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("keeps bounded source navigation available before patch-only headroom recovery", async () => {
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return response({
+          choices: [{
+            finish_reason: "tool_calls",
+            message: {
+              content: null,
+              tool_calls: [
+                modelToolCall("list-1", "list_files", { path: ".", depth: 2 }, 0, 0).choices[0].message.tool_calls[0],
+                modelToolCall("list-2", "list_files", { path: ".", recursive: true, depth: 2 }, 0, 0).choices[0].message.tool_calls[0],
+              ],
+            },
+          }],
+          usage: { prompt_tokens: 1_700, completion_tokens: 140 },
+        });
+      }
+      if (requests.length === 2) {
+        return response(modelToolCall("read-1", "file_read", {
+          path: "command.go",
+          anchor: "func (c *Command) Name() string",
+        }, 3_000, 120));
+      }
+      if (requests.length === 3) {
+        return response(modelToolCall("patch-1", "apply_patch", { input: "bounded patch" }, 2_000, 100));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: '{"summary":"fixed"}' } }],
+        usage: { prompt_tokens: 500, completion_tokens: 40 },
+      });
+    });
+    const largeDirectoryEvidence = JSON.stringify({
+      path: ".",
+      entries: Array.from({ length: 120 }, (_, index) => ({
+        name: `fixture-${index}.go`,
+        path: `internal/benchmark/navigation/fixture-${index}.go`,
+        type: "file",
+        size: 63_218 + index,
+      })),
+    });
+    const execute = vi.fn(async (request: { id: string; name: string }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: request.name === "list_files"
+        ? largeDirectoryEvidence
+        : request.name === "file_read"
+          ? JSON.stringify({
+            path: "command.go",
+            anchor: { text: "func (c *Command) Name() string", byteOffset: 46_089 },
+            content: "func (c *Command) Name() string {\n\treturn strings.LastIndex(c.Use, \" \" )\n}",
+          })
+          : "Patch applied successfully",
+      durationMs: 1,
+    }));
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 6,
+      readToolNames: ["file_read", "list_files"],
+    });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-navigation-before-recovery",
+      text: "Fix Command.Name so it returns the first token.",
+      automationProfile: "bare",
+      meta: { _agentLaunchSpec: { workspaceMutationRequirement: "required" } },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === '{"summary":"fixed"}'
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(requests).toHaveLength(4);
+    expect(requests[1]?.tools?.map((tool: any) => tool.function.name)).toEqual([
+      "file_read",
+      "list_files",
+      "apply_patch",
+    ]);
+    expect(requests[2]?.tools?.map((tool: any) => tool.function.name)).toEqual(["apply_patch"]);
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "list_files",
+      "list_files",
+      "file_read",
+      "apply_patch",
+    ]);
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("requires a mutation tool and disables DeepSeek thinking before it can exhaust output", async () => {
     const requests: Array<Record<string, any>> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
@@ -418,9 +512,11 @@ function createAgent(input: {
   toolCallRepairLevel?: "off" | "dedupe" | "full";
   thinking?: Record<string, unknown>;
   mutationToolNames?: string[];
+  readToolNames?: string[];
 }) {
   const mutationToolNames = input.mutationToolNames ?? ["apply_patch"];
-  const definitions = [toolDefinition("file_read"), ...mutationToolNames.map(toolDefinition)];
+  const readToolNames = input.readToolNames ?? ["file_read"];
+  const definitions = [...readToolNames.map(toolDefinition), ...mutationToolNames.map(toolDefinition)];
   return new ToolEnabledAgent({
     baseUrl: "https://api.openai.com/v1",
     apiKey: "test-key",

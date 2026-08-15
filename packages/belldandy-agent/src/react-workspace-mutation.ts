@@ -27,6 +27,7 @@ export type WorkspaceMutationRecoveryRequest = {
   tools: WorkspaceMutationToolDefinition[];
   estimatedInputTokens: number;
   evidenceCount: number;
+  sourceEvidenceCount: number;
   truncatedEvidenceCount: number;
 };
 
@@ -47,6 +48,7 @@ const MIN_TASK_TOKENS = 48;
 const MIN_EVIDENCE_TOKENS = 48;
 const FILE_READ_ANCHOR_CONTEXT_BEFORE_CHARS = 384;
 const FILE_READ_ANCHOR_CONTEXT_AFTER_CHARS = 1_024;
+const MUTATION_SOURCE_EVIDENCE_TOOLS = new Set(["file_read", "text_search", "code_intel"]);
 
 export function selectWorkspaceMutationToolDefinitions(
   definitions: WorkspaceMutationToolDefinition[],
@@ -118,6 +120,7 @@ export function buildWorkspaceMutationRecoveryRequest(input: {
       - estimateTokens(evidenceHeader, input.tokenEstimateContext),
   );
   const evidenceSections: string[] = [];
+  let sourceEvidenceCount = 0;
   let truncatedEvidenceCount = 0;
 
   for (let index = evidence.length - 1; index >= 0 && remainingTokens >= MIN_EVIDENCE_TOKENS; index--) {
@@ -145,6 +148,9 @@ export function buildWorkspaceMutationRecoveryRequest(input: {
       continue;
     }
     evidenceSections.unshift(section);
+    if (MUTATION_SOURCE_EVIDENCE_TOOLS.has(item.toolName)) {
+      sourceEvidenceCount++;
+    }
     remainingTokens -= sectionTokens;
   }
 
@@ -168,6 +174,7 @@ export function buildWorkspaceMutationRecoveryRequest(input: {
     tools: input.tools,
     estimatedInputTokens,
     evidenceCount: evidenceSections.length,
+    sourceEvidenceCount,
     truncatedEvidenceCount,
   };
 }
