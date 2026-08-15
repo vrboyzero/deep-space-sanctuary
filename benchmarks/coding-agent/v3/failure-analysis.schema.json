@@ -1,0 +1,307 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-failure-analysis-v1.json",
+  "title": "Coding Agent Benchmark Failure Analysis v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "status",
+    "source",
+    "scope",
+    "execution",
+    "families",
+    "runs",
+    "summary",
+    "diagnostics"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "coding-agent-benchmark-failure-analysis/v1" },
+    "generatedAt": { "$ref": "#/$defs/timestamp" },
+    "status": { "enum": ["completed", "incomplete"] },
+    "source": { "$ref": "#/$defs/source" },
+    "scope": { "$ref": "#/$defs/scope" },
+    "execution": { "$ref": "#/$defs/execution" },
+    "families": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 6,
+      "items": { "$ref": "#/$defs/family" }
+    },
+    "runs": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/run" }
+    },
+    "summary": { "$ref": "#/$defs/summary" },
+    "diagnostics": { "type": "array", "maxItems": 0 }
+  },
+  "$defs": {
+    "timestamp": { "type": "string", "format": "date-time" },
+    "sha1": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "identifier": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "count": { "type": "integer", "minimum": 0 },
+    "positiveCount": { "type": "integer", "minimum": 1 },
+    "platform": { "enum": ["windows-native", "wsl2-linux"] },
+    "platforms": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/platform" }
+    },
+    "familyId": {
+      "enum": [
+        "model_empty_content_at_length",
+        "completed_without_required_mutation",
+        "patch_acceptance_failed",
+        "token_budget_exhausted",
+        "output_schema_invalid",
+        "unknown"
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "aggregateSha256",
+        "aggregateSchemaVersion",
+        "aggregateGeneratedAt",
+        "manifestSha256",
+        "sourceCommit",
+        "sourceContentSha256",
+        "harnessCommit",
+        "harnessContentSha256"
+      ],
+      "properties": {
+        "aggregateSha256": { "$ref": "#/$defs/sha256" },
+        "aggregateSchemaVersion": { "const": "coding-agent-benchmark-report/v3" },
+        "aggregateGeneratedAt": { "$ref": "#/$defs/timestamp" },
+        "manifestSha256": { "$ref": "#/$defs/sha256" },
+        "sourceCommit": { "$ref": "#/$defs/sha1" },
+        "sourceContentSha256": { "$ref": "#/$defs/sha256" },
+        "harnessCommit": { "$ref": "#/$defs/sha1" },
+        "harnessContentSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceRunCount",
+        "analyzedFailureCount",
+        "failureCategory",
+        "platforms",
+        "modelMetadataPolicy"
+      ],
+      "properties": {
+        "sourceRunCount": { "$ref": "#/$defs/positiveCount" },
+        "analyzedFailureCount": { "$ref": "#/$defs/positiveCount" },
+        "failureCategory": { "const": "product_workflow" },
+        "platforms": { "$ref": "#/$defs/platforms" },
+        "modelMetadataPolicy": { "const": "excluded_untrusted_runner_declaration" }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "modelCalls",
+        "providerCalls",
+        "networkCalls",
+        "credentialsRead",
+        "aggregateModified",
+        "contentMode"
+      ],
+      "properties": {
+        "mode": { "const": "offline-analysis" },
+        "modelCalls": { "const": 0 },
+        "providerCalls": { "const": 0 },
+        "networkCalls": { "const": 0 },
+        "credentialsRead": { "const": false },
+        "aggregateModified": { "const": false },
+        "contentMode": { "const": "metadata_only" }
+      }
+    },
+    "family": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "priority",
+        "observationCode",
+        "runCount",
+        "taskCount",
+        "taskIds",
+        "platforms"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/familyId" },
+        "priority": { "type": "integer", "minimum": 1, "maximum": 99 },
+        "observationCode": {
+          "enum": [
+            "provider_length_stop_with_reasoning_and_no_visible_content",
+            "terminal_completed_without_required_workspace_mutation",
+            "edit_attempt_failed_or_workspace_patch_machine_rejected",
+            "total_token_budget_exhausted",
+            "terminal_output_schema_invalid",
+            "unrecognized_metadata_signature"
+          ]
+        },
+        "runCount": { "$ref": "#/$defs/positiveCount" },
+        "taskCount": { "$ref": "#/$defs/positiveCount" },
+        "taskIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "platforms": { "$ref": "#/$defs/platforms" }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runId", "taskId", "platform", "attempt", "family", "signals", "source"],
+      "properties": {
+        "runId": { "$ref": "#/$defs/identifier" },
+        "taskId": { "$ref": "#/$defs/identifier" },
+        "platform": { "$ref": "#/$defs/platform" },
+        "attempt": { "type": "integer", "minimum": 1 },
+        "family": { "$ref": "#/$defs/familyId" },
+        "signals": { "$ref": "#/$defs/signals" },
+        "source": { "$ref": "#/$defs/runSource" }
+      }
+    },
+    "signals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "terminalType",
+        "errorCode",
+        "toolCallCount",
+        "editCallCount",
+        "failedEditCallCount",
+        "workspaceMutationObserved",
+        "terminalChangeStatus",
+        "terminalChangedFileCount",
+        "patchBytes",
+        "testsPassed",
+        "patchAccepted",
+        "regressionCount",
+        "usageStatus"
+      ],
+      "properties": {
+        "terminalType": {
+          "enum": ["run.cancelled", "run.interrupted", "run.completed", "run.failed"]
+        },
+        "errorCode": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "toolCallCount": { "$ref": "#/$defs/count" },
+        "editCallCount": { "$ref": "#/$defs/count" },
+        "failedEditCallCount": { "$ref": "#/$defs/count" },
+        "workspaceMutationObserved": { "type": "boolean" },
+        "terminalChangeStatus": { "enum": ["available", "unavailable", "missing"] },
+        "terminalChangedFileCount": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "patchBytes": { "$ref": "#/$defs/count" },
+        "testsPassed": { "type": ["boolean", "null"] },
+        "patchAccepted": { "type": ["boolean", "null"] },
+        "regressionCount": { "$ref": "#/$defs/count" },
+        "usageStatus": { "enum": ["provider_reported", "unavailable", "not_reached"] }
+      }
+    },
+    "runSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifestSha256", "eventsSha256", "patchSha256"],
+      "properties": {
+        "manifestSha256": { "$ref": "#/$defs/sha256" },
+        "eventsSha256": { "$ref": "#/$defs/sha256" },
+        "patchSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "analyzedFailureCount",
+        "unknownCount",
+        "failedEditCallCount",
+        "changedRunCount",
+        "familyCounts",
+        "taskBreakdown",
+        "nextAction"
+      ],
+      "properties": {
+        "analyzedFailureCount": { "$ref": "#/$defs/positiveCount" },
+        "unknownCount": { "$ref": "#/$defs/count" },
+        "failedEditCallCount": { "$ref": "#/$defs/count" },
+        "changedRunCount": { "$ref": "#/$defs/count" },
+        "familyCounts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "items": { "$ref": "#/$defs/familyCount" }
+        },
+        "taskBreakdown": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/taskBreakdown" }
+        },
+        "nextAction": { "$ref": "#/$defs/nextAction" }
+      }
+    },
+    "familyCount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "count"],
+      "properties": {
+        "id": { "$ref": "#/$defs/familyId" },
+        "count": { "$ref": "#/$defs/positiveCount" }
+      }
+    },
+    "taskBreakdown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taskId", "runCount", "familyCounts"],
+      "properties": {
+        "taskId": { "$ref": "#/$defs/identifier" },
+        "runCount": { "$ref": "#/$defs/positiveCount" },
+        "familyCounts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "items": { "$ref": "#/$defs/familyCount" }
+        }
+      }
+    },
+    "nextAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "targetFamily", "reasonCode"],
+      "properties": {
+        "status": {
+          "enum": ["ready_for_improvement", "blocked_unknown_failure_evidence"]
+        },
+        "targetFamily": {
+          "anyOf": [
+            { "$ref": "#/$defs/familyId" },
+            { "type": "null" }
+          ]
+        },
+        "reasonCode": {
+          "enum": ["largest_cross_task_failure_family", "unknown_failure_family_present"]
+        }
+      }
+    }
+  }
+}

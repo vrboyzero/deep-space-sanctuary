@@ -51,7 +51,7 @@ describe("bdd agent run", () => {
     expect(resolveAgentRunCliOptions({
       timeout: "5000",
       cwd: "packages/belldandy-core",
-      toolAllow: "file_read,run_command,file_read",
+      toolAllow: "file_read,run_command,apply_patch,file_read",
       toolDeny: "run_command",
       permissionMode: "accept-edits",
       automationProfile: "bare",
@@ -60,6 +60,8 @@ describe("bdd agent run", () => {
       maxTurns: "3",
       maxTokens: "1200",
       maxCostUsd: "0.25",
+      expectedResolvedModelId: "deepseek-v4-flash",
+      requireWorkspaceMutation: true,
       requireCapability: "journal,trace,journal",
       requireTool: "file_read,file_read",
       requireMcpServer: "repo-index",
@@ -70,7 +72,7 @@ describe("bdd agent run", () => {
       timeoutMs: 5000,
       codingRun: {
         cwd: path.resolve("packages/belldandy-core"),
-        toolAllow: ["file_read", "run_command"],
+        toolAllow: ["file_read", "run_command", "apply_patch"],
         toolDeny: ["run_command"],
         permissionMode: "acceptEdits",
         automationProfile: "bare",
@@ -80,6 +82,8 @@ describe("bdd agent run", () => {
         maxTurns: 3,
         maxTokens: 1200,
         maxCostUsd: 0.25,
+        expectedResolvedModelId: "deepseek-v4-flash",
+        workspaceMutationRequirement: "required",
         requiredCapabilities: {
           schemaVersion: 1,
           capabilities: ["journal", "trace"],
@@ -105,6 +109,59 @@ describe("bdd agent run", () => {
     expect(resolveAgentRunCliOptions({ modelLoopBudgetPolicy: "unknown" })).toMatchObject({
       ok: false,
       message: expect.stringContaining("model-loop-budget-policy"),
+    });
+    expect(resolveAgentRunCliOptions({ requireWorkspaceMutation: true })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("requires --automation-profile bare"),
+    });
+    expect(resolveAgentRunCliOptions({
+      automationProfile: "bare",
+      requireWorkspaceMutation: true,
+    })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("requires --cwd"),
+    });
+    expect(resolveAgentRunCliOptions({
+      automationProfile: "bare",
+      cwd: ".",
+      permissionMode: "plan",
+      toolAllow: "apply_patch",
+      requireWorkspaceMutation: true,
+    })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("requires --permission-mode accept-edits"),
+    });
+    expect(resolveAgentRunCliOptions({
+      automationProfile: "bare",
+      cwd: ".",
+      permissionMode: "accept-edits",
+      toolAllow: "file_read",
+      requireWorkspaceMutation: true,
+    })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("requires an allowed workspace mutation tool"),
+    });
+    expect(resolveAgentRunCliOptions({
+      automationProfile: "bare",
+      cwd: ".",
+      permissionMode: "accept-edits",
+      toolAllow: "file_read,apply_patch",
+      toolDeny: "apply_patch",
+      requireWorkspaceMutation: true,
+    })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("requires an allowed workspace mutation tool"),
+    });
+    expect(resolveAgentRunCliOptions({
+      automationProfile: "bare",
+      cwd: ".",
+      permissionMode: "accept-edits",
+      toolAllow: "apply_patch",
+      maxTurns: "1",
+      requireWorkspaceMutation: true,
+    })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("requires --max-turns of at least 2"),
     });
     expect(resolveAgentRunCliOptions({ requireCapability: "tools" })).toMatchObject({
       ok: false,
@@ -402,6 +459,10 @@ describe("bdd agent run", () => {
     const conversationId = "bare-profile-conversation";
     const observedInputs: Parameters<BelldandyAgent["run"]>[0][] = [];
     const agent: BelldandyAgent = {
+      getCodingRunCapabilities: () => ({
+        maxCostUsd: false,
+        workspaceMutationRequirement: true,
+      }),
       async *run(input) {
         observedInputs.push(input);
         yield { type: "final", text: "done" };
@@ -441,9 +502,10 @@ describe("bdd agent run", () => {
             codingRun: {
               cwd,
               automationProfile: "bare",
-              toolAllow: ["file_read"],
+              toolAllow: ["file_read", "apply_patch"],
               toolDeny: ["run_command"],
-              permissionMode: "plan",
+              permissionMode: "acceptEdits",
+              workspaceMutationRequirement: "required",
               maxTurns: 2,
               maxTokens: 800,
             },
@@ -467,12 +529,14 @@ describe("bdd agent run", () => {
         },
       });
       expect(bareInput.promptOverride?.text).not.toContain("AGENTS.md");
+      expect(bareInput.promptOverride?.text).toContain("successful workspace mutation");
       expect(bareInput.meta?._agentLaunchSpec).toMatchObject({
         cwd,
         commandSandbox: "required",
-        toolSet: ["file_read"],
+        toolSet: ["file_read", "apply_patch"],
         toolDeny: ["run_command"],
-        permissionMode: "plan",
+        permissionMode: "acceptEdits",
+        workspaceMutationRequirement: "required",
         toolLoopIterationBudget: 2,
         maxTotalTokens: 800,
       });
@@ -513,6 +577,56 @@ describe("bdd agent run", () => {
         })).toBe(4);
       });
       expect(stderr.join("")).toContain("cannot enforce maxCostUsd");
+    } finally {
+      await server.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("fails before starting when the selected Agent cannot enforce required workspace mutation", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-mutation-capability-"));
+    const cwd = path.join(stateDir, "workspace");
+    let runCalled = false;
+    const agent: BelldandyAgent = {
+      async *run() {
+        runCalled = true;
+        yield { type: "final", text: "unexpected" };
+      },
+    };
+    await fs.promises.mkdir(cwd, { recursive: true });
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+      agentFactory: () => agent,
+    });
+    const stderr: string[] = [];
+
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(server.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        expect(await runAgentRunCommand({
+          stateDir,
+          prompt: "change the workspace",
+          jsonl: true,
+          codingRun: {
+            automationProfile: "bare",
+            cwd,
+            permissionMode: "acceptEdits",
+            toolAllow: ["apply_patch"],
+            workspaceMutationRequirement: "required",
+            maxTurns: 2,
+          },
+          writeStdout: () => {},
+          writeStderr: (text) => stderr.push(text),
+        })).toBe(4);
+      });
+      expect(stderr.join(" ")).toContain("cannot enforce the required workspace mutation contract");
+      expect(runCalled).toBe(false);
     } finally {
       await server.close();
       await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});

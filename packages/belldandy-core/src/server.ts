@@ -2589,6 +2589,8 @@ function parseCodingRunOptions(
   if (!isObjectRecord(value)) return { ok: false, message: "codingRun must be an object" };
   const allowedKeys = new Set([
     "automationProfile",
+    "expectedResolvedModelId",
+    "workspaceMutationRequirement",
     "cwd",
     "toolAllow",
     "toolDeny",
@@ -2608,6 +2610,20 @@ function parseCodingRunOptions(
   const automationProfile = value.automationProfile;
   if (automationProfile !== undefined && automationProfile !== "bare") {
     return { ok: false, message: "codingRun.automationProfile must be bare" };
+  }
+
+  const expectedResolvedModelIdRaw = value.expectedResolvedModelId;
+  let expectedResolvedModelId: string | undefined;
+  if (expectedResolvedModelIdRaw !== undefined) {
+    if (typeof expectedResolvedModelIdRaw !== "string"
+      || !expectedResolvedModelIdRaw.trim()
+      || expectedResolvedModelIdRaw.trim().length > 256) {
+      return { ok: false, message: "codingRun.expectedResolvedModelId must be a non-empty model ID up to 256 characters" };
+    }
+    if (automationProfile !== "bare") {
+      return { ok: false, message: "codingRun.expectedResolvedModelId requires automationProfile bare" };
+    }
+    expectedResolvedModelId = expectedResolvedModelIdRaw.trim();
   }
 
   const cwdRaw = value.cwd;
@@ -2637,6 +2653,33 @@ function parseCodingRunOptions(
     return { ok: false, message: "codingRun.permissionMode must be plan, acceptEdits, or confirm" };
   }
 
+  const workspaceMutationRequirement = value.workspaceMutationRequirement;
+  if (workspaceMutationRequirement !== undefined && workspaceMutationRequirement !== "required") {
+    return { ok: false, message: "codingRun.workspaceMutationRequirement must be required" };
+  }
+  if (workspaceMutationRequirement === "required") {
+    if (automationProfile !== "bare") {
+      return { ok: false, message: "codingRun.workspaceMutationRequirement requires automationProfile bare" };
+    }
+    if (!cwd) {
+      return { ok: false, message: "codingRun.workspaceMutationRequirement requires cwd" };
+    }
+    if (permissionMode !== "acceptEdits") {
+      return { ok: false, message: "codingRun.workspaceMutationRequirement requires permissionMode acceptEdits" };
+    }
+    const mutationToolNames = new Set(["apply_patch", "file_edit", "file_write", "file_delete"]);
+    const deniedTools = new Set(toolDeny.value ?? []);
+    const hasAllowedMutationTool = (toolAllow.value ?? []).some(
+      (name) => mutationToolNames.has(name) && !deniedTools.has(name),
+    );
+    if (!hasAllowedMutationTool) {
+      return {
+        ok: false,
+        message: "codingRun.workspaceMutationRequirement requires an allowed workspace mutation tool that is not denied",
+      };
+    }
+  }
+
   const toolArgumentPolicy = value.toolArgumentPolicy;
   if (
     toolArgumentPolicy !== undefined
@@ -2657,6 +2700,13 @@ function parseCodingRunOptions(
   if (!maxWallTimeMs.ok) return maxWallTimeMs;
   const maxTurns = parseCodingRunPositiveInteger(value.maxTurns, "maxTurns");
   if (!maxTurns.ok) return maxTurns;
+  if (
+    workspaceMutationRequirement === "required"
+    && maxTurns.value !== undefined
+    && maxTurns.value < 2
+  ) {
+    return { ok: false, message: "codingRun.workspaceMutationRequirement requires maxTurns of at least 2" };
+  }
   const maxTokens = parseCodingRunPositiveInteger(value.maxTokens, "maxTokens");
   if (!maxTokens.ok) return maxTokens;
   const requiredCapabilities = value.requiredCapabilities === undefined
@@ -2680,6 +2730,8 @@ function parseCodingRunOptions(
     ok: true,
     value: {
       ...(automationProfile ? { automationProfile } : {}),
+      ...(expectedResolvedModelId ? { expectedResolvedModelId } : {}),
+      ...(workspaceMutationRequirement ? { workspaceMutationRequirement } : {}),
       ...(cwd ? { cwd } : {}),
       ...(toolAllow.value ? { toolAllow: toolAllow.value } : {}),
       ...(toolDeny.value ? { toolDeny: toolDeny.value } : {}),

@@ -30,4 +30,18 @@ describe("buildCodingRunPromptOverride", () => {
     expect(override?.text).not.toContain("Methodology System");
     expect(override?.text.length).toBeLessThan(1_600);
   });
+
+  it("adds the trusted success condition only for mutation-required runs", () => {
+    const override = buildCodingRunPromptOverride({
+      automationProfile: "bare",
+      cwd: "E:/workspace/project",
+      toolAllow: ["file_read", "apply_patch"],
+      permissionMode: "acceptEdits",
+      workspaceMutationRequirement: "required",
+    });
+
+    expect(override?.text).toContain("successful workspace mutation");
+    expect(override?.text).toContain("must fail closed");
+    expect(override?.sections?.map((section) => section.id)).toContain("coding-run-workspace-mutation");
+  });
 });

@@ -140,6 +140,10 @@ export function buildAgentRunArgs(input) {
     ...(input.conversationId ? ["--conversation-id", input.conversationId] : []),
     ...(input.profile.agentId ? ["--agent-id", input.profile.agentId] : []),
     ...(input.modelId ? ["--model-id", input.modelId] : []),
+    ...(input.modelId ? ["--expected-resolved-model-id", input.modelId] : []),
+    ...(input.profile.mode === "workspace-write" || input.profile.mode === "recovery-control"
+      ? ["--require-workspace-mutation"]
+      : []),
     "--permission-mode", input.profile.permissionMode === "acceptEdits" ? "accept-edits" : input.profile.permissionMode,
     "--tool-allow", input.profile.toolAllow.join(","),
     "--tool-deny", (input.profile.toolDeny ?? (input.profile.toolAllow.includes("run_command")
@@ -163,6 +167,7 @@ export function validateAgentRunEvents(
   isAgentRunEventV1,
   validators = {},
   expectedAutomationProfile,
+  expectedResolvedModelId,
 ) {
   if (!Array.isArray(events) || events.length === 0) {
     throw new Error("Agent JSONL did not contain any v1 events.");
@@ -225,6 +230,13 @@ export function validateAgentRunEvents(
   if (expectedAutomationProfile !== undefined && automationProfile !== expectedAutomationProfile) {
     throw new Error(`Agent JSONL automation profile mismatch: expected ${expectedAutomationProfile}.`);
   }
+  const modelRoute = readModelRouteEvidence(events[0]?.payload?.modelRoute);
+  if (expectedResolvedModelId !== undefined
+    && (!modelRoute
+      || modelRoute.declaredModelId !== expectedResolvedModelId
+      || modelRoute.resolvedModelId !== expectedResolvedModelId)) {
+    throw new Error(`Agent JSONL resolved model mismatch: expected ${expectedResolvedModelId}.`);
+  }
   if (!validators.isCodingRunUsageCompletenessV1(terminalEvent?.payload?.usage)) {
     throw new Error("Agent JSONL terminal event is missing a valid usage completeness declaration.");
   }
@@ -235,6 +247,7 @@ export function validateAgentRunEvents(
     },
     terminalType,
     ...(automationProfile === undefined ? {} : { automationProfile }),
+    ...(modelRoute === undefined ? {} : { modelRoute }),
     capabilities: events[0].payload.capabilities,
     usage: terminalEvent.payload.usage,
   };
@@ -245,6 +258,20 @@ export function sanitizeDiagnostic(value) {
     /\b((?:api[_-]?key|access[_-]?token|token|secret|password|authorization|cookie|session)[\w-]*)\s*([:=])\s*(?:Bearer\s+)?[^\s,;]+/gi,
     "$1$2[REDACTED]",
   );
+}
+
+function readModelRouteEvidence(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  if (typeof value.declaredModelId !== "string" || !value.declaredModelId.trim()
+    || typeof value.resolvedModelId !== "string" || !value.resolvedModelId.trim()
+    || !["primary", "named", "manual"].includes(value.source)) {
+    return undefined;
+  }
+  return {
+    declaredModelId: value.declaredModelId.trim(),
+    resolvedModelId: value.resolvedModelId.trim(),
+    source: value.source,
+  };
 }
 
 export function buildBenchmarkPermissionResponseParams(protocolVersion, request) {
@@ -394,7 +421,7 @@ async function main() {
       isCodingRunCapabilitiesV1,
       isCodingRunUsageCompletenessV1,
       expectedTracePolicy: CODING_RUN_TRACE_POLICY,
-    }, CODING_CI_AUTOMATION_PROFILE);
+    }, CODING_CI_AUTOMATION_PROFILE, options.modelId);
   } catch (error) {
     eventContractError = sanitizeDiagnostic(error instanceof Error ? error.message : error);
   }
@@ -475,6 +502,7 @@ async function main() {
     mode: options.profile.mode,
     ...(options.profile.candidateId ? { profileCandidateId: options.profile.candidateId } : {}),
     automationProfile: eventContract?.automationProfile ?? null,
+    modelRoute: eventContract?.modelRoute ?? null,
     limits: options.limits ?? CODING_CI_LIMITS,
     cliExitCode: child.exitCode,
     eventCount: parsed.events.length,
@@ -489,6 +517,9 @@ async function main() {
       eventContract: !eventContractError,
       capabilityHandshake: Boolean(eventContract?.capabilities),
       automationProfile: eventContract?.automationProfile === CODING_CI_AUTOMATION_PROFILE,
+      modelRoute: options.modelId === undefined
+        ? null
+        : eventContract?.modelRoute?.resolvedModelId === options.modelId,
       usageComplete: eventContract?.usage?.status === "complete",
       traceContract: !traceContractError,
       artifactPolicy: !artifactPolicyError,
@@ -515,6 +546,7 @@ async function main() {
       `event_contract=${manifest.checks.eventContract}`,
       `capability_handshake=${manifest.checks.capabilityHandshake}`,
       `automation_profile=${manifest.automationProfile ?? "none"}`,
+      `model_route=${manifest.checks.modelRoute ?? "not_applicable"}`,
       `usage_complete=${manifest.checks.usageComplete}`,
       `trace_contract=${manifest.checks.traceContract}`,
       `artifact_policy=${manifest.checks.artifactPolicy}`,

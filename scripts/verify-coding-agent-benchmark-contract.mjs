@@ -63,6 +63,9 @@ import {
 import {
   CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V3_VERSION,
 } from "./run-coding-agent-benchmark-navigation-candidate-v3.mjs";
+import {
+  CODING_AGENT_BENCHMARK_FAILURE_ANALYSIS_VERSION,
+} from "./run-coding-agent-benchmark-failure-analysis.mjs";
 import { resolveCodingCiProfile } from "./run-coding-agent-ci.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
@@ -166,6 +169,9 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   const modelLoopRolloutAuditV3Schema = await readJson(
     "benchmarks/coding-agent/v3/model-loop-rollout-audit.schema.json",
   );
+  const failureAnalysisV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/failure-analysis.schema.json",
+  );
   const navigationCandidateV2V3Schema = await readJson(
     "benchmarks/coding-agent/v3/navigation-candidate-v2.schema.json",
   );
@@ -197,6 +203,7 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   await readText("scripts/run-coding-agent-benchmark-navigation-shadow-v3-analysis.mjs");
   await readText("scripts/run-coding-agent-benchmark-model-loop-budget-termination.mjs");
   await readText("scripts/run-coding-agent-benchmark-model-loop-rollout-audit.mjs");
+  await readText("scripts/run-coding-agent-benchmark-failure-analysis.mjs");
   await readText("scripts/run-coding-agent-benchmark-navigation-candidate-v2.mjs");
   await readText("scripts/run-coding-agent-benchmark-navigation-candidate-v3.mjs");
   const projectMap = await readText("docs/project-map.md");
@@ -312,6 +319,7 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "v3 model-loop budget termination",
     modelLoopBudgetTerminationV3Schema,
   );
+  validateSchema(failures, "v3 failure analysis", failureAnalysisV3Schema);
   validateSchema(failures, "v3 navigation candidate v2", navigationCandidateV2V3Schema);
   validateSchema(failures, "v3 navigation candidate v3", navigationCandidateV3V3Schema);
   if (JSON.stringify(benchmarkAgentsV2) !== JSON.stringify({
@@ -346,6 +354,10 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   }
   if (reportV3Schema?.properties?.schemaVersion?.const !== CODING_AGENT_BENCHMARK_REPORT_V3_VERSION) {
     failures.push("v3 benchmark report Schema version drifted from the external-validity contract.");
+  }
+  if (failureAnalysisV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_BENCHMARK_FAILURE_ANALYSIS_VERSION) {
+    failures.push("v3 failure analysis Schema version drifted from its offline evidence contract.");
   }
   if (scorecardV3Schema?.properties?.schemaVersion?.const !== CODING_AGENT_BENCHMARK_SCORECARD_V3_VERSION) {
     failures.push("v3 scorecard Schema version drifted from the 9.5 target contract.");
@@ -564,6 +576,10 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     !== "node scripts/aggregate-coding-agent-benchmark.mjs") {
     failures.push("package.json must expose the Stage 0D baseline aggregator.");
   }
+  if (packageJson?.scripts?.["benchmark:coding-agent:v3:failure-analysis"]
+    !== "node scripts/run-coding-agent-benchmark-failure-analysis.mjs") {
+    failures.push("package.json must expose the v3 offline failure analysis.");
+  }
   if (manifest) validateRunnerProfiles(failures, manifest, "v1");
   if (manifestV2) validateRunnerProfiles(failures, manifestV2, "v2");
   for (const requiredText of [
@@ -579,6 +595,7 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "coding-agent-benchmark-scorecard/v3",
     "coding-agent-benchmark-snapshot-receipt/v1",
     "coding-agent-benchmark-linux-snapshot-preparation/v1",
+    "coding-agent-benchmark-failure-analysis/v1",
     "coding-agent-benchmark-repository-inputs/v1",
     "linux-snapshot-preparation.schema.json",
     "repository-inputs.schema.json",
@@ -595,6 +612,7 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "navigation-shadow-v3-analysis.schema.json",
     "model-loop-budget-termination.schema.json",
     "model-loop-rollout-audit.schema.json",
+    "failure-analysis.schema.json",
     "systemBrowserScreenshot",
     "browser-screenshot.png",
     "coding-agent-benchmark-parallel-read-harness.mjs",
@@ -695,6 +713,7 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "benchmark:coding-agent:stage0d:core:windows",
     "benchmark:coding-agent:stage0d:core:wsl",
     "aggregate:coding-agent:baseline",
+    "benchmark:coding-agent:v3:failure-analysis",
     "baseline-index.json",
     "command.interactive-control",
     "safety.boundary-enforcement",
@@ -764,6 +783,8 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "benchmarks/coding-agent/v3/model-loop-budget-termination.schema.json",
     "scripts/run-coding-agent-benchmark-model-loop-rollout-audit.mjs",
     "benchmarks/coding-agent/v3/model-loop-rollout-audit.schema.json",
+    "scripts/run-coding-agent-benchmark-failure-analysis.mjs",
+    "benchmarks/coding-agent/v3/failure-analysis.schema.json",
     "scripts/run-coding-agent-benchmark-navigation-candidate-v2.mjs",
     "benchmarks/coding-agent/v3/navigation-candidate-v2.schema.json",
     "scripts/run-coding-agent-benchmark-navigation-candidate-v3.mjs",

@@ -68,6 +68,11 @@ describe("Gateway Conversation CLI stream", () => {
       webRoot: resolveWebRoot(),
       stateDir,
       agentFactory: () => agent,
+      primaryModelConfig: {
+        baseUrl: "https://api.example.invalid/v1",
+        apiKey: "test-placeholder-key",
+        model: "deepseek-v4-flash",
+      },
     });
     const events: AgentRunEvent[] = [];
 
@@ -81,6 +86,11 @@ describe("Gateway Conversation CLI stream", () => {
           stateDir,
           prompt: "hello",
           timeoutMs: 5_000,
+          modelId: "deepseek-v4-flash",
+          codingRun: {
+            automationProfile: "bare",
+            expectedResolvedModelId: "deepseek-v4-flash",
+          },
           onEvent: (event) => events.push(event),
         });
 
@@ -100,6 +110,11 @@ describe("Gateway Conversation CLI stream", () => {
           .filter((event) => event.type === "run.status")
           .map((event) => event.payload.status)).toEqual(["running", "done", "done"]);
         expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5, 6]);
+        expect(events[0]?.payload.modelRoute).toEqual({
+          declaredModelId: "deepseek-v4-flash",
+          resolvedModelId: "deepseek-v4-flash",
+          source: "primary",
+        });
         expect(events.every((event) => JSON.parse(JSON.stringify(event)).version === "v1")).toBe(true);
       });
     } finally {

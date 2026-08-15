@@ -102,6 +102,38 @@ describe("apply_patch tool", () => {
     await expect(fs.readFile(path.join(tempDir, "FENCED.md"), "utf-8")).resolves.toBe("wrapped fence\n");
   });
 
+  it("should return structured correction hints for an empty update hunk without mutating the file", async () => {
+    await fs.writeFile(path.join(tempDir, "source.txt"), "before\n", "utf-8");
+
+    const result = await applyPatchTool.execute(
+      {
+        input: [
+          "*** Begin Patch",
+          "*** Update File: source.txt",
+          "*** End Patch",
+        ].join("\n"),
+      },
+      baseContext,
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      failureKind: "input_error",
+      metadata: {
+        repairAction: "apply_patch_input_invalid",
+        argumentValidation: {
+          blocked: true,
+          correctionHints: expect.arrayContaining([
+            expect.stringContaining("non-empty change hunk"),
+            expect.stringContaining("workspace-relative path"),
+          ]),
+        },
+      },
+    });
+    expect(result.error).toContain("is empty");
+    await expect(fs.readFile(path.join(tempDir, "source.txt"), "utf-8")).resolves.toBe("before\n");
+  });
+
   it("should still reject files outside whitelist", async () => {
     const result = await applyPatchTool.execute(
       {

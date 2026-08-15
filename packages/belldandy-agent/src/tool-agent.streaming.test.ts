@@ -236,6 +236,57 @@ describe("ToolEnabledAgent Provider streaming", () => {
     expect(JSON.stringify(items)).not.toContain("private chain");
   });
 
+  it("recovers a length-stopped reasoning-only stream with one buffered finalization", async () => {
+    const provider = await createProvider([
+      (response) => {
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        writeSse(response, {
+          choices: [{ delta: { reasoning_content: "private chain" }, finish_reason: "length" }],
+          usage: { prompt_tokens: 12, completion_tokens: 8 },
+        });
+        response.end("data: [DONE]\n\n");
+      },
+      (response) => {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          choices: [{ finish_reason: "stop", message: { content: "bounded stream recovery" } }],
+          usage: { prompt_tokens: 20, completion_tokens: 4 },
+        }));
+      },
+    ]);
+    const agent = new ToolEnabledAgent({
+      baseUrl: provider.baseUrl,
+      apiKey: "local-test-key",
+      model: "deepseek-v4-flash",
+      toolExecutor: createToolExecutor(),
+      maxTotalTokens: 2_000,
+      maxOutputTokens: 256,
+      streamingEnabled: true,
+    } as any);
+
+    const items = await collectItems(agent.run({
+      conversationId: "stream-reasoning-length-recovery",
+      text: "finish once",
+    }));
+
+    expect(provider.payloads).toHaveLength(2);
+    expect(provider.payloads[0]?.stream).toBe(true);
+    expect(provider.payloads[1]?.stream).toBe(false);
+    expect(provider.payloads[1]).not.toHaveProperty("tools");
+    expect(items.filter((item) => item.type === "delta").map((item) => item.delta).join(""))
+      .toBe("bounded stream recovery");
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "usage",
+      inputTokens: 32,
+      outputTokens: 12,
+      modelCalls: 2,
+      providerReportedModelCalls: 2,
+    }));
+    expect(items).toContainEqual({ type: "final", text: "bounded stream recovery" });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+    expect(JSON.stringify(items)).not.toContain("private chain");
+  });
+
   it("assembles fragmented tool arguments and executes the completed tool exactly once", async () => {
     const execute = vi.fn(async (request: { id: string; name: string; arguments: unknown }) => ({
       id: request.id,

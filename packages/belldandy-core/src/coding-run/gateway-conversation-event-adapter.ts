@@ -1,5 +1,5 @@
 import { sanitizeCommandPermissionPreview } from "@belldandy/skills";
-import type { CodingRunOptions } from "@belldandy/protocol";
+import type { CodingRunModelRouteEvidence, CodingRunOptions } from "@belldandy/protocol";
 
 import {
   CODING_RUN_CAPABILITIES,
@@ -20,6 +20,7 @@ export type GatewayConversationEventAdapter = {
   start: (binding: GatewayRunBinding, traceContext?: {
     promptId?: string;
     agentId?: string;
+    modelRoute?: CodingRunModelRouteEvidence;
   }) => AgentRunEvent | undefined;
   consume: (input: { event: string; payload: unknown }) => AgentRunEvent | undefined;
   fail: (input: { code?: CodingRunErrorCode; message: string }) => AgentRunEvent | undefined;
@@ -71,6 +72,7 @@ export function createGatewayConversationEventAdapter(input: {
       return emit("run.started", {
         status: "running",
         ...(input.automationProfile ? { automationProfile: input.automationProfile } : {}),
+        ...(traceContext?.modelRoute ? { modelRoute: { ...traceContext.modelRoute } } : {}),
         traceContext: {
           ...(promptId ? { promptId } : {}),
           agentId: getNonEmptyString(traceContext?.agentId) ?? "default",

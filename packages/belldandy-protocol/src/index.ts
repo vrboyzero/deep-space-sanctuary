@@ -176,9 +176,20 @@ export type CodingRunCapabilityRequirements = {
   skills?: string[];
 };
 
+/** Gateway 在 Agent 创建前投影的无正文模型解析证据。 */
+export type CodingRunModelRouteEvidence = {
+  declaredModelId: string;
+  resolvedModelId: string;
+  source: "primary" | "named" | "manual";
+};
+
 export type CodingRunOptions = {
   /** 确定性自动化运行面；bare 仅使用显式输入并跳过隐式上下文与扩展。 */
   automationProfile?: "bare";
+  /** Provider 调用前必须与 Gateway 最终解析出的实际模型 ID 完全一致。 */
+  expectedResolvedModelId?: string;
+  /** 运行成功前必须至少执行一次成功的 workspace mutation。 */
+  workspaceMutationRequirement?: "required";
   cwd?: string;
   toolAllow?: string[];
   toolDeny?: string[];

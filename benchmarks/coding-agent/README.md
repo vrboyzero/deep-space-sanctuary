@@ -384,6 +384,17 @@ corepack pnpm aggregate:coding-agent:baseline --verify --output-root <baseline-a
 
 可先增加 `--dry-run` 检查输入和覆盖缺口而不写入文件。`--verify` 使用输出目录中已保留的 `task-manifest.json` 重算，不接受 `--manifest-revision`。WSL evidence 若保存在 Linux `/tmp`，应在清理前通过当前发行版可访问的 `\\wsl.localhost\<distribution>\tmp\...\benchmark-report.json` 显式传入；路径只用于本机读取，不会写入 report、index 或日志。聚合并不替代真实模型样本，不能以 fixture 成功或旧调试 artifact 填补缺口。
 
+### v3 产品失败离线聚类
+
+`benchmark:coding-agent:v3:failure-analysis` 只接受 `completed`、source/harness identity 对齐且无基础设施失败的 v3 aggregate，分析其中 `product_workflow` 失败。工具重新读取每项 `manifest.json`、`events.jsonl` 与 `changes.patch`，校验 artifact containment、常规文件、大小、manifest 绑定、唯一终态和 Tool 生命周期；输出 `coding-agent-benchmark-failure-analysis/v1` 的 `failure-analysis.json`，只保留计数、布尔值、受控 reason code 与 SHA-256，不复制模型正文、reasoning 或 Tool output。`failure-analysis.schema.json` 是封闭输出合同，未知签名固定使报告成为 `incomplete`。
+
+分析根与 aggregate 根必须互不包含，且输出目录必须尚不存在。`--verify` 会从原 aggregate 及其失败 artifact 重建报告并进行整份深度比对；来源、聚类或报告字段任一漂移都会失败。该命令不调用 Gateway、模型、Provider 或网络，不读取凭据，也不修改冻结 aggregate：
+
+```powershell
+corepack pnpm benchmark:coding-agent:v3:failure-analysis --aggregate-root <v3-aggregate-root> --output-root <new-failure-analysis-root>
+corepack pnpm benchmark:coding-agent:v3:failure-analysis --verify --aggregate-root <v3-aggregate-root> --output-root <failure-analysis-root>
+```
+
 ## 阶段 0D Core Task
 
 冻结 manifest 的 `feature.cross-file`、`tests.failed-diagnosis` 与 `navigation.large-repository` 使用独立、可再生 Git fixture。feature 任务只接受 `src/feature.mjs` 与 `src/index.mjs` 的双文件修改及固定测试通过；诊断和导航任务使用完整工作区快照，连 `.gitignore` 下文件的变化也会失败。导航 fixture 生成 80 个 source segment，要求定位 `src/segments/segment-071.mjs` 的第 97 行 `lateSegmentAnchor`，且不得读取 `ignored/private-note.mjs`。

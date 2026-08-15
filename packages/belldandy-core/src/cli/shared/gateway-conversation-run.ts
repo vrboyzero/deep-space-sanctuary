@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { CodingRunOptions } from "@belldandy/protocol";
+import type { CodingRunModelRouteEvidence, CodingRunOptions } from "@belldandy/protocol";
 import { approvePairingCode } from "../../security/store.js";
 import {
   toSafeCodingRunErrorMessage,
@@ -339,6 +339,18 @@ export async function runGatewayConversation(input: {
         ));
         return;
       }
+      const modelRoute = readModelRouteEvidence(payload.modelRoute);
+      const expectedResolvedModelId = input.codingRun?.expectedResolvedModelId?.trim();
+      if (expectedResolvedModelId
+        && (!modelRoute
+          || modelRoute.declaredModelId !== expectedResolvedModelId
+          || modelRoute.resolvedModelId !== expectedResolvedModelId)) {
+        failBeforeRun(new GatewayConversationRunError(
+          "Gateway accepted the coding run without matching resolved model evidence.",
+          "execution_failed",
+        ));
+        return;
+      }
       binding = { conversationId, agentRunId };
       const messageMeta = isRecord(payload.messageMeta) ? payload.messageMeta : undefined;
       const promptTimestampMs = typeof messageMeta?.timestampMs === "number"
@@ -349,6 +361,7 @@ export async function runGatewayConversation(input: {
       adapter.start(binding, {
         ...(promptTimestampMs === undefined ? {} : { promptId: `message:${promptTimestampMs}` }),
         agentId: input.agentId?.trim() || "default",
+        ...(modelRoute ? { modelRoute } : {}),
       });
       runTimeout = setTimeout(() => {
         requestStopWithGracePeriod("Coding run timed out.", true);
@@ -405,6 +418,22 @@ function readGatewayError(frame: Record<string, unknown>): string {
 
 function readGatewayErrorCode(frame: Record<string, unknown>): string | undefined {
   return isRecord(frame.error) && typeof frame.error.code === "string" ? frame.error.code : undefined;
+}
+
+function readModelRouteEvidence(value: unknown): CodingRunModelRouteEvidence | undefined {
+  if (!isRecord(value)
+    || typeof value.declaredModelId !== "string"
+    || !value.declaredModelId.trim()
+    || typeof value.resolvedModelId !== "string"
+    || !value.resolvedModelId.trim()
+    || (value.source !== "primary" && value.source !== "named" && value.source !== "manual")) {
+    return undefined;
+  }
+  return {
+    declaredModelId: value.declaredModelId.trim(),
+    resolvedModelId: value.resolvedModelId.trim(),
+    source: value.source,
+  };
 }
 
 async function approvePairingCodeWithRetry(input: {

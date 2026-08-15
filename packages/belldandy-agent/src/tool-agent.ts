@@ -128,6 +128,16 @@ import {
   REACT_FINALIZATION_OUTPUT_TOKEN_RESERVE,
   type ReactFinalizationRequest,
 } from "./react-finalization.js";
+import {
+  buildWorkspaceMutationRecoveryRequest,
+  selectWorkspaceMutationToolDefinitions,
+  WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE,
+  type WorkspaceMutationRecoveryRequest,
+} from "./react-workspace-mutation.js";
+import {
+  buildBoundedStructuredOutputRepairRequest,
+  type BoundedStructuredOutputRepairRequest,
+} from "./react-structured-output-repair.js";
 
 type ApiProtocol = "openai" | "anthropic";
 type CacheSupport = "supported" | "unsupported" | "unknown";
@@ -2032,9 +2042,14 @@ export class ToolEnabledAgent implements BelldandyAgent {
     this.starweaverVisibleNotifyFingerprint.set(input.conversationId, fingerprint);
   }
 
-  getCodingRunCapabilities(): { maxCostUsd: boolean; steerAtModelBoundary: true } {
+  getCodingRunCapabilities(): {
+    maxCostUsd: boolean;
+    workspaceMutationRequirement: true;
+    steerAtModelBoundary: true;
+  } {
     return {
       maxCostUsd: hasUsagePricing(this.opts.usagePricing),
+      workspaceMutationRequirement: true,
       steerAtModelBoundary: true,
     };
   }
@@ -2361,6 +2376,14 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let totalUsageCostUsd = 0;
     let modelCallCount = 0;
     let providerReportedModelCallCount = 0;
+    let pendingEmptyContentFinalizationError: string | undefined;
+    let emptyContentFinalizationAttempted = false;
+    const workspaceMutationRequired = runtimeContext?.launchSpec?.workspaceMutationRequirement === "required";
+    let workspaceMutationObserved = false;
+    let workspaceMutationRecoveryPending = false;
+    let workspaceMutationRecoveryAttempted = false;
+    let workspaceMutationFinalizationPending = false;
+    let pendingBoundedStructuredOutputRepairRequest: BoundedStructuredOutputRepairRequest | undefined;
     let lastProviderRawUsage: AgentUsage["providerRawUsage"] | undefined;
     let lastRequestShape: AgentUsage["requestShape"] | undefined;
     let lastLocalPromptEstimate: AgentUsage["localPromptEstimate"] | undefined;
@@ -2532,6 +2555,15 @@ export class ToolEnabledAgent implements BelldandyAgent {
       });
     };
 
+    const emitWorkspaceMutationFailure = async function* (detail: string) {
+      const error = `required workspace mutation was not completed: ${detail}`;
+      runSuccess = false;
+      runError = error;
+      yield* yieldItem(buildUsageItem());
+      yield* yieldItem({ type: "final", text: error });
+      yield* yieldItem({ type: "status", status: "error" });
+    };
+
     const emitRunAbort = async function* () {
       if (activeRunAbortController.isWallTimeExceeded()) {
         const observed = Math.max(
@@ -2573,6 +2605,21 @@ export class ToolEnabledAgent implements BelldandyAgent {
         const nextModelCallIndex = modelCallCount + 1;
         const structuredOutputRepairCall = structuredOutputSession?.isRepairCall() ?? false;
         const iterationBudget = runBudgets.toolLoopIterationBudget;
+        const workspaceMutationRecoveryRequiredByGate = workspaceMutationRequired
+          && !workspaceMutationObserved
+          && !workspaceMutationRecoveryAttempted
+          && modelCallCount > 0
+          && (
+            (iterationBudget > 0 && nextModelCallIndex >= iterationBudget - 1)
+            || (
+              runBudget.modelLoopBudgetPolicy !== undefined
+              && runBudget.modelCalls + 2 >= MODEL_LOOP_COST_CONTAINMENT_LIMITS.maxModelCalls
+            )
+          );
+        const workspaceMutationRecoveryRequested = workspaceMutationRequired
+          && !workspaceMutationObserved
+          && !workspaceMutationRecoveryAttempted
+          && (workspaceMutationRecoveryPending || workspaceMutationRecoveryRequiredByGate);
         if (iterationBudget > 0) {
           const warningThreshold = Math.max(1, Math.ceil(iterationBudget * this.opts.toolLoopWarningFraction));
           if (
@@ -2722,11 +2769,18 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
         }
 
-        const pendingSteerCommands = input.steering && !structuredOutputRepairCall
+        const emptyContentFinalizationPending = pendingEmptyContentFinalizationError !== undefined;
+        const pendingSteerCommands = input.steering
+          && !structuredOutputRepairCall
+          && !emptyContentFinalizationPending
+          && !workspaceMutationRecoveryRequested
+          && !workspaceMutationFinalizationPending
           ? input.steering.peekPending()
           : [];
 
         let tools = structuredOutputRepairCall
+          || emptyContentFinalizationPending
+          || workspaceMutationFinalizationPending
           ? []
           : this.opts.toolExecutor.getDefinitions(resolvedAgentId, input.conversationId, runtimeContext);
         let toolNames = tools.map((tool) => tool.function.name);
@@ -2741,26 +2795,187 @@ export class ToolEnabledAgent implements BelldandyAgent {
           independentBlockText: currentIndependentBlockText,
           messageLayout: this.opts.messageLayout,
         }) as Message[];
+        const boundedStructuredOutputRepairRequest = structuredOutputRepairCall
+          ? pendingBoundedStructuredOutputRepairRequest
+          : undefined;
+        const budgetPreflightMessages = boundedStructuredOutputRepairRequest
+          ? boundedStructuredOutputRepairRequest.messages as Message[]
+          : preflightRequestMessages;
         const dispatchTokenEstimateContext = currentTokenEstimateModel ? { model: currentTokenEstimateModel } : undefined;
         const preflightSystemPromptTokens = estimateSystemPromptTokens(
-          preflightRequestMessages,
+          budgetPreflightMessages,
           dispatchTokenEstimateContext,
         );
         const preflightContextTokens = estimateContextTokensFromMessages(
-          preflightRequestMessages,
+          budgetPreflightMessages,
           { includeSystem: false },
           dispatchTokenEstimateContext,
         );
         const preflightPromptTokens = preflightSystemPromptTokens + preflightContextTokens;
+        let workspaceMutationRecoveryCall = false;
+        let workspaceMutationRecoveryRequest: WorkspaceMutationRecoveryRequest | undefined;
+        let workspaceMutationFinalizationCall = false;
+        let finalizationOnlyCall = false;
+        let finalizationRequest: ReactFinalizationRequest | undefined;
+        let finalizationTrigger: ReturnType<ReActRunBudgetTracker["checkModelCallPreflight"]>;
+        const finalizationOutputTokens = Math.max(
+          1,
+          Math.min(
+            REACT_FINALIZATION_OUTPUT_TOKEN_RESERVE,
+            this.opts.maxOutputTokens ?? REACT_FINALIZATION_OUTPUT_TOKEN_RESERVE,
+          ),
+        );
+        const mutationRecoveryOutputTokens = Math.max(
+          1,
+          Math.min(
+            WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE,
+            this.opts.maxOutputTokens ?? WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE,
+          ),
+        );
+        const buildMutationRecoveryCandidate = (): WorkspaceMutationRecoveryRequest | undefined => {
+          const mutationTools = selectWorkspaceMutationToolDefinitions(
+            tools,
+            (name) => this.opts.toolExecutor.getRegisteredToolContract?.(name),
+          );
+          const remainingForBothCalls = Math.max(
+            0,
+            runBudget.maxTotalTokens
+              - runBudget.totalTokens
+              - mutationRecoveryOutputTokens
+              - finalizationOutputTokens,
+          );
+          const mutationInputBudget = Math.floor(
+            remainingForBothCalls / 2 / REACT_FINALIZATION_INPUT_SAFETY_FACTOR,
+          );
+          return buildWorkspaceMutationRecoveryRequest({
+            messages: preflightRequestMessages,
+            tools: mutationTools,
+            maxInputTokens: mutationInputBudget,
+            tokenEstimateContext: dispatchTokenEstimateContext,
+          });
+        };
+        if (workspaceMutationRecoveryRequested) {
+          const candidate = buildMutationRecoveryCandidate();
+          if (!candidate) {
+            yield* emitWorkspaceMutationFailure(
+              "no bounded mutation-only request can be built from the allowed workspace mutation tools and remaining token budget.",
+            );
+            return;
+          }
+          const candidateMinimumCost = calculateUsageCostUsd({
+            inputTokens: candidate.estimatedInputTokens,
+            outputTokens: mutationRecoveryOutputTokens + finalizationOutputTokens,
+            pricing: this.opts.usagePricing,
+          });
+          const candidatePreflight = runBudget.checkModelCallPreflight({
+            minimumInputTokens: candidate.estimatedInputTokens,
+            minimumOutputTokens: mutationRecoveryOutputTokens + finalizationOutputTokens,
+            ...(candidateMinimumCost ? { minimumCostUsd: candidateMinimumCost.totalUsd } : {}),
+          });
+          if (candidatePreflight) {
+            const error = candidatePreflight.budget === "cost_usd"
+              ? `required workspace mutation recovery exceeds the remaining cost budget (maximum $${candidatePreflight.limit.toFixed(8)}, projected $${candidatePreflight.observed.toFixed(8)}).`
+              : `required workspace mutation recovery exceeds the remaining token budget (maximum ${candidatePreflight.limit}, projected ${candidatePreflight.observed}).`;
+            yield* emitBudgetExhausted(
+              candidatePreflight.budget,
+              candidatePreflight.limit,
+              candidatePreflight.observed,
+              error,
+              {
+                policyId: candidatePreflight.policyId,
+                stage: candidatePreflight.stage,
+                reasonCode: candidatePreflight.reasonCode,
+              },
+            );
+            return;
+          }
+          workspaceMutationRecoveryCall = true;
+          workspaceMutationRecoveryAttempted = true;
+          workspaceMutationRecoveryPending = false;
+          workspaceMutationRecoveryRequest = candidate;
+          tools = candidate.tools;
+          toolNames = tools.map((tool) => tool.function.name);
+          logWarn("[workspace-mutation] switching to one bounded mutation-only call", {
+            mutationInputTokens: candidate.estimatedInputTokens,
+            mutationOutputTokens: mutationRecoveryOutputTokens,
+            finalizationOutputReserve: finalizationOutputTokens,
+            evidenceCount: candidate.evidenceCount,
+            truncatedEvidenceCount: candidate.truncatedEvidenceCount,
+            conversationId: input.conversationId,
+            agentId: resolvedAgentId,
+          });
+        }
+        if (workspaceMutationFinalizationPending) {
+          const remainingInputTokens = Math.floor(Math.max(
+            0,
+            runBudget.maxTotalTokens
+              - runBudget.totalTokens
+              - finalizationOutputTokens,
+          ) / REACT_FINALIZATION_INPUT_SAFETY_FACTOR);
+          const candidate = buildReactFinalizationRequest({
+            messages: preflightRequestMessages,
+            maxInputTokens: remainingInputTokens,
+            tokenEstimateContext: dispatchTokenEstimateContext,
+          });
+          if (!candidate) {
+            yield* emitWorkspaceMutationFailure(
+              "the mutation succeeded, but no bounded tool-free finalization fits the remaining token budget.",
+            );
+            return;
+          }
+          const candidateMinimumCost = calculateUsageCostUsd({
+            inputTokens: candidate.estimatedInputTokens,
+            outputTokens: finalizationOutputTokens,
+            pricing: this.opts.usagePricing,
+          });
+          const candidatePreflight = runBudget.checkModelCallPreflight({
+            minimumInputTokens: candidate.estimatedInputTokens,
+            minimumOutputTokens: finalizationOutputTokens,
+            ...(candidateMinimumCost ? { minimumCostUsd: candidateMinimumCost.totalUsd } : {}),
+          });
+          if (candidatePreflight) {
+            const error = candidatePreflight.budget === "cost_usd"
+              ? `required workspace mutation finalization exceeds the remaining cost budget (maximum $${candidatePreflight.limit.toFixed(8)}, projected $${candidatePreflight.observed.toFixed(8)}).`
+              : `required workspace mutation finalization exceeds the remaining token budget (maximum ${candidatePreflight.limit}, projected ${candidatePreflight.observed}).`;
+            yield* emitBudgetExhausted(
+              candidatePreflight.budget,
+              candidatePreflight.limit,
+              candidatePreflight.observed,
+              error,
+              {
+                policyId: candidatePreflight.policyId,
+                stage: candidatePreflight.stage,
+                reasonCode: candidatePreflight.reasonCode,
+              },
+            );
+            return;
+          }
+          workspaceMutationFinalizationPending = false;
+          workspaceMutationFinalizationCall = true;
+          finalizationOnlyCall = true;
+          finalizationRequest = candidate;
+          tools = [];
+          toolNames = [];
+        }
+        const reservedPromptTokens = workspaceMutationRecoveryRequest?.estimatedInputTokens
+          ?? finalizationRequest?.estimatedInputTokens
+          ?? boundedStructuredOutputRepairRequest?.estimatedInputTokens
+          ?? preflightPromptTokens;
+        const reservedOutputTokens = workspaceMutationRecoveryCall
+          ? mutationRecoveryOutputTokens + finalizationOutputTokens
+          : finalizationOnlyCall || boundedStructuredOutputRepairRequest
+            ? finalizationOutputTokens
+            : runtimeContext?.launchSpec?.modelLoopBudgetPolicy
+              ? MODEL_LOOP_COST_CONTAINMENT_LIMITS.minimumOutputTokenReserve
+              : 0;
         const modelLoopMinimumCost = calculateUsageCostUsd({
-          inputTokens: preflightPromptTokens,
-          outputTokens: runtimeContext?.launchSpec?.modelLoopBudgetPolicy
-            ? MODEL_LOOP_COST_CONTAINMENT_LIMITS.minimumOutputTokenReserve
-            : 0,
+          inputTokens: reservedPromptTokens,
+          outputTokens: reservedOutputTokens,
           pricing: this.opts.usagePricing,
         });
         const modelLoopBudgetExhausted = runBudget.reserveModelCall({
-          minimumInputTokens: preflightPromptTokens,
+          minimumInputTokens: reservedPromptTokens,
+          minimumOutputTokens: reservedOutputTokens,
           ...(modelLoopMinimumCost ? { minimumCostUsd: modelLoopMinimumCost.totalUsd } : {}),
         });
         if (modelLoopBudgetExhausted) {
@@ -2782,20 +2997,79 @@ export class ToolEnabledAgent implements BelldandyAgent {
           );
           return;
         }
-        let finalizationOnlyCall = false;
-        let finalizationRequest: ReactFinalizationRequest | undefined;
-        let finalizationTrigger: ReturnType<ReActRunBudgetTracker["checkModelCallPreflight"]>;
-        const finalizationOutputTokens = Math.max(
-          1,
-          Math.min(
-            REACT_FINALIZATION_OUTPUT_TOKEN_RESERVE,
-            this.opts.maxOutputTokens ?? REACT_FINALIZATION_OUTPUT_TOKEN_RESERVE,
-          ),
-        );
+        if (emptyContentFinalizationPending) {
+          const recoveryError = pendingEmptyContentFinalizationError
+            ?? "模型返回空内容，且无法构造有界最终总结。";
+          pendingEmptyContentFinalizationError = undefined;
+          const remainingInputTokens = Math.floor(Math.max(
+            0,
+            runBudget.maxTotalTokens
+              - runBudget.totalTokens
+              - finalizationOutputTokens,
+          ) / REACT_FINALIZATION_INPUT_SAFETY_FACTOR);
+          const candidate = buildReactFinalizationRequest({
+            messages: preflightRequestMessages,
+            maxInputTokens: remainingInputTokens,
+            tokenEstimateContext: dispatchTokenEstimateContext,
+          });
+          const candidateMinimumCost = candidate
+            ? calculateUsageCostUsd({
+              inputTokens: candidate.estimatedInputTokens,
+              outputTokens: finalizationOutputTokens,
+              pricing: this.opts.usagePricing,
+            })
+            : undefined;
+          const candidatePreflight = candidate
+            ? runBudget.checkModelCallPreflight({
+              minimumInputTokens: candidate.estimatedInputTokens,
+              minimumOutputTokens: finalizationOutputTokens,
+              ...(candidateMinimumCost ? { minimumCostUsd: candidateMinimumCost.totalUsd } : {}),
+            })
+            : undefined;
+          if (!candidate) {
+            runSuccess = false;
+            runError = recoveryError;
+            yield* yieldItem(buildUsageItem());
+            yield* yieldItem({ type: "final", text: recoveryError });
+            yield* yieldItem({ type: "status", status: "error" });
+            return;
+          }
+          if (candidatePreflight) {
+            const error = candidatePreflight.budget === "cost_usd"
+              ? `剩余费用预算不足以覆盖空内容恢复的有界最终总结（最大 $${candidatePreflight.limit.toFixed(8)}，预计累计 $${candidatePreflight.observed.toFixed(8)}）。`
+              : `剩余 token 预算不足以覆盖空内容恢复的有界最终总结（最大 ${candidatePreflight.limit}，预计累计 ${candidatePreflight.observed}）。`;
+            yield* emitBudgetExhausted(
+              candidatePreflight.budget,
+              candidatePreflight.limit,
+              candidatePreflight.observed,
+              error,
+              {
+                policyId: candidatePreflight.policyId,
+                stage: candidatePreflight.stage,
+                reasonCode: candidatePreflight.reasonCode,
+              },
+            );
+            return;
+          }
+          finalizationOnlyCall = true;
+          finalizationRequest = candidate;
+          tools = [];
+          toolNames = [];
+          logWarn("[model-empty-content] switching to bounded finalization-only call", {
+            remainingInputTokens,
+            finalizationInputTokens: candidate.estimatedInputTokens,
+            finalizationOutputTokens,
+            evidenceCount: candidate.evidenceCount,
+            truncatedEvidenceCount: candidate.truncatedEvidenceCount,
+            conversationId: input.conversationId,
+            agentId: resolvedAgentId,
+          });
+        }
         if (
           modelCallCount > 0
           && !structuredOutputRepairCall
           && !runBudget.modelLoopBudgetPolicy
+          && !finalizationOnlyCall
         ) {
           const ordinaryMinimumCost = calculateUsageCostUsd({
             inputTokens: preflightPromptTokens,
@@ -2807,7 +3081,46 @@ export class ToolEnabledAgent implements BelldandyAgent {
             minimumOutputTokens: finalizationOutputTokens,
             ...(ordinaryMinimumCost ? { minimumCostUsd: ordinaryMinimumCost.totalUsd } : {}),
           });
-          if (ordinaryPreflight) {
+          if (
+            ordinaryPreflight
+            && workspaceMutationRequired
+            && !workspaceMutationObserved
+            && !workspaceMutationRecoveryAttempted
+          ) {
+            const candidate = buildMutationRecoveryCandidate();
+            if (!candidate) {
+              yield* emitWorkspaceMutationFailure(
+                "the ordinary model loop reached its budget gate before an allowed bounded mutation-only request could be built.",
+              );
+              return;
+            }
+            const candidateMinimumCost = calculateUsageCostUsd({
+              inputTokens: candidate.estimatedInputTokens,
+              outputTokens: mutationRecoveryOutputTokens + finalizationOutputTokens,
+              pricing: this.opts.usagePricing,
+            });
+            const candidatePreflight = runBudget.checkModelCallPreflight({
+              minimumInputTokens: candidate.estimatedInputTokens,
+              minimumOutputTokens: mutationRecoveryOutputTokens + finalizationOutputTokens,
+              ...(candidateMinimumCost ? { minimumCostUsd: candidateMinimumCost.totalUsd } : {}),
+            });
+            if (candidatePreflight) {
+              yield* emitBudgetExhausted(
+                candidatePreflight.budget,
+                candidatePreflight.limit,
+                candidatePreflight.observed,
+                "required workspace mutation recovery cannot fit before the active model-loop budget closes.",
+              );
+              return;
+            }
+            workspaceMutationRecoveryCall = true;
+            workspaceMutationRecoveryAttempted = true;
+            workspaceMutationRecoveryPending = false;
+            workspaceMutationRecoveryRequest = candidate;
+            tools = candidate.tools;
+            toolNames = tools.map((tool) => tool.function.name);
+          }
+          if (ordinaryPreflight && !workspaceMutationRecoveryCall) {
             const remainingInputTokens = Math.floor(Math.max(
               0,
               runBudget.maxTotalTokens
@@ -2863,19 +3176,26 @@ export class ToolEnabledAgent implements BelldandyAgent {
             }
           }
         }
-        const steerCommands = input.steering && !structuredOutputRepairCall
+        const steerCommands = input.steering
+          && !structuredOutputRepairCall
+          && !finalizationOnlyCall
+          && !workspaceMutationRecoveryCall
           ? await input.steering.consumePending({ modelCallIndex: nextModelCallIndex })
           : [];
         for (const command of steerCommands) {
           messages.push({ role: "user", content: command.prompt });
         }
-        const requestMessages = finalizationRequest
-          ? finalizationRequest.messages as Message[]
-          : applyStablePrefixSplitMessageLayout(messages, {
-            transientText: currentTransientTailText,
-            independentBlockText: currentIndependentBlockText,
-            messageLayout: this.opts.messageLayout,
-          }) as Message[];
+        const requestMessages = workspaceMutationRecoveryRequest
+          ? workspaceMutationRecoveryRequest.messages as Message[]
+          : finalizationRequest
+            ? finalizationRequest.messages as Message[]
+            : boundedStructuredOutputRepairRequest
+              ? boundedStructuredOutputRepairRequest.messages as Message[]
+              : applyStablePrefixSplitMessageLayout(messages, {
+                transientText: currentTransientTailText,
+                independentBlockText: currentIndependentBlockText,
+                messageLayout: this.opts.messageLayout,
+              }) as Message[];
         const dispatchSystemPromptTokens = estimateSystemPromptTokens(
           requestMessages,
           dispatchTokenEstimateContext,
@@ -2914,10 +3234,15 @@ export class ToolEnabledAgent implements BelldandyAgent {
           hasToolSearch: toolNames.includes("tool_search"),
           textAttachmentChars,
           finalizationOnly: finalizationOnlyCall,
+          workspaceMutationRecovery: workspaceMutationRecoveryCall,
+          workspaceMutationFinalization: workspaceMutationFinalizationCall,
         });
 
         // 调用模型。流式模式通过相邻单槽 delivery 转发，避免在本文件持有队列和协议状态。
-        const streamDelivery = this.opts.streamingEnabled && !structuredOutputSession && !finalizationOnlyCall
+        const streamDelivery = this.opts.streamingEnabled
+          && !structuredOutputSession
+          && !finalizationOnlyCall
+          && !workspaceMutationRecoveryCall
           ? createModelStreamTextDelivery()
           : undefined;
         const responsePromise = this.callModel(
@@ -2962,11 +3287,21 @@ export class ToolEnabledAgent implements BelldandyAgent {
             capturePromptSnapshot(requestMessages);
           },
           currentSystemPromptState.bypassProviderNativeSystemBlocks
+            || finalizationOnlyCall
+            || workspaceMutationRecoveryCall
+            || boundedStructuredOutputRepairRequest !== undefined
             ? undefined
             : providerNativeSystemBlocks,
           streamDelivery,
-          finalizationOnlyCall ? finalizationOutputTokens : undefined,
+          workspaceMutationRecoveryCall
+            ? mutationRecoveryOutputTokens
+            : finalizationOnlyCall || boundedStructuredOutputRepairRequest
+              ? finalizationOutputTokens
+              : undefined,
         );
+        if (boundedStructuredOutputRepairRequest) {
+          pendingBoundedStructuredOutputRepairRequest = undefined;
+        }
         modelCallCount++;
         let response: Awaited<typeof responsePromise>;
         if (streamDelivery) {
@@ -3060,31 +3395,16 @@ export class ToolEnabledAgent implements BelldandyAgent {
           logDebug(`[usage] ${parts.join(" ")}`);
         }
 
-        if (!response.ok) {
-          if (response.error === STOP_REQUESTED_ERROR) {
-            yield* emitRunAbort();
-            return;
-          }
-          runSuccess = false;
-          runError = response.error;
-          yield* yieldItem(buildUsageItem());
-          if (response.interrupted) {
-            yield* yieldItem(response.interrupted);
-            yield* yieldItem({ type: "status", status: "error" });
-            return;
-          }
-          yield* yieldItem({ type: "final", text: response.error });
-          yield* yieldItem({ type: "status", status: "error" });
-          return;
-        }
-
         // 供应商没有 usage 时，才用本轮请求形状和返回载荷做本地估算。
         // 估算仅用于预算兜底，不覆盖 Provider 已报告的 usage/cached token。
-        const fallbackOutputTokenSource = [
-          response.content,
-          response.reasoning_content,
-          response.toolCalls?.map((toolCall) => JSON.stringify(toolCall)).join("\n"),
-        ].filter((part): part is string => typeof part === "string" && part.length > 0).join("\n");
+        const fallbackOutputTokenSource = (response.ok
+          ? [
+            response.content,
+            response.reasoning_content,
+            response.toolCalls?.map((toolCall) => JSON.stringify(toolCall)).join("\n"),
+          ]
+          : [response.reasoning_content]
+        ).filter((part): part is string => typeof part === "string" && part.length > 0).join("\n");
         const usageCostForBudget = response.usage
           ? calculateUsageCostUsd({
             inputTokens: response.usage.input_tokens,
@@ -3095,17 +3415,19 @@ export class ToolEnabledAgent implements BelldandyAgent {
             pricing: this.opts.usagePricing,
           })
           : undefined;
-        const totalTokenBudgetExhausted = runBudget.recordModelUsage({
-          providerUsageAvailable: response.usage !== undefined,
-          inputTokens: response.usage?.input_tokens ?? 0,
-          outputTokens: response.usage?.output_tokens ?? 0,
-          cacheReadTokens: response.usage?.cache_read_input_tokens ?? 0,
-          cacheCreationTokens: response.usage?.cache_creation_input_tokens ?? 0,
-          fallbackInputTokens: lastLocalPromptEstimate?.totalPromptTokens
-            ?? estimateMessagesTotal(requestMessages, dispatchTokenEstimateContext),
-          fallbackOutputTokens: estimateTokens(fallbackOutputTokenSource, dispatchTokenEstimateContext),
-          ...(usageCostForBudget ? { costUsd: usageCostForBudget.totalUsd } : {}),
-        });
+        const totalTokenBudgetExhausted = (response.ok || response.emptyContent)
+          ? runBudget.recordModelUsage({
+            providerUsageAvailable: response.usage !== undefined,
+            inputTokens: response.usage?.input_tokens ?? 0,
+            outputTokens: response.usage?.output_tokens ?? 0,
+            cacheReadTokens: response.usage?.cache_read_input_tokens ?? 0,
+            cacheCreationTokens: response.usage?.cache_creation_input_tokens ?? 0,
+            fallbackInputTokens: lastLocalPromptEstimate?.totalPromptTokens
+              ?? estimateMessagesTotal(requestMessages, dispatchTokenEstimateContext),
+            fallbackOutputTokens: estimateTokens(fallbackOutputTokenSource, dispatchTokenEstimateContext),
+            ...(usageCostForBudget ? { costUsd: usageCostForBudget.totalUsd } : {}),
+          })
+          : undefined;
         if (totalTokenBudgetExhausted) {
           const error = totalTokenBudgetExhausted.budget === "cost_usd"
             ? `累计费用预算超限（最大 $${totalTokenBudgetExhausted.limit.toFixed(8)}，已累计 $${totalTokenBudgetExhausted.observed.toFixed(8)}）。已停止后续模型和工具调用。`
@@ -3126,6 +3448,47 @@ export class ToolEnabledAgent implements BelldandyAgent {
             totalTokenBudgetExhausted.observed,
             error,
           );
+          return;
+        }
+
+        if (!response.ok) {
+          if (response.error === STOP_REQUESTED_ERROR) {
+            yield* emitRunAbort();
+            return;
+          }
+          if (workspaceMutationRecoveryCall) {
+            yield* emitWorkspaceMutationFailure(`the mutation-only model call failed: ${response.error}`);
+            return;
+          }
+          if (
+            response.emptyContent?.finishReason === "length"
+            && !emptyContentFinalizationAttempted
+            && !finalizationOnlyCall
+            && !structuredOutputRepairCall
+          ) {
+            emptyContentFinalizationAttempted = true;
+            pendingEmptyContentFinalizationError = response.error;
+            logWarn("[model-empty-content] scheduling one bounded finalization", {
+              finishReason: response.emptyContent.finishReason,
+              reasoningContentLength: response.emptyContent.reasoningContentLength,
+              modelCallIndex: nextModelCallIndex,
+              totalTokens: runBudget.totalTokens,
+              maxTotalTokens: runBudget.maxTotalTokens,
+              conversationId: input.conversationId,
+              agentId: resolvedAgentId,
+            });
+            continue;
+          }
+          runSuccess = false;
+          runError = response.error;
+          yield* yieldItem(buildUsageItem());
+          if (response.interrupted) {
+            yield* yieldItem(response.interrupted);
+            yield* yieldItem({ type: "status", status: "error" });
+            return;
+          }
+          yield* yieldItem({ type: "final", text: response.error });
+          yield* yieldItem({ type: "status", status: "error" });
           return;
         }
 
@@ -3160,11 +3523,22 @@ export class ToolEnabledAgent implements BelldandyAgent {
           return;
         }
 
-        if (input.conversationId && !structuredOutputRepairCall) {
+        if (
+          input.conversationId
+          && !structuredOutputRepairCall
+          && !finalizationOnlyCall
+          && !workspaceMutationRecoveryCall
+        ) {
           await this.opts.toolExecutor.consumeLoadedDeferredToolsForNextTurn(input.conversationId);
         }
 
-        if (contentForDisplay && !streamDelivery && !structuredOutputSession) {
+        if (
+          contentForDisplay
+          && !streamDelivery
+          && !structuredOutputSession
+          && !workspaceMutationRecoveryCall
+          && !(workspaceMutationRequired && !workspaceMutationObserved)
+        ) {
           for (const delta of splitText(contentForDisplay, 16)) {
             yield* yieldItem({ type: "delta", delta });
           }
@@ -3192,6 +3566,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
               finalizationTrigger.observed,
               error,
             );
+          } else {
+            runSuccess = false;
+            runError = error;
+            yield* yieldItem(buildUsageItem());
+            yield* yieldItem({ type: "final", text: error });
+            yield* yieldItem({ type: "status", status: "error" });
           }
           return;
         }
@@ -3203,6 +3583,20 @@ export class ToolEnabledAgent implements BelldandyAgent {
           return;
         }
         if (!toolCalls || toolCalls.length === 0) {
+          if (workspaceMutationRequired && !workspaceMutationObserved) {
+            if (workspaceMutationRecoveryCall || workspaceMutationRecoveryAttempted) {
+              yield* emitWorkspaceMutationFailure(
+                "the one mutation-only model call did not request a workspace mutation tool.",
+              );
+              return;
+            }
+            workspaceMutationRecoveryPending = true;
+            messages.push({
+              role: "assistant",
+              content: response.content || contentForDisplay,
+            });
+            continue;
+          }
           if (structuredOutputSession) {
             const review = structuredOutputSession.reviewFinal(contentForDisplay);
             if (review.action === "repair") {
@@ -3271,6 +3665,52 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 minimumInputTokens: minimumRepairInputTokens,
                 ...(minimumRepairCost ? { minimumCostUsd: minimumRepairCost.totalUsd } : {}),
               });
+              if (
+                repairBudgetExhausted
+                && (repairBudgetExhausted.budget === "total_tokens"
+                  || repairBudgetExhausted.budget === "cost_usd")
+              ) {
+                const boundedRepairInputTokens = Math.floor(Math.max(
+                  0,
+                  runBudget.maxTotalTokens
+                    - runBudget.totalTokens
+                    - finalizationOutputTokens,
+                ) / REACT_FINALIZATION_INPUT_SAFETY_FACTOR);
+                const boundedRepair = buildBoundedStructuredOutputRepairRequest({
+                  repairPrompt: review.prompt,
+                  originalText: contentForDisplay,
+                  maxInputTokens: boundedRepairInputTokens,
+                  tokenEstimateContext: repairTokenEstimateContext,
+                });
+                const boundedRepairMinimumCost = boundedRepair
+                  ? calculateUsageCostUsd({
+                    inputTokens: boundedRepair.estimatedInputTokens,
+                    outputTokens: finalizationOutputTokens,
+                    pricing: this.opts.usagePricing,
+                  })
+                  : undefined;
+                const boundedRepairPreflight = boundedRepair
+                  ? runBudget.checkModelCallPreflight({
+                    minimumInputTokens: boundedRepair.estimatedInputTokens,
+                    minimumOutputTokens: finalizationOutputTokens,
+                    ...(boundedRepairMinimumCost
+                      ? { minimumCostUsd: boundedRepairMinimumCost.totalUsd }
+                      : {}),
+                  })
+                  : repairBudgetExhausted;
+                if (boundedRepair && !boundedRepairPreflight) {
+                  pendingBoundedStructuredOutputRepairRequest = boundedRepair;
+                  logWarn("[structured-output] switching to one bounded repair call", {
+                    fullRepairInputTokens: minimumRepairInputTokens,
+                    boundedRepairInputTokens: boundedRepair.estimatedInputTokens,
+                    boundedRepairOutputTokens: finalizationOutputTokens,
+                    draftTruncated: boundedRepair.draftTruncated,
+                    conversationId: input.conversationId,
+                    agentId: resolvedAgentId,
+                  });
+                  continue;
+                }
+              }
               if (repairBudgetExhausted) {
                 const budgetLabel = repairBudgetExhausted.budget === "cost_usd" ? "cost" : "token";
                 const rejection = structuredOutputSession.rejectRepair(
@@ -3317,6 +3757,16 @@ export class ToolEnabledAgent implements BelldandyAgent {
           yield* yieldItem({ type: "final", text: contentForDisplay });
           yield* yieldItem({ type: "status", status: "done" });
           return;
+        }
+        if (workspaceMutationRecoveryCall) {
+          const requestedMutationTool = toolCalls.length === 1
+            && toolNames.includes(toolCalls[0]?.function.name ?? "");
+          if (!requestedMutationTool) {
+            yield* emitWorkspaceMutationFailure(
+              "the mutation-only model call must request exactly one allowed workspace mutation tool.",
+            );
+            return;
+          }
         }
         logDebug("[tool-check] tool calls detected", { names: toolCalls.map(tc => tc.function.name) });
 
@@ -3434,6 +3884,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
                   },
                   requestArguments: request.arguments,
                 }));
+                if (workspaceMutationRecoveryCall) {
+                  yield* emitWorkspaceMutationFailure(blockedError);
+                  return;
+                }
                 continue;
               }
               if (hookRes?.skipExecution) {
@@ -3475,6 +3929,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
                   toolCallId: tc.id,
                   isSynthetic: true,
                 });
+                if (workspaceMutationRecoveryCall) {
+                  yield* emitWorkspaceMutationFailure(
+                    `tool ${request.name} was skipped by a hook instead of mutating the workspace.`,
+                  );
+                  return;
+                }
                 continue;
               }
               if (hookRes?.params) {
@@ -3531,6 +3991,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 },
                 requestArguments: request.arguments,
               }));
+              if (workspaceMutationRecoveryCall) {
+                yield* emitWorkspaceMutationFailure(hookError);
+                return;
+              }
               continue;
             }
           } else if (runLegacyHooks?.beforeToolCall) {
@@ -3596,6 +4060,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
                   },
                   requestArguments: request.arguments,
                 }));
+                if (workspaceMutationRecoveryCall) {
+                  yield* emitWorkspaceMutationFailure(blockedError);
+                  return;
+                }
                 continue;
               }
               if (hookRes && typeof hookRes === "object") {
@@ -3652,6 +4120,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 },
                 requestArguments: request.arguments,
               }));
+              if (workspaceMutationRecoveryCall) {
+                yield* emitWorkspaceMutationFailure(hookError);
+                return;
+              }
               continue;
             }
           }
@@ -3725,6 +4197,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 conversationId: input.conversationId,
                 agentId: resolvedAgentId,
               });
+              if (workspaceMutationRecoveryCall) {
+                yield* emitWorkspaceMutationFailure(
+                  `tool ${request.name} reused a prior result instead of mutating the workspace.`,
+                );
+                return;
+              }
               continue;
             }
             const duplicateError = `工具调用已被拦截：检测到连续重复的相同调用（${request.name}）。请基于上一轮工具结果继续，而不是重复调用同一工具。`;
@@ -3796,6 +4274,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
               conversationId: input.conversationId,
               agentId: resolvedAgentId,
             });
+            if (workspaceMutationRecoveryCall) {
+              yield* emitWorkspaceMutationFailure(duplicateError);
+              return;
+            }
             continue;
           }
 
@@ -3858,6 +4340,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 conversationId: input.conversationId,
                 agentId: resolvedAgentId,
               });
+              if (workspaceMutationRecoveryCall) {
+                yield* emitWorkspaceMutationFailure(nearDuplicateError);
+                return;
+              }
               continue;
             }
 
@@ -3921,6 +4407,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 conversationId: input.conversationId,
                 agentId: resolvedAgentId,
               });
+              if (workspaceMutationRecoveryCall) {
+                yield* emitWorkspaceMutationFailure(thrashError);
+                return;
+              }
               continue;
             }
           }
@@ -4100,6 +4590,24 @@ export class ToolEnabledAgent implements BelldandyAgent {
           if (recentToolCallTraces.length > 6) {
             recentToolCallTraces.shift();
           }
+          const resultContract = this.opts.toolExecutor.getRegisteredToolContract?.(request.name);
+          const successfulWorkspaceMutation = result.success
+            && resultContract?.isReadOnly === false
+            && (resultContract.family === "workspace-write" || resultContract.family === "patch");
+          if (successfulWorkspaceMutation) {
+            workspaceMutationObserved = true;
+          }
+          if (workspaceMutationRecoveryCall) {
+            if (!successfulWorkspaceMutation) {
+              yield* emitWorkspaceMutationFailure(
+                result.success
+                  ? `tool ${request.name} did not satisfy the trusted workspace mutation contract.`
+                  : `tool ${request.name} failed: ${result.error || "unknown tool failure"}`,
+              );
+              return;
+            }
+            workspaceMutationFinalizationPending = true;
+          }
           if (isRunStopRequested(input.abortSignal)) {
             yield* emitRunAbort();
             return;
@@ -4186,6 +4694,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
     ok: false;
     error: string;
     interrupted?: AgentInterrupted;
+    emptyContent?: {
+      finishReason: string;
+      reasoningContentLength: number;
+    };
+
+    reasoning_content?: string;
     usage?: AnthropicUsage;
     rawUsage?: AgentUsage["providerRawUsage"];
   }> {
@@ -4423,9 +4937,15 @@ export class ToolEnabledAgent implements BelldandyAgent {
           && (!toolCalls || toolCalls.length === 0)
           && streamedResponse.reasoningContent?.trim()
         ) {
+          const reasoningContent = streamedResponse.reasoningContent.trim();
           return {
             ok: false,
-            error: `模型返回空内容。finish_reason=${streamedResponse.finishReason || "unknown"}，reasoning_content=present(${streamedResponse.reasoningContent.trim().length})。`,
+            error: `模型返回空内容。finish_reason=${streamedResponse.finishReason || "unknown"}，reasoning_content=present(${reasoningContent.length})。`,
+            emptyContent: {
+              finishReason: streamedResponse.finishReason || "unknown",
+              reasoningContentLength: reasoningContent.length,
+            },
+            reasoning_content: reasoningContent,
             usage,
             rawUsage: providerRawUsage,
           };
@@ -4588,10 +5108,15 @@ export class ToolEnabledAgent implements BelldandyAgent {
       } : undefined;
 
       if (!content.trim() && (!toolCalls || toolCalls.length === 0) && reasoning_content?.trim()) {
-        const reasoningLength = reasoning_content.trim().length;
+        const normalizedReasoningContent = reasoning_content.trim();
         return {
           ok: false,
-          error: `模型返回空内容。finish_reason=${finishReason || "unknown"}，reasoning_content=present(${reasoningLength})。`,
+          error: `模型返回空内容。finish_reason=${finishReason || "unknown"}，reasoning_content=present(${normalizedReasoningContent.length})。`,
+          emptyContent: {
+            finishReason: finishReason || "unknown",
+            reasoningContentLength: normalizedReasoningContent.length,
+          },
+          reasoning_content: normalizedReasoningContent,
           usage,
           rawUsage: providerRawUsage,
         };

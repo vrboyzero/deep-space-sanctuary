@@ -22,6 +22,12 @@ import { parseCodingRunCapabilityRequirements } from "../../../coding-run/capabi
 
 type TextWriter = (text: string) => void;
 const MAX_STDIN_PROMPT_BYTES = 1024 * 1024;
+const WORKSPACE_MUTATION_TOOL_NAMES = new Set([
+  "apply_patch",
+  "file_edit",
+  "file_write",
+  "file_delete",
+]);
 
 export type AgentRunCommandInput = {
   stateDir: string;
@@ -40,6 +46,8 @@ export type AgentRunCommandInput = {
 export type AgentRunCliOptionsInput = {
   timeout?: unknown;
   automationProfile?: unknown;
+  expectedResolvedModelId?: unknown;
+  requireWorkspaceMutation?: unknown;
   cwd?: unknown;
   toolAllow?: unknown;
   toolDeny?: unknown;
@@ -93,18 +101,48 @@ export function resolveAgentRunCliOptions(
   if (!cwd.ok) return cwd;
   const automationProfile = parseAutomationProfileOption(input.automationProfile);
   if (!automationProfile.ok) return automationProfile;
+  const expectedResolvedModelId = parseExpectedResolvedModelId(input.expectedResolvedModelId);
+  if (!expectedResolvedModelId.ok) return expectedResolvedModelId;
+  if (expectedResolvedModelId.value && automationProfile.value !== "bare") {
+    return { ok: false, message: "--expected-resolved-model-id requires --automation-profile bare." };
+  }
   const toolAllow = parseToolListOption(input.toolAllow, "--tool-allow");
   if (!toolAllow.ok) return toolAllow;
   const toolDeny = parseToolListOption(input.toolDeny, "--tool-deny");
   if (!toolDeny.ok) return toolDeny;
   const permissionMode = parsePermissionModeOption(input.permissionMode);
   if (!permissionMode.ok) return permissionMode;
+  const requireWorkspaceMutation = input.requireWorkspaceMutation === true;
+  if (requireWorkspaceMutation) {
+    if (automationProfile.value !== "bare") {
+      return { ok: false, message: "--require-workspace-mutation requires --automation-profile bare." };
+    }
+    if (!cwd.value) {
+      return { ok: false, message: "--require-workspace-mutation requires --cwd." };
+    }
+    if (permissionMode.value !== "acceptEdits") {
+      return { ok: false, message: "--require-workspace-mutation requires --permission-mode accept-edits." };
+    }
+    const deniedTools = new Set(toolDeny.value ?? []);
+    const hasAllowedMutationTool = (toolAllow.value ?? []).some(
+      (name) => WORKSPACE_MUTATION_TOOL_NAMES.has(name) && !deniedTools.has(name),
+    );
+    if (!hasAllowedMutationTool) {
+      return {
+        ok: false,
+        message: "--require-workspace-mutation requires an allowed workspace mutation tool that is not denied.",
+      };
+    }
+  }
   const toolArgumentPolicy = parseToolArgumentPolicyOption(input.toolArgumentPolicy);
   if (!toolArgumentPolicy.ok) return toolArgumentPolicy;
   const modelLoopBudgetPolicy = parseModelLoopBudgetPolicyOption(input.modelLoopBudgetPolicy);
   if (!modelLoopBudgetPolicy.ok) return modelLoopBudgetPolicy;
   const maxTurns = parsePositiveIntegerOption(input.maxTurns, "--max-turns");
   if (!maxTurns.ok) return maxTurns;
+  if (requireWorkspaceMutation && maxTurns.value !== undefined && maxTurns.value < 2) {
+    return { ok: false, message: "--require-workspace-mutation requires --max-turns of at least 2." };
+  }
   const maxTokens = parsePositiveIntegerOption(input.maxTokens, "--max-tokens");
   if (!maxTokens.ok) return maxTokens;
   const maxCostUsd = parsePositiveNumberOption(input.maxCostUsd, "--max-cost-usd");
@@ -114,6 +152,8 @@ export function resolveAgentRunCliOptions(
 
   const codingRun: CodingRunOptions = {
     ...(automationProfile.value ? { automationProfile: automationProfile.value } : {}),
+    ...(expectedResolvedModelId.value ? { expectedResolvedModelId: expectedResolvedModelId.value } : {}),
+    ...(requireWorkspaceMutation ? { workspaceMutationRequirement: "required" as const } : {}),
     ...(cwd.value ? { cwd: cwd.value } : {}),
     ...(toolAllow.value ? { toolAllow: toolAllow.value } : {}),
     ...(toolDeny.value ? { toolDeny: toolDeny.value } : {}),
@@ -529,6 +569,16 @@ function parseAutomationProfileOption(
   return { ok: false, message: "--automation-profile must be bare." };
 }
 
+function parseExpectedResolvedModelId(
+  value: unknown,
+): { ok: true; value?: string } | { ok: false; message: string } {
+  if (value === undefined) return { ok: true };
+  if (typeof value !== "string" || !value.trim() || value.trim().length > 256) {
+    return { ok: false, message: "--expected-resolved-model-id must be a non-empty model ID up to 256 characters." };
+  }
+  return { ok: true, value: value.trim() };
+}
+
 function parseToolArgumentPolicyOption(
   value: unknown,
 ): { ok: true; value?: CodingRunOptions["toolArgumentPolicy"] } | { ok: false; message: string } {
@@ -603,6 +653,8 @@ export default defineCommand({
     "conversation-id": { type: "string", description: "Continue this Conversation ID" },
     "agent-id": { type: "string", description: "Optional Agent ID" },
     "model-id": { type: "string", description: "Optional Model ID" },
+    "expected-resolved-model-id": { type: "string", description: "Fail unless Gateway resolves this exact model ID" },
+    "require-workspace-mutation": { type: "boolean", description: "Fail unless this run successfully mutates the workspace" },
     timeout: { type: "string", description: "Run timeout in milliseconds (minimum: 1000)" },
     cwd: { type: "string", description: "Filesystem scope for this local Gateway run" },
     "tool-allow": { type: "string", description: "Comma-separated tool allowlist" },
@@ -631,6 +683,8 @@ export default defineCommand({
     const runOptions = resolveAgentRunCliOptions({
       timeout: args.timeout,
       automationProfile: args["automation-profile"],
+      expectedResolvedModelId: args["expected-resolved-model-id"],
+      requireWorkspaceMutation: args["require-workspace-mutation"],
       cwd: args.cwd,
       toolAllow: args["tool-allow"],
       toolDeny: args["tool-deny"],

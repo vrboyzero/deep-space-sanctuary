@@ -301,6 +301,8 @@ export type ToolRuntimeLaunchSpec = {
   toolArgumentPolicy?: "bounded-navigation-v1";
   /** 单次运行显式启用的模型循环成本止损策略；不代表任务成功率提升。 */
   modelLoopBudgetPolicy?: "cost-containment-v1";
+  /** 本次运行成功前必须至少执行一次成功的 workspace mutation。 */
+  workspaceMutationRequirement?: "required";
   /** Coding runs may require an OS command sandbox; absence of a backend must fail closed. */
   commandSandbox?: "required";
   /** 以下预算仅用于收紧本次运行，调用方不得以此提升 Profile 上限。 */

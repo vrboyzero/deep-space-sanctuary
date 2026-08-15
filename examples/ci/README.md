@@ -33,6 +33,7 @@ node scripts/run-coding-agent-ci.mjs \
   --artifact-dir "$CI_TEMP_DIR/coding-agent-artifacts" \
   --prompt-file examples/ci/review-prompt.md \
   --output-schema examples/ci/review-output.schema.json \
+  --model-id "$BELLDANDY_MODEL_ID" \
   --mode plan
 ```
 
@@ -40,13 +41,13 @@ node scripts/run-coding-agent-ci.mjs \
 
 `--output-schema` 同时会被 Core 序列化为本次 Agent 的输出数据契约，要求模型只返回能通过该 JSON Schema 的原始 JSON；Schema 按数据处理，不作为可执行指令。终态仍由本地 AJV 严格复核，模型提示不会放宽类型、必填字段或常量约束。
 
-Headless 消费方应先读取首个 `run.started.payload.capabilities` 和 `automationProfile`，并确认实际 profile 为 `bare`。当前 `coding-run-capabilities/v1` 声明事件序号连续、全程恰好一个且位于末尾的终态、终态 usage completeness，以及默认无正文的 `coding-run-trace/v1`。完成、失败、取消和中断都会在终态 `payload.usage` 中明确给出 `complete` 或 `incomplete`；后者仍是合法协议结果，但表示 Provider usage 不足以支持可信费用核算，自动化不得把已见到的部分 token/cost 当作完整账单。`run.started.payload.traceContext` 提供本次已接受 prompt 与实际 Agent 的关联 ID；缺少持久消息 ID 的来源只使用明确标记的 run-local 关联值，不从正文生成 ID。
+Headless 消费方应先读取首个 `run.started.payload.capabilities` 和 `automationProfile`，并确认实际 profile 为 `bare`。提供 `--model-id` 时，包装器会同时声明同名 expected resolved model；Gateway 必须在 Agent 创建和 Provider 调用前证明最终解析出的 Provider model 完全一致，否则以 `model_route_mismatch` 失败关闭。匹配证据位于 `run.started.payload.modelRoute`，只包含 declared/resolved model ID 与 `primary|named|manual` 来源，不包含正文或凭据。当前 `coding-run-capabilities/v1` 声明事件序号连续、全程恰好一个且位于末尾的终态、终态 usage completeness，以及默认无正文的 `coding-run-trace/v1`。完成、失败、取消和中断都会在终态 `payload.usage` 中明确给出 `complete` 或 `incomplete`；后者仍是合法协议结果，但表示 Provider usage 不足以支持可信费用核算，自动化不得把已见到的部分 token/cost 当作完整账单。`run.started.payload.traceContext` 提供本次已接受 prompt 与实际 Agent 的关联 ID；缺少持久消息 ID 的来源只使用明确标记的 run-local 关联值，不从正文生成 ID。
 
 ## Artifact
 
 | 文件 | 用途 |
 | --- | --- |
-| `manifest.json` | `coding-agent-ci/v1` 运行方式、实际 automation profile、固定预算、退出码、binding、capability、终态 usage completeness、trace 摘要和门禁结果。`checks.usageComplete=false` 表示费用观测不完整；`checks.traceContract=false` 表示 trace 未形成可信闭环并使 CI 失败。 |
+| `manifest.json` | `coding-agent-ci/v1` 运行方式、实际 automation profile、resolved model route、固定预算、退出码、binding、capability、终态 usage completeness、trace 摘要和门禁结果。传入模型时 `checks.modelRoute=false` 表示声明模型与 Gateway 实际解析模型不一致或证据缺失；`checks.usageComplete=false` 表示费用观测不完整；`checks.traceContract=false` 表示 trace 未形成可信闭环并使 CI 失败。 |
 | `events.jsonl` | 通过运行时 guard 的 `AgentRunEvent v1` 规范化事件。 |
 | `trace.jsonl` | 由 Core `coding-run-trace/v1` owner 从最终事件流投影的连续元数据 trace；固定 `content.mode=none`，disconnect recovery 会按最终合并事件重算。 |
 | `result.json` | 通过 `review-output.schema.json` 的最终结构化输出；非完成终态时不存在。 |

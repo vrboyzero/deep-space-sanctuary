@@ -14,6 +14,7 @@ import type { ConversationStore } from "@belldandy/agent";
 import type { MemoryRuntimeBudgetGuard, MemoryRuntimeUsageAccounting } from "../memory-runtime-budget.js";
 import {
   CodingRunCapabilityError,
+  CodingRunModelRouteError,
   TaskCapabilityClosureError,
   MessageSendConfigurationError,
   handleConversationRunStopWithQueryRuntime,
@@ -238,6 +239,14 @@ export async function handleMessageSendMethod(
       },
     });
   } catch (error) {
+    if (error instanceof CodingRunModelRouteError) {
+      return {
+        type: "res",
+        id: req.id,
+        ok: false,
+        error: { code: "model_route_mismatch", message: error.message },
+      };
+    }
     if (error instanceof TaskCapabilityClosureError) {
       return {
         type: "res",

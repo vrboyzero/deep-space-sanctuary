@@ -225,6 +225,8 @@ describe("coding agent CI runner", () => {
       "--state-dir", path.resolve("C:/fixture/state"),
       "--conversation-id", "coding-ci-fixture-run",
       "--model-id", "deepseek-v4-flash",
+      "--expected-resolved-model-id", "deepseek-v4-flash",
+      "--require-workspace-mutation",
       "--permission-mode", "accept-edits",
       "--tool-allow", "file_read,list_files,apply_patch,file_write,file_delete",
       "--tool-deny", "run_command,spawn_subagent",
@@ -402,6 +404,11 @@ describe("coding agent CI runner", () => {
       event(1, "run.started", binding, {
         status: "running",
         automationProfile: "bare",
+        modelRoute: {
+          declaredModelId: "deepseek-v4-flash",
+          resolvedModelId: "deepseek-v4-flash",
+          source: "primary",
+        },
         capabilities: fixtureCapabilities(),
       }),
       event(2, "message.delta", binding, { delta: "ok" }),
@@ -414,13 +421,35 @@ describe("coding agent CI runner", () => {
     expect(validateAgentRunEvents(events, isFixtureEvent, {
       isCodingRunCapabilitiesV1: isFixtureCapabilities,
       isCodingRunUsageCompletenessV1: isFixtureUsageCompleteness,
-    }, "bare")).toEqual({
+    }, "bare", "deepseek-v4-flash")).toEqual({
       binding,
       terminalType: "run.completed",
       automationProfile: "bare",
+      modelRoute: {
+        declaredModelId: "deepseek-v4-flash",
+        resolvedModelId: "deepseek-v4-flash",
+        source: "primary",
+      },
       capabilities: fixtureCapabilities(),
       usage: fixtureCompleteUsage(),
     });
+    expect(() => validateAgentRunEvents([
+      {
+        ...events[0],
+        payload: {
+          ...events[0].payload,
+          modelRoute: {
+            declaredModelId: "deepseek-v4-flash",
+            resolvedModelId: "deepseek-v4-pro",
+            source: "primary",
+          },
+        },
+      },
+      ...events.slice(1),
+    ], isFixtureEvent, {
+      isCodingRunCapabilitiesV1: isFixtureCapabilities,
+      isCodingRunUsageCompletenessV1: isFixtureUsageCompleteness,
+    }, "bare", "deepseek-v4-flash")).toThrow(/resolved model/i);
     expect(() => validateAgentRunEvents([
       events[0],
       event(3, "run.completed", binding, { usage: fixtureCompleteUsage() }),

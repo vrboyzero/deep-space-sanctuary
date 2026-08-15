@@ -160,6 +160,35 @@ describe("tool result prompt deltas", () => {
     expect(deltas[0]?.text).toContain("select");
   });
 
+  it("directs an invalid apply_patch retry to a real hunk instead of another unchanged read", () => {
+    const delta = buildToolFailureRecoveryPromptDelta({
+      toolCallId: "call-empty-patch",
+      toolName: "apply_patch",
+      error: "Invalid patch hunk: Update file hunk for path 'source.ts' is empty",
+      failureKind: "input_error",
+      metadata: {
+        repairAction: "apply_patch_input_invalid",
+        argumentValidation: {
+          blocked: true,
+          correctionHints: [
+            "Retry with at least one non-empty change hunk containing context and actual + or - lines.",
+          ],
+        },
+      },
+    });
+
+    expect(delta).toBeDefined();
+    expect(delta?.metadata).toMatchObject({
+      toolName: "apply_patch",
+      failureClass: "input_error",
+      repairAction: "apply_patch_input_invalid",
+    });
+    expect(delta?.text).toContain("The patch parser rejected the request before any workspace mutation");
+    expect(delta?.text).toContain("correct the patch syntax directly");
+    expect(delta?.text).toContain("non-empty change hunk");
+    expect(delta?.text).not.toContain("A read-only inspection step is usually safer");
+  });
+
   it("builds a post-verification delta for write-like tools", () => {
     const delta = buildToolPostVerificationPromptDelta({
       toolCallId: "call-2",

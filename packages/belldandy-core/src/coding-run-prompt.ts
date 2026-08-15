@@ -41,6 +41,19 @@ const CODING_RUN_SECTIONS: SystemPromptSection[] = [
   },
 ];
 
+const WORKSPACE_MUTATION_SECTION: SystemPromptSection = {
+  id: "coding-run-workspace-mutation",
+  label: "coding-run-workspace-mutation",
+  source: "core",
+  priority: 2,
+  text: [
+    "## Required Workspace Mutation",
+    "",
+    "This run succeeds only after a successful workspace mutation tool call.",
+    "Do not report completion based only on reads or analysis. If no allowed mutation can be completed within the launch limits, the run must fail closed.",
+  ].join("\n"),
+};
+
 export function buildCodingRunPromptOverride(
   codingRun: MessageSendParams["codingRun"],
 ): AgentRunPromptOverride | undefined {
@@ -49,6 +62,9 @@ export function buildCodingRunPromptOverride(
   }
 
   const sections = CODING_RUN_SECTIONS.map((section) => ({ ...section }));
+  if (codingRun.workspaceMutationRequirement === "required") {
+    sections.push({ ...WORKSPACE_MUTATION_SECTION });
+  }
   if (codingRun.automationProfile === "bare") {
     sections[0] = {
       ...sections[0],

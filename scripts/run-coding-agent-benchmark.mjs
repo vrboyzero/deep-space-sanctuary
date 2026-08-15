@@ -980,7 +980,7 @@ async function executeCodingCiProcess(input) {
       ...(input.gatewayWorkspace ? ["--gateway-workspace", input.gatewayWorkspace] : []),
       "--state-dir", input.stateDir,
       "--conversation-id", input.conversationId,
-      "--model-id", input.modelId,
+      ...(input.modelId ? ["--model-id", input.modelId] : []),
       "--artifact-dir", input.artifactDir,
       "--prompt-file", input.promptPath,
       "--output-schema", input.outputSchemaPath,
@@ -1167,7 +1167,11 @@ async function executeProcessRestartCodingCiProcess(input) {
     bddEntry: input.bddEntry,
     sourceRoot: input.sourceRoot,
     artifactPath: path.join(input.artifactDir, "restart-injection.json"),
-    executeCodingCi: executeCodingCiProcess,
+    executeCodingCi: async (codingCiInput) => await executeCodingCiProcess({
+      ...codingCiInput,
+      // The restart fixture uses a local non-Provider Agent and reports usage=not_reached.
+      modelId: undefined,
+    }),
   });
 }
 

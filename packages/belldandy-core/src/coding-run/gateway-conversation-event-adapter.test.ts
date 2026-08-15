@@ -13,7 +13,15 @@ describe("Gateway Conversation coding-run event adapter", () => {
 
     adapter.start(
       { agentRunId: "run-bare", conversationId: "conversation-bare" },
-      { promptId: "message:1700000000000", agentId: "coding-agent-bare" },
+      {
+        promptId: "message:1700000000000",
+        agentId: "coding-agent-bare",
+        modelRoute: {
+          declaredModelId: "deepseek-v4-flash",
+          resolvedModelId: "deepseek-v4-flash",
+          source: "primary",
+        },
+      },
     );
 
     expect(events[0]).toMatchObject({
@@ -23,6 +31,11 @@ describe("Gateway Conversation coding-run event adapter", () => {
         traceContext: {
           promptId: "message:1700000000000",
           agentId: "coding-agent-bare",
+        },
+        modelRoute: {
+          declaredModelId: "deepseek-v4-flash",
+          resolvedModelId: "deepseek-v4-flash",
+          source: "primary",
         },
         capabilities: CODING_RUN_CAPABILITIES,
       },

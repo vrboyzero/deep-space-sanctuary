@@ -7,11 +7,20 @@ import type {
   ConversationRunBinding,
 } from "./coding-run/conversation-follow-up-queue.js";
 import { ConversationSteerMailbox } from "./coding-run/conversation-steer-mailbox.js";
-import type { AgentPromptDelta, AgentRegistry, BelldandyAgent, CompressionResult, ConversationStore } from "@belldandy/agent";
+import {
+  resolveModelConfig,
+  type AgentPromptDelta,
+  type AgentRegistry,
+  type BelldandyAgent,
+  type CompressionResult,
+  type ConversationStore,
+  type ModelProfile,
+} from "@belldandy/agent";
 import type { DurableExtractionDigestSnapshot, DurableExtractionRecord, DurableExtractionRuntime } from "@belldandy/memory";
 import {
   uploadTokenUsage,
   type ChatMessageMeta,
+  type CodingRunModelRouteEvidence,
   type ConversationRunStopParams,
   type GatewayEventFrame,
   type GatewayResFrame,
@@ -95,22 +104,8 @@ export type MessageSendQueryRuntimeContext = {
       conversationId: string;
       runId?: string;
     }) => Promise<ConversationPromptSnapshotArtifact | undefined>;
-    primaryModelConfig?: {
-      baseUrl: string;
-      apiKey: string;
-      model: string;
-      protocol?: string;
-      wireApi?: string;
-    };
-    modelFallbacks?: Array<{
-      id?: string;
-      displayName?: string;
-      baseUrl: string;
-      apiKey: string;
-      model: string;
-      protocol?: string;
-      wireApi?: string;
-    }>;
+    primaryModelConfig?: Parameters<typeof resolveModelConfig>[1];
+    modelFallbacks?: ModelProfile[];
     deepSeekRoutePolicyEnabled?: boolean;
     /** Commander 模式（"on" | "off" | "auto"），用于 chat commander 显式触发判定 */
     commanderMode?: "on" | "off" | "auto";
@@ -247,6 +242,12 @@ export async function handleMessageSendWithQueryRuntime(
       routeDecision: modelRouteDecision,
       primaryModelConfig: runtimeDeps.primaryModelConfig,
     });
+    const modelRouteEvidence = assertExpectedResolvedModel({
+      codingRun: request.params.codingRun,
+      effectiveModelId,
+      primaryModelConfig: runtimeDeps.primaryModelConfig,
+      modelFallbacks: runtimeDeps.modelFallbacks,
+    });
     const createOpts = effectiveModelId ? { modelOverride: effectiveModelId } : undefined;
 
     queryRuntime.mark("request_validated", {
@@ -255,6 +256,7 @@ export async function handleMessageSendWithQueryRuntime(
         requestedAgentId: requestedAgentId ?? "default",
         requestedModelId: requestedModelId ?? "default",
         effectiveModelId: effectiveModelId ?? "default",
+        resolvedProviderModelId: modelRouteEvidence?.resolvedModelId,
         deepseekRouteMode: modelRouteDecision.routeMode,
         deepseekRouteReason: modelRouteDecision.reason,
         deepseekRouteDegraded: modelRouteDecision.degraded,
@@ -591,6 +593,7 @@ export async function handleMessageSendWithQueryRuntime(
         conversationId,
         runId,
         messageMeta: io.toChatMessageMeta(userMessage.timestamp, true),
+        ...(modelRouteEvidence ? { modelRoute: modelRouteEvidence } : {}),
       },
     };
     } finally {
@@ -686,6 +689,33 @@ function resolveEffectiveMessageSendModelId(input: {
   return input.primaryModelConfig ? "primary" : undefined;
 }
 
+function assertExpectedResolvedModel(input: {
+  codingRun: MessageSendParams["codingRun"];
+  effectiveModelId?: string;
+  primaryModelConfig?: MessageSendQueryRuntimeContext["runtime"]["primaryModelConfig"];
+  modelFallbacks?: ModelProfile[];
+}): CodingRunModelRouteEvidence | undefined {
+  const declaredModelId = input.codingRun?.expectedResolvedModelId?.trim();
+  if (!declaredModelId) return undefined;
+  if (!input.effectiveModelId || !input.primaryModelConfig) {
+    throw new CodingRunModelRouteError();
+  }
+  const resolved = resolveModelConfig(
+    input.effectiveModelId,
+    input.primaryModelConfig,
+    input.modelFallbacks ?? [],
+  );
+  const resolvedModelId = resolved.model.trim();
+  if (!resolvedModelId || resolvedModelId !== declaredModelId) {
+    throw new CodingRunModelRouteError();
+  }
+  return {
+    declaredModelId,
+    resolvedModelId,
+    source: resolved.source,
+  };
+}
+
 function createAgent(input: {
   agentFactory: () => BelldandyAgent;
   agentRegistry?: AgentRegistry;
@@ -712,6 +742,13 @@ export class MessageSendConfigurationError extends Error {
   constructor() {
     super("API Key or configuration missing.");
     this.name = "MessageSendConfigurationError";
+  }
+}
+
+export class CodingRunModelRouteError extends Error {
+  constructor() {
+    super("Coding run declared model does not match the Gateway resolved model.");
+    this.name = "CodingRunModelRouteError";
   }
 }
 
@@ -986,11 +1023,20 @@ function assertCodingRunCapabilities(
   agent: BelldandyAgent,
   codingRun: MessageSendParams["codingRun"],
 ): void {
-  if (codingRun?.maxCostUsd === undefined) return;
-  if (agent.getCodingRunCapabilities?.().maxCostUsd === true) return;
-  throw new CodingRunCapabilityError(
-    "This Agent cannot enforce maxCostUsd because valid model usage pricing is unavailable.",
-  );
+  const capabilities = agent.getCodingRunCapabilities?.();
+  if (codingRun?.maxCostUsd !== undefined && capabilities?.maxCostUsd !== true) {
+    throw new CodingRunCapabilityError(
+      "This Agent cannot enforce maxCostUsd because valid model usage pricing is unavailable.",
+    );
+  }
+  if (
+    codingRun?.workspaceMutationRequirement === "required"
+    && capabilities?.workspaceMutationRequirement !== true
+  ) {
+    throw new CodingRunCapabilityError(
+      "This Agent cannot enforce the required workspace mutation contract.",
+    );
+  }
 }
 
 async function assertTaskCapabilityClosure(input: {
@@ -1048,6 +1094,9 @@ function buildCodingRunLaunchSpec(
     ...(codingRun.permissionMode ? { permissionMode: codingRun.permissionMode } : {}),
     ...(codingRun.toolArgumentPolicy ? { toolArgumentPolicy: codingRun.toolArgumentPolicy } : {}),
     ...(codingRun.modelLoopBudgetPolicy ? { modelLoopBudgetPolicy: codingRun.modelLoopBudgetPolicy } : {}),
+    ...(codingRun.workspaceMutationRequirement
+      ? { workspaceMutationRequirement: codingRun.workspaceMutationRequirement }
+      : {}),
     ...(codingRun.maxWallTimeMs ? { maxRunWallTimeMs: codingRun.maxWallTimeMs } : {}),
     ...(codingRun.maxTurns ? { toolLoopIterationBudget: codingRun.maxTurns } : {}),
     ...(codingRun.maxTokens ? { maxTotalTokens: codingRun.maxTokens } : {}),

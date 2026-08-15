@@ -165,6 +165,9 @@ export function buildToolFailureRecoveryPromptDelta(input: {
   const resolvedContract = contract ?? getToolContractV2(input.toolName);
   const failureClass = input.failureKind ?? inferToolFailureKindFromError(input.error);
   const toolRepairMetadata = readToolRepairMetadata(input.metadata);
+  const failureGuidance = toolRepairMetadata?.repairAction === "apply_patch_input_invalid"
+    ? "If the target content is already known and unchanged, correct the patch syntax directly and retry with a materially changed non-empty hunk. Do not spend another read call solely to recover this parser error."
+    : FAILURE_CLASS_GUIDANCE[failureClass];
   const lines = [
     "## Tool Failure Recovery",
     "",
@@ -216,7 +219,7 @@ export function buildToolFailureRecoveryPromptDelta(input: {
 
   lines.push(
     "",
-    FAILURE_CLASS_GUIDANCE[failureClass],
+    failureGuidance,
     "Do not repeat the identical tool call until you can explain what changed in the arguments, permissions, or environment.",
   );
 
@@ -267,6 +270,12 @@ function readToolRepairMetadata(metadata: unknown): {
         repairAction,
         correctionHints: normalizedCorrectionHints,
         summary: "The tool runtime rejected the current arguments before execution.",
+      };
+    case "apply_patch_input_invalid":
+      return {
+        repairAction,
+        correctionHints: normalizedCorrectionHints,
+        summary: "The patch parser rejected the request before any workspace mutation.",
       };
     case "duplicate_tool_call_suppressed":
       return {

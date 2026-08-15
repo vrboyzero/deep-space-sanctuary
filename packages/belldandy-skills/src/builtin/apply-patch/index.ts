@@ -202,6 +202,20 @@ async function commitWorkspaceMutation(
     });
 }
 
+function buildApplyPatchInputRepairMetadata(): NonNullable<ToolCallResult["metadata"]> {
+    return {
+        repairAction: "apply_patch_input_invalid",
+        argumentValidation: {
+            blocked: true,
+            correctionHints: [
+                "Retry with at least one non-empty change hunk containing context and actual + or - lines.",
+                "Use the real workspace-relative path; do not use /dev/null as an Update File target.",
+                "If the target content is already known and unchanged, correct the patch syntax directly instead of reading it again.",
+            ],
+        },
+    };
+}
+
 // ============ apply_patch Tool ============
 
 export const applyPatchTool: Tool = withToolContract({
@@ -226,13 +240,18 @@ export const applyPatchTool: Tool = withToolContract({
         const id = crypto.randomUUID();
         const name = "apply_patch";
 
-        const makeError = (error: string, failureKind?: ToolCallResult["failureKind"]): ToolCallResult => (
+        const makeError = (
+            error: string,
+            failureKind?: ToolCallResult["failureKind"],
+            metadata?: ToolCallResult["metadata"],
+        ): ToolCallResult => (
             buildFailureToolCallResult({
                 id,
                 name,
                 start,
                 error,
                 ...(failureKind ? { failureKind } : {}),
+                ...(metadata ? { metadata } : {}),
             })
         );
 
@@ -245,9 +264,22 @@ export const applyPatchTool: Tool = withToolContract({
         try {
             throwIfAborted(context.abortSignal);
             // 1. 解析 Patch DSL
-            const parsed = parsePatchText(inputArg);
+            let parsed: ReturnType<typeof parsePatchText>;
+            try {
+                parsed = parsePatchText(inputArg);
+            } catch (err) {
+                return makeError(
+                    err instanceof Error ? err.message : String(err),
+                    "input_error",
+                    buildApplyPatchInputRepairMetadata(),
+                );
+            }
             if (parsed.hunks.length === 0) {
-                return makeError("未找到任何修改（No Hunks found）", "input_error");
+                return makeError(
+                    "未找到任何修改（No Hunks found）",
+                    "input_error",
+                    buildApplyPatchInputRepairMetadata(),
+                );
             }
 
             const summary = {

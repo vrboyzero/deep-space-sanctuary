@@ -21,7 +21,7 @@ SS 已从上一轮 `7.4/10` 推进到安全、恢复、编辑、Headless、本�
 | SS 内部硬 Gate | **9.1/10**（原始加权 `9.065`） | corrected v2、类别下限、核心类别、测试、patch、回归、双平台和工程 Gate 均通过；只对既定 benchmark 与环境成立 |
 | 新一轮横向评分 | **9.0/10**（原始加权 `8.955`） | 对真实仓泛化、语义导航、验证控制面、并行和生态成熟度保留折扣；竞品未参加同环境 benchmark |
 
-横向评分不是模型能力排名。新 identity `6801ed7ba78c26bdc6b14e31389caf402de627d8` 的单一 HEAD 原生 aggregate 已完成 `144/144`，B 层由旧基线 `0/48` 提升到 `12/48`，C 层保持 `23/24`；但实际路由为 Windows=`deepseek-v4-pro`、WSL2=`deepseek-v4-flash`，只能作为混合模型复核证据，不能宣称纯 flash 双平台 uplift。当前主要差距转为剩余 37 项真实任务失败、实际模型与声明模型的一致性 Gate、Provider 账单核对，以及两个连续 P2-C 候选证据。两个新增 Settings 字段的可见交互/console 手测已完成，P2-B 本地严格零发现依赖 Gate 与远端专项 Gate 已通过；P1-B 验证 DAG、P1-C TaskProjection/Capability Closure 与 P2-A Supervisor fault matrix/双平台长稳/零残留 Gate 均已完成。前部旧切片中的“尚未闭合”只描述当时上下文，不代表当前状态，当前状态以第 11、12 节为准。
+横向评分不是模型能力排名。新 identity `6801ed7ba78c26bdc6b14e31389caf402de627d8` 的单一 HEAD 原生 aggregate 已完成 `144/144`，B 层由旧基线 `0/48` 提升到 `12/48`，C 层保持 `23/24`；但实际路由为 Windows=`deepseek-v4-pro`、WSL2=`deepseek-v4-flash`，只能作为混合模型复核证据，不能宣称纯 flash 双平台 uplift。声明模型与 Gateway resolved effective model 的前置失败关闭 Gate 已闭合；37 项真实失败已完成可复算离线聚类，最大族 `24` 项 `finish_reason=length + reasoning present + visible content empty` 已具备一次有界、工具禁用且受原预算约束的生产恢复机制，并完成离线回归，尚未用真实矩阵证明这 24 项转为通过。`completed_without_required_mutation=7` 与 `patch_acceptance_failed=4` 已完成只读拆分，其中 2 项 Go 空 hunk 失败已获得结构化 Tool 修复提示，7 项 mutation intent 已获得可信入口、原预算内一次受控编辑机会和无 mutation 失败关闭合同。最后两个单项失败族也已闭合归因：`token_budget_exhausted=1` 是正确 Gate，按 `record_only` 保留；`output_schema_invalid=1` 暴露的完整 transcript repair 剩余预算缺口已通过只裁剪不可信 draft 的一次 bounded repair 修复。Provider 账单外部核对、上述生产机制的真实 uplift、纯 flash 双平台复核和两个连续 P2-C 候选证据仍缺。两个新增 Settings 字段的可见交互/console 手测已完成，P2-B 本地严格零发现依赖 Gate 与远端专项 Gate 已通过；P1-B 验证 DAG、P1-C TaskProjection/Capability Closure 与 P2-A Supervisor fault matrix/双平台长稳/零残留 Gate 均已完成。前部旧切片中的“尚未闭合”只描述当时上下文，不代表当前状态，当前状态以第 11、12 节为准。
 
 ### 1.2 下一轮五个闭环
 
@@ -165,9 +165,9 @@ Source / Workspace Revision
 
 **方案重点**：冻结 24 项任务、Windows/WSL2 各 3 次共 144 项矩阵；固定仓 commit、snapshot receipt、source/harness identity、费用/usage/trace/敏感/残留 Gate；B 层使用 Express、Preact、vscode-languageserver-node、spf13/cobra，C 层覆盖 browser、parallel-read、parallel-write、restart-delivery；所有外部输入在创建运行目录前失败关闭。
 
-**已完成/验证要点**：P0.1-P0.30 合同、fixture、runner、Linux preparation、system harness、cost-containment-v1、三代 navigation shadow 与原生 aggregate 重启边界审计均已形成可复算 evidence。当前 identity `6801ed7ba78c26bdc6b14e31389caf402de627d8` 已取得 Windows/WSL2 各 `72` 项、合计 `144/144` 的 completed aggregate，source/harness content SHA-256 均为 `a20e96e26301b1cd6bed320171da449ece9eb32847791d7b367a479077167a50`；A=`72/72`、B=`12/48`、C=`23/24`，infrastructure error=`0`，usage=`132 provider_reported + 6 unavailable + 6 not_reached`。实际模型为 Windows pro/WSL2 flash，报告中的 `51 pro + 93 flash` 仅是 runner 声明元数据，不能替代 Gateway resolved-route 证据。`cost-containment-v1` 继续为 `hold_explicit_opt_in`，candidate v1-v3 均 `do_not_promote`，navigation candidate line 保持停止。
+**已完成/验证要点**：P0.1-P0.30 合同、fixture、runner、Linux preparation、system harness、cost-containment-v1、三代 navigation shadow 与原生 aggregate 重启边界审计均已形成可复算 evidence。当前 identity `6801ed7ba78c26bdc6b14e31389caf402de627d8` 已取得 Windows/WSL2 各 `72` 项、合计 `144/144` 的 completed aggregate，source/harness content SHA-256 均为 `a20e96e26301b1cd6bed320171da449ece9eb32847791d7b367a479077167a50`；A=`72/72`、B=`12/48`、C=`23/24`，infrastructure error=`0`，usage=`132 provider_reported + 6 unavailable + 6 not_reached`。实际模型为 Windows pro/WSL2 flash，报告中的 `51 pro + 93 flash` 仅是 runner 声明元数据，不能替代 Gateway resolved-route 证据。37 项失败已按 `24/7/4/1/1` 五族稳定分类且 `unknown=0`；resolved effective model 前置 Gate、最大失败族的一次有界恢复、Go 空 hunk 结构化修复和 required workspace mutation 失败关闭均已通过离线验证，但未重跑真实矩阵。`cost-containment-v1` 继续为 `hold_explicit_opt_in`，candidate v1-v3 均 `do_not_promote`，navigation candidate line 保持停止。
 
-**关闭边界**：单一 HEAD 原生 completed aggregate、固定真实仓、usage/identity/敏感/残留审计均已闭合，本轮 P0 复核按“混合模型结果完成但不晋级”收口。37 项 product workflow failure 与两份已恢复的 WSL2 基础设施失败报告均原样保留，不从分母或证据链剔除；纯 flash 双平台复核、Provider 实际账单核对和 effective-model 前置 Gate 尚未闭合。后续能力改进与模型一致性 Gate 拆为独立任务，禁止 candidate v4、竞品代跑、公开排行榜和无新证据的付费扩样。
+**关闭边界**：单一 HEAD 原生 completed aggregate、固定真实仓、usage/identity/敏感/残留审计和 effective-model 前置 Gate 均已闭合，本轮 P0 复核按“混合模型结果完成但不晋级”收口。37 项 product workflow failure 与两份已恢复的 WSL2 基础设施失败报告均原样保留，不从分母或证据链剔除；最大失败族的生产恢复只完成离线实现验证，不改变冻结 aggregate。纯 flash 双平台复核与 Provider 实际账单核对尚未闭合；后续能力改进继续作为独立任务，禁止 candidate v4、竞品代跑、公开排行榜和无新证据的付费扩样。
 
 **风险/工作量**：中高风险，主要是费用越界、identity 漂移、无效 Provider 结果进入分母和 artifact 覆盖；估算 `14-22 人日`，不含 Provider 费用和观察窗口。
 
@@ -2147,6 +2147,252 @@ Source / Workspace Revision
 - **为什么先做它**：模型一致性缺口已经造成 pro 误调用和 report 元数据漂移；在该 Gate 与账单边界未闭合前继续付费样本，会重复成本风险并产生不可比较证据。
 - **当前还缺的关键闭环**：纯 `deepseek-v4-flash` 双平台证据、Provider 实际账单核对、effective-model 前置 Gate，以及剩余 B=`36`、C=`1` 的产品能力改进。现有 `40 RMB` 授权仍是硬上限且未撤销，但余额不构成自动调用理由；P2-C 保持未启动。
 
+#### P0 后续 Gate 实现结论：声明模型与 Gateway resolved effective model 一致性（2026-08-15）
+
+##### 已完成内容
+
+1. **`index.ts`、`run.ts` 与 Gateway Conversation Adapter 扩展**：
+   - `CodingRunOptions` 新增仅限 `bare` automation profile 的 `expectedResolvedModelId`，CLI 增加同名参数并执行非空、长度与 profile 校验。
+   - Gateway 接受 run 后必须返回 declared/resolved/source 三项无正文 `modelRoute`；Headless 在生成首个 `run.started` 前再次核对声明值和解析值。
+   - `run.started.payload.modelRoute` 保持 additive，不改变未声明 expected model 的普通 Conversation 和既有 v1 事件消费者行为。
+
+2. **`query-runtime-message-send.ts` 与 Gateway wiring 接入**：
+   - 在 lifecycle lease、Agent 创建、用户消息持久化和 Provider 调用前复用生产 `resolveModelConfig()`，比较最终 Provider model 与 runner 声明模型。
+   - 不一致、缺少模型配置或无法形成有效 resolved model 时返回 `model_route_mismatch`；失败路径不创建 Agent、不写 Conversation、不进入 Provider。
+   - primary、named fallback 与 manual override 共用同一 resolver；匹配证据随 `message.send` 响应进入 Headless 事件，不保存正文或凭据。
+
+3. **`run-coding-agent-ci.mjs` 与 benchmark runner 修改**：
+   - Coding CI 在传入 `model-id` 时同步提交 expected resolved model，并对首事件与 manifest 做精确二次校验；manifest/status 增加 additive `modelRoute` Gate。
+   - benchmark 的 Provider-reaching run 自动继承该 Gate；本地 process-restart fixture 明确不声明模型，继续保持 `usage=not_reached`，不伪造 resolved-route 证据。
+   - 修复 benchmark child 参数装配把缺失 `modelId` 误传成字符串 `undefined` 的回归，并为真实本地 Gateway fixture 配置与声明一致的模型。
+
+4. **效果**：
+   - runner 只修改报告声明而 Gateway 仍回退到其他 primary model 时，会在任何模型调用和 workspace mutation 前失败关闭。
+   - 成功 run 的事件与 manifest 可直接证明声明模型等于 Gateway 实际 Provider model，不能再用 route ref 或 runner 元数据替代 resolved evidence。
+   - 未传模型的非 Provider process-restart fixture 和普通非 Headless 请求保持兼容，不被强制制造模型证据。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`@belldandy/protocol` 与 `@belldandy/core` build 均通过。
+- 8 个目标测试文件共 `136/136` 通过：Core/CLI/Coding CI `87/87`、benchmark `36/36`、recovery/contract `13/13`；另行隔离复跑 v1/v3 process-restart 均通过且受管 Gateway 进程归零。
+- `corepack pnpm verify:coding-ci`、`corepack pnpm verify:coding-benchmark` 与 `git diff --check` 通过；本环节执行 `0` 模型、`0` Provider、`0` 凭据读取、`0` 费用和 `0` 远端写入。
+- 回归行为：给定 runner 声明 `deepseek-v4-flash` 而 Gateway 最终解析为其他模型，当提交 coding run 时，Gateway 返回 `model_route_mismatch`，Agent factory 保持未调用且不产生模型/工具副作用。
+
+##### 后续计划
+
+- **下一步准备做什么**：不等待外部账单权限，先对现有 mixed-model aggregate 的剩余 37 项 product workflow failure 做只读离线聚类，形成可复算的失败族、优先级和最小能力改进候选；Provider 账单继续由用户在外部控制台核对。
+- **为什么先做它**：effective-model Gate 已消除继续采样前的实现风险，而失败 artifact 已完整存在；离线聚类不产生费用，可先确定下一项产品改进是否值得实施。
+- **当前还缺的关键闭环**：Provider 实际 pro 账单、纯 `deepseek-v4-flash` 双平台复核、37 项失败的稳定分类与对应能力改进，以及满足 P2-C 的两个连续候选版本；未经新的付费执行确认，不自动重跑矩阵或调用 Provider。
+
+#### P0 失败分析实现结论：`6801ed7` product workflow 离线聚类（2026-08-15）
+
+##### 已完成内容
+
+1. **`run-coding-agent-benchmark-failure-analysis.mjs` 新建**：
+   - 只接受 completed、source/harness identity 对齐且基础设施失败为零的 v3 aggregate，并逐项绑定 `manifest.json`、`events.jsonl` 与 `changes.patch`。
+   - 对 artifact containment、常规文件、大小、manifest 一致性、唯一终态、Tool 生命周期和可用终态变更计数执行失败关闭校验；未知签名固定输出 `incomplete`。
+   - `--verify` 从原 aggregate 重建整份报告并深度比对；输入根和输出根禁止相互包含，输出目录禁止覆盖。
+
+2. **`failure-analysis.schema.json`、测试与仓库合同接入**：
+   - 新增封闭 `coding-agent-benchmark-failure-analysis/v1` Schema，只允许受控 family、计数、布尔、平台、终态 reason code 和 SHA-256。
+   - 新增 `6` 项测试，覆盖五类归因、未知签名、aggregate/manifest 漂移、重复证据、失败 edit、一次性输出、路径重叠与重建验证。
+   - `package.json`、`verify-coding-agent-benchmark-contract.mjs`、benchmark README 和 `project-map.md` 已同步接入命令、Schema 与 owner 边界。
+
+3. **`artifacts/p0-native-6801ed7/failure-analysis-v1/failure-analysis.json` 生成**：
+   - canonical 报告 SHA-256=`2f36737f4b2aa4398070216e00be57b799215368a655415d70ecf01a5498045f`，覆盖 aggregate 的 `37/37` product workflow failure，`unknown=0`。
+   - 固定分类为 `model_empty_content_at_length=24`、`completed_without_required_mutation=7`、`patch_acceptance_failed=4`、`token_budget_exhausted=1`、`output_schema_invalid=1`；失败 edit call=`3`。
+   - 早期试运行目录 `artifacts/p0-native-6801ed7/failure-analysis/` 在终态变更证据兼容修复前生成，不作为 canonical evidence，也未被覆盖或用于当前结论。
+
+4. **效果**：
+   - 最大失败族已从笼统的 37 项产品失败收敛为跨 Windows/WSL2、覆盖 6 个任务的 24 项“Provider 因长度停止、存在 reasoning、无可见正文”。
+   - 报告不复制模型正文、reasoning、Tool output 或 runner 模型声明；真实报告中 `reasoning_content`、`deepseek-v4-flash` 与测试 secret marker 均为零命中。
+   - 下一能力改进可聚焦模型循环终态恢复，不需要重跑付费矩阵或扩大到 candidate v4/P2-C。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节无 TypeScript 生产修改；同工作树前一 effective-model Gate 的 Protocol/Core build 已通过。
+- `run-coding-agent-benchmark-failure-analysis.test.mjs` 共 `6/6` 通过；`corepack pnpm verify:coding-benchmark` 与 `git diff --check` 通过。
+- canonical 报告 `--verify` 返回 `verified 37 failure(s)`，真实报告通过封闭 Schema 校验；关键计数为 `37/37`、`unknown=0`、最大族=`24`。
+- 本环节执行 `0` Gateway、`0` 模型、`0` Provider、`0` 网络、`0` 凭据读取、`0` 费用和 `0` 远端写入，冻结 aggregate 未修改。
+
+##### 后续计划
+
+- **下一步准备做什么**：定位生产模型循环对 `finish_reason=length + reasoning present + visible content empty` 的处理路径，先用失败测试定义一次有界恢复，再实现最小恢复机制。
+- **为什么先做它**：该签名占 `24/37`，跨双平台和 6 个任务，是当前覆盖面最大的真实失败族；先闭合它的潜在收益高于继续处理零散单项失败。
+- **当前还缺的关键闭环**：恢复必须证明只触发一次、不提高原 `24000` 总 token 上限、不重放工具副作用，并在仍无正文时保持原有失败关闭；离线测试不能替代后续经授权的纯 flash 双平台 uplift 证据。
+
+#### P0 能力改进实现结论：reasoning-only length stop 一次有界恢复（2026-08-15）
+
+##### 已完成内容
+
+1. **`tool-agent.ts` 修改**：
+   - OpenAI-compatible 响应仅在 `finish_reason=length`、存在 reasoning 且无可见正文和 Tool call 时，进入一次最终总结恢复；`stop` 等其他空内容终态保持原显式失败。
+   - 首轮 Provider usage 先进入现有 `ReActRunBudgetTracker`，恢复请求复用 `buildReactFinalizationRequest()`，输出上限不超过 `1024`，并继续受原 turn、wall-time、总 token、费用和模型调用 Gate 约束。
+   - 恢复轮禁用 Tool、steering、deferred Tool 和 streaming；二次空正文或恢复轮返回 Tool call 时立即失败关闭，不执行 Tool，也不发起第三轮模型调用。
+
+2. **`tool-agent-empty-content-recovery.test.ts` 新建、`tool-agent.streaming.test.ts` 扩展**：
+   - 新增 buffered 回归，覆盖成功恢复、二次空正文、恢复轮非法 Tool call 和首轮总 token 超限四条路径。
+   - 新增 streaming 首轮到 buffered 恢复的组合验证，断言两轮 usage 累计、恢复请求无 Tool、最终正文正常交付且私有 reasoning 不泄漏。
+
+3. **效果**：
+   - 对离线聚类中占 `24/37` 的最大失败签名提供一次最小恢复机会，不放宽 benchmark 成功条件，也不改变冻结 aggregate。
+   - 恢复失败时仍给出可诊断错误终态，且不会重放 workspace mutation 或扩大工具副作用面。
+   - reasoning 只用于内部 usage 估算，不进入 transcript、delta、日志或失败分析报告。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`@belldandy/agent` 与 `@belldandy/core` build 均通过。
+- 新恢复测试 `4/4`、buffered/streaming 组合 `12/12`、相关扩大回归 `117/117` 通过；Agent 全包 `537/537` 通过，另有 `1` 项既有跳过。
+- `corepack pnpm verify:coding-ci`、`corepack pnpm verify:coding-benchmark` 与 `git diff --check` 通过。
+- 关键功能验证：首轮预算允许时最多发起一次无 Tool 恢复；预算耗尽、二次空正文或恢复轮 Tool call 均停止，reasoning 不进入用户可见输出。
+- 本环节执行 `0` 真实模型、`0` Gateway、`0` Provider、`0` 网络、`0` 凭据读取、`0` 费用和 `0` 远端写入；因此不能宣称原 24 项真实任务已转为通过。
+
+##### 后续计划
+
+- **下一步准备做什么**：对 canonical 报告中的 `completed_without_required_mutation=7` 与 `patch_acceptance_failed=4` 做只读逐项证据分析，优先寻找无需 Provider 重跑即可验证的共同生产边界。
+- **为什么先做它**：最大失败族的生产机制已经具备并通过离线验证；继续分析次大失败族能以零模型费用确定下一项最小改进，避免把模型行为问题和补丁接收问题混为一谈。
+- **当前还缺的关键闭环**：尚未证明 24 项真实任务因恢复机制转为通过；`7 + 4` 项的共同根因和生产 owner 尚未确定，纯 flash 双平台复核与 Provider 实际账单也仍需独立授权或外部核对。
+
+#### P0 能力改进实现结论：apply_patch 空 hunk 结构化恢复（2026-08-15）
+
+##### 已完成内容
+
+1. **`6801ed7` 的 `7 + 4` 项冻结 evidence 只读拆分**：
+   - `completed_without_required_mutation=7` 全部发生在 Windows、覆盖 4 个任务；每项只执行 `3-9` 次 `list_files/file_read`，edit call=`0`、changed file=`0`，随后以 `run.completed` 返回。终态摘要显示主要在 token 预检转入 finalization 前未开始修改，另有 1 项把未发生的修改表述为已完成。
+   - `patch_acceptance_failed=4` 不是单一根因：2 个 Go run 的 `apply_patch` 分别提交了目标测试文件和 `/dev/null` 的空 `Update File` block，工具以 `input_error` 正确拒绝且零 mutation；2 个 Preact run 的 patch 工具成功且冻结测试通过，但一个把规则扩大到所有带连字符属性，另一个使用语义等价的 `===` 被冻结 evaluator 的 `==` 精确字符串条件拒绝。
+   - 技术债决策：Preact evaluator 等价表达误拒拆为 `split_task`，因为修改冻结 evaluator 会改变 harness identity；本切片不覆盖历史 artifact，也不把另一项过宽 patch 误判为 Tool 缺陷。
+
+2. **`apply-patch/index.ts` 与 `index.test.ts` 修改**：
+   - Patch DSL 解析失败在任何 workspace mutation 前返回 `failureKind=input_error` 与 `repairAction=apply_patch_input_invalid`。
+   - 结构化 correction hints 要求真实 workspace-relative path、至少一个非空 change hunk 和实际上下文/增删行，并明确已有上下文未变化时无需再次读取。
+   - 新增空 `Update File` block 回归，断言目标文件内容不变、错误可诊断且 metadata 可被上层消费。
+
+3. **`runtime-prompt-deltas.ts` 与 `runtime-prompt-deltas.test.ts` 修改**：
+   - Agent 识别 `apply_patch_input_invalid` 后，将通用“先只读检查”替换为补丁解析专用恢复指引，避免与结构化 correction hints 冲突。
+   - 下一轮提示明确解析器已在零 mutation 状态拒绝请求；只有实质修正 hunk 后才允许重试，仍保留禁止重复相同 Tool call 的现有 Gate。
+
+4. **效果**：
+   - 两个真实 Go 空补丁签名现在能获得确定、跨 Tool/Agent 边界的机器可读恢复信息，不再被通用 input error 文案引导回无效读取。
+   - 路径白名单、敏感文件、权限、预算、补丁原子提交和失败关闭语义均未放宽；解析失败继续保持零写入。
+   - 这是生产恢复机制与离线回归，不代表冻结 aggregate 的 2 个 Go run 已转为通过。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`@belldandy/skills`、`@belldandy/agent` 与 `@belldandy/core` build 均通过。
+- TDD 红测先出现 `2` 项预期失败；实现后定向 `24/24` 通过，含 `2` 个新增结构化恢复测试。
+- Skills 全包 `912/912` 通过，另有 `2` 项既有跳过；Agent 全包 `538/538` 通过，另有 `1` 项既有跳过。
+- `corepack pnpm verify:coding-ci`、`corepack pnpm verify:coding-benchmark` 与 `git diff --check` 通过；benchmark verify 仅保留仓库已知的 Ajv `date-time` format ignored 提示。
+- 关键功能验证：空 update hunk 被拒绝且文件字节不变，下一轮提示包含非空 hunk、真实路径和直接修正语义，不再包含“重复只读更安全”的冲突建议。
+- 本环节执行 `0` 真实模型、`0` Gateway、`0` Provider、`0` 网络、`0` 凭据读取、`0` 费用和 `0` 远端写入。
+
+##### 后续计划
+
+- **下一步准备做什么**：为 `completed_without_required_mutation=7` 设计并测试显式、可信的 `mutation required` 运行输入，使预算预检在尚无成功 mutation 时保留一次受控编辑机会，并在最终仍无 mutation 时失败关闭；先确认 CLI、Gateway launch spec 与 Agent 的最窄合同边界。
+- **为什么先做它**：7 项都已定位为只读探索后无修改却完成，单纯增加 token 或继续强化提示都缺少确定边界；只有由调用方显式声明 mutation intent，Agent 才能在不误伤只读任务的前提下做预算和终态决策。
+- **当前还缺的关键闭环**：需要证明声明不能被普通不可信消息伪造、预算只能在原 `24000` 上限内重分配、编辑机会不开放额外读取/Tool 副作用、无 mutation 终态可诊断且旧调用保持兼容；真实任务 uplift 仍需后续单独授权的 `deepseek-v4-flash` 复核。
+
+#### P0 能力改进实现结论：required workspace mutation 失败关闭合同（2026-08-15）
+
+##### 已完成内容
+
+1. **`index.ts`、`run.ts`、`server.ts` 与 Gateway launch wiring 扩展**：
+   - `CodingRunOptions`、CLI 和可信 launch spec 新增 `workspaceMutationRequirement=required`；Coding CI 的 `workspace-write` / `recovery-control` profile 自动声明，既有只读 profile 保持兼容。
+   - Gateway 只接受 `bare`、绝对 `cwd`、`permissionMode=acceptEdits`、至少一个未被 deny 的 mutation Tool，且显式 `maxTurns>=2`；Agent 未声明 capability 时在创建和 Provider 调用前失败关闭。
+   - bare prompt 增加可信 mutation completion Gate；普通正文伪造 `_agentLaunchSpec` 不会启用合同。
+
+2. **`react-workspace-mutation.ts` 新建、`tool-agent.ts` 接入**：
+   - 只按已注册 Tool contract 选择 `workspace-write/patch` 定义，把原任务和最近 Tool output 收敛为有界、不可信证据，不开放 read、command、deferred Tool、steering、streaming 或 provider-native system block。
+   - 在原 turn、wall-time、token、cost、model-call 和 Tool 风险预算内预留最多一次 mutation-only 请求及一次无 Tool finalization；成功 mutation 后仍由 structured-output owner 校验最终 JSON。
+   - mutation-only 轮必须恰好请求并真实执行一个允许的 mutation Tool；Tool 失败、无/多个/错误 Tool、hook 合成结果、duplicate/near-duplicate/thrash 抑制或结果复用均立即失败关闭，不进入额外模型轮次。
+
+3. **测试与 CI 合同扩展**：
+   - 新增 mutation 请求纯函数与 Agent 端到端回归，覆盖成功 mutation + structured finalization、无 mutation、多个 Tool、Tool 失败、duplicate repair 抑制及不可信正文伪造。
+   - CLI/Gateway 测试覆盖入口约束、可信 launch spec 和 capability 缺失；CI 测试固定写 profile 自动参数，benchmark/CI 静态 verifier 保持对齐。
+
+4. **效果**：
+   - 显式要求修改的 coding run 不再能在零成功 workspace mutation 时返回 `done`；预算接近关闭时只获得一次受控编辑机会，不能借恢复轮扩展读取或副作用面。
+   - 只读任务和未声明合同的普通 Conversation 行为不变；冻结 `6801ed7` aggregate 不修改，也不能据此宣称原 7 项已转为通过。
+   - 轻量对抗性 review 修复了 mutation-only Tool 被合成抑制后继续循环的可达缺口；模型路由 Gate、provider-native block 隔离和 structured-output 终态交互未发现新增旁路。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build` 通过，workspace package entrypoint 校验完成。
+- Agent 全包 `546/546` 通过，另有 `1` 项既有跳过；Core 全包 `2005/2005` 通过；同工作树 Skills `912/912`、Protocol `61/61` 与 Core CLI `17/17` 既有结果保持通过。
+- `corepack pnpm verify:coding-ci`、`corepack pnpm verify:coding-benchmark` 与 `git diff --check` 通过；benchmark verify 仅保留仓库已知的 Ajv `date-time` format ignored 提示。
+- 回归行为：给定可信 coding run 要求 workspace mutation，当普通轮只读结束且 mutation-only Tool 被失败或合成抑制时，run 立即以可诊断错误终止；只有真实 mutation 成功且 bounded finalization 有效时才进入 `done`。
+- 本环节执行 `0` 真实模型、`0` Provider、`0` 网络、`0` 凭据读取、`0` 费用、`0` 远端写入；未重跑付费矩阵。
+
+##### 后续计划
+
+- **下一步准备做什么**：继续只读分析 canonical 报告中剩余的 `token_budget_exhausted=1` 与 `output_schema_invalid=1`，确认它们是已有 Gate 的正确拒绝、测试/runner 配置问题，还是仍需最小生产恢复；Provider 账单继续 `record_only`。
+- **为什么先做它**：`24 + 7 + 4` 三个主要失败族均已有稳定分类和生产边界，剩余两项可以在零模型费用下完成失败族闭包，避免在无证据时扩大预算或 structured-output repair 能力。
+- **当前还缺的关键闭环**：全部生产机制仍未获得冻结真实任务 uplift；纯 `deepseek-v4-flash` 双平台复核、Provider 实际账单、Preact evaluator 等价表达拆分，以及 B=`36`、C=`1` 的后续能力改进仍未闭合；不创建 candidate v4、不启动 P2-C。
+
+#### P0 能力改进实现结论：剩余失败族归因与 bounded structured-output repair（2026-08-15）
+
+##### 已完成内容
+
+1. **冻结 `1 + 1` 失败 evidence 只读归因**：
+   - `real-js-failed-test-fix-windows-a3-1786767449512` 已执行 `4` 次模型调用和 `10` 次只读 Tool，usage=`22513`；有界最终总结预计累计 `31805 > 24000`，同任务其余 `5/6` 已通过，因此 `token_budget_exhausted=1` 判定为现有 Gate 正确拒绝，技术债决策为 `record_only`，不提高预算。
+   - `system-restart-delivery-reconciliation-wsl2-linux-a1-1786769822828` 的 system evidence 全部通过，`6` 次模型调用累计 usage=`18955`；完整 transcript repair 预计累计 `24883 > 24000`，失败点仅为 summary schema 无效，确认存在“完整 repair 放不进剩余预算”的最小生产缺口。
+
+2. **`react-structured-output-repair.ts` 新建、`tool-agent.ts` 接入**：
+   - 新增无 I/O bounded repair request builder，完整保留 schema 与 validation repair contract，只裁剪不可信 previous draft；完整合同或最小 draft 放不进预算时返回失败关闭。
+   - 仅在既有 structured-output session 的完整 transcript repair 被 token/cost preflight 拒绝时启用，不增加 repair 次数；请求继续受原 turn、wall-time、total-token、cost、model-call 和输出 reserve 约束。
+   - bounded repair 禁用 Tool、Provider streaming、steering、deferred Tool 和 provider-native system blocks；二次无效输出仍由既有 session 直接以 `output_schema_invalid` 终止。
+
+3. **测试与项目地图扩展**：
+   - 新增纯函数测试，覆盖完整 repair contract 保留、只裁剪 draft 和无法容纳最小输入时失败关闭。
+   - 扩展 structured-output 端到端回归，覆盖完整 transcript 超预算时一次 bounded repair、无 Tool/固定输出上限，以及 Anthropic provider-native system block 不进入修复请求。
+   - `project-map.md` 已登记 bounded repair owner，并更新 `tool-agent.ts` 的 structured-output 预算路由边界。
+
+4. **效果**：
+   - 结构化终态不会因无关长 transcript 挤占剩余预算而直接失去唯一 repair 机会，同时 schema contract 不被截断或降级。
+   - 预算、调用次数和副作用边界不放宽；若 bounded 请求或其输出仍无效，保持原可诊断失败终态。
+   - 冻结 aggregate、evaluator 和 Provider artifact 均未修改，不能据此宣称 C 层 `23/24` 已转为 `24/24`。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build` 通过，workspace package entrypoint 校验完成。
+- bounded repair 定向 `2` 文件 `21/21` 通过；Agent 全包 `550/550` 通过，另有 `1` 项既有跳过。
+- `corepack pnpm verify:coding-ci`、`corepack pnpm verify:coding-benchmark` 与 `git diff --check` 通过；benchmark verify 仅保留仓库已知的 Ajv `date-time` format ignored 提示。
+- 关键功能验证：bounded repair 最多复用既有唯一 repair 机会，完整 schema prompt 始终保留，Tool 与 provider-native system blocks 不进入请求，turn/token/cost/wall-time/model-call Gate 均不可绕过。
+- 本环节执行 `0` 真实模型、`0` Gateway、`0` Provider、`0` 网络、`0` 凭据读取、`0` 费用和 `0` 远端写入；未运行付费矩阵。
+
+##### 后续计划
+
+- **下一步准备做什么**：在当前“不运行付费矩阵、不修改冻结 aggregate/evaluator、不创建 candidate v4、不启动 P2-C”的边界内，P0 五个失败族的离线归因与对应生产改进已到达闭合点；下一步等待是否授权使用 `deepseek-v4-flash` 做纯 flash 双平台复核或进入 P2-C 候选/观察窗口，Provider 实际账单继续由外部控制台核对。
+- **为什么先做它**：剩余关键证据是实际模型 uplift 与候选稳定性，继续仅凭冻结 artifact 扩写生产逻辑会脱离证据并增加回归风险；真实复核还会产生费用和新 artifact，属于当前授权边界外动作。
+- **当前还缺的关键闭环**：24 项 length-stop 恢复、7 项 required mutation、2 项 Go 空 hunk 提示和 1 项 bounded schema repair 的真实 uplift，纯 flash 双平台可比较 aggregate、Provider 实际账单、Preact evaluator 等价表达的独立任务，以及 B=`36`、C=`1` 能力改善和两个连续 P2-C 候选版本。
+
+#### P0 完成性审计实现结论：benchmark required-mutation fixture 能力接线（2026-08-15）
+
+##### 已完成内容
+
+1. **`run-coding-agent-benchmark.test.mjs` 修改**：
+   - 完成性组合回归发现两个真实 Gateway 集成 fixture 仍使用旧 Agent 接口，`workspace-write` / `recovery-control` profile 新增 required-mutation Gate 后会在 fixture `run()` 前正确失败关闭。
+   - 两个实际执行或模拟 workspace mutation 的 fixture Agent 现显式声明 `workspaceMutationRequirement=true`，并断言写任务收到可信 `_agentLaunchSpec.workspaceMutationRequirement=required`。
+   - 只修复测试替身的能力合同；生产 Gateway capability Gate、Agent mutation owner、benchmark profile 和冻结 evaluator 均未放宽。
+
+2. **效果**：
+   - benchmark 的真实 Gateway/Coding CI artifact 链继续覆盖 required-mutation 入口，不再因测试替身接口落后而产生假回归。
+   - recovery fixture 仍证明一次断线恢复只写入一次；双 tracer-bullet fixture 仍证明只读规则任务和写入 bug-fix 任务都通过真实 Gateway 链。
+   - 测试替身若未显式声明能力仍会被生产 Gateway 拒绝，失败关闭语义保持不变。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build` 通过，workspace package entrypoint 校验完成。
+- 首轮目标组合回归 `17` 文件为 `198/200`，两个失败均落在旧 fixture capability 缺失；修复后失败文件 `36/36` 通过，首轮其余 `16` 文件 `164/164` 保持通过。
+- canonical `failure-analysis-v1` 从冻结 aggregate 重建验证通过，输出 `verified 37 failure(s)`；未改写报告或来源 artifact。
+- `corepack pnpm verify:coding-ci`、`corepack pnpm verify:coding-benchmark` 与 `git diff --check` 通过；benchmark verify 仅保留仓库已知的 Ajv `date-time` format ignored 提示。
+- 本环节执行 `0` 真实模型、`0` Provider、`0` 网络、`0` 凭据读取、`0` 费用和 `0` 远端写入。
+
+##### 后续计划
+
+- **下一步准备做什么**：当前目标范围内的 effective-model Gate 后续、reasoning-only length stop 有界恢复、五个失败族离线归因及其最小生产改进已完成审计；保持冻结输入不变，等待纯 `deepseek-v4-flash` 双平台复核或 P2-C 的新授权。
+- **为什么先做它**：代码、测试、canonical 报告和文档已形成闭环，剩余问题只能由新 source identity 的真实模型证据回答，继续离线修改没有新的失败证据支撑。
+- **当前还缺的关键闭环**：真实 uplift、Provider 实际账单、Preact evaluator 独立任务、B=`36`/C=`1` 改善和两个连续 P2-C 候选版本；这些属于后续阶段，不反向改变本轮离线目标的完成结论。
+
 ### 6.7 P2-C：9.5 稳定化与最终复核（未启动：当前候选未达 Gate）
 
 **目的与方案**：在两个连续冻结候选版本上运行完整 Benchmark v3、P1/P2 fault matrix、四客户端 conformance 和外部消费者 Gate；比较任务成功率、p95、人工干预、usage、费用、残留和错误 taxonomy；阈值调整必须留痕，不能回写旧 artifact。
@@ -2246,10 +2492,17 @@ Source / Workspace Revision
 - 最终 aggregate=`107 passed + 37 product_workflow failed`，A=`72/72`、B=`12/48`、C=`23/24`，infrastructure error=`0`；相较旧基线增加 `12` 个 B 层通过项，但实际模型为 Windows pro/WSL2 flash，当前结论为“混合模型结果完成但不晋级”。
 - report 元数据的 Windows `51 pro + 21 flash` 不代表实际路由；Gateway 日志确认所有 Windows Provider-reaching Conversation 均为 pro，WSL2 均为 flash。两份 WSL2 `not_reached` 基础设施失败报告原样保留，retry 通过后才进入正式分母。
 - 正式 aggregate 本地 usage 估值=`$0.28421362`；跨历史账本 observed=`$2.02236222`、reserved=`$0.69095400`，守卫上界=`21.70652976 RMB < 40 RMB`。Windows 后 `21` 项模型/费率声明与实际 pro 路由不一致，因此该本地估值不能替代 Provider 实际账单，外部账单核对保持 `record_only`。
-- 敏感、system evidence 与资源残留 Gate 已完成；Git 事故中的 `origin`/upstream 与 `react-run-budget.ts` blob 已核实恢复，`Void/**` 测试发现已隔离。DSH 不可达对象二次精确清理已完成：移除 `8447` 个事故 pack 对象、`6` 个事故快照 loose object 和 `4` 条目标 reflog 记录，事故对象与 reflog 交集归零；`fsck` 无损坏/缺失，`Void` 前后保持 `8918` 项且元数据指纹一致。另有 `9` 个 2026 年 4-5 月形成、与 DSH 事故无关的既有不可达对象按最小范围原则保留。effective-model 前置断言按 `split_task` 处理。
-- **下一步准备做什么**：本轮按用户要求暂停，不自动重跑 Windows 或调用 Provider；恢复时先闭合 effective-model resolved-route Gate 和 Provider 账单核对，再离线聚类剩余 37 项失败。
-- **为什么先做它**：先消除声明模型与实际路由漂移，才能避免再次误用 pro、守住费用边界并产生可比较的纯 flash 证据。
-- **当前还缺的关键闭环**：纯 flash 双平台复核、Provider 实际账单、effective-model 前置 Gate，以及 B=`36`、C=`1` 的剩余能力缺口；现有 `40 RMB` 上限仍有效，但余额不构成自动调用理由，P2-C 保持未启动且不创建 candidate v4。
+- 敏感、system evidence 与资源残留 Gate 已完成；Git 事故中的 `origin`/upstream 与 `react-run-budget.ts` blob 已核实恢复，`Void/**` 测试发现已隔离。DSH 不可达对象二次精确清理已完成：移除 `8447` 个事故 pack 对象、`6` 个事故快照 loose object 和 `4` 条目标 reflog 记录，事故对象与 reflog 交集归零；`fsck` 无损坏/缺失，`Void` 前后保持 `8918` 项且元数据指纹一致。另有 `9` 个 2026 年 4-5 月形成、与 DSH 事故无关的既有不可达对象按最小范围原则保留。
+- effective-model resolved-route Gate 已闭合：Provider-reaching Coding CI run 在 Agent 创建前核对声明模型与生产 resolver 的实际 Provider model，匹配证据进入 `run.started` 与 manifest；目标回归 `136/136`、双 build、两项 verify 与 diff check 通过，且未调用 Provider。
+- 37 项 product workflow failure 已形成 `24/7/4/1/1` 的可复算离线分类，canonical 报告 `--verify` 与 Schema 校验通过；最大族为跨双平台 6 个任务的 `model_empty_content_at_length=24`。
+- reasoning-only length stop 的一次有界恢复已闭合生产实现与离线回归：首轮 usage 先计入原预算，恢复轮无 Tool/steering/deferred Tool/streaming，最多一次，失败路径不重放副作用；Agent 全包 `537/537` 通过，另有 `1` 项既有跳过。冻结 aggregate 未重跑，不能宣称 24 项已转为通过。
+- `7 + 4` 项已拆为无 mutation 完成 `7`、Go 空 hunk Tool input error `2`、Preact 过宽 patch `1`、Preact 等价表达被冻结字符串 evaluator 误拒 `1`。空 hunk 已接入 `apply_patch_input_invalid` 结构化 metadata 和 Agent 专用恢复提示；Skills `912/912`、Agent `538/538` 通过，既有跳过分别为 `2/1`。冻结 aggregate 未重跑，不能宣称失败项已转为通过。
+- required workspace mutation 合同已闭合：CLI/Gateway 可信声明、bare/cwd/acceptEdits/Tool/capability Gate、原预算内一次 mutation-only 调用与一次 tool-free finalization 均已接入；synthetic/失败/缺失 mutation 立即失败关闭。Agent `546/546`、Core `2005/2005`、workspace build 与两项合同 verify 通过，冻结 aggregate 未重跑。
+- 剩余 `1 + 1` 已闭合归因：`token_budget_exhausted=1` 的 `22513` usage 与 projected `31805 > 24000` 证明现有 Gate 正确，按 `record_only` 保留；`output_schema_invalid=1` 的完整 repair projected `24883 > 24000` 暴露剩余预算适配缺口，现已接入只裁剪不可信 draft、完整保留 schema contract 的一次 bounded repair。Agent 全包 `550/550`、workspace build 与两项合同 verify 通过，另有 `1` 项既有跳过；冻结 aggregate 未重跑。
+- 完成性组合回归发现并修复两个 benchmark 真实 Gateway fixture 未声明 required-mutation capability 的测试接线缺口；首轮其余 `16` 文件 `164/164`、修复后 benchmark `36/36`、canonical `37` 项失败重建验证、workspace build 与两项合同 verify 均通过，生产 Gate 未放宽。
+- **下一步准备做什么**：当前不运行付费矩阵、不修改冻结 aggregate/evaluator、不创建 candidate v4 且不启动 P2-C；下一步等待是否授权使用 `deepseek-v4-flash` 做纯 flash 双平台复核或进入候选/观察窗口，Provider 实际账单继续由用户在外部控制台核对。
+- **为什么先做它**：五个失败族的离线归因与对应最小生产改进已经闭合，剩余判断依赖真实 uplift 和连续候选证据；继续仅凭旧 artifact 扩写能力会失去证据边界。
+- **当前还缺的关键闭环**：24 项恢复、2 个 Go 空 hunk 提示、7 项 required mutation 与 1 项 bounded schema repair 的真实 uplift，纯 flash 双平台复核、Provider 实际账单与 B=`36`、C=`1` 能力改进；Preact evaluator 等价表达误拒按 `split_task` 处理。现有 `40 RMB` 上限仍有效，但余额不构成自动调用理由，P2-C 保持未启动且不创建 candidate v4。
 
 ### P1-C（已完成）
 
@@ -2297,7 +2550,7 @@ Source / Workspace Revision
 | 项目 | 优先级 | 状态 | 粗略工作量 | 完成边界 |
 | --- | --- | --- | ---: | --- |
 | 本轮 SS 能力复核与 9.5 增强规划 | - | 已完成 | - | 已复核 scorecard、目标向量 `9.510`、C#/Go 投入收益、多语言方案和竞品资料；竞品未做同环境 benchmark |
-| P0：Benchmark v3 与外部有效性 | P0 | 已完成基线与 `6801ed7` 复核（结果均未晋级）。新 identity formal=`144/144`、aggregate=`107 passed + 37 product_workflow failed`、A=`72/72`、B=`12/48`、C=`23/24`、infrastructure error=`0`、usage=`132 provider_reported + 6 unavailable + 6 not_reached`，dry-run 与 `--verify` 通过；实际模型为 Windows pro/WSL2 flash，不能宣称纯 flash 双平台 uplift。跨历史本地账本 observed=`$2.02236222`、reserved=`$0.69095400`，守卫=`21.70652976 RMB < 40 RMB`，但 Windows 后 `21` 项声明费率与实际 pro 路由不一致，Provider 实际账单仍待外部核对。敏感/system evidence/资源残留 Gate 已闭合；effective-model 前置断言=`split_task`，账单核对=`record_only`。Git 事故修复保持有效；DSH 二次精确清理已移除 `8447` 个事故 pack 对象、`6` 个事故 loose object 和 `4` 条目标 reflog，`fsck` 无损坏/缺失且 `Void` 前后指纹一致；`9` 个与事故无关的既有不可达对象保留。按用户要求当前暂停，不自动重跑、不调用 Provider、不创建 candidate v4、不启动 P2-C 观察窗口 | 14-22 人日 | A/B/C 三层、至少 4 个固定仓、144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；不含 candidate v4、竞品代跑、公开排行榜 |
+| P0：Benchmark v3 与外部有效性 | P0 | 已完成基线与 `6801ed7` 复核（结果均未晋级）。新 identity formal=`144/144`、aggregate=`107 passed + 37 product_workflow failed`、A=`72/72`、B=`12/48`、C=`23/24`、infrastructure error=`0`、usage=`132 provider_reported + 6 unavailable + 6 not_reached`，dry-run 与 `--verify` 通过；实际模型为 Windows pro/WSL2 flash，不能宣称纯 flash 双平台 uplift。effective-model 前置 Gate 已闭合，执行 `0` Provider。37 项失败的 canonical 离线聚类已完成并自验证：`model_empty_content_at_length=24`、`completed_without_required_mutation=7`、`patch_acceptance_failed=4`、`token_budget_exhausted=1`、`output_schema_invalid=1`、`unknown=0`；最大族的一次有界、无 Tool 恢复已完成生产实现和离线验证。`7 + 4` 项已拆分，2 个 Go 空 hunk 已有结构化 Tool/Agent 恢复提示；7 项 mutation intent 已闭合可信声明、原预算内一次受控编辑和无 mutation 失败关闭。最后 `1 + 1` 已归因：token budget 是正确 Gate，按 `record_only` 保留；schema failure 已以一次 bounded repair 修复完整 transcript 放不进剩余预算的生产缺口。Agent=`550/550`、Core=`2005/2005`，既有跳过各 `1/0`；workspace build、两项合同 verify 与 diff check 通过。完成性审计另验证目标组合其余 `16` 文件 `164/164`、benchmark 真实 Gateway 集成 `36/36` 和 canonical failure analysis `37/37`，并补齐 fixture required-mutation capability 接线，生产 Gate 未放宽。冻结 aggregate 未重跑，不能宣称失败项已通过。跨历史本地账本 observed=`$2.02236222`、reserved=`$0.69095400`，守卫=`21.70652976 RMB < 40 RMB`；Provider 实际账单仍为外部 `record_only`。敏感/system evidence/资源残留 Gate 已闭合；当前边界内 P0 离线归因与生产改进已到闭合点，下一步需另行授权纯 flash 双平台复核或 P2-C 候选/观察窗口；不自动重跑、不调用 Provider、不创建 candidate v4、不启动 P2-C | 14-22 人日 | A/B/C 三层、至少 4 个固定仓、144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；不含 candidate v4、竞品代跑、公开排行榜 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | 已完成；attempt 12 aggregate=`passed`；binary regression/Provider failure=`0/0`；`semantic-live=7/8`；非目标整文件读取 `21 -> 14`；16/16 cell 预算耗尽；candidate task/patch success=`0/8`；累计费用 `1.68214072 RMB` | 8-12 人日 | 公共 contract、TS/JS Provider、Inspector、truth set、resource soak、双平台 native runtime 与真实 uplift Gate；不含外部 LSP、Go/C# GA、SCIP store |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | 已完成；Host、pinned profile、Go Doctor、Adapter/truth/fault、双平台 native/OCI、readiness/progress/monitor、comparator 和 eligibility 已闭合；`goCanaryEligible=true`、`productionEligible=false` | 6-11 人日 | 双平台 identity/truth/lifecycle/OCI evidence、只读 comparator、单一 eligibility owner、Doctor projection；不含 Go 生产默认启用、自动安装、公开发布、扩大 fixture、rollout 观察窗口 |
 | P1-A3：C# 条件接入 | 条件 | 延后，等待真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild 执行面、restore/联网和生命周期；未命中需求不进入生产，也不阻断 9.5 |
@@ -2305,4 +2558,4 @@ Source / Workspace Revision
 | P1-C：TaskProjection 与 Capability Closure | P1 | 已完成；硬 Gate 全部闭合，广泛回归 `31` 文件 `312/312`、最后切片 `58/58`、Core build/diff check 通过。公共人工 provenance、`blocked/verifying` observation 与 verification DAG 外键缺 authoritative owner，已拆分为 `split_task/defer`，未知指标保持 `incomplete` | 10-15 人日 | 只读跨 owner 投影、exact-binding action、任务启动闭包、六类故障投影和旧客户端兼容；不迁移领域真源，不按客户端身份猜测人工来源 |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | 已完成；admission/worktree Gate、restart reattach、exact-bound control、fan-in、统一预算、fault matrix、跨进程 Git mutation lock 与 failure compensation 均闭合。修复后 Core/Skills build、相关回归 `18` 文件 `138/138` 通过；Windows/WSL2 正式 r3 同 identity 各 `360/360` lane，平台 Gate、Schema、comparator 与 child/worktree/branch/process/receipt/lock/tmp/root 零残留 sweep 全部通过。r2 WSL2 首次失败 artifact 原样保留 | 12-20 人日 | 隔离写入、预算、60 分钟 soak、steer/cancel/reattach、fan-in 和 fault matrix；不含自动 merge/release/deploy |
 | P2-B：生态与运行前置收口 | P2 | 已完成；窄 reference client、两个 Windows/WSL2 仓外 consumer、完整 `17 + 1 + 5` error taxonomy、failure conformance、coding runtime preflight Doctor、Puppeteer `25.7.0`、零发现 audit、真实 Chrome/MV3 Relay、portable lifecycle、Settings 手测和最终 P0 运行前置均已闭合。Docker context 修复 `e61a3e4` 的 Quality `31805350871` 全绿，本地真实 builder/`verify:build` 通过；Docker run `31805350776` 终态因当前 GitHub 凭据不可读而保留为未验证历史项，不新增实现缺口 | 8-14 人日 | 两个外部消费者、N-1/N conformance、真实 CI、OCI/语言 Doctor、零发现 dependency Gate；不含公开发布、系统级自动安装、sandbox 替换，未经授权不再升级依赖主版本 |
-| P2-C：9.5 稳定化与最终复核 | P2 | 未启动；当前 mixed-model aggregate 的 B=`12/48`、C=`23/24`，仍未满足候选进入 Gate。普通 ReAct finalization 已取得部分真实任务改善，但实际 Windows=pro、WSL2=flash，尚缺纯 flash 双平台可比较证据、effective-model Gate、Provider 账单核对和剩余 37 项能力闭环；本 P0 费用授权不等同于 P2-C 候选/观察窗口授权，不创建 candidate v4、不宣称 `>=9.500` | 5-8 人日 + 观察窗口 | 两个连续候选版本原始 `>=9.500`、目标维度和全部硬 Gate 通过；不含竞品联合 benchmark、生产写入 |
+| P2-C：9.5 稳定化与最终复核 | P2 | 未启动；当前 mixed-model aggregate 的 B=`12/48`、C=`23/24`，仍未满足候选进入 Gate。effective-model Gate 和五个 product-failure family 的离线归因已闭合，`24 + 7 + 2 + 1` 已有对应最小生产改进，但冻结矩阵未重跑，不能视为真实 uplift。实际 Windows=pro、WSL2=flash，尚缺纯 flash 双平台可比较证据、Provider 账单核对、Preact evaluator 独立任务、B=`36`/C=`1` 改善和两个连续候选版本；本 P0 费用授权不等同于 P2-C 候选/观察窗口授权，不创建 candidate v4、不宣称 `>=9.500` | 5-8 人日 + 观察窗口 | 两个连续候选版本原始 `>=9.500`、目标维度和全部硬 Gate 通过；不含竞品联合 benchmark、生产写入 |

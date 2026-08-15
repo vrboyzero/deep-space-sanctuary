@@ -1681,6 +1681,65 @@ test("message.send forwards modelId to AgentRegistry.create as modelOverride", a
   }
 }, 15_000);
 
+test("message.send rejects a declared coding model that differs from the resolved Gateway model", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const createAgent = vi.fn((): BelldandyAgent => new MockAgent());
+  const registry = new AgentRegistry(createAgent);
+  registry.register({
+    id: "default",
+    displayName: "Belldandy",
+    model: "primary",
+  });
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    agentRegistry: registry,
+    primaryModelConfig: {
+      baseUrl: "https://api.example.invalid/v1",
+      apiKey: "test-placeholder-key",
+      model: "deepseek-v4-pro",
+    },
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    const reqId = "model-route-mismatch";
+    ws.send(JSON.stringify({
+      type: "req",
+      id: reqId,
+      method: "message.send",
+      params: {
+        text: "must not reach the model",
+        modelId: "deepseek-v4-flash",
+        codingRun: {
+          automationProfile: "bare",
+          expectedResolvedModelId: "deepseek-v4-flash",
+        },
+      },
+    }));
+
+    await waitFor(() => frames.some((frame) => frame.type === "res" && frame.id === reqId));
+    expect(frames.find((frame) => frame.type === "res" && frame.id === reqId)).toMatchObject({
+      ok: false,
+      error: { code: "model_route_mismatch" },
+    });
+    expect(createAgent).not.toHaveBeenCalled();
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+}, 15_000);
+
 test("message.send resolves deepseek:auto to flash when warmup verdict is not promotable", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
   const capturedOverrides: Array<string | undefined> = [];

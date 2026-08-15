@@ -558,6 +558,97 @@ describe("ToolEnabledAgent structured output", () => {
     }));
   });
 
+  it("uses one bounded repair when the full transcript does not fit the remaining token budget", async () => {
+    const responses = [
+      {
+        choices: [{ message: { content: "status is ok" } }],
+        usage: { prompt_tokens: 1_800, completion_tokens: 50 },
+      },
+      {
+        choices: [{ message: { content: '{"status":"ok"}' } }],
+        usage: { prompt_tokens: 250, completion_tokens: 20 },
+      },
+    ];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      const response = responses.shift();
+      if (!response) throw new Error("unexpected model call");
+      return jsonResponse(response);
+    });
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      systemPrompt: `large-system-marker\n${"context ".repeat(1_200)}`,
+      maxTotalTokens: 3_000,
+      maxOutputTokens: 256,
+      toolExecutor: createToolExecutor(),
+      streamingEnabled: false,
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "structured-bounded-repair",
+      text: "return status",
+      structuredOutput: {
+        schema: { type: "object", properties: { status: { const: "ok" } } },
+        validateOutput: validateStatusOutput,
+      },
+    } as any));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const repairPayload = JSON.parse(String(fetchSpy.mock.calls[1]?.[1]?.body ?? "{}"));
+    expect(repairPayload.tools).toBeUndefined();
+    expect(repairPayload.max_tokens).toBe(256);
+    expect(JSON.stringify(repairPayload.messages)).not.toContain("large-system-marker");
+    expect(JSON.stringify(repairPayload.messages)).toContain("required JSON Schema");
+    expect(items.some((item) => item.type === "budget_exhausted")).toBe(false);
+    expect(items).toContainEqual({ type: "final", text: '{"status":"ok"}' });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("excludes provider-native system blocks from the bounded repair request", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({
+        content: [{ type: "text", text: "status is ok" }],
+        usage: { input_tokens: 1_800, output_tokens: 50 },
+        stop_reason: "end_turn",
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        content: [{ type: "text", text: '{"status":"ok"}' }],
+        usage: { input_tokens: 250, output_tokens: 20 },
+        stop_reason: "end_turn",
+      }));
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.anthropic.com",
+      apiKey: "test-key",
+      model: "claude-test",
+      systemPrompt: `provider-native-marker\n${"context ".repeat(1_200)}`,
+      maxTotalTokens: 3_000,
+      maxOutputTokens: 256,
+      toolExecutor: createToolExecutor(),
+      streamingEnabled: false,
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "structured-bounded-repair-provider-native-blocks",
+      text: "return status",
+      structuredOutput: {
+        schema: { type: "object", properties: { status: { const: "ok" } } },
+        validateOutput: validateStatusOutput,
+      },
+    } as any));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const repairPayload = JSON.parse(String(fetchSpy.mock.calls[1]?.[1]?.body ?? "{}"));
+    const repairSystemText = Array.isArray(repairPayload.system)
+      ? repairPayload.system.map((block: any) => String(block?.text ?? "")).join("\n\n")
+      : String(repairPayload.system ?? "");
+    expect(repairSystemText).toContain("Bounded structured-output repair phase");
+    expect(repairSystemText).not.toContain("provider-native-marker");
+    expect(repairPayload.tools).toBeUndefined();
+    expect(items).toContainEqual({ type: "final", text: '{"status":"ok"}' });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("keeps cost-containment metadata when repair preflight exhausts remaining tokens", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
       choices: [{ message: { content: "policy-token-budget-original" } }],

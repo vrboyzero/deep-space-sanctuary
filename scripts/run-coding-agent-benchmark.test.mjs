@@ -1586,10 +1586,14 @@ describe("coding agent benchmark stage 0B runner", () => {
     const runId = "recovery-windows-integration";
     let writeCount = 0;
     const agent = {
+      getCodingRunCapabilities() {
+        return { maxCostUsd: false, workspaceMutationRequirement: true };
+      },
       async *run(input) {
         expect(input.meta?._agentLaunchSpec).toMatchObject({
           permissionMode: "acceptEdits",
           toolDeny: ["run_command", "spawn_subagent", "file_delete"],
+          workspaceMutationRequirement: "required",
         });
         yield { type: "status", status: "running" };
         yield {
@@ -1621,6 +1625,11 @@ describe("coding agent benchmark stage 0B runner", () => {
       webRoot: resolveWebRoot(),
       stateDir: stateRoot,
       agentFactory: () => agent,
+      primaryModelConfig: {
+        baseUrl: "https://fixture.invalid/v1",
+        apiKey: "fixture-key",
+        model: "fixture-model",
+      },
     });
 
     try {
@@ -1693,6 +1702,9 @@ describe("coding agent benchmark stage 0B runner", () => {
     };
     const invocationPrompts = [];
     const agent = {
+      getCodingRunCapabilities() {
+        return { maxCostUsd: false, workspaceMutationRequirement: true };
+      },
       async *run(input) {
         invocationPrompts.push({
           conversationId: input?.conversationId ?? null,
@@ -1711,6 +1723,9 @@ describe("coding agent benchmark stage 0B runner", () => {
         if (!input?.text?.includes("reported logic bug")) {
           throw new Error("Unexpected benchmark fixture prompt.");
         }
+        expect(input.meta?._agentLaunchSpec).toMatchObject({
+          workspaceMutationRequirement: "required",
+        });
         await fs.writeFile(
           path.join(fixtureRoot, runIds["bug.reproducible-fix"], "workspace", "src/calculate.mjs"),
           [
@@ -1733,6 +1748,11 @@ describe("coding agent benchmark stage 0B runner", () => {
       webRoot: resolveWebRoot(),
       stateDir: gatewayState,
       agentFactory: () => agent,
+      primaryModelConfig: {
+        baseUrl: "https://fixture.invalid/v1",
+        apiKey: "fixture-key",
+        model: "fixture-model",
+      },
     });
 
     try {
