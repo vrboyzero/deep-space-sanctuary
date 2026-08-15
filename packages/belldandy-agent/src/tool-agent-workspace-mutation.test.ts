@@ -669,11 +669,19 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       omitProtocolAnchor: true,
       completes: true,
     },
+    {
+      name: "expands an explicit default limit for an unfocused required read",
+      navigationReadCount: 3,
+      omitProtocolAnchor: true,
+      protocolReadLimit: 102_400,
+      completes: true,
+    },
     { name: "fails closed when one required path is omitted", navigationReadCount: 2, completes: false },
   ])("$name in one bounded navigation when only a non-target test was read", async ({
     navigationReadCount,
     extraNavigationPath,
     omitProtocolAnchor,
+    protocolReadLimit,
     completes,
   }) => {
     const requiredChangedPaths = [
@@ -718,6 +726,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
                   modelToolCall("read-protocol", "file_read", {
                     path: requiredChangedPaths[2],
                     ...(!omitProtocolAnchor ? { anchor: "trace?: TraceValues;" } : {}),
+                    ...(protocolReadLimit ? { limit: protocolReadLimit } : {}),
                   }, 0, 0).choices[0].message.tool_calls[0],
                 ].slice(0, navigationReadCount),
                 ...(extraNavigationPath

@@ -153,14 +153,11 @@ export function selectRequiredWorkspaceMutationNavigationToolCalls<
     return undefined;
   }
   return selected.map(({ toolCall, arguments: parsedArguments }) => {
-    const boundedArguments = parsedArguments.anchor !== undefined
-      || parsedArguments.limit !== undefined
-      || parsedArguments.maxBytes !== undefined
-      ? parsedArguments
-      : {
-          ...parsedArguments,
-          limit: WORKSPACE_MUTATION_NAVIGATION_REQUIRED_FILE_READ_LIMIT,
-        };
+    const boundedArguments = { ...parsedArguments };
+    if (boundedArguments.anchor === undefined) {
+      delete boundedArguments.maxBytes;
+      boundedArguments.limit = WORKSPACE_MUTATION_NAVIGATION_REQUIRED_FILE_READ_LIMIT;
+    }
     return {
       ...toolCall,
       function: {

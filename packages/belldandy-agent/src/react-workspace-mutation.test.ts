@@ -92,6 +92,26 @@ describe("ReAct workspace mutation recovery", () => {
     });
   });
 
+  it.each([
+    { name: "limit", arguments: { limit: 102_400 } },
+    { name: "legacy maxBytes", arguments: { maxBytes: 102_400 } },
+  ])("expands an unanchored required read with an explicit $name", ({ arguments: readArguments }) => {
+    const call = fileReadToolCall("read-api", "src/api.ts");
+    call.function.arguments = JSON.stringify({ path: "src/api.ts", ...readArguments });
+
+    const selected = selectRequiredWorkspaceMutationNavigationToolCalls(
+      [call],
+      ["src/api.ts"],
+      ["file_read"],
+      1,
+    );
+
+    expect(JSON.parse(selected?.[0]?.function.arguments ?? "{}")).toEqual({
+      path: "src/api.ts",
+      limit: 1_048_576,
+    });
+  });
+
   it("builds one bounded mutation-only request from the task and recent read evidence", () => {
     const definitions = [
       toolDefinition("file_read"),
