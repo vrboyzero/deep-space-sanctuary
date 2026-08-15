@@ -102,6 +102,36 @@ function seekSequence(
     return null;
 }
 
+function stripEscapedCarriageReturn(value: string): string {
+    return value.endsWith("\\r") ? value.slice(0, -2) : value;
+}
+
+function normalizeModelEscapedCarriageReturns(
+    originalLines: string[],
+    chunk: UpdateFileChunk,
+): UpdateFileChunk {
+    const nonEmptyOldLines = chunk.oldLines.filter((line) => line.length > 0);
+    if (nonEmptyOldLines.length === 0 || nonEmptyOldLines.some((line) => !line.endsWith("\\r"))) {
+        return chunk;
+    }
+
+    const normalizedOldLines = chunk.oldLines.map(stripEscapedCarriageReturn);
+    if (seekSequence(originalLines, normalizedOldLines, 0, chunk.isEndOfFile) === null) {
+        return chunk;
+    }
+
+    // file_read 的 JSON 内容会把 CRLF 表示为 \r\n；模型有时会把其中的 \r 当成补丁正文。
+    // 只有旧行去掉该标记后确实匹配目标文件时，才同步归一化新增行。
+    return {
+        ...chunk,
+        ...(chunk.changeContext?.endsWith("\\r")
+            ? { changeContext: stripEscapedCarriageReturn(chunk.changeContext) }
+            : {}),
+        oldLines: normalizedOldLines,
+        newLines: chunk.newLines.map(stripEscapedCarriageReturn),
+    };
+}
+
 // 计算替换操作
 function computeReplacements(
     originalLines: string[],
@@ -197,7 +227,10 @@ export async function applyUpdateChunks(
         originalLines.pop();
     }
 
-    const replacements = computeReplacements(originalLines, filePath, chunks);
+    const normalizedChunks = newline === "\r\n"
+        ? chunks.map((chunk) => normalizeModelEscapedCarriageReturns(originalLines, chunk))
+        : chunks;
+    const replacements = computeReplacements(originalLines, filePath, normalizedChunks);
     let newLines = applyReplacements(originalLines, replacements);
 
     // 确保文件以换行符结尾（POSIX 标准）

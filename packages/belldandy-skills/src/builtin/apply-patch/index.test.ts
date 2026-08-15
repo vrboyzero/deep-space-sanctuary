@@ -338,6 +338,49 @@ describe("apply_patch tool", () => {
     await expect(fs.readFile(path.join(tempDir, "crlf.txt"), "utf-8")).resolves.toBe("alpha\r\ngamma\r\n");
   });
 
+  it("should tolerate model-escaped carriage returns when updating a CRLF file", async () => {
+    await fs.writeFile(path.join(tempDir, "crlf.txt"), "alpha\r\nbeta\r\n", "utf-8");
+
+    const result = await applyPatchTool.execute(
+      {
+        input: [
+          "*** Begin Patch",
+          "*** Update File: crlf.txt",
+          "@@",
+          " alpha\\r",
+          "-beta\\r",
+          "+gamma\\r",
+          "*** End Patch",
+        ].join("\n"),
+      },
+      baseContext,
+    );
+
+    expect(result.success).toBe(true);
+    await expect(fs.readFile(path.join(tempDir, "crlf.txt"), "utf-8")).resolves.toBe("alpha\r\ngamma\r\n");
+  });
+
+  it("should preserve a literal escaped carriage return without matching old-line evidence", async () => {
+    await fs.writeFile(path.join(tempDir, "crlf.txt"), "alpha\r\n", "utf-8");
+
+    const result = await applyPatchTool.execute(
+      {
+        input: [
+          "*** Begin Patch",
+          "*** Update File: crlf.txt",
+          "@@",
+          " alpha",
+          "+literal\\r",
+          "*** End Patch",
+        ].join("\n"),
+      },
+      baseContext,
+    );
+
+    expect(result.success).toBe(true);
+    await expect(fs.readFile(path.join(tempDir, "crlf.txt"), "utf-8")).resolves.toBe("alpha\r\nliteral\\r\r\n");
+  });
+
   it("prepares every patch target before writes and commits each successful mutation", async () => {
     await fs.writeFile(path.join(tempDir, "source.txt"), "before\n", "utf-8");
     const workspaceMutationObserver = {
