@@ -4,7 +4,9 @@ import {
   buildWorkspaceMutationNavigationRequest,
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationRecoveryRequest,
+  buildWorkspaceMutationVerificationRequest,
   selectRequiredWorkspaceMutationNavigationToolCalls,
+  selectRequiredWorkspaceMutationVerificationToolCalls,
   selectWorkspaceMutationNavigationToolDefinitions,
   selectWorkspaceMutationToolDefinitions,
   WORKSPACE_MUTATION_RECOVERY_MIN_OUTPUT_TOKEN_RESERVE,
@@ -12,6 +14,66 @@ import {
 } from "./react-workspace-mutation.js";
 
 describe("ReAct workspace mutation recovery", () => {
+  it("builds one anchored read-after-write request for each bounded required path", () => {
+    const definitions = [toolDefinition("file_read"), toolDefinition("apply_patch")];
+    const readTools = selectWorkspaceMutationNavigationToolDefinitions(definitions, (name) => (
+      name === "file_read" ? { isReadOnly: true } : { isReadOnly: false }
+    ));
+
+    const request = buildWorkspaceMutationVerificationRequest({
+      messages: [{ role: "user", content: "Remove the deprecated public API from both files." }],
+      tools: readTools,
+      maxInputTokens: 700,
+      requiredChangedPaths: ["src/api.ts", "src/protocol.ts"],
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+    });
+
+    expect(request).toMatchObject({
+      maxFileReadCalls: 2,
+      requiredVerificationPaths: ["src/api.ts", "src/protocol.ts"],
+      tools: [expect.objectContaining({ function: expect.objectContaining({ name: "file_read" }) })],
+    });
+    expect(request?.messages[0]?.content).toContain("Post-mutation verification phase");
+    expect(request?.messages[0]?.content).toContain("non-empty exact anchor");
+    expect(request?.messages[1]?.content).toContain("Trusted required paths to verify after mutation");
+  });
+
+  it("accepts exactly one anchored verification read per required path", () => {
+    const apiRead = fileReadToolCall("read-api", "src/api.ts");
+    apiRead.function.arguments = JSON.stringify({ path: "src/api.ts", anchor: "export { TraceValue" });
+    const protocolRead = fileReadToolCall("read-protocol", "./src/protocol.ts");
+    protocolRead.function.arguments = JSON.stringify({ path: "./src/protocol.ts", anchor: "trace?: TraceValue" });
+
+    const selected = selectRequiredWorkspaceMutationVerificationToolCalls(
+      [apiRead, protocolRead],
+      ["src/api.ts", "src/protocol.ts"],
+      ["file_read"],
+      2,
+    );
+
+    expect(selected?.map((call) => call.id)).toEqual(["read-api", "read-protocol"]);
+    expect(JSON.parse(selected?.[0]?.function.arguments ?? "{}")).toEqual({
+      path: "src/api.ts",
+      anchor: "export { TraceValue",
+    });
+  });
+
+  it.each([
+    { name: "omits an anchor", arguments: { path: "src/api.ts" } },
+    { name: "uses an empty anchor", arguments: { path: "src/api.ts", anchor: "" } },
+    { name: "uses an offset with an anchor", arguments: { path: "src/api.ts", anchor: "TraceValue", offset: 0 } },
+  ])("fails closed when verification $name", ({ arguments: readArguments }) => {
+    const call = fileReadToolCall("read-api", "src/api.ts");
+    call.function.arguments = JSON.stringify(readArguments);
+
+    expect(selectRequiredWorkspaceMutationVerificationToolCalls(
+      [call],
+      ["src/api.ts"],
+      ["file_read"],
+      1,
+    )).toBeUndefined();
+  });
+
   it("retains exactly one read per required navigation path and drops unrelated reads", () => {
     const requiredPaths = ["src/api.ts", "src/protocol.ts"];
     const calls = [

@@ -13,6 +13,269 @@ afterEach(() => {
 });
 
 describe("ToolEnabledAgent required workspace mutation", () => {
+  it("requires bounded anchored reads after all required paths are mutated", async () => {
+    const requiredChangedPaths = ["src/api.ts", "src/protocol.ts"];
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return response(modelToolCall("patch-all", "apply_patch", {
+          input: "*** Begin Patch\n*** Update File: src/api.ts\n@@\n-old\n+new\n*** Update File: src/protocol.ts\n@@\n-old\n+new\n*** End Patch",
+        }, 500, 100));
+      }
+      if (requests.length === 2) {
+        return response({
+          choices: [{
+            finish_reason: "tool_calls",
+            message: {
+              content: null,
+              tool_calls: [
+                modelToolCall("verify-api", "file_read", {
+                  path: requiredChangedPaths[0],
+                  anchor: "new api",
+                }, 0, 0).choices[0].message.tool_calls[0],
+                modelToolCall("verify-protocol", "file_read", {
+                  path: requiredChangedPaths[1],
+                  anchor: "new protocol",
+                }, 0, 0).choices[0].message.tool_calls[0],
+              ],
+            },
+          }],
+          usage: { prompt_tokens: 400, completion_tokens: 80 },
+        });
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: "verified" } }],
+        usage: { prompt_tokens: 300, completion_tokens: 30 },
+      });
+    });
+    const execute = vi.fn(async (request: { id: string; name: string; arguments?: Record<string, unknown> }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: request.name === "file_read"
+        ? JSON.stringify({
+            path: request.arguments?.path,
+            truncated: false,
+            content: `const value = ${JSON.stringify(request.arguments?.anchor)};`,
+          })
+        : "Patch applied successfully",
+      ...(request.name === "apply_patch" ? {
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+        },
+      } : {}),
+      durationMs: 1,
+    }));
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 3 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-read-after-write",
+      text: "Migrate the public API in both required files.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 3,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(3);
+    expect(requests[1]?.tools?.map((tool: any) => tool.function.name)).toEqual(["file_read"]);
+    expect(requests[1]?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "system",
+        content: expect.stringContaining("Post-mutation verification phase"),
+      }),
+    ]));
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "apply_patch",
+      "file_read",
+      "file_read",
+    ]);
+    expect(items).toContainEqual({ type: "final", text: "verified" });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("extends the iteration budget once when verification follows the final ordinary turn", async () => {
+    const requiredChangedPaths = ["src/api.ts"];
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, any>);
+      if (requests.length === 1) {
+        return response(modelToolCall("patch-api", "apply_patch", { input: "patch api" }, 300, 60));
+      }
+      if (requests.length === 2) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: "verified" } }],
+        usage: { prompt_tokens: 200, completion_tokens: 30 },
+      });
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: request.name === "file_read"
+        ? JSON.stringify({ path: request.arguments?.path, truncated: false, content: "verified" })
+        : "Patch applied successfully",
+      ...(request.name === "apply_patch" ? {
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+        },
+      } : {}),
+      durationMs: 1,
+    }));
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 1 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-verification-budget-extension",
+      text: "Migrate src/api.ts.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 1,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(3);
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "apply_patch",
+      "file_read",
+    ]);
+    expect(items).toContainEqual({ type: "final", text: "verified" });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("fails closed when an anchored read-after-write tool fails", async () => {
+    const requiredChangedPaths = ["src/api.ts"];
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, any>);
+      return response(requests.length === 1
+        ? modelToolCall("patch-api", "apply_patch", { input: "patch api" }, 300, 60)
+        : modelVerificationReads(requiredChangedPaths));
+    });
+    const execute = vi.fn(async (request: { id: string; name: string }) => request.name === "file_read"
+      ? {
+          id: request.id,
+          name: request.name,
+          success: false,
+          output: "",
+          error: "anchor was not found",
+          durationMs: 1,
+        }
+      : {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: "Patch applied successfully",
+          metadata: {
+            workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+          },
+          durationMs: 1,
+        });
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 1 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-verification-read-failure",
+      text: "Migrate src/api.ts.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 1,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(2);
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "final",
+      text: expect.stringContaining("anchor was not found"),
+    }));
+    expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
+  });
+
+  it("uses one tool-free finalization after a post-verification correction", async () => {
+    const requiredChangedPaths = ["src/api.ts"];
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, any>);
+      if (requests.length === 1) {
+        return response(modelToolCall("patch-api", "apply_patch", { input: "initial patch" }, 300, 60));
+      }
+      if (requests.length === 2) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
+      if (requests.length === 3) {
+        return response(modelToolCall("correct-api", "apply_patch", { input: "correct patch" }, 300, 60));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: "corrected and verified" } }],
+        usage: { prompt_tokens: 200, completion_tokens: 30 },
+      });
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: request.name === "file_read"
+        ? JSON.stringify({ path: request.arguments?.path, truncated: false, content: "needs correction" })
+        : "Patch applied successfully",
+      ...(request.name === "apply_patch" ? {
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+        },
+      } : {}),
+      durationMs: 1,
+    }));
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 1 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-verification-correction",
+      text: "Migrate src/api.ts.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 1,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(4);
+    expect(requests[3]).not.toHaveProperty("tools");
+    expect(requests.filter((request) => request.messages?.some((message: any) => (
+      message.role === "system" && String(message.content).includes("Post-mutation verification phase")
+    )))).toHaveLength(1);
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "apply_patch",
+      "file_read",
+      "apply_patch",
+    ]);
+    expect(items).toContainEqual({ type: "final", text: "corrected and verified" });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("uses one mutation-only call and one tool-free finalization inside the original budgets", async () => {
     const requests: Array<Record<string, any>> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
@@ -104,13 +367,25 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       if (requests.length === 2) {
         return response(modelToolCall("patch-rest", "apply_patch", { input: "patch remaining" }, 600, 90));
       }
+      if (requests.length === 3) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
       return response({
         choices: [{ finish_reason: "stop", message: { content: "fixed" } }],
         usage: { prompt_tokens: 300, completion_tokens: 30 },
       });
     });
     let mutationCall = 0;
-    const execute = vi.fn(async (request: { id: string; name: string }) => {
+    const execute = vi.fn(async (request: { id: string; name: string; arguments?: Record<string, unknown> }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({ path: request.arguments?.path, truncated: false, content: "verified" }),
+          durationMs: 1,
+        };
+      }
       mutationCall++;
       return {
         id: request.id,
@@ -143,7 +418,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       },
     }));
 
-    expect(requests).toHaveLength(3);
+    expect(requests).toHaveLength(4);
     expect(requests[1]?.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({
         role: "system",
@@ -153,8 +428,12 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     const recoveryText = requests[1]?.messages?.find((message: any) => message.role === "user")?.content;
     expect(recoveryText).toContain("jsonrpc/src/common/connection.ts");
     expect(recoveryText).toContain("protocol/src/common/protocol.ts");
-    expect(requests[2]).not.toHaveProperty("tools");
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(requests[2]?.tools?.map((tool: any) => tool.function.name)).toEqual(["file_read"]);
+    expect(requests[3]?.tools?.map((tool: any) => tool.function.name)).toEqual([
+      "file_read",
+      "apply_patch",
+    ]);
+    expect(execute).toHaveBeenCalledTimes(5);
     expect(items).toContainEqual({ type: "final", text: "fixed" });
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
@@ -241,13 +520,25 @@ describe("ToolEnabledAgent required workspace mutation", () => {
           input: `patch ${requests.length}`,
         }, 500, 80));
       }
+      if (requests.length === 3) {
+        return response(modelVerificationReads(["src/api.ts"]));
+      }
       return response({
         choices: [{ finish_reason: "stop", message: { content: "fixed" } }],
         usage: { prompt_tokens: 300, completion_tokens: 30 },
       });
     });
     let mutationCall = 0;
-    const execute = vi.fn(async (request: { id: string; name: string }) => {
+    const execute = vi.fn(async (request: { id: string; name: string; arguments?: Record<string, unknown> }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({ path: request.arguments?.path, truncated: false, content: "verified" }),
+          durationMs: 1,
+        };
+      }
       mutationCall++;
       return {
         id: request.id,
@@ -275,14 +566,15 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       },
     }));
 
-    expect(requests).toHaveLength(3);
+    expect(requests).toHaveLength(4);
     expect(requests[1]?.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({
         role: "system",
         content: expect.stringContaining("Mutation-only recovery phase"),
       }),
     ]));
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(requests[2]?.tools?.map((tool: any) => tool.function.name)).toEqual(["file_read"]);
+    expect(execute).toHaveBeenCalledTimes(3);
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
@@ -305,13 +597,25 @@ describe("ToolEnabledAgent required workspace mutation", () => {
           usage: { prompt_tokens: 500, completion_tokens: 100 },
         });
       }
+      if (requests.length === 2) {
+        return response(modelVerificationReads(["src/api.ts"]));
+      }
       return response({
         choices: [{ finish_reason: "stop", message: { content: "fixed" } }],
         usage: { prompt_tokens: 300, completion_tokens: 30 },
       });
     });
     let mutationCall = 0;
-    const execute = vi.fn(async (request: { id: string; name: string }) => {
+    const execute = vi.fn(async (request: { id: string; name: string; arguments?: Record<string, unknown> }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({ path: request.arguments?.path, truncated: false, content: "verified" }),
+          durationMs: 1,
+        };
+      }
       mutationCall++;
       return {
         id: request.id,
@@ -339,8 +643,8 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       },
     }));
 
-    expect(requests).toHaveLength(2);
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(requests).toHaveLength(3);
+    expect(execute).toHaveBeenCalledTimes(3);
     expect(items).toContainEqual({ type: "final", text: "fixed" });
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
@@ -745,6 +1049,9 @@ describe("ToolEnabledAgent required workspace mutation", () => {
           input: "multi-file patch",
         }, 1_200, 100));
       }
+      if (requests.length === 4) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
       return response({
         choices: [{ finish_reason: "stop", message: { content: '{"summary":"migrated"}' } }],
         usage: { prompt_tokens: 500, completion_tokens: 40 },
@@ -852,7 +1159,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     ]));
     expect(requests[1]?.messages[0]?.content).toContain("do not omit or duplicate any listed path");
     if (completes) {
-      expect(requests).toHaveLength(4);
+      expect(requests).toHaveLength(5);
       expect(requests[2]?.tools?.map((tool: any) => tool.function.name)).toEqual(["apply_patch"]);
       expect(requests[2]?.messages[0]?.content).toContain(
         "trusted required changed paths are one atomic checklist",
@@ -860,6 +1167,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       expect(requests[2]?.messages[0]?.content).toContain(
         "Partial path coverage will be rejected",
       );
+      expect(requests[3]?.tools?.map((tool: any) => tool.function.name)).toEqual(["file_read"]);
       expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
         "list_files",
         "file_read",
@@ -867,6 +1175,9 @@ describe("ToolEnabledAgent required workspace mutation", () => {
         "file_read",
         "file_read",
         "apply_patch",
+        "file_read",
+        "file_read",
+        "file_read",
       ]);
       if (omitProtocolAnchor) {
         const protocolRead = execute.mock.calls
@@ -1312,6 +1623,25 @@ function modelToolCall(
       },
     }],
     usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens },
+  };
+}
+
+function modelVerificationReads(requiredPaths: readonly string[]) {
+  return {
+    choices: [{
+      finish_reason: "tool_calls",
+      message: {
+        content: null,
+        tool_calls: requiredPaths.map((path, index) => modelToolCall(
+          `verify-${index}`,
+          "file_read",
+          { path, anchor: `post-mutation-anchor-${index}` },
+          0,
+          0,
+        ).choices[0].message.tool_calls[0]),
+      },
+    }],
+    usage: { prompt_tokens: 400, completion_tokens: 80 },
   };
 }
 
