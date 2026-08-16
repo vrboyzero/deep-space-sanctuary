@@ -34,6 +34,8 @@ describe("coding agent benchmark Windows launcher", () => {
       baseEnv: {
         BELLDANDY_ALLOWED_ORIGINS: "http://127.0.0.1:28889",
         BELLDANDY_OPENAI_API_KEY: "sensitive-provider-key",
+        BELLDANDY_MODEL_INPUT_USD_PER_1M: "0.125",
+        BELLDANDY_MODEL_OUTPUT_USD_PER_1M: "0.25",
       },
       randomToken: () => "ephemeral-gateway-token",
       resolvePath: (value) => path.win32.resolve(value),
@@ -53,6 +55,8 @@ describe("coding agent benchmark Windows launcher", () => {
       BELLDANDY_ALLOWED_ORIGINS: "http://127.0.0.1:28895",
       BELLDANDY_AGENT_PROVIDER: "openai",
       BELLDANDY_OPENAI_MODEL: "deepseek-v4-flash",
+      BELLDANDY_MODEL_INPUT_USD_PER_1M: "0.125",
+      BELLDANDY_MODEL_OUTPUT_USD_PER_1M: "0.25",
     });
     expect(invocation.benchmark.env).toBe(invocation.gateway.env);
     expect(invocation.benchmark.args).toEqual(expect.arrayContaining([
@@ -109,6 +113,23 @@ describe("coding agent benchmark Windows launcher", () => {
     }, {
       resolvePath: (value) => path.win32.resolve(value),
     })).toThrow(/share the same state root.*pairing/i);
+  });
+
+  it("rejects formal runs without complete model pricing before spawning", () => {
+    expect(() => buildWindowsBenchmarkInvocation({
+      workspaceRoot,
+      fixtureRoot: "E:/project/star-sanctuary/tmp/fixtures",
+      artifactRoot: "E:/project/star-sanctuary/artifacts/windows-formal",
+      stateRoot: "E:/project/star-sanctuary/tmp/runtime",
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      credentialsConfigured: true,
+    }, {
+      baseEnv: {
+        BELLDANDY_MODEL_INPUT_USD_PER_1M: "0.125",
+      },
+      resolvePath: (value) => path.win32.resolve(value),
+    })).toThrow(/BELLDANDY_MODEL_OUTPUT_USD_PER_1M.*pricing/i);
   });
 
   it("rejects non-loopback Gateway endpoints", () => {

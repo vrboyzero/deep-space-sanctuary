@@ -18,6 +18,10 @@ const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 28889;
 const DEFAULT_GATEWAY_READY_TIMEOUT_MS = 60_000;
 const DEFAULT_GATEWAY_STOP_GRACE_MS = 3_000;
+const REQUIRED_MODEL_PRICING_ENV_KEYS = [
+  "BELLDANDY_MODEL_INPUT_USD_PER_1M",
+  "BELLDANDY_MODEL_OUTPUT_USD_PER_1M",
+];
 
 export function buildWindowsBenchmarkInvocation(input, dependencies = {}) {
   const resolvePath = dependencies.resolvePath ?? path.resolve;
@@ -37,6 +41,7 @@ export function buildWindowsBenchmarkInvocation(input, dependencies = {}) {
   if (typeof credentialsConfigured !== "boolean") {
     throw new Error("credentialsConfigured must be a boolean.");
   }
+  const baseEnv = dependencies.baseEnv ?? process.env;
 
   const host = input.host ?? DEFAULT_HOST;
   if (host !== "127.0.0.1" && host !== "localhost") {
@@ -46,6 +51,17 @@ export function buildWindowsBenchmarkInvocation(input, dependencies = {}) {
   const authMode = input.authMode ?? "token";
   if (authMode !== "none" && authMode !== "token") {
     throw new Error("authMode must be none or token.");
+  }
+  if (credentialsConfigured) {
+    for (const key of REQUIRED_MODEL_PRICING_ENV_KEYS) {
+      const rawValue = baseEnv[key];
+      const value = typeof rawValue === "string" && rawValue.trim()
+        ? Number(rawValue.trim())
+        : Number.NaN;
+      if (!Number.isFinite(value) || value < 0) {
+        throw new Error(`${key} must provide finite non-negative model pricing for a Windows benchmark formal run.`);
+      }
+    }
   }
 
   const manifestRevision = input.manifestRevision ?? "v1";
@@ -80,7 +96,7 @@ export function buildWindowsBenchmarkInvocation(input, dependencies = {}) {
     : requireInput(input, "shadowCandidateId");
 
   const env = {
-    ...(dependencies.baseEnv ?? process.env),
+    ...baseEnv,
     BELLDANDY_STATE_DIR: gatewayStateRoot,
     BELLDANDY_ENV_DIR: gatewayStateRoot,
     BELLDANDY_HOST: host,
