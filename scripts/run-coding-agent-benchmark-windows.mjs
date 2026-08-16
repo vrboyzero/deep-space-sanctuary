@@ -38,11 +38,19 @@ const CONTROLLED_GATEWAY_RUNTIME_ENV = Object.freeze({
   BELLDANDY_DREAM_AUTO_HEARTBEAT_ENABLED: "false",
   BELLDANDY_DREAM_AUTO_CRON_ENABLED: "false",
   BELLDANDY_BROWSER_RELAY_ENABLED: "false",
+  BELLDANDY_MCP_ENABLED: "false",
   BELLDANDY_CHANNEL_ROUTER_ENABLED: "false",
+  BELLDANDY_EMAIL_SMTP_ENABLED: "false",
   BELLDANDY_EMAIL_IMAP_ENABLED: "false",
   BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED: "false",
   BELLDANDY_DISCORD_ENABLED: "false",
   BELLDANDY_COMMUNITY_API_ENABLED: "false",
+  BELLDANDY_FEISHU_APP_ID: "",
+  BELLDANDY_FEISHU_APP_SECRET: "",
+  BELLDANDY_FEISHU_AGENT_ID: "",
+  BELLDANDY_QQ_APP_ID: "",
+  BELLDANDY_QQ_APP_SECRET: "",
+  BELLDANDY_QQ_AGENT_ID: "",
 });
 
 export function buildWindowsBenchmarkInvocation(input, dependencies = {}) {
@@ -120,6 +128,7 @@ export function buildWindowsBenchmarkInvocation(input, dependencies = {}) {
   const env = {
     ...baseEnv,
     BELLDANDY_STATE_DIR: gatewayStateRoot,
+    BELLDANDY_STATE_DIR_WINDOWS: gatewayStateRoot,
     BELLDANDY_ENV_DIR: gatewayStateRoot,
     BELLDANDY_HOST: host,
     BELLDANDY_PORT: String(port),

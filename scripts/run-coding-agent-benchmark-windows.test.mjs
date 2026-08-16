@@ -33,6 +33,7 @@ describe("coding agent benchmark Windows launcher", () => {
     }, {
       baseEnv: {
         BELLDANDY_ALLOWED_ORIGINS: "http://127.0.0.1:28889",
+        BELLDANDY_STATE_DIR_WINDOWS: "H:/user-state",
         BELLDANDY_OPENAI_API_KEY: "sensitive-provider-key",
         BELLDANDY_MODEL_INPUT_USD_PER_1M: "0.125",
         BELLDANDY_MODEL_OUTPUT_USD_PER_1M: "0.25",
@@ -53,6 +54,7 @@ describe("coding agent benchmark Windows launcher", () => {
       BELLDANDY_AUTH_MODE: "token",
       BELLDANDY_AUTH_TOKEN: "ephemeral-gateway-token",
       BELLDANDY_ALLOWED_ORIGINS: "http://127.0.0.1:28895",
+      BELLDANDY_STATE_DIR_WINDOWS: path.win32.resolve("E:/project/star-sanctuary/tmp/runtime"),
       BELLDANDY_AGENT_PROVIDER: "openai",
       BELLDANDY_OPENAI_MODEL: "deepseek-v4-flash",
       BELLDANDY_MODEL_INPUT_USD_PER_1M: "0.125",
@@ -170,7 +172,9 @@ describe("coding agent benchmark Windows launcher", () => {
       "BELLDANDY_DREAM_AUTO_HEARTBEAT_ENABLED",
       "BELLDANDY_DREAM_AUTO_CRON_ENABLED",
       "BELLDANDY_BROWSER_RELAY_ENABLED",
+      "BELLDANDY_MCP_ENABLED",
       "BELLDANDY_CHANNEL_ROUTER_ENABLED",
+      "BELLDANDY_EMAIL_SMTP_ENABLED",
       "BELLDANDY_EMAIL_IMAP_ENABLED",
       "BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED",
       "BELLDANDY_DISCORD_ENABLED",
@@ -197,6 +201,39 @@ describe("coding agent benchmark Windows launcher", () => {
       Object.fromEntries(disabledRuntimeKeys.map((key) => [key, "false"])),
     );
     expect(invocation.benchmark.env).toBe(invocation.gateway.env);
+  });
+
+  it("clears inherited channel credentials for controlled benchmark runs", () => {
+    const invocation = buildWindowsBenchmarkInvocation({
+      workspaceRoot,
+      fixtureRoot: "E:/project/star-sanctuary/tmp/fixtures",
+      artifactRoot: "E:/project/star-sanctuary/artifacts/windows-formal",
+      stateRoot: "E:/project/star-sanctuary/tmp/runtime",
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      credentialsConfigured: true,
+    }, {
+      baseEnv: {
+        BELLDANDY_MODEL_INPUT_USD_PER_1M: "0.125",
+        BELLDANDY_MODEL_OUTPUT_USD_PER_1M: "0.25",
+        BELLDANDY_FEISHU_APP_ID: "inherited-feishu-id",
+        BELLDANDY_FEISHU_APP_SECRET: "inherited-feishu-secret",
+        BELLDANDY_FEISHU_AGENT_ID: "inherited-feishu-agent",
+        BELLDANDY_QQ_APP_ID: "inherited-qq-id",
+        BELLDANDY_QQ_APP_SECRET: "inherited-qq-secret",
+        BELLDANDY_QQ_AGENT_ID: "inherited-qq-agent",
+      },
+      resolvePath: (value) => path.win32.resolve(value),
+    });
+
+    expect(invocation.gateway.env).toMatchObject({
+      BELLDANDY_FEISHU_APP_ID: "",
+      BELLDANDY_FEISHU_APP_SECRET: "",
+      BELLDANDY_FEISHU_AGENT_ID: "",
+      BELLDANDY_QQ_APP_ID: "",
+      BELLDANDY_QQ_APP_SECRET: "",
+      BELLDANDY_QQ_AGENT_ID: "",
+    });
   });
 
   it("rejects non-loopback Gateway endpoints", () => {
