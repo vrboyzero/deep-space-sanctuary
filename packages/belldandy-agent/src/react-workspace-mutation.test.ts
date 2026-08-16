@@ -156,6 +156,10 @@ describe("ReAct workspace mutation recovery", () => {
         content: expect.stringContaining("Fix the exported Go API"),
       }),
     ]);
+    expect(request?.messages[0]?.content).toContain(
+      "merely naming a required path or providing context-only lines is not coverage",
+    );
+    expect(request?.messages[0]?.content).toContain("at least one added or removed line");
     expect(request?.messages[1]?.content).toContain("[tool=file_read]");
     expect(request?.messages.some((message) => message.role === ("tool" as string))).toBe(false);
     expect(WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE).toBe(4_096);

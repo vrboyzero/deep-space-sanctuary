@@ -82,6 +82,42 @@ describe("apply_patch tool", () => {
     });
   });
 
+  it("rejects a multi-file patch atomically when one update is a no-op", async () => {
+    await fs.mkdir(path.join(tempDir, "src"), { recursive: true });
+    await fs.writeFile(path.join(tempDir, "src", "api.ts"), "export const api = false;\n", "utf-8");
+    await fs.writeFile(path.join(tempDir, "src", "connection.ts"), "export const connection = false;\n", "utf-8");
+
+    const result = await applyPatchTool.execute(
+      {
+        input: [
+          "*** Begin Patch",
+          "*** Update File: src/api.ts",
+          "@@",
+          " export const api = false;",
+          "*** Update File: src/connection.ts",
+          "@@",
+          "-export const connection = false;",
+          "+export const connection = true;",
+          "*** End Patch",
+        ].join("\n"),
+      },
+      baseContext,
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      failureKind: "input_error",
+      metadata: {
+        repairAction: "apply_patch_input_invalid",
+      },
+    });
+    expect(result.error).toContain("src/api.ts");
+    await expect(fs.readFile(path.join(tempDir, "src", "api.ts"), "utf-8"))
+      .resolves.toBe("export const api = false;\n");
+    await expect(fs.readFile(path.join(tempDir, "src", "connection.ts"), "utf-8"))
+      .resolves.toBe("export const connection = false;\n");
+  });
+
   it("should unwrap an apply_patch wrapper around raw patch text", async () => {
     const result = await applyPatchTool.execute(
       {
@@ -211,6 +247,34 @@ describe("apply_patch tool", () => {
 
     expect(result.success).toBe(true);
     await expect(fs.readFile(path.join(tempDir, "source.txt"), "utf-8")).resolves.toBe("after\n");
+  });
+
+  it("should reject a same-path move without content changes", async () => {
+    await fs.writeFile(path.join(tempDir, "source.txt"), "before\n", "utf-8");
+
+    const result = await applyPatchTool.execute(
+      {
+        input: [
+          "*** Begin Patch",
+          "*** Update File: source.txt",
+          "*** Move to: source.txt",
+          "@@",
+          " before",
+          "*** End Patch",
+        ].join("\n"),
+      },
+      baseContext,
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      failureKind: "input_error",
+      metadata: {
+        repairAction: "apply_patch_input_invalid",
+      },
+    });
+    expect(result.error).toContain("source.txt");
+    await expect(fs.readFile(path.join(tempDir, "source.txt"), "utf-8")).resolves.toBe("before\n");
   });
 
   it("should still reject files outside whitelist", async () => {

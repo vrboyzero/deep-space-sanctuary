@@ -342,14 +342,19 @@ export const applyPatchTool: Tool = withToolContract({
                         const moveCheck = validateWritablePath(hunk.movePath, context);
                         if (!moveCheck.ok) throw new Error(moveCheck.error);
                         if (moveCheck.absolute === absolute) {
-                            if (newContent !== originalContent) {
-                                operations.push({
-                                    kind: "update",
-                                    absolute,
-                                    relative,
-                                    newContent,
-                                });
+                            if (newContent === originalContent) {
+                                return makeError(
+                                    `[${relative}] Update File 未产生任何实际内容变化或路径变化`,
+                                    "input_error",
+                                    buildApplyPatchInputRepairMetadata(),
+                                );
                             }
+                            operations.push({
+                                kind: "update",
+                                absolute,
+                                relative,
+                                newContent,
+                            });
                             continue;
                         }
                         operations.push({
@@ -364,7 +369,11 @@ export const applyPatchTool: Tool = withToolContract({
                         });
                     } else {
                         if (newContent === originalContent) {
-                            continue;
+                            return makeError(
+                                `[${relative}] Update File 未产生任何实际内容变化或路径变化`,
+                                "input_error",
+                                buildApplyPatchInputRepairMetadata(),
+                            );
                         }
                         operations.push({
                             kind: "update",
