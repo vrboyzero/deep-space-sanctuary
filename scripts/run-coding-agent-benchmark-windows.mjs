@@ -22,6 +22,28 @@ const REQUIRED_MODEL_PRICING_ENV_KEYS = [
   "BELLDANDY_MODEL_INPUT_USD_PER_1M",
   "BELLDANDY_MODEL_OUTPUT_USD_PER_1M",
 ];
+const CONTROLLED_GATEWAY_RUNTIME_ENV = Object.freeze({
+  AUTO_OPEN_BROWSER: "false",
+  BELLDANDY_PRIMARY_WARMUP_ENABLED: "false",
+  BELLDANDY_MEMORY_ENABLED: "false",
+  BELLDANDY_EMBEDDING_ENABLED: "false",
+  BELLDANDY_MEMORY_SUMMARY_ENABLED: "false",
+  BELLDANDY_MEMORY_EVOLUTION_ENABLED: "false",
+  BELLDANDY_TASK_MEMORY_ENABLED: "false",
+  BELLDANDY_TASK_SUMMARY_ENABLED: "false",
+  BELLDANDY_COMPACTION_ENABLED: "false",
+  BELLDANDY_UPDATE_CHECK: "false",
+  BELLDANDY_HEARTBEAT_ENABLED: "false",
+  BELLDANDY_CRON_ENABLED: "false",
+  BELLDANDY_DREAM_AUTO_HEARTBEAT_ENABLED: "false",
+  BELLDANDY_DREAM_AUTO_CRON_ENABLED: "false",
+  BELLDANDY_BROWSER_RELAY_ENABLED: "false",
+  BELLDANDY_CHANNEL_ROUTER_ENABLED: "false",
+  BELLDANDY_EMAIL_IMAP_ENABLED: "false",
+  BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED: "false",
+  BELLDANDY_DISCORD_ENABLED: "false",
+  BELLDANDY_COMMUNITY_API_ENABLED: "false",
+});
 
 export function buildWindowsBenchmarkInvocation(input, dependencies = {}) {
   const resolvePath = dependencies.resolvePath ?? path.resolve;
@@ -104,7 +126,7 @@ export function buildWindowsBenchmarkInvocation(input, dependencies = {}) {
     BELLDANDY_AUTH_MODE: authMode,
     BELLDANDY_ALLOWED_ORIGINS: `http://${host}:${port}`,
     BELLDANDY_AGENT_PROVIDER: provider,
-    BELLDANDY_PRIMARY_WARMUP_ENABLED: "false",
+    ...CONTROLLED_GATEWAY_RUNTIME_ENV,
     ...(provider === "openai" ? { BELLDANDY_OPENAI_MODEL: modelId } : {}),
     ...(manifestRevision === "v1" ? {} : {
       BELLDANDY_TOOL_RESULT_EVENT_OUTPUT_CHAR_LIMIT: "2048",

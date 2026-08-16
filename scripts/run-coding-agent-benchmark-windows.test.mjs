@@ -153,6 +153,52 @@ describe("coding agent benchmark Windows launcher", () => {
     expect(invocation.benchmark.env).toBe(invocation.gateway.env);
   });
 
+  it("disables unaccounted background runtime for controlled benchmark runs", () => {
+    const disabledRuntimeKeys = [
+      "AUTO_OPEN_BROWSER",
+      "BELLDANDY_PRIMARY_WARMUP_ENABLED",
+      "BELLDANDY_MEMORY_ENABLED",
+      "BELLDANDY_EMBEDDING_ENABLED",
+      "BELLDANDY_MEMORY_SUMMARY_ENABLED",
+      "BELLDANDY_MEMORY_EVOLUTION_ENABLED",
+      "BELLDANDY_TASK_MEMORY_ENABLED",
+      "BELLDANDY_TASK_SUMMARY_ENABLED",
+      "BELLDANDY_COMPACTION_ENABLED",
+      "BELLDANDY_UPDATE_CHECK",
+      "BELLDANDY_HEARTBEAT_ENABLED",
+      "BELLDANDY_CRON_ENABLED",
+      "BELLDANDY_DREAM_AUTO_HEARTBEAT_ENABLED",
+      "BELLDANDY_DREAM_AUTO_CRON_ENABLED",
+      "BELLDANDY_BROWSER_RELAY_ENABLED",
+      "BELLDANDY_CHANNEL_ROUTER_ENABLED",
+      "BELLDANDY_EMAIL_IMAP_ENABLED",
+      "BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED",
+      "BELLDANDY_DISCORD_ENABLED",
+      "BELLDANDY_COMMUNITY_API_ENABLED",
+    ];
+    const invocation = buildWindowsBenchmarkInvocation({
+      workspaceRoot,
+      fixtureRoot: "E:/project/star-sanctuary/tmp/fixtures",
+      artifactRoot: "E:/project/star-sanctuary/artifacts/windows-formal",
+      stateRoot: "E:/project/star-sanctuary/tmp/runtime",
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      credentialsConfigured: true,
+    }, {
+      baseEnv: {
+        BELLDANDY_MODEL_INPUT_USD_PER_1M: "0.125",
+        BELLDANDY_MODEL_OUTPUT_USD_PER_1M: "0.25",
+        ...Object.fromEntries(disabledRuntimeKeys.map((key) => [key, "true"])),
+      },
+      resolvePath: (value) => path.win32.resolve(value),
+    });
+
+    expect(invocation.gateway.env).toMatchObject(
+      Object.fromEntries(disabledRuntimeKeys.map((key) => [key, "false"])),
+    );
+    expect(invocation.benchmark.env).toBe(invocation.gateway.env);
+  });
+
   it("rejects non-loopback Gateway endpoints", () => {
     expect(() => buildWindowsBenchmarkInvocation({
       workspaceRoot,
