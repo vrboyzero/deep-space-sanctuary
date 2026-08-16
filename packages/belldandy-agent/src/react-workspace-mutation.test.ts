@@ -34,15 +34,18 @@ describe("ReAct workspace mutation recovery", () => {
       tools: [expect.objectContaining({ function: expect.objectContaining({ name: "file_read" }) })],
     });
     expect(request?.messages[0]?.content).toContain("Post-mutation verification phase");
-    expect(request?.messages[0]?.content).toContain("non-empty exact anchor");
-    expect(request?.messages[0]?.content).toContain("when no reliable anchor is available");
-    expect(request?.messages[0]?.content).toContain("full file_read from the start");
+    expect(request?.messages[0]?.content).toContain("from the start without an anchor");
+    expect(request?.messages[0]?.content).toContain("discard any supplied non-empty anchor");
     expect(request?.messages[1]?.content).toContain("Trusted required paths to verify after mutation");
   });
 
-  it("accepts exactly one anchored verification read per required path", () => {
+  it("normalizes anchored verification reads to bounded full-file reads", () => {
     const apiRead = fileReadToolCall("read-api", "src/api.ts");
-    apiRead.function.arguments = JSON.stringify({ path: "src/api.ts", anchor: "export { TraceValue" });
+    apiRead.function.arguments = JSON.stringify({
+      path: "src/api.ts",
+      anchor: "export { TraceValue",
+      offset: 0,
+    });
     const protocolRead = fileReadToolCall("read-protocol", "./src/protocol.ts");
     protocolRead.function.arguments = JSON.stringify({ path: "./src/protocol.ts", anchor: "trace?: TraceValue" });
 
@@ -53,11 +56,10 @@ describe("ReAct workspace mutation recovery", () => {
       2,
     );
 
-    expect(selected?.map((call) => call.id)).toEqual(["read-api", "read-protocol"]);
-    expect(JSON.parse(selected?.[0]?.function.arguments ?? "{}")).toEqual({
-      path: "src/api.ts",
-      anchor: "export { TraceValue",
-    });
+    expect(selected?.map((call) => JSON.parse(call.function.arguments))).toEqual([
+      { path: "src/api.ts", limit: 1_048_576 },
+      { path: "./src/protocol.ts", limit: 1_048_576 },
+    ]);
   });
 
   it("normalizes exact unanchored verification reads to the bounded full-file limit", () => {
@@ -81,7 +83,7 @@ describe("ReAct workspace mutation recovery", () => {
 
   it.each([
     { name: "uses an empty anchor", arguments: { path: "src/api.ts", anchor: "" } },
-    { name: "uses an offset with an anchor", arguments: { path: "src/api.ts", anchor: "TraceValue", offset: 0 } },
+    { name: "uses a positive offset with an anchor", arguments: { path: "src/api.ts", anchor: "TraceValue", offset: 1 } },
     { name: "uses a cursor without an anchor", arguments: { path: "src/api.ts", cursor: "next" } },
   ])("fails closed when verification $name", ({ arguments: readArguments }) => {
     const call = fileReadToolCall("read-api", "src/api.ts");

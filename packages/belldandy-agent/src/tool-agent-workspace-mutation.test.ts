@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 describe("ToolEnabledAgent required workspace mutation", () => {
-  it("requires bounded anchored reads after all required paths are mutated", async () => {
+  it("normalizes unreliable verification anchors to bounded full-file reads", async () => {
     const requiredChangedPaths = ["src/api.ts", "src/protocol.ts"];
     const requests: Array<Record<string, any>> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
@@ -96,6 +96,9 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       "file_read",
       "file_read",
     ]);
+    expect(execute.mock.calls.slice(1).map(([request]) => request.arguments)).toEqual(
+      requiredChangedPaths.map((path) => ({ path, limit: 1_048_576 })),
+    );
     expect(items).toContainEqual({ type: "final", text: "verified" });
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
@@ -301,7 +304,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
-  it("fails closed when an anchored read-after-write tool fails", async () => {
+  it("fails closed when a bounded read-after-write tool fails", async () => {
     const requiredChangedPaths = ["src/api.ts"];
     const requests: Array<Record<string, any>> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {

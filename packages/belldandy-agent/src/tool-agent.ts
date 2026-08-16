@@ -4055,7 +4055,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           );
           if (!requiredToolCalls) {
             yield* emitWorkspaceMutationFailure(
-              "the bounded read-after-write model call must request one valid file_read (anchored or bounded full-file) for every required path, with no omissions, duplicates, or extra calls.",
+              "the bounded read-after-write model call must request one valid bounded full-file file_read for every required path, with no omissions, duplicates, or extra calls.",
             );
             return;
           }
