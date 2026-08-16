@@ -132,6 +132,27 @@ describe("coding agent benchmark Windows launcher", () => {
     })).toThrow(/BELLDANDY_MODEL_OUTPUT_USD_PER_1M.*pricing/i);
   });
 
+  it("disables unaccounted primary warmup calls for controlled benchmark runs", () => {
+    const invocation = buildWindowsBenchmarkInvocation({
+      workspaceRoot,
+      fixtureRoot: "E:/project/star-sanctuary/tmp/fixtures",
+      artifactRoot: "E:/project/star-sanctuary/artifacts/windows-formal",
+      stateRoot: "E:/project/star-sanctuary/tmp/runtime",
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      credentialsConfigured: true,
+    }, {
+      baseEnv: {
+        BELLDANDY_MODEL_INPUT_USD_PER_1M: "0.125",
+        BELLDANDY_MODEL_OUTPUT_USD_PER_1M: "0.25",
+      },
+      resolvePath: (value) => path.win32.resolve(value),
+    });
+
+    expect(invocation.gateway.env.BELLDANDY_PRIMARY_WARMUP_ENABLED).toBe("false");
+    expect(invocation.benchmark.env).toBe(invocation.gateway.env);
+  });
+
   it("rejects non-loopback Gateway endpoints", () => {
     expect(() => buildWindowsBenchmarkInvocation({
       workspaceRoot,

@@ -104,6 +104,7 @@ export function buildWindowsBenchmarkInvocation(input, dependencies = {}) {
     BELLDANDY_AUTH_MODE: authMode,
     BELLDANDY_ALLOWED_ORIGINS: `http://${host}:${port}`,
     BELLDANDY_AGENT_PROVIDER: provider,
+    BELLDANDY_PRIMARY_WARMUP_ENABLED: "false",
     ...(provider === "openai" ? { BELLDANDY_OPENAI_MODEL: modelId } : {}),
     ...(manifestRevision === "v1" ? {} : {
       BELLDANDY_TOOL_RESULT_EVENT_OUTPUT_CHAR_LIMIT: "2048",
