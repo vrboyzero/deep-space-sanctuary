@@ -1642,6 +1642,172 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     }
   });
 
+  it("disables DeepSeek thinking for finalization after required-path verification", async () => {
+    const requiredChangedPaths = [
+      "jsonrpc/src/common/api.ts",
+      "jsonrpc/src/common/connection.ts",
+      "protocol/src/common/protocol.ts",
+    ];
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return response({
+          choices: [{
+            finish_reason: "tool_calls",
+            message: {
+              content: null,
+              tool_calls: [
+                modelToolCall("list-1", "list_files", { path: "." }, 0, 0).choices[0].message.tool_calls[0],
+                modelToolCall("read-test", "file_read", {
+                  path: "test/benchmark-v3/real-ts-api-migration.mjs",
+                }, 0, 0).choices[0].message.tool_calls[0],
+              ],
+            },
+          }],
+          usage: { prompt_tokens: 1_000, completion_tokens: 180 },
+        });
+      }
+      if (requests.length === 2) {
+        return response({
+          choices: [{
+            finish_reason: "tool_calls",
+            message: {
+              content: null,
+              tool_calls: requiredChangedPaths.map((path, index) => modelToolCall(
+                `read-required-${index}`,
+                "file_read",
+                { path },
+                0,
+                0,
+              ).choices[0].message.tool_calls[0]),
+            },
+          }],
+          usage: { prompt_tokens: 1_200, completion_tokens: 100 },
+        });
+      }
+      if (requests.length === 3) {
+        return response(modelToolCall("patch-1", "apply_patch", {
+          input: "multi-file patch",
+        }, 1_200, 100));
+      }
+      if (requests.length === 4) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
+      if ((body.thinking as { type?: unknown } | undefined)?.type !== "disabled") {
+        return response({
+          choices: [{
+            finish_reason: "length",
+            message: { content: null, reasoning_content: "R".repeat(Number(body.max_tokens)) },
+          }],
+          usage: { prompt_tokens: 500, completion_tokens: Number(body.max_tokens) },
+        });
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: '{"summary":"migrated"}' } }],
+        usage: { prompt_tokens: 500, completion_tokens: 40 },
+      });
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      const requestPath = String(request.arguments?.path ?? "");
+      if (request.name === "list_files") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({ path: ".", entries: ["jsonrpc", "protocol", "test"] }),
+          durationMs: 1,
+        };
+      }
+      if (request.name === "apply_patch") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: "Patch applied successfully",
+          metadata: {
+            workspaceMutation: {
+              schemaVersion: 1,
+              changedPaths: requiredChangedPaths,
+            },
+          },
+          durationMs: 1,
+        };
+      }
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: JSON.stringify({
+          path: requestPath,
+          truncated: false,
+          content: requestPath.startsWith("test/")
+            ? requiredChangedPaths.join("\n")
+            : `complete source for ${requestPath}\n${"x".repeat(
+                requestPath === requiredChangedPaths[0]
+                  ? 5_423
+                  : requestPath === requiredChangedPaths[1]
+                    ? 60_123
+                    : 134_094,
+              )}`,
+        }),
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 12,
+      thinking: { type: "enabled" },
+      mutationToolNames: ["apply_patch"],
+      readToolNames: ["file_read", "list_files"],
+    });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-verified-finalization-thinking",
+      text: "Apply the frozen public API migration.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 12,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === '{"summary":"migrated"}'
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(requests).toHaveLength(5);
+    expect(requests[0]?.thinking).toEqual({ type: "enabled" });
+    expect(requests.slice(1, 4).every((request) => request.thinking?.type === "disabled")).toBe(true);
+    expect(requests[4]).not.toHaveProperty("tools");
+    expect(requests[4]?.max_tokens).toBe(1_024);
+    expect(requests[4]?.thinking).toEqual({ type: "disabled" });
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "list_files",
+      "file_read",
+      "file_read",
+      "file_read",
+      "file_read",
+      "apply_patch",
+      "file_read",
+      "file_read",
+      "file_read",
+    ]);
+    expect(items).toContainEqual({ type: "final", text: '{"summary":"migrated"}' });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it.each([
     {
       name: "mixed source-read tools",
