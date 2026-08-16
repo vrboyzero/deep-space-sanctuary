@@ -13,4 +13,12 @@ describe("Gateway workflow runtime wiring", () => {
     expect(source.match(/toolExecutor\.registerTool\(runWorkflowTool/g)).toHaveLength(1);
     expect(source).not.toContain("WorkflowRuntime skipped (memory manager not available)");
   });
+
+  it("binds background memory indexing to the memory master switch", () => {
+    const source = fs.readFileSync(new URL("./bin/gateway-main.ts", import.meta.url), "utf8");
+
+    expect(source).toContain(
+      "backgroundIndexingEnabled: memoryRuntimeSwitches.masterEnabled,",
+    );
+  });
 });

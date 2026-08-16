@@ -737,6 +737,8 @@ export interface MemoryManagerOptions {
     localModel?: string;
     modelsDir?: string;
     indexerOptions?: IndexerOptions;
+    /** 关闭自动 lazy scan/watch；显式 indexWorkspace 调用保持可用。 */
+    backgroundIndexingEnabled?: boolean;
     embeddingBatchSize?: number;
     rerankerOptions?: RerankerOptions;
     /** L0 摘要层配置 */
@@ -846,6 +848,7 @@ export class MemoryManager {
     private readonly embeddingFailureLedger: EmbeddingFailureLedger;
     private indexer: MemoryIndexer;
     private indexCoordinator: IndexCoordinator;
+    private readonly backgroundIndexingEnabled: boolean;
     private readonly memoryTreeRefreshQueue: MemoryTreeRefreshQueue;
     private readonly queryEmbeddingCache: QueryEmbeddingCache;
     private reranker: ResultReranker;
@@ -915,6 +918,7 @@ export class MemoryManager {
         this.workspaceRoot = options.workspaceRoot;
         this.additionalRoots = options.additionalRoots ?? [];
         this.additionalFiles = options.additionalFiles ?? [];
+        this.backgroundIndexingEnabled = options.backgroundIndexingEnabled ?? true;
         this.queryEmbeddingCache = new QueryEmbeddingCache();
 
         // Default store path: .star_sanctuary/memory.sqlite（带旧目录回退）
@@ -1137,6 +1141,9 @@ export class MemoryManager {
     startLazyIndexing(): Promise<void> {
         if (this.closed) {
             return this.closePromise ?? Promise.resolve();
+        }
+        if (!this.backgroundIndexingEnabled) {
+            return Promise.resolve();
         }
         return this.indexCoordinator.runFullScan();
     }

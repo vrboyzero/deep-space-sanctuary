@@ -3460,6 +3460,7 @@ const scopedMemoryManagers = createScopedMemoryManagers({
   embeddingBatchSize,
   embeddingQueryPrefix,
   embeddingPassagePrefix,
+  backgroundIndexingEnabled: memoryRuntimeSwitches.masterEnabled,
   summaryEnabled,
   summaryModel,
   summaryBaseUrl,

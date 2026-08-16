@@ -114,6 +114,20 @@ describe("MemoryManager guardrails", () => {
     expect(indexSpy).toHaveBeenCalledTimes(2);
   });
 
+  it("skips lazy indexing when background indexing is disabled", async () => {
+    manager = createManager({
+      workspaceRoot: sessionsDir,
+      stateDir,
+      backgroundIndexingEnabled: false,
+    });
+
+    const runSpy = vi.spyOn((manager as any).indexCoordinator, "runFullScan");
+
+    await manager.startLazyIndexing();
+
+    expect(runSpy).not.toHaveBeenCalled();
+  });
+
   it("continues a byte-limited full scan from the deferred file on later generations", async () => {
     const files = ["a.md", "b.md", "c.md"].map((name) => path.join(docsDir, name));
     for (const [index, sourcePath] of files.entries()) {
