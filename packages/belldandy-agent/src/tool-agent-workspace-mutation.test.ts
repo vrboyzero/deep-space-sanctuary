@@ -422,7 +422,9 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
-  it("uses one mutation-only call and one tool-free finalization inside the original budgets", async () => {
+  it("normalizes a colonless mutation-only Update File header before tool execution", async () => {
+    const colonlessPatch = "*** Begin Patch\n*** Update File api.go\n@@\n-old\n+new\n*** End Patch";
+    const normalizedPatch = "*** Begin Patch\n*** Update File: api.go\n@@\n-old\n+new\n*** End Patch";
     const requests: Array<Record<string, any>> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
@@ -432,7 +434,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       }
       if (requests.length === 2) {
         return response(modelToolCall("patch-1", "apply_patch", {
-          input: "*** Begin Patch\n*** Update File: api.go\n@@\n-old\n+new\n*** End Patch",
+          input: colonlessPatch,
         }, 600, 120));
       }
       return response({
@@ -440,7 +442,11 @@ describe("ToolEnabledAgent required workspace mutation", () => {
         usage: { prompt_tokens: 500, completion_tokens: 80 },
       });
     });
-    const execute = vi.fn(async (request: { id: string; name: string }) => ({
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => ({
       id: request.id,
       name: request.name,
       success: true,
@@ -488,6 +494,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(requests[1]?.max_tokens).toBeLessThanOrEqual(4_096);
     expect(requests[2]).not.toHaveProperty("tools");
     expect(execute.mock.calls.map(([request]) => request.name)).toEqual(["file_read", "apply_patch"]);
+    expect(execute.mock.calls[1]?.[0].arguments).toEqual({ input: normalizedPatch });
     expect(items).toContainEqual(expect.objectContaining({
       type: "usage",
       modelCalls: 3,
@@ -599,12 +606,12 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       }
       if (requests.length === 2) {
         return response(modelToolCall("patch-partial", "apply_patch", {
-          input: "patch api and connection",
+          input: "*** Begin Patch\n*** Update File: jsonrpc/src/common/api.ts\n@@\n-old\n+new\n*** Update File: jsonrpc/src/common/connection.ts\n@@\n-old\n+new\n*** End Patch",
         }, 600, 90));
       }
       if (requests.length === 3) {
         return response(modelToolCall("patch-missing", "apply_patch", {
-          input: "patch protocol",
+          input: "*** Begin Patch\n*** Update File protocol/src/common/protocol.ts\n@@\n-old\n+new\n*** End Patch",
         }, 500, 80));
       }
       if (requests.length === 4) {
@@ -685,7 +692,44 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       "file_read",
       "file_read",
     ]);
+    expect(execute.mock.calls[4]?.[0].arguments).toEqual({
+      input: "*** Begin Patch\n*** Update File: protocol/src/common/protocol.ts\n@@\n-old\n+new\n*** End Patch",
+    });
     expect(items).toContainEqual({ type: "final", text: "fixed" });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("leaves a colonless Update File header unchanged outside required mutation recovery", async () => {
+    const colonlessPatch = "*** Begin Patch\n*** Update File src/api.ts\n@@\n-old\n+new\n*** End Patch";
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, any>);
+      if (requests.length === 1) {
+        return response(modelToolCall("patch-ordinary", "apply_patch", { input: colonlessPatch }, 400, 80));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: "done" } }],
+        usage: { prompt_tokens: 200, completion_tokens: 20 },
+      });
+    });
+    const execute = vi.fn(async (request: { id: string; name: string; arguments?: Record<string, unknown> }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: "Patch applied successfully",
+      durationMs: 1,
+    }));
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 3 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-ordinary-colonless-patch",
+      text: "Update src/api.ts.",
+      automationProfile: "bare",
+    }));
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0]?.[0].arguments).toEqual({ input: colonlessPatch });
+    expect(items).toContainEqual({ type: "final", text: "done" });
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 

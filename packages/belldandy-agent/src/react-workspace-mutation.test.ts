@@ -6,6 +6,7 @@ import {
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationRecoveryRequest,
   buildWorkspaceMutationVerificationRequest,
+  normalizeWorkspaceMutationRecoveryToolCall,
   selectRequiredWorkspaceMutationNavigationToolCalls,
   selectRequiredWorkspaceMutationVerificationToolCalls,
   selectWorkspaceMutationNavigationToolDefinitions,
@@ -15,6 +16,54 @@ import {
 } from "./react-workspace-mutation.js";
 
 describe("ReAct workspace mutation recovery", () => {
+  it("normalizes only colonless Update File headers inside a recovery patch envelope", () => {
+    const call = {
+      function: {
+        name: "apply_patch",
+        arguments: JSON.stringify({
+          input: [
+            "*** Begin Patch",
+            "*** Update File src/api.ts",
+            "@@",
+            "-old",
+            "+new",
+            "*** Add File src/other.ts",
+            "+content",
+            "*** End Patch",
+          ].join("\n"),
+          extra: "preserved",
+        }),
+      },
+    };
+
+    const normalized = normalizeWorkspaceMutationRecoveryToolCall(call);
+
+    expect(JSON.parse(normalized.function.arguments)).toEqual({
+      input: [
+        "*** Begin Patch",
+        "*** Update File: src/api.ts",
+        "@@",
+        "-old",
+        "+new",
+        "*** Add File src/other.ts",
+        "+content",
+        "*** End Patch",
+      ].join("\n"),
+      extra: "preserved",
+    });
+  });
+
+  it("leaves colonless Update File text outside a patch envelope untouched", () => {
+    const call = {
+      function: {
+        name: "apply_patch",
+        arguments: JSON.stringify({ input: "*** Update File src/api.ts\n-old\n+new" }),
+      },
+    };
+
+    expect(normalizeWorkspaceMutationRecoveryToolCall(call)).toBe(call);
+  });
+
   it("builds one bounded read-after-write request for each required path", () => {
     const definitions = [toolDefinition("file_read"), toolDefinition("apply_patch")];
     const readTools = selectWorkspaceMutationNavigationToolDefinitions(definitions, (name) => (

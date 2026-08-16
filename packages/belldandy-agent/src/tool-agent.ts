@@ -139,6 +139,7 @@ import {
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationVerificationRequest,
   isCompleteWorkspaceMutationVerificationReadResult,
+  normalizeWorkspaceMutationRecoveryToolCall,
   selectWorkspaceMutationNavigationToolDefinitions,
   selectRequiredWorkspaceMutationNavigationToolCalls,
   selectRequiredWorkspaceMutationVerificationToolCalls,
@@ -4121,6 +4122,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             );
             return;
           }
+          toolCalls = [normalizeWorkspaceMutationRecoveryToolCall(toolCalls[0]!)];
         }
         if (workspaceMutationNavigationCall) {
           const maxFileReadCalls = workspaceMutationNavigationRequest?.maxFileReadCalls ?? 2;
