@@ -1304,6 +1304,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       }),
     ]));
     expect(requests[1]?.messages[0]?.content).toContain("do not omit or duplicate any listed path");
+    expect(requests[1]?.messages[0]?.content).toContain("from the start without an anchor");
     if (completes) {
       expect(requests).toHaveLength(5);
       expect(requests[2]?.tools?.map((tool: any) => tool.function.name)).toEqual(["apply_patch"]);
@@ -1331,6 +1332,14 @@ describe("ToolEnabledAgent required workspace mutation", () => {
           .find((request) => request.arguments?.path === requiredChangedPaths[2]);
         expect(protocolRead?.arguments?.limit).toBe(1_048_576);
         expect(requests[2]?.messages[1]?.content).toContain("trace?: TraceValues;");
+      } else {
+        const protocolRead = execute.mock.calls
+          .map(([request]) => request)
+          .find((request) => request.id === "read-protocol");
+        expect(protocolRead?.arguments).toEqual({
+          path: requiredChangedPaths[2],
+          limit: 1_048_576,
+        });
       }
       expect(items.at(-1)).toEqual({ type: "status", status: "done" });
     } else {

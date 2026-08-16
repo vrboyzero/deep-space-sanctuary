@@ -119,6 +119,28 @@ describe("ReAct workspace mutation recovery", () => {
     ]);
   });
 
+  it("normalizes unreliable required navigation anchors to bounded full-file reads", () => {
+    const apiRead = fileReadToolCall("read-api", "src/api.ts");
+    const protocolRead = fileReadToolCall("read-protocol", "src/protocol.ts");
+    protocolRead.function.arguments = JSON.stringify({
+      path: "src/protocol.ts",
+      anchor: "TraceValue",
+      limit: 102_400,
+    });
+
+    const selected = selectRequiredWorkspaceMutationNavigationToolCalls(
+      [apiRead, protocolRead],
+      ["src/api.ts", "src/protocol.ts"],
+      ["file_read"],
+      2,
+    );
+
+    expect(selected?.map((call) => JSON.parse(call.function.arguments))).toEqual([
+      { path: "src/api.ts", limit: 1_048_576 },
+      { path: "src/protocol.ts", limit: 1_048_576 },
+    ]);
+  });
+
   it.each([
     {
       name: "duplicates a required path",
@@ -172,7 +194,6 @@ describe("ReAct workspace mutation recovery", () => {
 
     expect(JSON.parse(selected?.[0]?.function.arguments ?? "{}")).toEqual({
       path: "src/api.ts",
-      offset: 0,
       limit: 1_048_576,
     });
   });
