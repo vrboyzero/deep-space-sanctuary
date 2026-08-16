@@ -315,7 +315,13 @@ describe("ReAct workspace mutation recovery", () => {
     expect(request?.messages[0]?.content).toContain(
       "merely naming a required path or providing context-only lines is not coverage",
     );
-    expect(request?.messages[0]?.content).toContain("at least one added or removed line");
+    expect(request?.messages[0]?.content).toContain("a real added or removed line per file");
+    expect(request?.messages[0]?.content).toContain(
+      "copy context and removed lines as exact complete evidence source lines, never partial fragments",
+    );
+    expect(request?.messages[0]?.content).toContain(
+      "preserve unchanged replacement prefixes and suffixes",
+    );
     expect(request?.messages[1]?.content).toContain("[tool=file_read]");
     expect(request?.messages.some((message) => message.role === ("tool" as string))).toBe(false);
     expect(WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE).toBe(4_096);
@@ -348,6 +354,12 @@ describe("ReAct workspace mutation recovery", () => {
     expect(plan).toBeDefined();
     expect(plan?.messages[0]?.content).toContain("Missing-path mutation continuation phase");
     expect(plan?.messages[0]?.content).toContain("no already-covered or unlisted path");
+    expect(plan?.messages[0]?.content).toContain(
+      "copy context and removed lines as exact complete evidence source lines, never partial fragments",
+    );
+    expect(plan?.messages[0]?.content).toContain(
+      "preserve unchanged replacement prefixes and suffixes",
+    );
     expect(plan?.messages[1]?.content).toContain(
       'Trusted required changed paths still missing:\n["src/protocol.ts"]',
     );

@@ -487,7 +487,9 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(requests[1]?.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({
         role: "system",
-        content: expect.stringContaining("Mutation-only recovery phase"),
+        content: expect.stringMatching(
+          /Mutation-only recovery phase.*copy context and removed lines as exact complete evidence source lines, never partial fragments/,
+        ),
       }),
     ]));
     expect(requests[1]?.max_tokens).toBeGreaterThanOrEqual(1_024);
