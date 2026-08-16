@@ -5,6 +5,18 @@ export type WorkspaceMutationPathCoverage = {
   missingPaths(): string[];
 };
 
+export function hasOnlyWorkspaceMutationChangedPaths(
+  metadata: unknown,
+  allowedPaths: readonly string[],
+): boolean {
+  const changedPaths = readWorkspaceMutationChangedPaths(metadata);
+  if (!changedPaths || changedPaths.length === 0 || allowedPaths.length === 0) {
+    return false;
+  }
+  const allowedIdentities = new Set(allowedPaths.map((path) => path.toLowerCase()));
+  return changedPaths.every((path) => allowedIdentities.has(path.toLowerCase()));
+}
+
 export function createWorkspaceMutationPathCoverage(
   requiredChangedPaths: readonly string[],
 ): WorkspaceMutationPathCoverage {

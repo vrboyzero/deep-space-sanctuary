@@ -584,11 +584,245 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
-  it("fails closed when bounded recovery leaves one required changed path uncovered", async () => {
+  it("uses one bounded continuation when the mutation-only call covers only part of the required paths", async () => {
     const requiredChangedPaths = [
       "jsonrpc/src/common/api.ts",
       "jsonrpc/src/common/connection.ts",
       "protocol/src/common/protocol.ts",
+    ];
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return response(modelUnanchoredVerificationReads(requiredChangedPaths));
+      }
+      if (requests.length === 2) {
+        return response(modelToolCall("patch-partial", "apply_patch", {
+          input: "patch api and connection",
+        }, 600, 90));
+      }
+      if (requests.length === 3) {
+        return response(modelToolCall("patch-missing", "apply_patch", {
+          input: "patch protocol",
+        }, 500, 80));
+      }
+      if (requests.length === 4) {
+        return response(modelUnanchoredVerificationReads(requiredChangedPaths));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: "fixed" } }],
+        usage: { prompt_tokens: 300, completion_tokens: 30 },
+      });
+    });
+    let mutationCall = 0;
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: request.arguments?.path,
+            truncated: false,
+            content: `source context for ${String(request.arguments?.path)}`,
+          }),
+          durationMs: 1,
+        };
+      }
+      mutationCall++;
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: {
+            schemaVersion: 1,
+            changedPaths: mutationCall === 1
+              ? requiredChangedPaths.slice(0, 2)
+              : requiredChangedPaths.slice(2),
+          },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 3 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-path-mutation-only-continuation",
+      text: "Apply the frozen public API migration.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 3,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(5);
+    expect(requests[1]?.messages[0]?.content).toContain("Mutation-only recovery phase");
+    expect(requests[2]?.tools?.map((tool: any) => tool.function.name)).toEqual(["apply_patch"]);
+    expect(requests[2]?.messages[0]?.content).toContain("Missing-path mutation continuation phase");
+    const continuationText = requests[2]?.messages[1]?.content;
+    expect(continuationText).toContain(
+      `Trusted required changed paths still missing:\n[\"${requiredChangedPaths[2]}\"]`,
+    );
+    expect(requests[3]?.tools?.map((tool: any) => tool.function.name)).toEqual(["file_read"]);
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "file_read",
+      "file_read",
+      "file_read",
+      "apply_patch",
+      "apply_patch",
+      "file_read",
+      "file_read",
+      "file_read",
+    ]);
+    expect(items).toContainEqual({ type: "final", text: "fixed" });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("fails closed when the bounded continuation reports an already-covered path", async () => {
+    const requiredChangedPaths = ["src/api.ts", "src/protocol.ts"];
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, any>);
+      if (requests.length === 1) {
+        return response(modelUnanchoredVerificationReads(requiredChangedPaths));
+      }
+      return response(modelToolCall(
+        `patch-${requests.length}`,
+        "apply_patch",
+        { input: `patch ${requests.length}` },
+        500,
+        80,
+      ));
+    });
+    let mutationCall = 0;
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({ path: request.arguments?.path, truncated: false, content: "source" }),
+          durationMs: 1,
+        };
+      }
+      mutationCall++;
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: {
+            schemaVersion: 1,
+            changedPaths: mutationCall === 1
+              ? [requiredChangedPaths[0]]
+              : [requiredChangedPaths[1], requiredChangedPaths[0]],
+          },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 3 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-path-continuation-extra-path",
+      text: "Apply the frozen public API migration.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 3,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(3);
+    expect(execute).toHaveBeenCalledTimes(4);
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "final",
+      text: expect.stringContaining("already-covered or unlisted path"),
+    }));
+    expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
+  });
+
+  it("fails closed before continuation when the remaining token budget cannot fit it", async () => {
+    const requiredChangedPaths = ["src/api.ts", "src/protocol.ts"];
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, any>);
+      if (requests.length === 1) {
+        return response({
+          ...modelUnanchoredVerificationReads(requiredChangedPaths),
+          usage: { prompt_tokens: 9_500, completion_tokens: 500 },
+        });
+      }
+      return response(modelToolCall("patch-api", "apply_patch", { input: "patch api" }, 12_000, 700));
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: request.name === "file_read"
+        ? JSON.stringify({ path: request.arguments?.path, truncated: false, content: "source" })
+        : "Patch applied successfully",
+      ...(request.name === "apply_patch" ? {
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: [requiredChangedPaths[0]] },
+        },
+      } : {}),
+      durationMs: 1,
+    }));
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 3 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-path-continuation-no-token-budget",
+      text: "Apply the frozen public API migration.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 3,
+          maxTotalTokens: 24_000,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(2);
+    expect(execute).toHaveBeenCalledTimes(3);
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "final",
+      text: expect.stringContaining("no bounded missing-path mutation continuation"),
+    }));
+    expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
+  });
+
+  it("fails closed when the bounded continuation still leaves a required changed path uncovered", async () => {
+    const requiredChangedPaths = [
+      "jsonrpc/src/common/api.ts",
+      "jsonrpc/src/common/connection.ts",
+      "protocol/src/common/protocol.ts",
+      "protocol/src/common/transport.ts",
     ];
     const requests: Array<Record<string, any>> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
@@ -602,6 +836,12 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       ));
       if (recoveryCall) {
         return response(modelToolCall("patch-connection", "apply_patch", { input: "patch connection" }, 600, 90));
+      }
+      const continuationCall = body.messages?.some((message: any) => (
+        message.role === "system" && String(message.content).includes("Missing-path mutation continuation phase")
+      ));
+      if (continuationCall) {
+        return response(modelToolCall("patch-protocol", "apply_patch", { input: "patch protocol" }, 500, 80));
       }
       return response({
         choices: [{ finish_reason: "stop", message: { content: "all files migrated" } }],
@@ -640,11 +880,11 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       },
     }));
 
-    expect(requests).toHaveLength(2);
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(requests).toHaveLength(3);
+    expect(execute).toHaveBeenCalledTimes(3);
     expect(items).toContainEqual(expect.objectContaining({
       type: "final",
-      text: expect.stringContaining("protocol/src/common/protocol.ts"),
+      text: expect.stringContaining("protocol/src/common/transport.ts"),
     }));
     expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
   });

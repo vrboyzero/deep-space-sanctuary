@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildWorkspaceMutationContinuationPlan,
   buildWorkspaceMutationNavigationRequest,
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationRecoveryRequest,
@@ -270,6 +271,38 @@ describe("ReAct workspace mutation recovery", () => {
     expect(request?.messages.some((message) => message.role === ("tool" as string))).toBe(false);
     expect(WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE).toBe(4_096);
     expect(WORKSPACE_MUTATION_RECOVERY_MIN_OUTPUT_TOKEN_RESERVE).toBe(1_024);
+  });
+
+  it("builds a bounded missing-path-only continuation plan", () => {
+    const plan = buildWorkspaceMutationContinuationPlan({
+      messages: [
+        { role: "user", content: "Apply the public API migration." },
+        {
+          role: "assistant",
+          tool_calls: [{ id: "read-protocol", function: { name: "file_read", arguments: "{}" } }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "read-protocol",
+          content: JSON.stringify({ path: "src/protocol.ts", truncated: false, content: "export type Protocol = {};" }),
+        },
+      ],
+      tools: [toolDefinition("apply_patch")],
+      remainingTokenBudget: 10_000,
+      maxOutputTokens: 4_096,
+      finalizationOutputTokens: 1_024,
+      inputSafetyFactor: 1.2,
+      missingRequiredChangedPaths: ["src/protocol.ts"],
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+    });
+
+    expect(plan).toBeDefined();
+    expect(plan?.messages[0]?.content).toContain("Missing-path mutation continuation phase");
+    expect(plan?.messages[0]?.content).toContain("no already-covered or unlisted path");
+    expect(plan?.messages[1]?.content).toContain(
+      'Trusted required changed paths still missing:\n["src/protocol.ts"]',
+    );
+    expect(plan?.outputTokens).toBeLessThanOrEqual(4_096);
   });
 
   it("builds a bounded source-navigation request with source-read tools only", () => {
