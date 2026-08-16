@@ -240,10 +240,12 @@ node scripts/run-coding-agent-benchmark-windows.mjs --workspace-root <clean-harn
 
 上述 pricing 必须来自当前 Provider/路由的已核对价格，不能使用示例值或沿用其他模型的费率。零凭证
 dry-run 可将 `--credentials-configured` 设为 `false`，此时不要求 pricing，但仍应通过同一 launcher
-验证 Gateway auth/hello 和自动回收。repository config 不保存 receipt 内容或任何凭据；receipt 由独立文件
-提供并在运行前复核。B/C 专属 JSON artifact 均限制为 1 MiB，并拒绝常见 credential 字段。命令行会为
-v3 装配 native system harness；browser behavior、parallel read isolation、parallel write fan-in 与 restart
-delivery reconciliation 均按本机生产构建可用性声明 capability。
+验证 Gateway auth/hello 和自动回收；launcher 会从两个 child 的共享环境中清除继承的主模型 key、外部
+model config 与已知 Provider API key，确保父进程即使已经加载真实凭据也不会把 dry-run 变成真实调用。
+repository config 不保存 receipt 内容或任何凭据；receipt 由独立文件提供并在运行前复核。B/C 专属 JSON
+artifact 均限制为 1 MiB，并拒绝常见 credential 字段。命令行会为 v3 装配 native system harness；browser
+behavior、parallel read isolation、parallel write fan-in 与 restart delivery reconciliation 均按本机生产
+构建可用性声明 capability。
 
 ## P0.7 v3 native aggregate 边界
 

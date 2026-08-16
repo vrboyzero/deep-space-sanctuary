@@ -102,6 +102,35 @@ describe("coding agent benchmark Windows launcher", () => {
     expect(invocation.gateway.env).not.toHaveProperty("BELLDANDY_AUTH_TOKEN");
   });
 
+  it("strips inherited Provider credentials from zero-credential dry-runs", () => {
+    const invocation = buildWindowsBenchmarkInvocation({
+      workspaceRoot,
+      fixtureRoot: "E:/project/star-sanctuary/tmp/fixtures",
+      artifactRoot: "E:/project/star-sanctuary/artifacts/windows-dry-run",
+      stateRoot: "E:/project/star-sanctuary/tmp/runtime",
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      credentialsConfigured: false,
+    }, {
+      baseEnv: {
+        BELLDANDY_OPENAI_API_KEY: "sensitive-provider-key",
+        BELLDANDY_MODEL_CONFIG_FILE: "E:/user-state/models.json",
+        BELLDANDY_MODEL_PREFERRED_PROVIDERS: "fallback",
+      },
+      randomToken: () => "ephemeral-gateway-token",
+      resolvePath: (value) => path.win32.resolve(value),
+      nodePath: "node.exe",
+    });
+
+    expect(invocation.gateway.env).not.toHaveProperty("BELLDANDY_OPENAI_API_KEY");
+    expect(invocation.gateway.env).not.toHaveProperty("BELLDANDY_MODEL_CONFIG_FILE");
+    expect(invocation.gateway.env).not.toHaveProperty("BELLDANDY_MODEL_PREFERRED_PROVIDERS");
+    expect(invocation.benchmark.env).toBe(invocation.gateway.env);
+    expect(invocation.benchmark.args).toEqual(expect.arrayContaining([
+      "--credentials-configured", "false",
+    ]));
+  });
+
   it("rejects split Gateway and Coding CI state roots before spawning", () => {
     expect(() => buildWindowsBenchmarkInvocation({
       workspaceRoot,
