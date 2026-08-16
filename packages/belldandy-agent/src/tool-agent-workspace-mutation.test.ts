@@ -100,6 +100,149 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("continues to a valid final result after complete bounded unanchored reads", async () => {
+    const requiredChangedPaths = ["src/api.ts", "src/connection.ts", "src/protocol.ts"];
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, any>);
+      if (requests.length === 1) {
+        return response(modelToolCall("patch-all", "apply_patch", { input: "patch all" }, 500, 100));
+      }
+      if (requests.length === 2) {
+        return response(modelUnanchoredVerificationReads(requiredChangedPaths));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: '{"summary":"verified"}' } }],
+        usage: { prompt_tokens: 300, completion_tokens: 30 },
+      });
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: request.name === "file_read"
+        ? JSON.stringify({
+            path: request.arguments?.path,
+            truncated: false,
+            content: "post-mutation content",
+          })
+        : "Patch applied successfully",
+      ...(request.name === "apply_patch" ? {
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+        },
+      } : {}),
+      durationMs: 1,
+    }));
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 3 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-unanchored-read-after-write",
+      text: "Migrate the public API in all required files.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 3,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === '{"summary":"verified"}'
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(requests).toHaveLength(3);
+    const readRequests = execute.mock.calls
+      .map(([request]) => request)
+      .filter((request) => request.name === "file_read");
+    expect(readRequests.map((request) => request.arguments)).toEqual(requiredChangedPaths.map((path) => ({
+      path,
+      limit: 1_048_576,
+    })));
+    expect(items).toContainEqual({ type: "final", text: '{"summary":"verified"}' });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it.each([
+    {
+      name: "is truncated",
+      resultPath: "src/api.ts",
+      truncated: true,
+    },
+    {
+      name: "returns a different path",
+      resultPath: "src/other.ts",
+      truncated: false,
+    },
+  ])("fails closed when an unanchored read-after-write result $name", async ({ resultPath, truncated }) => {
+    const requiredChangedPaths = ["src/api.ts"];
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, any>);
+      if (requests.length === 1) {
+        return response(modelToolCall("patch-api", "apply_patch", { input: "patch api" }, 300, 60));
+      }
+      if (requests.length === 2) {
+        return response(modelUnanchoredVerificationReads(requiredChangedPaths));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: "must not be reached" } }],
+        usage: { prompt_tokens: 200, completion_tokens: 30 },
+      });
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: request.name === "file_read"
+        ? JSON.stringify({
+            path: resultPath,
+            truncated,
+            content: "untrusted post-mutation content",
+          })
+        : "Patch applied successfully",
+      ...(request.name === "apply_patch" ? {
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+        },
+      } : {}),
+      durationMs: 1,
+    }));
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 3 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-truncated-unanchored-read-after-write",
+      text: "Migrate src/api.ts.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 3,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(2);
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "final",
+      text: expect.stringContaining("complete post-mutation file"),
+    }));
+    expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
+  });
+
   it("extends the iteration budget once when verification follows the final ordinary turn", async () => {
     const requiredChangedPaths = ["src/api.ts"];
     const requests: Array<Record<string, any>> = [];
@@ -1636,6 +1779,25 @@ function modelVerificationReads(requiredPaths: readonly string[]) {
           `verify-${index}`,
           "file_read",
           { path, anchor: `post-mutation-anchor-${index}` },
+          0,
+          0,
+        ).choices[0].message.tool_calls[0]),
+      },
+    }],
+    usage: { prompt_tokens: 400, completion_tokens: 80 },
+  };
+}
+
+function modelUnanchoredVerificationReads(requiredPaths: readonly string[]) {
+  return {
+    choices: [{
+      finish_reason: "tool_calls",
+      message: {
+        content: null,
+        tool_calls: requiredPaths.map((path, index) => modelToolCall(
+          `verify-unanchored-${index}`,
+          "file_read",
+          { path, limit: 102_400 },
           0,
           0,
         ).choices[0].message.tool_calls[0]),

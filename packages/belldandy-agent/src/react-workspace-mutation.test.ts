@@ -14,7 +14,7 @@ import {
 } from "./react-workspace-mutation.js";
 
 describe("ReAct workspace mutation recovery", () => {
-  it("builds one anchored read-after-write request for each bounded required path", () => {
+  it("builds one bounded read-after-write request for each required path", () => {
     const definitions = [toolDefinition("file_read"), toolDefinition("apply_patch")];
     const readTools = selectWorkspaceMutationNavigationToolDefinitions(definitions, (name) => (
       name === "file_read" ? { isReadOnly: true } : { isReadOnly: false }
@@ -35,6 +35,8 @@ describe("ReAct workspace mutation recovery", () => {
     });
     expect(request?.messages[0]?.content).toContain("Post-mutation verification phase");
     expect(request?.messages[0]?.content).toContain("non-empty exact anchor");
+    expect(request?.messages[0]?.content).toContain("when no reliable anchor is available");
+    expect(request?.messages[0]?.content).toContain("full file_read from the start");
     expect(request?.messages[1]?.content).toContain("Trusted required paths to verify after mutation");
   });
 
@@ -58,10 +60,29 @@ describe("ReAct workspace mutation recovery", () => {
     });
   });
 
+  it("normalizes exact unanchored verification reads to the bounded full-file limit", () => {
+    const apiRead = fileReadToolCall("read-api", "src/api.ts");
+    apiRead.function.arguments = JSON.stringify({ path: "src/api.ts", limit: 102_400 });
+    const protocolRead = fileReadToolCall("read-protocol", "./src/protocol.ts");
+    protocolRead.function.arguments = JSON.stringify({ path: "./src/protocol.ts", maxBytes: 102_400 });
+
+    const selected = selectRequiredWorkspaceMutationVerificationToolCalls(
+      [apiRead, protocolRead],
+      ["src/api.ts", "src/protocol.ts"],
+      ["file_read"],
+      2,
+    );
+
+    expect(selected?.map((call) => JSON.parse(call.function.arguments))).toEqual([
+      { path: "src/api.ts", limit: 1_048_576 },
+      { path: "./src/protocol.ts", limit: 1_048_576 },
+    ]);
+  });
+
   it.each([
-    { name: "omits an anchor", arguments: { path: "src/api.ts" } },
     { name: "uses an empty anchor", arguments: { path: "src/api.ts", anchor: "" } },
     { name: "uses an offset with an anchor", arguments: { path: "src/api.ts", anchor: "TraceValue", offset: 0 } },
+    { name: "uses a cursor without an anchor", arguments: { path: "src/api.ts", cursor: "next" } },
   ])("fails closed when verification $name", ({ arguments: readArguments }) => {
     const call = fileReadToolCall("read-api", "src/api.ts");
     call.function.arguments = JSON.stringify(readArguments);

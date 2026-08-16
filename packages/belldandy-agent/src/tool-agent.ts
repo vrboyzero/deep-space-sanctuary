@@ -137,6 +137,7 @@ import {
   buildWorkspaceMutationNavigationRequest,
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationVerificationRequest,
+  isCompleteWorkspaceMutationVerificationReadResult,
   selectWorkspaceMutationNavigationToolDefinitions,
   selectRequiredWorkspaceMutationNavigationToolCalls,
   selectRequiredWorkspaceMutationVerificationToolCalls,
@@ -3026,7 +3027,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           });
           if (!candidate) {
             yield* emitWorkspaceMutationFailure(
-              "the mutation succeeded, but no bounded anchored read-after-write request can be built from the allowed tools and remaining token budget.",
+              "the mutation succeeded, but no bounded read-after-write request can be built from the allowed tools and remaining token budget.",
             );
             return;
           }
@@ -3860,7 +3861,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
         if (!toolCalls || toolCalls.length === 0) {
           if (workspaceMutationVerificationCall) {
             yield* emitWorkspaceMutationFailure(
-              "the bounded read-after-write model call did not request the required anchored file reads.",
+              "the bounded read-after-write model call did not request the required post-mutation file reads.",
             );
             return;
           }
@@ -4054,7 +4055,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           );
           if (!requiredToolCalls) {
             yield* emitWorkspaceMutationFailure(
-              "the bounded read-after-write model call must request one anchored file_read for every required path, with no omissions, duplicates, or extra calls.",
+              "the bounded read-after-write model call must request one valid file_read (anchored or bounded full-file) for every required path, with no omissions, duplicates, or extra calls.",
             );
             return;
           }
@@ -4986,6 +4987,17 @@ export class ToolEnabledAgent implements BelldandyAgent {
           if (workspaceMutationVerificationCall && !result.success) {
             yield* emitWorkspaceMutationFailure(
               `the bounded read-after-write tool failed: ${result.error || "unknown tool failure"}`,
+            );
+            return;
+          }
+          if (workspaceMutationVerificationCall
+            && result.success
+            && !isCompleteWorkspaceMutationVerificationReadResult({
+              arguments: request.arguments,
+              output: result.output,
+            })) {
+            yield* emitWorkspaceMutationFailure(
+              "the bounded read-after-write tool did not return the complete post-mutation file for the requested path.",
             );
             return;
           }
