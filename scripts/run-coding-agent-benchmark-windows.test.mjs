@@ -14,7 +14,7 @@ describe("coding agent benchmark Windows launcher", () => {
   it("binds the Gateway allowlist and ephemeral token to the actual benchmark endpoint", () => {
     const invocation = buildWindowsBenchmarkInvocation({
       workspaceRoot,
-      gatewayStateRoot: "E:/project/star-sanctuary/tmp/gateway-state",
+      gatewayStateRoot: "E:/project/star-sanctuary/tmp/runtime",
       fixtureRoot: "E:/project/star-sanctuary/tmp/fixtures",
       artifactRoot: "E:/project/star-sanctuary/artifacts/windows-formal",
       stateRoot: "E:/project/star-sanctuary/tmp/runtime",
@@ -70,7 +70,6 @@ describe("coding agent benchmark Windows launcher", () => {
   it("uses no auth secret for an explicit auth-none diagnostic run", () => {
     const invocation = buildWindowsBenchmarkInvocation({
       workspaceRoot,
-      gatewayStateRoot: "E:/project/star-sanctuary/tmp/gateway-state",
       fixtureRoot: "E:/project/star-sanctuary/tmp/fixtures",
       artifactRoot: "E:/project/star-sanctuary/artifacts/windows-dry-run",
       stateRoot: "E:/project/star-sanctuary/tmp/runtime",
@@ -90,14 +89,32 @@ describe("coding agent benchmark Windows launcher", () => {
     expect(invocation.gateway.env).toMatchObject({
       BELLDANDY_AUTH_MODE: "none",
       BELLDANDY_ALLOWED_ORIGINS: "http://127.0.0.1:28889",
+      BELLDANDY_STATE_DIR: path.win32.resolve("E:/project/star-sanctuary/tmp/runtime"),
+      BELLDANDY_ENV_DIR: path.win32.resolve("E:/project/star-sanctuary/tmp/runtime"),
     });
+    expect(invocation.paths.gatewayStateRoot).toBe(path.win32.resolve("E:/project/star-sanctuary/tmp/runtime"));
     expect(invocation.gateway.env).not.toHaveProperty("BELLDANDY_AUTH_TOKEN");
+  });
+
+  it("rejects split Gateway and Coding CI state roots before spawning", () => {
+    expect(() => buildWindowsBenchmarkInvocation({
+      workspaceRoot,
+      gatewayStateRoot: "E:/project/star-sanctuary/tmp/runtime/gateway-state",
+      fixtureRoot: "E:/project/star-sanctuary/tmp/fixtures",
+      artifactRoot: "E:/project/star-sanctuary/artifacts/windows-formal",
+      stateRoot: "E:/project/star-sanctuary/tmp/runtime",
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      credentialsConfigured: true,
+    }, {
+      resolvePath: (value) => path.win32.resolve(value),
+    })).toThrow(/share the same state root.*pairing/i);
   });
 
   it("rejects non-loopback Gateway endpoints", () => {
     expect(() => buildWindowsBenchmarkInvocation({
       workspaceRoot,
-      gatewayStateRoot: "E:/project/star-sanctuary/tmp/gateway-state",
+      gatewayStateRoot: "E:/project/star-sanctuary/tmp/runtime",
       fixtureRoot: "E:/project/star-sanctuary/tmp/fixtures",
       artifactRoot: "E:/project/star-sanctuary/artifacts/windows-formal",
       stateRoot: "E:/project/star-sanctuary/tmp/runtime",

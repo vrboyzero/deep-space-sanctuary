@@ -3491,6 +3491,101 @@ Source / Workspace Revision
 - **为什么先做它**：auth/origin 和自动回收已经由确定性测试与真实 Gateway smoke 关闭，新 clean identity 能同时绑定 required-path 生产修复与正式运行编排修复，避免用文档-only identity 规避同版本不重试约束。
 - **当前还缺的关键闭环**：新 identity Windows formal 的 declared/resolved flash route、三文件 changed paths、冻结 evaluator、唯一成功终态、usage/cost 与零残留；Windows 全绿后才创建同 identity WSL2 harness。下一次 formal 预留后守卫上界=`26.07343104 RMB < 50 RMB`，无需再次申请费用授权；不重跑完整矩阵、不创建 candidate v4、不启动 P2-C、不 push。
 
+#### P0 后续能力改进实现结论：`7314840` Windows launcher 零费用 dry-run（2026-08-16）
+
+##### 已完成内容
+
+1. **独立 clean Windows harness 新建**：
+   - detached harness=`.tmp/p0-native-7314840-harness`，commit=`73148401b1ec129d4161a94795f99619c2110bc8`、content SHA-256=`aa4957227cef8d6b7a106bfd167ff311925e1323921d92cd471d0a6a197bd5a6`、workspace dirty=`false`。
+   - `corepack pnpm install --offline --frozen-lockfile` 完成，resolved=`493`、downloaded=`0`；workspace build 与 `verify:build` 通过，构建前后 tracked identity 保持 clean。
+
+2. **Windows launcher 零费用 dry-run 执行**：
+   - artifact=`artifacts/p0-required-mutation-canary-7314840-ts-api-windows-dry-run`，run=`real-ts-api-migration-windows-a1-1786859867848`，benchmark report SHA-256=`9b9627c60f543b87acf7c0dc3a3ec8ed19cf05de0e54804e88a6f50b242b8c5f`。
+   - launcher 在 `28895` 完成随机 token、同端口 allowlist 与真实 auth/hello 探针；runner 模型声明=`deepseek-v4-flash`、credentials configured=`false`、usage=`not_reached`、event count=`0`，未读取主仓 API key、未调用 Provider。
+   - production preflight 与 repository snapshot preflight 均为 `passed`；formal fixture/runtime/artifact 路径仍不存在，没有覆盖旧证据。
+
+3. **效果**：
+   - `7314840` clean identity 已证明正式 launcher 能在非默认端口通过 Gateway WebSocket 安全边界，并消费冻结 `vscode-languageserver-node` Windows snapshot。
+   - dry-run 同时验证 launcher 自动回收，不再需要外层按端口补停 Gateway；模型、费用、任务、identity 与隔离根已固定到下一次唯一 formal。
+
+##### 验证结果
+
+- TypeScript 编译无错误，harness workspace build 与 `verify:build` 通过。
+- 测试计数=`0`：本环节未修改生产逻辑，验证载体为 `1` 个 Windows launcher dry-run；auth/hello、production preflight 与 snapshot preflight=`passed`，usage=`not_reached`。
+- `28892/28895` listener=`0`、相关 Gateway/canary Node=`0`、PID/token 文件=`0`；harness/source status entries=`0`。
+- Provider 调用=`0`、新增费用=`0`；授权窗口仍为 observed=`$2.21696888`、reserved=`$0.94221000`，当前守卫上界=`25.27343104 RMB < 50 RMB`。
+
+##### 后续计划
+
+- **下一步准备做什么**：复用同一 `7314840` Windows harness 与新 launcher，执行且只执行一次上限 `$0.10` 的 `real-ts.api-migration` formal；Gateway effective model 和 runner declared model 均固定为 `deepseek-v4-flash`。
+- **为什么先做它**：新 identity 的构建、冻结 source、auth/hello、repository 与 production Gate 均已在零费用路径闭合，formal 是验证 required-path no-op 修复能否产生可接受三文件 patch 的最小剩余步骤。
+- **当前还缺的关键闭环**：formal 的 declared/resolved flash route、三文件 changed paths、冻结 evaluator、patch acceptance、唯一成功终态、完整 usage/cost 与自动零残留；只有 Windows 全绿后才创建 WSL2 harness。预留后费用守卫上界=`26.07343104 RMB < 50 RMB`，无需再次申请授权；不重跑完整矩阵、不创建 candidate v4、不启动 P2-C、不 push。
+
+#### P0 后续能力改进实现结论：`7314840` Windows formal Provider 前 pairing state 失败（2026-08-16）
+
+##### 已完成内容
+
+1. **唯一 Windows formal 失败证据保留**：
+   - artifact=`artifacts/p0-required-mutation-canary-7314840-ts-api-windows`，run=`real-ts-api-migration-windows-a1-1786860069103`；source/harness 均为 clean `73148401b1ec129d4161a94795f99619c2110bc8`，content SHA-256=`aa4957227cef8d6b7a106bfd167ff311925e1323921d92cd471d0a6a197bd5a6`。
+   - launcher 的 token-auth/hello、production preflight 与 repository snapshot preflight 均为 `passed`；Coding CI 随后以 `pairing code not found or expired` 在 Agent run 创建前失败。
+   - runner 声明模型=`deepseek-v4-flash`、credentials configured=`true`，但 event count=`0`、model route=`null`、usage=`not_reached`，没有调用 Provider、没有产生模型费用。
+
+2. **失败关闭与根因定位**：
+   - formal 唯一报告状态=`failed/product_workflow`，CLI exit code=`3`、terminal type=`none`、changed paths=`0`、result=`null`；空 patch SHA-256=`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`，benchmark report SHA-256=`797a9e3c37536d099fd4b8f743b1592654ca5c94e8813df0d08964bc972ce678`。
+   - Gateway state/env root=`tmp/p0-required-mutation-canary-7314840-ts-api-windows-runtime/gateway-state`，Coding CI `--state-dir`=`tmp/p0-required-mutation-canary-7314840-ts-api-windows-runtime`；Gateway 在前者生成 pairing code，CLI 却在后者执行本地批准，导致 exact state owner 不一致。
+   - 未在 `7314840` 上重试 formal，未创建 WSL2 harness；launcher 自动回收后 `28892/28895`、相关 Node、PID/token 文件均为 `0`，harness/source 保持 clean。
+
+3. **效果**：
+   - origin/auth 安全边界与自动进程回收已经真实生效；本轮没有退回上一轮 `401`，也没有留下 Gateway listener。
+   - pairing 失败被保留在 Provider、Agent、workspace mutation 与 evaluator 之前，不能作为 required-path 修复效果证据。
+
+##### 验证结果
+
+- TypeScript 编译无错误；复用 formal 前通过 workspace build 与 `verify:build` 的 clean harness，本失败环节未修改生产代码。
+- 测试计数=`0`：本环节执行 `1` 个 Windows formal；auth/hello 与两个 preflight 通过，但 event/capability/model route/usage、冻结 evaluator、task result 与 patch acceptance 均未到达。
+- Provider 新增 observed=`$0`；授权窗口仍为 observed=`$2.21696888`、reserved=`$0.94221000`，当前守卫上界=`25.27343104 RMB < 50 RMB`。
+- 最终 `28892/28895` listener=`0`、Gateway/canary Node=`0`、PID/token 文件=`0`、harness/source status entries=`0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：先以失败测试固定“受控 Gateway 与 Coding CI 必须共享同一 state root”的 pairing 合同，并让 launcher 对分离 root 失败关闭；修复后用本地 mock/握手路径证明 pairing 可批准，再形成新的 clean identity。
+- **为什么先做它**：formal 已证明 origin/auth 闭合后，下一个确定性阻塞是 pairing 状态 owner 分裂；继续重试模型或只延长 pairing TTL 都不能修正 CLI 查错目录。
+- **当前还缺的关键闭环**：共享 state root 的 pairing 成功回归、下一 identity 的 build/dry-run/Windows formal 三文件成功证据，以及随后同 identity WSL2 复核。下一次 `$0.10` formal 预留后守卫上界仍为 `26.07343104 RMB < 50 RMB`，无需再次申请费用授权；不重试 `7314840`、不重跑完整矩阵、不创建 candidate v4、不启动 P2-C、不 push。
+
+#### P0 后续能力改进实现结论：Windows launcher 共享 pairing state root（2026-08-16）
+
+##### 已完成内容
+
+1. **`scripts/run-coding-agent-benchmark-windows.mjs` 修改**：
+   - Gateway 的 `BELLDANDY_STATE_DIR` / `BELLDANDY_ENV_DIR` 与 Coding CI 的 `--state-root` 统一使用同一绝对目录，关闭 pairing code 与本地批准分属不同 owner 的根因。
+   - `--gateway-state-root` 保留为兼容输入；未提供时默认等于 `--state-root`，显式提供分离路径时在日志创建和进程 spawn 前失败关闭。
+   - Windows 路径比较统一处理大小写、分隔符和末尾分隔符，不因等价路径表示产生误拒绝。
+
+2. **`scripts/run-coding-agent-benchmark-windows.test.mjs` 扩展**：
+   - 新增分离 Gateway/Coding CI state root 的拒绝用例，固定共享 pairing 状态真源合同。
+   - 既有临时 token、同端口 origin、loopback、温和退出与精确进程树回收测试继续通过。
+
+3. **无 Provider 的真实 pairing smoke 执行**：
+   - 隔离 state root=`tmp/pairing-smoke-shared-state-1786861000000`；Gateway 与本地 RPC 客户端使用相同 state root、token auth 和 `http://127.0.0.1:28896` origin。
+   - 对 pairing-protected `models.config.get` 的真实调用返回 `ok=true`、`paired=true`，证明 pairing code 生成、本地批准与重试读取同一状态 owner。
+
+4. **效果**：
+   - `7314840` formal 暴露的 `pairing code not found or expired` 确定性编排缺陷已关闭；分裂路径不能再进入 benchmark 或 Provider 阶段。
+   - 本环节未创建新 harness、未执行 dry-run/formal、未启动 WSL2，按用户要求在修复、验证、文档与提交闭环后暂停。
+
+##### 验证结果
+
+- TypeScript 编译无错误；workspace build 与 `verify:build` 通过。
+- 相关 Windows/WSL launcher、benchmark runner 与 native system harness 测试 `60/60` 通过，其中 Windows launcher=`6/6`、新增 pairing state root 回归=`1`。
+- `verify:coding-benchmark` 与 `verify:coding-ci` 通过；真实 pairing smoke=`ok=true/paired=true`。
+- smoke 最终 `28896` listener=`0`、Gateway process=`0`、PID/token 文件=`0`；model route/usage=`not_reached`，Provider 调用与新增费用=`0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：本环节按用户要求暂停；恢复持续开发后，先提交后继 clean identity 并创建新的 clean Windows harness，完成 build 与零费用 dry-run，再执行且只执行一次 `$0.10` Windows formal，模型固定为 `deepseek-v4-flash`。
+- **为什么先做它**：共享 state root 的确定性测试和真实 pairing 已闭合，新的 clean identity 才能把下一次正式证据精确绑定到该修复，且不会违反 `7314840` 不重试约束。
+- **当前还缺的关键闭环**：新 identity Windows formal 的三文件 changed paths、冻结 evaluator、declared/resolved flash route、完整 usage/cost 和零残留，以及 Windows 全绿后的同 identity WSL2 复核。下一次 formal 预留后守卫上界=`26.07343104 RMB < 50 RMB`，无需再次申请费用授权；不重跑完整矩阵、不创建 candidate v4、不启动 P2-C、不 push。
+
 ### P1-C（已完成）
 
 - supporting evidence binding 审计已完成：worktree exact binding 接入可信，command job/validation 延后，journal 保持现有精确边界。
@@ -3536,7 +3631,7 @@ Source / Workspace Revision
 
 | 项目 | 优先级 | 状态 | 粗略工作量 | 完成边界 |
 | --- | --- | --- | ---: | --- |
-| P0 后续：`10da036` 后继双平台代表 canary | P0 | required path no-op 修复与 `10da036` dry-run 已完成；该 identity 唯一 formal 在 Provider 前因默认 origin/非默认端口漂移失败。Windows launcher 的同端口 allowlist、临时 token、auth/hello 前置探针和精确进程回收已由 `48/48` 回归、真实 dry-run smoke、build 与 coding Gate 闭合，待提交形成新 clean identity；未重试 `10da036`、未启动 WSL2 | 1-2 小时 + WSL2 构建 | 新 clean identity 的 Windows formal 三文件 patch、冻结 evaluator、唯一成功终态、完整 usage/cost 和零残留全部通过后，才进入同 identity WSL2 复核；不含完整 144 项矩阵、candidate v4、P2-C、push |
+| P0 后续：`7314840` 后继双平台代表 canary | P0 | `7314840` 唯一 formal 的 pairing state owner 分裂已完成确定性修复；共享 state root、分裂路径失败关闭、真实 `paired=true` smoke、`60/60` 回归、两个 coding Gate 与 workspace build 全绿，Provider 调用/新增费用=`0`。本环节已完成并按用户要求暂停，未重试 `7314840`、未创建新 harness、未启动 WSL2 | 1-2 小时 + WSL2 构建 | 恢复后形成新 clean identity；其 Windows formal 三文件 patch、冻结 evaluator、唯一成功终态、完整 usage/cost 和零残留全部通过后，才进入同 identity WSL2 复核；不含完整 144 项矩阵、candidate v4、P2-C、push |
 | 本轮 SS 能力复核与 9.5 增强规划 | - | 已完成 | - | 已复核 scorecard、目标向量 `9.510`、C#/Go 投入收益、多语言方案和竞品资料；竞品未做同环境 benchmark |
 | P0：Benchmark v3 与外部有效性 | P0 | 已完成基线、mixed-model 与纯 flash 双平台复核，结果均未晋级。纯 flash identity=`edd1c877`，formal/aggregate=`144/144`、`107 passed + 37 product_workflow failed`、A=`72/72`、B=`12/48`、C=`23/24`，infrastructure error=`0`、usage=`132 provider_reported + 6 unavailable + 6 not_reached`；`138/138` Provider-reaching route 为 declared/resolved flash，dry-run、`--verify`、failure-analysis 重建、`765` 个 Schema 样本与 `144` 份 JSONL 均通过。canonical r2 将新失败收敛为 required-mutation recovery=`30`、length=`5`、schema=`2`、unknown=`0`；output/headroom、required Tool、DeepSeek thinking、no-op mutation、finalization、`file_read` anchor、recovery evidence 与 required changed paths 可信覆盖 Gate 已完成生产修复。新 Gate 的 Windows 前置诊断已证明 model mismatch 正确失败关闭、match 时 route/usage/trace 合同全绿；r12 暴露的 `apply_patch` CRLF 字面量 `\\r` 阻塞已完成 TDD 修复。`a1b8517` 暴露冻结测试被误当源码证据，`15c6c62` 又证明 `maxTurns=12` 下 iteration/headroom 可旁路 required-path 导航；`e2a978d` 的后继 formal 已即时进入导航，但模型返回 `4` 个 Tool calls，运行时在任何导航执行前失败关闭，唯一终态=`run.failed`、changed paths=`0`、usage=`2/2 provider_reported`、cost=`$0.00031866`，未启动 WSL2。required-path Tool call 白名单已使 `112f2f4` formal 完整执行三条 required reads；该轮因 `protocol.ts` 默认只读 `102400/134094` 字节而在 mutation 前失败关闭，usage=`2/2 provider_reported`、cost=`$0.00028742`、changed paths=`0`，未启动 WSL2。完整大文件修复已注入 1 MiB required-read 上限并投影任务相关中段上下文；`dc835a9` Windows formal 完成三文件 mutation但漏掉 `api.ts` 中段 import。中型完整证据投影修复后的 `552a645` Windows formal 已通过，三文件 patch、冻结 evaluator、flash-to-flash route、usage 与资源回收 Gate 全绿；同 identity WSL2 formal 因显式 `limit/maxBytes=102400` 再次截断 required `protocol.ts` 而在 mutation 前失败关闭。无 anchor exact required read 现统一规范化为 1 MiB；`4f7394e` Windows formal 的三条 source reads 均完整，但 mutation-only 仅修改 `connection.ts`，required changed-path Gate 拒绝部分 patch。atomic checklist 使 `75a439e` 生成三文件 patch，但 task-relevant evidence 半行边界导致 `api.ts` hunk 不存在，`apply_patch` 原子失败、changed paths=`0`，未启动 WSL2。task-relevant context 现对齐完整源码行并为超预算长行收敛到目标行，Agent `589/589`、workspace build、benchmark/CI 合同 Gate 通过，正式新 identity 双平台 canary 待执行。clean identity `fce9b6a` 的 `real-go.bug-fix` 已在 Windows/WSL2 各一次纯 flash canary 中通过，两端 declared/resolved flash、patch SHA-256 相同、只改 `command.go`、冻结 Go test 与资源零残留 Gate 全绿；Skills `932/932` 通过。代表任务转绿不改写原 aggregate，也不证明其余 required-mutation 项已改善。aggregate cost=`$0.12215932`；授权窗口 observed=`$2.21621741`、reserved=`$0.94221000`、当前守卫上界=`25.26741928 RMB < 50 RMB`。旧失败 artifacts 原样保留；不创建 candidate v4、不启动 P2-C、不 push | 14-22 人日 | A/B/C 三层、至少 4 个固定仓、144 项总任务、重复 Provider 子集、单一 HEAD 原生 aggregate；不含 candidate v4、竞品代跑、公开排行榜 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | 已完成；attempt 12 aggregate=`passed`；binary regression/Provider failure=`0/0`；`semantic-live=7/8`；非目标整文件读取 `21 -> 14`；16/16 cell 预算耗尽；candidate task/patch success=`0/8`；累计费用 `1.68214072 RMB` | 8-12 人日 | 公共 contract、TS/JS Provider、Inspector、truth set、resource soak、双平台 native runtime 与真实 uplift Gate；不含外部 LSP、Go/C# GA、SCIP store |
@@ -3594,7 +3689,8 @@ SS 已经从“功能不少”推进到了“做事前有检查、做完后能�
 - 一个较复杂的三文件修改任务曾在 Windows 成功，但 WSL2 后续仍暴露过读取不完整的问题。
 - 针对后来发现的多文件遗漏、读取范围、半行材料和 context-only hunk 问题，生产代码已经逐步修正；最新修复也已经保存成独立本地版本 `10da036`。
 - `10da036` 的 Windows 免费预检查已经通过，但正式复核在调用模型前被本地 Gateway 的 WebSocket 来源/鉴权检查拒绝，因此这轮没有产生费用，也还不能评价三文件修复效果。
-- 这条本地接线现已修正并通过不调用模型的真实 Gateway 验证；下一步需要形成包含该修正的新版本，再完成 Windows 和 WSL2 真实复核。“其余同类失败是否普遍改善”的证据也仍然缺失。
+- WebSocket 来源/鉴权和程序自动退出已修正；随后暴露的 Gateway/测试客户端 pairing 状态目录分裂也已修复，并由真实本地配对与回归测试证明两个调用方共享同一状态真源。
+- 本环节按用户要求在修复、验证和文档闭环后暂停；恢复后仍需形成新版本完成 Windows 和 WSL2 真实复核。“其余同类失败是否普遍改善”的证据也仍然缺失。
 - 一些已经完成的新能力虽然本身通过了功能测试，但还没有证明它们能稳定提高整套真实任务的成功率。
 
 因此，当前主要瓶颈是“效果证据还不够”，不是“基础能力还没做完”。
@@ -3619,6 +3715,6 @@ SS 已经从“功能不少”推进到了“做事前有检查、做完后能�
 
 ### 13.7 后续计划
 
-- **下一步准备做什么**：把已经通过本地验证的 Windows 测试启动器保存成新的 clean identity，重新走一次免费预检查，再执行一次小规模 Windows 真实验证；只有三文件修改、测试、费用记录和资源清理全部通过，才继续 WSL2。
-- **为什么先做它**：本地连接和自动回收问题已经关闭，新版本可以让下一次费用直接用于验证三文件修复，而不是再次消耗在启动编排错误上。
+- **下一步准备做什么**：本环节先暂停；恢复后形成包含共享 pairing state root 修复的新 clean identity，重新执行免费预检查和一次小规模 Windows 真实验证。
+- **为什么先做它**：本地配对已确认成功，新 identity 能把后续正式证据绑定到这次修复，并确保下一次费用真正用于验证三文件修改能力。
 - **当前还缺的关键闭环**：新版本在 Windows/WSL2 的一致成功证据、其余同类失败的改善范围、完整费用记录，以及两个连续达到 `9.5` 的候选版本。在这些证据齐全前，不启动 P2-C，不宣称已经达到 `9.5`。

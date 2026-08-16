@@ -22,10 +22,15 @@ const DEFAULT_GATEWAY_STOP_GRACE_MS = 3_000;
 export function buildWindowsBenchmarkInvocation(input, dependencies = {}) {
   const resolvePath = dependencies.resolvePath ?? path.resolve;
   const workspaceRoot = resolvePath(requireInput(input, "workspaceRoot"));
-  const gatewayStateRoot = resolvePath(requireInput(input, "gatewayStateRoot"));
   const fixtureRoot = resolvePath(requireInput(input, "fixtureRoot"));
   const artifactRoot = resolvePath(requireInput(input, "artifactRoot"));
   const stateRoot = resolvePath(requireInput(input, "stateRoot"));
+  const gatewayStateRoot = input.gatewayStateRoot === undefined
+    ? stateRoot
+    : resolvePath(requireInput(input, "gatewayStateRoot"));
+  if (!isSameWindowsPath(gatewayStateRoot, stateRoot)) {
+    throw new Error("Windows benchmark Gateway and Coding CI must share the same state root for pairing.");
+  }
   const provider = requireInput(input, "provider");
   const modelId = requireInput(input, "modelId");
   const credentialsConfigured = input.credentialsConfigured;
@@ -353,6 +358,11 @@ function normalizePort(value) {
   return port;
 }
 
+function isSameWindowsPath(left, right) {
+  const normalize = (value) => path.win32.normalize(value).replace(/[\\/]+$/, "").toLowerCase();
+  return normalize(left) === normalize(right);
+}
+
 function requireInput(input, key) {
   const value = input?.[key];
   if (typeof value !== "string" || !value.trim()) throw new Error(`${key} is required.`);
@@ -384,12 +394,13 @@ async function main() {
   if (credentialsValue !== "true" && credentialsValue !== "false") {
     throw new Error("--credentials-configured must be true or false.");
   }
+  const stateRoot = requireValue(values, "state-root");
   const exitCode = await runWindowsBenchmark({
     workspaceRoot: values.get("workspace-root") ?? defaultWorkspaceRoot,
-    gatewayStateRoot: requireValue(values, "gateway-state-root"),
+    gatewayStateRoot: values.get("gateway-state-root") ?? stateRoot,
     fixtureRoot: requireValue(values, "fixture-root"),
     artifactRoot: requireValue(values, "artifact-root"),
-    stateRoot: requireValue(values, "state-root"),
+    stateRoot,
     provider: requireValue(values, "provider"),
     modelId: requireValue(values, "model-id"),
     credentialsConfigured: credentialsValue === "true",
