@@ -227,13 +227,23 @@ repository config 示例：
 }
 ```
 
-显式运行已准备的 B 层任务：
+显式运行已准备的 Windows B 层任务必须经过受控 launcher；formal 不得直接调用底层
+`run-coding-agent-benchmark.mjs`。launcher 会统一启动/回收 Gateway、绑定临时 token、关闭
+非计费边界内后台能力，并在创建 Gateway、fixture、runtime 或 artifact 前校验 formal pricing：
 
 ```powershell
-node scripts/run-coding-agent-benchmark.mjs --manifest-revision v3 --platform windows-native --task-id real-js.bug-fix --v3-repository-config <repository-inputs.json> --fixture-root <fixture-root> --artifact-root <artifact-root> --state-root <gateway-state-root> --provider <provider-id> --model-id <model-id> --credentials-configured true
+$env:BELLDANDY_MODEL_CACHE_READ_USD_PER_1M = "<verified-cache-read-usd-per-1m>"
+$env:BELLDANDY_MODEL_INPUT_USD_PER_1M = "<verified-input-usd-per-1m>"
+$env:BELLDANDY_MODEL_OUTPUT_USD_PER_1M = "<verified-output-usd-per-1m>"
+node scripts/run-coding-agent-benchmark-windows.mjs --workspace-root <clean-harness> --source-root <clean-harness> --manifest-revision v3 --task-id real-js.bug-fix --v3-repository-config <repository-inputs.json> --fixture-root <fixture-root> --artifact-root <artifact-root> --state-root <gateway-state-root> --provider <provider-id> --model-id <model-id> --credentials-configured true
 ```
 
-repository config 不保存 receipt 内容或任何凭据；receipt 由独立文件提供并在运行前复核。B/C 专属 JSON artifact 均限制为 1 MiB，并拒绝常见 credential 字段。命令行会为 v3 装配 native system harness；browser behavior、parallel read isolation、parallel write fan-in 与 restart delivery reconciliation 均按本机生产构建可用性声明 capability。
+上述 pricing 必须来自当前 Provider/路由的已核对价格，不能使用示例值或沿用其他模型的费率。零凭证
+dry-run 可将 `--credentials-configured` 设为 `false`，此时不要求 pricing，但仍应通过同一 launcher
+验证 Gateway auth/hello 和自动回收。repository config 不保存 receipt 内容或任何凭据；receipt 由独立文件
+提供并在运行前复核。B/C 专属 JSON artifact 均限制为 1 MiB，并拒绝常见 credential 字段。命令行会为
+v3 装配 native system harness；browser behavior、parallel read isolation、parallel write fan-in 与 restart
+delivery reconciliation 均按本机生产构建可用性声明 capability。
 
 ## P0.7 v3 native aggregate 边界
 
