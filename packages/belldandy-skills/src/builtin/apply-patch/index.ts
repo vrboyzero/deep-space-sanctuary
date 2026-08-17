@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { Tool, ToolCallResult, ToolContext } from "../../types.js";
 import { parsePatchText } from "./dsl.js";
-import { ApplyPatchMatchError, applyUpdateChunks } from "./match.js";
+import { ApplyPatchMatchError, applyUpdateChunks, applyUpdateChunksToContent } from "./match.js";
 import { withToolContract } from "../../tool-contract.js";
 import { resolveRuntimeFilesystemScope } from "../../runtime-policy.js";
 import { readAbortReason, throwIfAborted } from "../../abort-utils.js";
@@ -133,6 +133,8 @@ type PreparedPatchOperation =
     | { kind: "add"; absolute: string; relative: string; contents: string }
     | { kind: "delete"; absolute: string; relative: string }
     | { kind: "update"; absolute: string; relative: string; newContent: string; move?: { absolute: string; relative: string } };
+
+type PreparedUpdateOperation = Extract<PreparedPatchOperation, { kind: "update" }>;
 
 function resolveMutationWorkspaceRoot(absolute: string, context: ToolContext): string {
     const scope = resolveRuntimeFilesystemScope(context);
@@ -303,6 +305,7 @@ export const applyPatchTool: Tool = withToolContract({
             // 2. 先完成所有预计算；只有在真正提交前才允许 stop，
             // 这样可以避免写了一半文件后因为中断留下不一致状态。
             const operations: PreparedPatchOperation[] = [];
+            const updateOperations = new Map<string, PreparedUpdateOperation>();
             for (const hunk of parsed.hunks) {
                 throwIfAborted(context.abortSignal);
                 const pathCheck = validateWritablePath(hunk.path, context);
@@ -336,6 +339,31 @@ export const applyPatchTool: Tool = withToolContract({
                 }
 
                 if (hunk.kind === "update") {
+                    const existingUpdate = updateOperations.get(absolute);
+                    if (existingUpdate) {
+                        if (existingUpdate.move || hunk.movePath) {
+                            return makeError(
+                                `[${relative}] 同一文件的多个 Update File section 不能包含 Move to`,
+                                "input_error",
+                                buildApplyPatchInputRepairMetadata(),
+                            );
+                        }
+                        const { originalContent, newContent } = applyUpdateChunksToContent(
+                            absolute,
+                            existingUpdate.newContent,
+                            hunk.chunks,
+                        );
+                        if (newContent === originalContent) {
+                            return makeError(
+                                `[${relative}] Update File 未产生任何实际内容变化或路径变化`,
+                                "input_error",
+                                buildApplyPatchInputRepairMetadata(),
+                            );
+                        }
+                        existingUpdate.newContent = newContent;
+                        continue;
+                    }
+
                     const { originalContent, newContent } = await applyUpdateChunks(absolute, hunk.chunks);
 
                     if (hunk.movePath) {
@@ -349,15 +377,17 @@ export const applyPatchTool: Tool = withToolContract({
                                     buildApplyPatchInputRepairMetadata(),
                                 );
                             }
-                            operations.push({
+                            const operation: PreparedUpdateOperation = {
                                 kind: "update",
                                 absolute,
                                 relative,
                                 newContent,
-                            });
+                            };
+                            operations.push(operation);
+                            updateOperations.set(absolute, operation);
                             continue;
                         }
-                        operations.push({
+                        const operation: PreparedUpdateOperation = {
                             kind: "update",
                             absolute,
                             relative,
@@ -366,7 +396,9 @@ export const applyPatchTool: Tool = withToolContract({
                                 absolute: moveCheck.absolute,
                                 relative: moveCheck.relative,
                             },
-                        });
+                        };
+                        operations.push(operation);
+                        updateOperations.set(absolute, operation);
                     } else {
                         if (newContent === originalContent) {
                             return makeError(
@@ -375,12 +407,14 @@ export const applyPatchTool: Tool = withToolContract({
                                 buildApplyPatchInputRepairMetadata(),
                             );
                         }
-                        operations.push({
+                        const operation: PreparedUpdateOperation = {
                             kind: "update",
                             absolute,
                             relative,
                             newContent,
-                        });
+                        };
+                        operations.push(operation);
+                        updateOperations.set(absolute, operation);
                     }
                 }
             }

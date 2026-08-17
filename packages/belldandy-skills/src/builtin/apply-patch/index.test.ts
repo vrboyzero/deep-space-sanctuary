@@ -82,6 +82,98 @@ describe("apply_patch tool", () => {
     });
   });
 
+  it("applies repeated Update File sections for one path as one mutation", async () => {
+    const connectionPath = "jsonrpc/src/common/connection.ts";
+    const apiPath = "jsonrpc/src/common/api.ts";
+    const protocolPath = "protocol/src/common/protocol.ts";
+    await fs.mkdir(path.join(tempDir, "jsonrpc", "src", "common"), { recursive: true });
+    await fs.mkdir(path.join(tempDir, "protocol", "src", "common"), { recursive: true });
+    await Promise.all([
+      fs.writeFile(
+        path.join(tempDir, connectionPath),
+        [
+          "/**",
+          " * @deprecated Use TraceValue instead",
+          " */",
+          "export const TraceValues = TraceValue;",
+          "export type TraceValues = TraceValue;",
+          "",
+          "export namespace Trace {",
+          "}",
+          "",
+        ].join("\r\n"),
+        "utf-8",
+      ),
+      fs.writeFile(
+        path.join(tempDir, apiPath),
+        [
+          "export { Trace, TraceValue, TraceValues, TraceFormat } from './connection';",
+          "export { MessageStrategy, TraceValues } from './connection';",
+          "",
+        ].join("\r\n"),
+        "utf-8",
+      ),
+      fs.writeFile(
+        path.join(tempDir, protocolPath),
+        [
+          "import { ProgressToken, RequestHandler, TraceValues } from 'vscode-jsonrpc';",
+          "",
+          "export interface InitializeParams {",
+          "\ttrace?: TraceValues;",
+          "}",
+          "",
+        ].join("\r\n"),
+        "utf-8",
+      ),
+    ]);
+
+    const result = await applyPatchTool.execute(
+      {
+        input: [
+          "*** Begin Patch",
+          `*** Update File: ${connectionPath}`,
+          "@@",
+          "-/**",
+          "- * @deprecated Use TraceValue instead",
+          "- */",
+          "-export const TraceValues = TraceValue;",
+          "-export type TraceValues = TraceValue;",
+          "-",
+          " export namespace Trace {",
+          `*** Update File: ${apiPath}`,
+          "@@",
+          "-export { Trace, TraceValue, TraceValues, TraceFormat } from './connection';",
+          "+export { Trace, TraceValue, TraceFormat } from './connection';",
+          `*** Update File: ${apiPath}`,
+          "@@",
+          "-export { MessageStrategy, TraceValues } from './connection';",
+          "+export { MessageStrategy } from './connection';",
+          `*** Update File: ${protocolPath}`,
+          "@@",
+          "-import { ProgressToken, RequestHandler, TraceValues } from 'vscode-jsonrpc';",
+          "+import { ProgressToken, RequestHandler, TraceValue } from 'vscode-jsonrpc';",
+          "@@",
+          "-\ttrace?: TraceValues;",
+          "+\ttrace?: TraceValue;",
+          "*** End Patch",
+        ].join("\n"),
+      },
+      baseContext,
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.metadata).toEqual({
+      workspaceMutation: {
+        schemaVersion: 1,
+        changedPaths: [connectionPath, apiPath, protocolPath],
+      },
+    });
+    for (const relativePath of [connectionPath, apiPath, protocolPath]) {
+      await expect(fs.readFile(path.join(tempDir, relativePath), "utf-8"))
+        .resolves.not.toContain("TraceValues");
+    }
+  });
+
   it("rejects a multi-file patch atomically when one update is a no-op", async () => {
     await fs.mkdir(path.join(tempDir, "src"), { recursive: true });
     await fs.writeFile(path.join(tempDir, "src", "api.ts"), "export const api = false;\n", "utf-8");

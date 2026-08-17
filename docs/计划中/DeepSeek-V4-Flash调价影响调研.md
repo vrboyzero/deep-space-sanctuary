@@ -11,7 +11,7 @@
 1. **不应因本次调价提高单次 `$0.10` 或累计 `$5.00` 上限。** 这两个值是货币风险上限，不是 token 配额。价格提高只会让同一费用池可支持的调用量减少；抬高上限反而会削弱 `50 RMB` 授权边界。
 2. **必须在下一次有凭证 formal 前更新 benchmark 的模型单价。** 当前受控 launcher 使用的 `0.125 / 0.25 / 0.0025 USD/1M` 已不符合 2026-08-17 起生效的现价。继续沿用会低估 `deepseek-v4-flash` 的缓存未命中输入、输出和缓存命中费用，破坏 `maxCostUsd` 的失败关闭依据。
 3. **当前 detached Windows 的 offline install、build、独立 verifier 和零凭证 dry-run 可以继续。** 零凭证 dry-run 不进入 Provider 和 usage pricing 路径；调价不改变 source/harness identity，也不影响这些确定性 Gate。
-4. **formal 参数不能沿用 `3.05342019 -> 3.15342019`。** 对北京时间 2026-08-17 00:00 后的 `32` 个历史 provider-reported formal 按高峰价和输入全 miss 重算后，`f0615b8` 与 `9a7c3b3` 已分别使用后续单次窗口并产生 `$0.00358616/$0.00302790` provider-reported 费用；当前 observed 保守上界为 `$2.38573603`，下一 identity 固定为 `3.18573603 -> 3.28573603`，单次窗口仍恰好 `$0.10`。
+4. **formal 参数不能沿用 `3.05342019 -> 3.15342019`。** 对北京时间 2026-08-17 00:00 后的 `32` 个历史 provider-reported formal 按高峰价和输入全 miss 重算后，`f0615b8`、`9a7c3b3` 与 `887bcd7` 已分别使用后续单次窗口并产生 `$0.00358616/$0.00302790/$0.00235180` provider-reported 费用；当前 observed 保守上界为 `$2.38808783`，下一 identity 固定为 `3.18808783 -> 3.28808783`，单次窗口仍恰好 `$0.10`。
 5. **模型名不需要改。** 当前应继续显式使用 `deepseek-v4-flash`；它对应的模型版本是 `DeepSeek-V4-Flash-0731`。旧名 `deepseek-chat`、`deepseek-reasoner` 已过官方停止使用日期，不应作为当前别名回退。
 
 ## 2. DeepSeek 官方现行价格
@@ -60,7 +60,7 @@ DeepSeek 的上下文缓存默认开启。官方响应通过 `prompt_cache_hit_t
 | 合同 | 当前值 | 证据 |
 | --- | ---: | --- |
 | Stage 0D 累计 benchmark 池 | `$5.00` | `scripts/run-coding-agent-benchmark.mjs` 的 `STAGE_0D_BENCHMARK_USAGE_BUDGET_USD` |
-| 下一次单次 formal 窗口 | `$0.10` | `9a7c3b3` 入账后的 `prior=3.18573603`、`maxTotal=3.28573603` 差额 |
+| 下一次单次 formal 窗口 | `$0.10` | `887bcd7` 入账后的 `prior=3.18808783`、`maxTotal=3.28808783` 差额 |
 | required-mutation token/turn | `24,000 tokens`、`12 turns` | `benchmarks/coding-agent/v3/task-manifest.json` |
 | Provider retry | `0` | 当前 Windows launcher 的 `BELLDANDY_OPENAI_MAX_RETRIES=0` |
 | 授权换算 | `50 CNY`，按 `8 CNY/USD` 并保留 `10 CNY` 缓冲 | runner 注释及 `benchmarks/coding-agent/README.md` |
@@ -128,14 +128,15 @@ BELLDANDY_MODEL_CACHE_READ_USD_PER_1M=0.0025
 
 | 当前步骤 | 是否受影响 | 处理 |
 | --- | --- | --- |
-| detached clean harness | 否 | `f0615b8` 已冻结；提交修复后建立新 identity |
-| frozen offline install | 否 | 新 identity 可继续 |
-| workspace build | 否 | 新 identity 可继续 |
-| 独立 `verify:build` | 否 | 新 identity 可继续 |
-| 零凭证 Windows dry-run | 否 | 新 identity 可继续；确认 Provider/usage 均未到达 |
+| detached clean harness | 否 | `887bcd7` 已冻结；提交 repeated Update section 修复后建立新 identity |
+| frozen offline install | 否 | 新 identity 继续执行 |
+| workspace build | 否 | 新 identity 继续执行 |
+| 独立 `verify:build` | 否 | 新 identity 继续执行 |
+| 零凭证 Windows dry-run | 否 | 新 identity 继续执行；确认 Provider/usage 均未到达 |
 | `f0615b8` 唯一 Windows formal | **已执行并冻结** | 已使用新高峰单价与 `3.17912197 -> 3.27912197`；provider-reported cost=`$0.00358616`，因 product workflow 失败未进入 WSL2 |
 | `9a7c3b3` 唯一 Windows formal | **已执行并冻结** | 已使用新高峰单价与 `3.18270813 -> 3.28270813`；provider-reported cost=`$0.00302790`，冻结 verifier 失败且未进入 WSL2 |
-| `prior=3.05342019 -> max=3.15342019` | **已替换** | 下一 identity 使用入账后的 `3.18573603 -> 3.28573603`，仍不得超过 `$5.00` |
+| `887bcd7` 唯一 Windows formal | **已执行并冻结** | 已使用新高峰单价与 `3.18573603 -> 3.28573603`；provider-reported cost=`$0.00235180`，完整 patch 因重复 changed path 写前失败且未进入 WSL2 |
+| `prior=3.05342019 -> max=3.15342019` | **已替换** | 下一 identity 使用入账后的 `3.18808783 -> 3.28808783`，仍不得超过 `$5.00` |
 | WSL2 | 无新增放宽 | 仍只在 Windows formal 全绿后进入 |
 | 完整矩阵、candidate v4、P2-C | 否 | 继续禁止启动 |
 
@@ -162,17 +163,18 @@ costUsdForGuard = costCny / 8
 | 调价重算后 observed conservative upper | `$2.37912197` |
 | `f0615b8` 新高峰价 formal | `$0.00358616` |
 | `9a7c3b3` 新高峰价 formal | `$0.00302790` |
-| 当前 observed conservative upper | `$2.38573603` |
-| 下一次 prior（含 `$0.80` 不可观测预留） | `$3.18573603` |
-| 下一次 maxTotal | `$3.28573603` |
+| `887bcd7` 新高峰价 formal | `$0.00235180` |
+| 当前 observed conservative upper | `$2.38808783` |
+| 下一次 prior（含 `$0.80` 不可观测预留） | `$3.18808783` |
+| 下一次 maxTotal | `$3.28808783` |
 
-当前加现有 reserved=`$0.94221000` 与 unobservable reserve=`$0.80000000` 的守卫为 `33.02356824 CNY < 50 CNY`；再加下一次完整 `$0.10` 预留后为 `33.82356824 CNY < 50 CNY`。`a72f127` 虽有完整 `run.usage` 事件，但 terminal/report 不可观测，仍按既有完整 `$0.10` 不可观测预留处理，没有用局部事件值抵扣。
+当前加现有 reserved=`$0.94221000` 与 unobservable reserve=`$0.80000000` 的守卫为 `33.04238264 CNY < 50 CNY`；再加下一次完整 `$0.10` 预留后为 `33.84238264 CNY < 50 CNY`。`a72f127` 虽有完整 `run.usage` 事件，但 terminal/report 不可观测，仍按既有完整 `$0.10` 不可观测预留处理，没有用局部事件值抵扣。
 
 ## 7. 建议决策
 
-1. `f0615b8` 与 `9a7c3b3` formal 均已执行并冻结；先提交 `9a7c3b3` 确定性复现的 snapshot Windows 长路径修复形成新 identity，再重走 Windows offline install、build、独立 verifier 和零凭证 dry-run。
+1. `f0615b8`、`9a7c3b3` 与 `887bcd7` formal 均已执行并冻结；先提交 `887bcd7` 确定性复现的 repeated Update section 修复形成新 identity，再重走 Windows offline install、build、独立 verifier 和零凭证 dry-run。
 2. 后续唯一 formal 继续固定高峰价：`BELLDANDY_MODEL_INPUT_USD_PER_1M=0.375`、`BELLDANDY_MODEL_OUTPUT_USD_PER_1M=1.125`、`BELLDANDY_MODEL_CACHE_READ_USD_PER_1M=0.0125`，并让 formal preflight/artifact 记录该合同。
-3. 使用 `9a7c3b3` 入账后的结果，固定 `prior=3.18573603`、`maxTotal=3.28573603`；无法观测者继续沿用完整 `$0.10` 预留。
+3. 使用 `887bcd7` 入账后的结果，固定 `prior=3.18808783`、`maxTotal=3.28808783`；无法观测者继续沿用完整 `$0.10` 预留。
 4. 保持 `$5.00` 累计池、`$0.10` 单次窗口、`12 turns`、`24,000 tokens` 和 Provider retry=`0` 不变。
 5. DeepSeek 最终账单仍作为外部真源单独复核；仓库内重算结果只用于保守 Gate。
 

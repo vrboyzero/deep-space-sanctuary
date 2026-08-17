@@ -223,6 +223,14 @@ export async function applyUpdateChunks(
     const originalContents = await fs.readFile(filePath, "utf8").catch((err) => {
         throw new Error(`Failed to read file to update ${filePath}: ${err}`);
     });
+    return applyUpdateChunksToContent(filePath, originalContents, chunks);
+}
+
+export function applyUpdateChunksToContent(
+    filePath: string,
+    originalContents: string,
+    chunks: UpdateFileChunk[],
+): { originalContent: string; newContent: string } {
     const newline = originalContents.includes("\r\n") ? "\r\n" : "\n";
 
     const originalLines = originalContents.split(/\r?\n/);
