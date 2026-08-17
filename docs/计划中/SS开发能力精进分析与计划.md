@@ -398,7 +398,7 @@ Source / Workspace Revision
 14. **已完成但失败：`d642205` Windows 复验**。clean build、dry-run、route/usage 与资源 Gate 通过；唯一 formal 将两个不相邻的完整 context 拼为同一 hunk，底层拒绝且零写入，禁止重跑。
 15. **已完成：context 边界显式化**。每个任务相关 context 均携带真实源码行范围，mutation/recovery 指令禁止单个 hunk 跨 context 项拼接；失败回归、Agent 全量、build 与合同 Gate 全绿，未增加调用、turn/token 或 retry。
 16. **已完成：`61735d4` Windows 分层复验**。offline install、clean build、dry-run 和唯一 formal 全绿；三文件 evaluator、唯一 `run.completed`、route/usage/cost、敏感值与资源 Gate 均通过。
-17. **待执行：`61735d4` 同 identity WSL2 复核**。在 ext4 clean harness 完成 offline frozen install、build、独立 `verify:build` 和零凭证 dry-run；前置 Gate 全绿后执行唯一 formal。
+17. **进行中：`61735d4` 同 identity WSL2 复核**。ext4 offline frozen install、build、独立 `verify:build` 和零凭证 `dry-run-r3` 已通过；Provider=`0`、identity/snapshot、敏感值与资源 Gate 全绿，待唯一 formal。
 
 #### P0 后续阶段实现结论：mutation hunk 无正文诊断（2026-08-17）
 
@@ -923,7 +923,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`61735d4` Windows 全绿，待同 identity WSL2 复核** | Windows 三文件 evaluator、唯一 `run.completed`、route=`deepseek-v4-flash`、usage=`5/5 provider_reported`、cost=`$0.00169510` 与敏感值/资源 Gate 全绿 | 1-3 小时 | 在 WSL2 ext4 做 offline install、build、dry-run 与条件式唯一 formal；全部通过才形成代表性双平台闭环，不外推为完整矩阵改善 |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **`61735d4` Windows 全绿，WSL2 前置 Gate 全绿，待唯一 formal** | WSL2 ext4 install/build/独立 verify 通过；`dry-run-r3` preflight/snapshot=`passed`、usage=`not_reached`、events/trace/patch=`0/0/0`，主 key=`0/12,268`、资源零残留 | 1-3 小时 | 以 `deepseek-v4-flash` 执行唯一 WSL2 formal；三文件 evaluator、唯一终态、usage/cost 与清理全绿才形成代表性双平台闭环 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | scorecard、目标向量 `9.510`、多语言投入收益、竞品和边界已复核 | - | 当前精简版与 archive-03 共同保留决策和完整历史 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
