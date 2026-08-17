@@ -378,7 +378,7 @@ Source / Workspace Revision
 - report SHA-256=`b3583db487e4f249a8ea6b9cba2b4de9aaca5714f8bf9518ebbbea5b8a6b4428`，空 patch SHA-256=`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`；
 - artifact、fixture、runtime 与 WSL clean harness 的真实主 key 扫描=`0/46,945`、不可读文件=`0`、符号链接=`1,320`；两端 Node、listener、根级 PID/token、fixture/harness/prepared source residue 均为 `0`。
 
-当前最小修复方向是：仅在路径唯一安全、section/hunk 结构有效时执行已有真实增删的文件 section，再复用现有一次 bounded missing-path continuation 补齐 `api.ts`；仍禁止执行 context-only section，不增加 maxTurns、maxTokens 或 Provider retry。先以公开 Agent 行为测试锁定“安全部分进度 + 单次补齐 + 最终三路径覆盖”。
+对应最小修复已提交为 `8c2499899fae3d9bc1076f1f922df22a24e4b9c3`：仅在路径唯一安全、section/hunk 结构有效时执行已有真实增删的文件 section，再复用现有一次 bounded missing-path continuation 补齐缺失路径；仍禁止执行 context-only section，不增加 maxTurns、maxTokens 或 Provider retry。该 identity 的 Windows offline frozen install、workspace build、独立 `verify:build` 和零凭证 dry-run 已全绿，下一步只执行一次 Windows formal。
 
 ### 6.5 恢复后的实施顺序
 
@@ -408,6 +408,7 @@ Source / Workspace Revision
 24. **已完成：`00d2559` WSL2 formal 前置 Gate**。ext4 harness 的 offline frozen install、workspace build、独立 `verify:build`、mode 恢复和零凭证 dry-run 全绿；Provider 未触达，Windows/WSL2 敏感值与资源零残留，开放唯一 WSL2 formal。
 25. **已完成但失败：`00d2559` WSL2 formal**。唯一 formal 的 `api.ts` 含 `2` 个 context-only hunk，其余两个文件 section 可执行；系统在工具执行前拒绝整包，changed paths/patch=`0/0`、唯一终态=`run.failed`，route/usage/cost、敏感值和资源清理证据完整，禁止重跑。
 26. **已完成：actionable section 安全保留与 continuation**。仅在严格 parser 的唯一拒绝原因为 `non_actionable_update_section` 时，保留 required path 白名单内具有真实增删的完整 section 原文；首次 mutation-only 调用成功后复用既有一次 missing-path continuation，continuation 不放宽。目标回归 `81/81`、Agent `630 passed + 1 skipped`、build 与合同 Gate 全绿，模型调用=`0`、新增费用=`$0`。
+27. **已完成：`8c24998` Windows formal 前置 Gate**。detached clean harness 的 frozen offline install（download=`0`）、workspace build、独立 `verify:build` 和零凭证 dry-run 全绿；source/harness clean、preflight passed、Provider/usage/changed paths/patch=`0/not_reached/0/0`，端口、Node、PID/token 和 fixture diff 均无残留，开放唯一 Windows formal。
 
 #### P0 后续阶段实现结论：mutation hunk 无正文诊断（2026-08-17）
 
@@ -1100,6 +1101,42 @@ Source / Workspace Revision
 - **为什么先做它**：先证明提交态代码、fixture 与任务合同在零凭证环境可重复，避免把构建或装配问题带入付费验证。
 - **当前还缺的关键闭环**：新 identity 的 Windows 和 WSL2 三文件 formal 需依次全绿；两端都必须满足 changed paths、冻结 evaluator、唯一 `run.completed`、完整 route/usage/cost、敏感值与资源零残留。
 
+#### P0 后续阶段实现结论：`8c24998` Windows build 与零凭证 dry-run（2026-08-17）
+
+##### 已完成内容
+
+1. **detached clean harness 新建**：
+   - source/harness 固定为 clean `8c2499899fae3d9bc1076f1f922df22a24e4b9c3`，content SHA-256=`250eed57433339ac53ff57e0156563dccd387cdf5147b500f387cfc6d48e3c33`；
+   - `corepack pnpm install --frozen-lockfile --offline` 完成，`493` 个包全部复用本地 store、download=`0`；
+   - workspace build 与独立 `verify:build` 通过，构建后 harness 仍为 clean detached HEAD。
+
+2. **零凭证 Windows dry-run**：
+   - artifact=`artifacts/p0-required-mutation-canary-8c24998-ts-api-windows-dry-run-r1`，run=`real-ts-api-migration-windows-a1-1786956765187`；
+   - report SHA-256=`256ab1d39ec69e50832096d1ac2050d2d4ffcfbdc386d3ff738d0497a3d6ff53`；
+   - production preflight 与 repository snapshot preflight 均为 `passed`，模型标识固定为 `deepseek-v4-flash`、`credentialsConfigured=false`。
+
+3. **失败关闭与清理审计**：
+   - usage=`not_reached`、cost=`null`、event/trace=`0/0`、changed paths/patch bytes=`0/0`，infrastructure error=`0`；
+   - frozen fixture workspace 保持 clean，没有模型调用、费用、文件修改或自动 push；
+   - `19645` listener、相关 Node、runtime 根级 PID/token 均为 `0`。
+
+4. **效果**：
+   - 新 identity 可从本地 store 离线重建并通过构建产物合同；
+   - 零凭证路径在 Provider 前确定失败关闭，未误触达模型；
+   - 已满足执行唯一 Windows formal 的全部无费用前置条件。
+
+##### 验证结果
+
+- TypeScript 编译无错误：workspace build 与独立 `verify:build` 通过；
+- Windows dry-run 生产 preflight、snapshot preflight 与 artifact policy 通过，fixture diff=`0`；
+- Provider 调用=`0`、新增费用=`$0`，端口、相关 Node、PID/token 残留均为 `0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：按 `priorObservedCostUsd=2.84602134`、`maxTotalCostUsd=2.94602134`，仅使用 `deepseek-v4-flash` 执行且只执行一次 `8c24998` Windows formal。
+- **为什么先做它**：提交态构建、任务合同、冻结仓输入与零凭证边界均已通过，真实三文件 mutation、verification 和 finalization 是当前唯一剩余的 Windows 证据。
+- **当前还缺的关键闭环**：Windows 三文件 changed paths、冻结 evaluator、唯一 `run.completed`、完整 route/usage/cost、敏感值与资源零残留；Windows 全绿后才创建同 identity WSL2 分层复核。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
@@ -1252,7 +1289,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 自动测试现已规定“定位和删除行的空格、制表符必须与单一原始材料逐字相同”，并保持原有材料预算。新版本 `00d2559` 已在 Windows 正确完成三个文件的修改、自动验收、最终说明、费用记录和资源清理。
 
-同版本的 WSL2 离线安装、构建和无凭据检查也已通过，但唯一正式复验中，模型只为其中两个文件给出真实修改，`api.ts` 的两段内容只有定位信息。系统在写入前拒绝整包，没有留下半成品。现在自动测试和实现已完成：系统只保留白名单内已有真实修改的完整文件段，再只给缺失文件一次补齐机会；越界路径会在写入前停止，最终仍必须三个文件全部完成并复读才算成功。下一步先用新提交版本做 Windows 离线构建和无凭据检查，通过后才执行一次正式验证；Windows 全绿后再复核 WSL2。
+同版本的 WSL2 离线安装、构建和无凭据检查也已通过，但唯一正式复验中，模型只为其中两个文件给出真实修改，`api.ts` 的两段内容只有定位信息。系统在写入前拒绝整包，没有留下半成品。现在自动测试和实现已完成：系统只保留白名单内已有真实修改的完整文件段，再只给缺失文件一次补齐机会；越界路径会在写入前停止，最终仍必须三个文件全部完成并复读才算成功。新提交版本 `8c24998` 已通过 Windows 离线安装、构建和无凭据检查，下一步只执行一次 Windows 正式验证；Windows 全绿后再复核 WSL2。
 
 在此之前，不能说原来的 37 个失败已经解决，也不能启动最终 9.5 评审。
 
@@ -1268,7 +1305,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`00d2559` WSL2 失败的对应实现修复已完成，待新 identity 分层复验** | actionable-section 目标回归=`81/81`，Agent=`630 passed + 1 skipped`；build、独立 `verify:build` 与合同 Gate 全绿；模型调用=`0`、新增费用=`$0` | 2-5 小时 | 提交新 identity，先走 Windows offline build/零凭证 dry-run/唯一 formal；Windows 全绿后才复核同 identity WSL2，双平台 formal 全绿为完成边界 |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **`8c24998` Windows 无费用前置 Gate 全绿，待唯一 formal** | offline install download=`0`；build、独立 `verify:build`、production/snapshot preflight 全绿；dry-run usage=`not_reached`、changed paths/patch=`0/0`、Provider/费用/资源残留=`0` | 2-5 小时 | 按既定费用守卫执行唯一 Windows `deepseek-v4-flash` formal；Windows 三文件、evaluator、终态与清理 Gate 全绿后才复核同 identity WSL2 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | scorecard、目标向量 `9.510`、多语言投入收益、竞品和边界已复核 | - | 当前精简版与 archive-03 共同保留决策和完整历史 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
