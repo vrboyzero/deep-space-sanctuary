@@ -560,7 +560,13 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       ],
       [
         requiredChangedPaths[2]!,
-        "import { TraceValue } from 'vscode-jsonrpc';\nexport interface InitializeParams {\n\ttrace?: TraceValue;\n}",
+        [
+          "import { TraceValue } from 'vscode-jsonrpc';",
+          ...Array.from({ length: 3_200 }, (_, index) => `export interface ProtocolFiller${index} { value: string; }`),
+          "export interface InitializeParams {",
+          "\ttrace?: TraceValue;",
+          "}",
+        ].join("\n"),
       ],
     ]);
     const requests: Array<Record<string, any>> = [];
@@ -2725,12 +2731,14 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       },
     } as any));
 
-    expect(requests).toHaveLength(5);
+    expect(requests).toHaveLength(6);
     expect(requests[0]?.thinking).toEqual({ type: "enabled" });
     expect(requests.slice(1, 4).every((request) => request.thinking?.type === "disabled")).toBe(true);
-    expect(requests[4]).not.toHaveProperty("tools");
-    expect(requests[4]?.max_tokens).toBe(1_024);
-    expect(requests[4]?.thinking).toEqual({ type: "disabled" });
+    expect(requests[4]?.messages[0]?.content).toContain("Post-mutation objective review phase");
+    expect(requests[4]?.tools?.map((tool: any) => tool.function.name)).toEqual(["apply_patch"]);
+    expect(requests[5]).not.toHaveProperty("tools");
+    expect(requests[5]?.max_tokens).toBe(1_024);
+    expect(requests[5]?.thinking).toEqual({ type: "disabled" });
     expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
       "list_files",
       "file_read",

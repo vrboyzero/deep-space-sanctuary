@@ -3409,6 +3409,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           && !runBudget.modelLoopBudgetPolicy
           && !finalizationOnlyCall
           && !workspaceMutationVerificationCall
+          && !workspaceMutationObjectiveReviewCall
         ) {
           const ordinaryMinimumCost = calculateUsageCostUsd({
             inputTokens: preflightPromptTokens,

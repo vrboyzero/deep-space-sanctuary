@@ -149,9 +149,21 @@ function normalizeRevisionId(input: RevisionMutationInput | { revisionId: string
   return value;
 }
 
+function resolveWorkspaceRevisionIdentityPath(value: string): string {
+  if (path.posix.isAbsolute(value)) return path.posix.normalize(value);
+  if (path.win32.isAbsolute(value)) return path.win32.normalize(value);
+  return path.resolve(value);
+}
+
+export function normalizeWorkspaceRevisionIdentityPath(value: string): string {
+  const resolved = resolveWorkspaceRevisionIdentityPath(value);
+  return /^[A-Za-z]:[\\/]/.test(resolved) || resolved.startsWith("\\\\")
+    ? resolved.toLowerCase()
+    : resolved;
+}
+
 function toCanonicalPath(value: string): string {
-  const resolved = path.resolve(value);
-  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  return normalizeWorkspaceRevisionIdentityPath(value);
 }
 
 function isPathInside(root: string, target: string): boolean {
@@ -872,13 +884,13 @@ export class WorkspaceRevisionRuntime implements WorkspaceMutationObserver {
   }
 
   private async loadOrCreateManifest(revisionId: string, workspaceRoot: string): Promise<LoadedManifest> {
-    const resolvedWorkspaceRoot = path.resolve(workspaceRoot);
+    const resolvedWorkspaceRoot = resolveWorkspaceRevisionIdentityPath(workspaceRoot);
     const workspaceId = hashText(toCanonicalPath(resolvedWorkspaceRoot));
     const directory = path.join(this.storageRoot, workspaceId, revisionId);
     const manifestPath = path.join(directory, "manifest.json");
     if (await pathExists(manifestPath)) {
       const loaded = await this.loadManifestAt(directory);
-      if (loaded.manifest.workspaceRoot !== resolvedWorkspaceRoot) {
+      if (toCanonicalPath(loaded.manifest.workspaceRoot) !== toCanonicalPath(resolvedWorkspaceRoot)) {
         throw new Error("Workspace revision id is already bound to another workspace.");
       }
       return loaded;
@@ -961,10 +973,11 @@ export class WorkspaceRevisionRuntime implements WorkspaceMutationObserver {
   }
 
   private async loadManifestForWorkspace(revisionId: string, workspaceRoot: string): Promise<LoadedManifest> {
-    const workspaceId = hashText(toCanonicalPath(path.resolve(workspaceRoot)));
+    const resolvedWorkspaceRoot = resolveWorkspaceRevisionIdentityPath(workspaceRoot);
+    const workspaceId = hashText(toCanonicalPath(resolvedWorkspaceRoot));
     const directory = path.join(this.storageRoot, workspaceId, revisionId);
     const loaded = await this.loadManifestAt(directory);
-    if (loaded.manifest.workspaceRoot !== path.resolve(workspaceRoot)) {
+    if (toCanonicalPath(loaded.manifest.workspaceRoot) !== toCanonicalPath(resolvedWorkspaceRoot)) {
       throw new Error("Workspace revision checkpoint workspace mismatch.");
     }
     return loaded;

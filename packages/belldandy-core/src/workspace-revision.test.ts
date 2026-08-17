@@ -5,7 +5,10 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { WorkspaceRevisionRuntime } from "./workspace-revision.js";
+import {
+  normalizeWorkspaceRevisionIdentityPath,
+  WorkspaceRevisionRuntime,
+} from "./workspace-revision.js";
 
 async function createFixture(prefix: string) {
   const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -20,6 +23,17 @@ function target(workspaceRoot: string, relativePath: string) {
 }
 
 describe("WorkspaceRevisionRuntime", () => {
+  it("normalizes foreign absolute workspace paths independently of the current host", () => {
+    expect(normalizeWorkspaceRevisionIdentityPath("E:\\Project\\Fixture\\..\\Fixture"))
+      .toBe("e:\\project\\fixture");
+    expect(normalizeWorkspaceRevisionIdentityPath("E:/Project/Fixture"))
+      .toBe("e:\\project\\fixture");
+    expect(normalizeWorkspaceRevisionIdentityPath("\\\\Server\\Share\\Fixture"))
+      .toBe("\\\\server\\share\\fixture");
+    expect(normalizeWorkspaceRevisionIdentityPath("/home/User/workspace/../fixture"))
+      .toBe("/home/User/fixture");
+  });
+
   it("records first preimages for added, updated and deleted files, then previews and restores them", async () => {
     const fixture = await createFixture("belldandy-workspace-revision-");
     try {

@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,7 +7,10 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { resolveWorkspaceChangeRecovery, WorkspaceChangeRecoveryRuntime } from "./workspace-change-recovery.js";
 import { WorkspaceChangeSnapshotRuntime } from "./workspace-change-snapshot.js";
-import { WorkspaceRevisionRuntime } from "./workspace-revision.js";
+import {
+  normalizeWorkspaceRevisionIdentityPath,
+  WorkspaceRevisionRuntime,
+} from "./workspace-revision.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -24,6 +28,43 @@ async function createFixture(prefix: string) {
 }
 
 describe("WorkspaceChangeRecoveryRuntime", () => {
+  it("finds a checkpoint whose absolute workspace path uses foreign host semantics", async () => {
+    const fixture = await createFixture("belldandy-change-recovery-foreign-path-");
+    const revisionId = "run-recovery-foreign-path";
+    const manifestWorkspaceRoot = process.platform === "win32"
+      ? "/home/User/workspace"
+      : "E:\\Project\\Workspace";
+    const requestedWorkspaceRoot = process.platform === "win32"
+      ? "/home/User/parent/../workspace"
+      : "e:/project/workspace";
+    const workspaceId = crypto.createHash("sha256")
+      .update(normalizeWorkspaceRevisionIdentityPath(manifestWorkspaceRoot))
+      .digest("hex");
+    const checkpointDirectory = path.join(
+      fixture.stateDir,
+      "workspace-revisions",
+      workspaceId,
+      revisionId,
+    );
+    await fs.mkdir(checkpointDirectory, { recursive: true });
+    await fs.writeFile(path.join(checkpointDirectory, "manifest.json"), `${JSON.stringify({
+      version: 1,
+      revisionId,
+      workspaceId,
+      workspaceRoot: manifestWorkspaceRoot,
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      files: [{ relativePath: "src/api.ts", after: { exists: false } }],
+      operations: [],
+    })}\n`, "utf-8");
+
+    await expect(new WorkspaceChangeRecoveryRuntime({ stateDir: fixture.stateDir }).evaluate({
+      revisionId,
+      workspaceRoot: requestedWorkspaceRoot,
+      files: [{ path: "src/api.ts" }],
+    })).resolves.toEqual({ recoveryGuarantee: "exact", checkpointId: revisionId });
+  });
+
   it("reports exact recovery only when one checkpoint covers every changed snapshot path", async () => {
     const fixture = await createFixture("belldandy-change-recovery-exact-");
     const file = path.join(fixture.workspaceRoot, "note.txt");
