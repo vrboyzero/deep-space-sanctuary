@@ -87,8 +87,8 @@ const codingCiRunnerPath = path.join(workspaceRoot, "scripts", "run-coding-agent
 export const CODING_AGENT_BENCHMARK_REPOSITORY_INPUTS_VERSION =
   "coding-agent-benchmark-repository-inputs/v1";
 
-// Keep a 20% reserve against the user-approved 30 CNY ceiling at an 8 CNY/USD guard rate.
-export const STAGE_0D_BENCHMARK_USAGE_BUDGET_USD = 3;
+// Keep a 20% reserve against the user-approved 50 CNY ceiling at an 8 CNY/USD guard rate.
+export const STAGE_0D_BENCHMARK_USAGE_BUDGET_USD = 5;
 const MAX_BROWSER_SCREENSHOT_ARTIFACT_BYTES = 5 * 1024 * 1024;
 
 export function resolveBenchmarkRuntimePlatform(input = {}, runtime = {}) {
@@ -143,14 +143,18 @@ export function resolvePriorObservedCostUsd(value = 0) {
   }
   const priorObservedCostUsd = roundCostUsd(value);
   if (priorObservedCostUsd >= STAGE_0D_BENCHMARK_USAGE_BUDGET_USD) {
-    throw new Error("Stage 0D prior observed cost must remain below the $3.00 usage budget.");
+    throw new Error(
+      `Stage 0D prior observed cost must remain below the $${STAGE_0D_BENCHMARK_USAGE_BUDGET_USD.toFixed(2)} usage budget.`,
+    );
   }
   return priorObservedCostUsd;
 }
 
 export function resolveBenchmarkMaximumCostUsd(value = STAGE_0D_BENCHMARK_USAGE_BUDGET_USD) {
   if (!Number.isFinite(value) || value <= 0 || value > STAGE_0D_BENCHMARK_USAGE_BUDGET_USD) {
-    throw new Error("Benchmark maximum cost must be within $0.00-$3.00 USD.");
+    throw new Error(
+      `Benchmark maximum cost must be within $0.00-$${STAGE_0D_BENCHMARK_USAGE_BUDGET_USD.toFixed(2)} USD.`,
+    );
   }
   return roundCostUsd(value);
 }

@@ -1062,19 +1062,19 @@ describe("coding agent benchmark stage 0B runner", () => {
     ))).resolves.toMatchObject({ manifestRevision: "v3", status: "not_run" });
   });
 
-  it("reserves part of the 30 CNY ceiling and fails closed when real-run cost is unavailable", () => {
+  it("reserves part of the 50 CNY ceiling and fails closed when real-run cost is unavailable", () => {
     const budget = createBenchmarkUsageBudget({
       provider: "fixture",
       id: "priced-model",
       credentialsConfigured: true,
     });
 
-    expect(budget).toMatchObject({ maxCostUsd: 3, remainingCostUsd: 3, observedCostUsd: 0 });
+    expect(budget).toMatchObject({ maxCostUsd: 5, remainingCostUsd: 5, observedCostUsd: 0 });
     expect(consumeBenchmarkUsageBudget(budget, {
       status: "provider_reported",
       costUsd: 0.75,
     })).toEqual({ continueRunning: true, reason: null });
-    expect(budget).toMatchObject({ remainingCostUsd: 2.25, observedCostUsd: 0.75 });
+    expect(budget).toMatchObject({ remainingCostUsd: 4.25, observedCostUsd: 0.75 });
     expect(consumeBenchmarkUsageBudget(budget, {
       status: "unavailable",
       costUsd: null,
@@ -1091,9 +1091,18 @@ describe("coding agent benchmark stage 0B runner", () => {
       credentialsConfigured: true,
     }, { priorObservedCostUsd: 0.75 });
     expect(resumedBudget).toMatchObject({
-      maxCostUsd: 3,
-      remainingCostUsd: 2.25,
+      maxCostUsd: 5,
+      remainingCostUsd: 4.25,
       observedCostUsd: 0.75,
+    });
+    expect(createBenchmarkUsageBudget({
+      provider: "fixture",
+      id: "priced-model",
+      credentialsConfigured: true,
+    }, { maxCostUsd: 3.15342019, priorObservedCostUsd: 3.05342019 })).toMatchObject({
+      maxCostUsd: 3.15342019,
+      remainingCostUsd: 0.1,
+      observedCostUsd: 3.05342019,
     });
     expect(createBenchmarkUsageBudget({
       provider: "fixture",
@@ -1114,7 +1123,12 @@ describe("coding agent benchmark stage 0B runner", () => {
       provider: "fixture",
       id: "priced-model",
       credentialsConfigured: true,
-    }, { priorObservedCostUsd: 3 })).toThrow(/prior observed cost/i);
+    }, { priorObservedCostUsd: 5 })).toThrow(/prior observed cost/i);
+    expect(() => createBenchmarkUsageBudget({
+      provider: "fixture",
+      id: "priced-model",
+      credentialsConfigured: true,
+    }, { maxCostUsd: 5.00000001 })).toThrow(/maximum cost/i);
     expect(() => createBenchmarkUsageBudget({
       provider: "fixture",
       id: "priced-model",
@@ -1151,7 +1165,7 @@ describe("coding agent benchmark stage 0B runner", () => {
     });
 
     expect(invocations).toHaveLength(1);
-    expect(invocations[0].maxCostUsd).toBe(2.25);
+    expect(invocations[0].maxCostUsd).toBe(4.25);
   });
 
   it("keeps the subscription probe stdin open until its matching response arrives", async () => {
