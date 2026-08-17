@@ -39,6 +39,7 @@ export type AgentRunCommandInput = {
   modelId?: string;
   timeoutMs?: number;
   codingRun?: CodingRunOptions;
+  workspaceSnapshotRoot?: string;
   outputSchema?: unknown;
   writeStdout?: TextWriter;
   writeStderr?: TextWriter;
@@ -51,6 +52,7 @@ export type AgentRunCliOptionsInput = {
   requireWorkspaceMutation?: unknown;
   requiredChangedPaths?: unknown;
   cwd?: unknown;
+  workspaceSnapshotRoot?: unknown;
   toolAllow?: unknown;
   toolDeny?: unknown;
   permissionMode?: unknown;
@@ -70,7 +72,8 @@ type HeadlessChangeCapture = {
   runtime: WorkspaceChangeSnapshotRuntime;
   baselineId: string;
   stateDir: string;
-  workspaceRoot: string;
+  snapshotWorkspaceRoot: string;
+  recoveryWorkspaceRoot: string;
 };
 
 type HeadlessChangeSummary = {
@@ -93,7 +96,7 @@ type HeadlessChangeSummary = {
 
 export function resolveAgentRunCliOptions(
   input: AgentRunCliOptionsInput,
-): { ok: true; timeoutMs?: number; codingRun?: CodingRunOptions } | { ok: false; message: string } {
+): { ok: true; timeoutMs?: number; codingRun?: CodingRunOptions; workspaceSnapshotRoot?: string } | { ok: false; message: string } {
   const timeoutMs = parseTimeoutMs(input.timeout);
   if (input.timeout !== undefined && timeoutMs === undefined) {
     return { ok: false, message: "--timeout must be an integer of at least 1000 milliseconds." };
@@ -101,6 +104,11 @@ export function resolveAgentRunCliOptions(
 
   const cwd = resolveCwdOption(input.cwd);
   if (!cwd.ok) return cwd;
+  const workspaceSnapshotRoot = resolveWorkspaceSnapshotRootOption(input.workspaceSnapshotRoot);
+  if (!workspaceSnapshotRoot.ok) return workspaceSnapshotRoot;
+  if (workspaceSnapshotRoot.value && !cwd.value) {
+    return { ok: false, message: "--workspace-snapshot-root requires --cwd." };
+  }
   const automationProfile = parseAutomationProfileOption(input.automationProfile);
   if (!automationProfile.ok) return automationProfile;
   const expectedResolvedModelId = parseExpectedResolvedModelId(input.expectedResolvedModelId);
@@ -181,6 +189,7 @@ export function resolveAgentRunCliOptions(
     ok: true,
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
     ...(Object.keys(codingRun).length > 0 ? { codingRun } : {}),
+    ...(workspaceSnapshotRoot.value ? { workspaceSnapshotRoot: workspaceSnapshotRoot.value } : {}),
   };
 }
 
@@ -323,17 +332,24 @@ export async function runAgentRunCommand(input: AgentRunCommandInput): Promise<n
 }
 
 async function captureHeadlessChanges(input: AgentRunCommandInput): Promise<HeadlessChangeCapture | HeadlessChangeSummary | undefined> {
-  const workspaceRoot = input.codingRun?.cwd?.trim();
-  if (!workspaceRoot) return undefined;
+  const recoveryWorkspaceRoot = input.codingRun?.cwd?.trim();
+  if (!recoveryWorkspaceRoot) return undefined;
+  const snapshotWorkspaceRoot = input.workspaceSnapshotRoot?.trim() || recoveryWorkspaceRoot;
   const runtime = new WorkspaceChangeSnapshotRuntime({ stateDir: input.stateDir });
   const baselineId = `headless-run-${randomUUID()}`;
   try {
     await runtime.captureBaseline({
       baselineId,
-      workspaceRoot,
+      workspaceRoot: snapshotWorkspaceRoot,
       source: "run_start",
     });
-    return { runtime, baselineId, stateDir: input.stateDir, workspaceRoot };
+    return {
+      runtime,
+      baselineId,
+      stateDir: input.stateDir,
+      snapshotWorkspaceRoot,
+      recoveryWorkspaceRoot,
+    };
   } catch (error) {
     return { status: "unavailable", error: toSafeCodingRunErrorMessage(error) };
   }
@@ -348,7 +364,7 @@ async function completeHeadlessChanges(
   try {
     const recovery = await new WorkspaceChangeRecoveryRuntime({ stateDir: capture.stateDir }).getCandidate({
       revisionId,
-      workspaceRoot: capture.workspaceRoot,
+      workspaceRoot: capture.recoveryWorkspaceRoot,
     });
     const snapshot = await capture.runtime.createSnapshot({
       baselineId: capture.baselineId,
@@ -580,6 +596,16 @@ function parseAutomationProfileOption(
   return { ok: false, message: "--automation-profile must be bare." };
 }
 
+function resolveWorkspaceSnapshotRootOption(
+  value: unknown,
+): { ok: true; value?: string } | { ok: false; message: string } {
+  if (value === undefined) return { ok: true };
+  if (typeof value !== "string" || !value.trim()) {
+    return { ok: false, message: "--workspace-snapshot-root must be a non-empty local path." };
+  }
+  return { ok: true, value: path.resolve(value.trim()) };
+}
+
 function parseExpectedResolvedModelId(
   value: unknown,
 ): { ok: true; value?: string } | { ok: false; message: string } {
@@ -685,6 +711,7 @@ export default defineCommand({
     "required-changed-paths": { type: "string", description: "JSON array of workspace-relative paths that must be changed" },
     timeout: { type: "string", description: "Run timeout in milliseconds (minimum: 1000)" },
     cwd: { type: "string", description: "Filesystem scope for this local Gateway run" },
+    "workspace-snapshot-root": { type: "string", description: "Local mirror of --cwd used only for workspace change snapshots" },
     "tool-allow": { type: "string", description: "Comma-separated tool allowlist" },
     "tool-deny": { type: "string", description: "Comma-separated tool denylist (takes precedence)" },
     "permission-mode": { type: "string", description: "plan, accept-edits, or confirm" },
@@ -715,6 +742,7 @@ export default defineCommand({
       requireWorkspaceMutation: args["require-workspace-mutation"],
       requiredChangedPaths: args["required-changed-paths"],
       cwd: args.cwd,
+      workspaceSnapshotRoot: args["workspace-snapshot-root"],
       toolAllow: args["tool-allow"],
       toolDeny: args["tool-deny"],
       permissionMode: args["permission-mode"],
@@ -750,6 +778,7 @@ export default defineCommand({
       ...(typeof args["model-id"] === "string" ? { modelId: args["model-id"] } : {}),
       ...(runOptions.timeoutMs === undefined ? {} : { timeoutMs: runOptions.timeoutMs }),
       ...(runOptions.codingRun === undefined ? {} : { codingRun: runOptions.codingRun }),
+      ...(runOptions.workspaceSnapshotRoot === undefined ? {} : { workspaceSnapshotRoot: runOptions.workspaceSnapshotRoot }),
       ...(outputSchemaResult.schema === undefined ? {} : { outputSchema: outputSchemaResult.schema }),
     });
   },

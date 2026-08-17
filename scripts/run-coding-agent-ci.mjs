@@ -139,6 +139,9 @@ export function buildAgentRunArgs(input) {
     "--jsonl",
     "--automation-profile", CODING_CI_AUTOMATION_PROFILE,
     "--cwd", input.gatewayWorkspace ?? path.resolve(input.workspace),
+    ...(input.gatewayWorkspace
+      ? ["--workspace-snapshot-root", path.resolve(input.workspace)]
+      : []),
     "--state-dir", path.resolve(input.stateDir),
     ...(input.conversationId ? ["--conversation-id", input.conversationId] : []),
     ...(input.profile.agentId ? ["--agent-id", input.profile.agentId] : []),
@@ -325,6 +328,27 @@ export function collectWorkspaceArtifact(input) {
   };
 }
 
+export function assertWorkspaceWriteTerminalChangeEvidence(input) {
+  if (input.mode !== "workspace-write" || input.terminalType !== "run.completed") return;
+
+  const changes = input.terminalChanges;
+  if (!changes || typeof changes !== "object" || Array.isArray(changes) || changes.status !== "available") {
+    throw new Error("Completed workspace-write run requires available terminal change evidence.");
+  }
+  if (changes.truncated !== false) {
+    throw new Error("Completed workspace-write terminal change evidence must not be truncated.");
+  }
+  if (!Number.isInteger(changes.changedFileCount) || changes.changedFileCount < 0) {
+    throw new Error("Completed workspace-write terminal change evidence has an invalid changed file count.");
+  }
+  const changedPaths = Array.isArray(input.changedPaths) ? input.changedPaths : [];
+  if (changes.changedFileCount !== changedPaths.length) {
+    throw new Error(
+      `Completed workspace-write terminal changed file count ${changes.changedFileCount} does not match Git artifact count ${changedPaths.length}.`,
+    );
+  }
+}
+
 export function assertCleanWorkspace(workspace) {
   const status = runGit(path.resolve(workspace), ["status", "--porcelain=v1", "--untracked-files=all"]).stdout;
   if (status.trim()) {
@@ -494,6 +518,22 @@ async function main() {
   }
   await fs.writeFile(path.join(options.artifactDir, "changes.patch"), workspaceArtifact.patch, "utf-8");
 
+  const workspaceChangeEvidenceApplicable = options.profile.mode === "workspace-write"
+    && eventContract?.terminalType === "run.completed";
+  let workspaceChangeEvidenceError;
+  if (workspaceChangeEvidenceApplicable && !artifactPolicyError) {
+    try {
+      assertWorkspaceWriteTerminalChangeEvidence({
+        mode: options.profile.mode,
+        terminalType: eventContract.terminalType,
+        terminalChanges: parsed.events.at(-1)?.payload?.changes,
+        changedPaths: workspaceArtifact.changedPaths,
+      });
+    } catch (error) {
+      workspaceChangeEvidenceError = sanitizeDiagnostic(error instanceof Error ? error.message : error);
+    }
+  }
+
   const finalOutput = extractCompletedOutput(parsed.events);
   if (finalOutput !== undefined) {
     await fs.writeFile(
@@ -530,12 +570,16 @@ async function main() {
       usageComplete: eventContract?.usage?.status === "complete",
       traceContract: !traceContractError,
       artifactPolicy: !artifactPolicyError,
+      workspaceChangeEvidence: workspaceChangeEvidenceApplicable
+        ? !artifactPolicyError && !workspaceChangeEvidenceError
+        : null,
       automaticPush: false,
       approvalPolicy: child.approvalEvidence ? child.approvalEvidence.status === "passed" : null,
     },
     ...(eventContractError ? { eventContractError } : {}),
     ...(traceContractError ? { traceContractError } : {}),
     ...(artifactPolicyError ? { artifactPolicyError } : {}),
+    ...(workspaceChangeEvidenceError ? { workspaceChangeEvidenceError } : {}),
   };
   await fs.writeFile(
     path.join(options.artifactDir, "manifest.json"),
@@ -557,6 +601,7 @@ async function main() {
       `usage_complete=${manifest.checks.usageComplete}`,
       `trace_contract=${manifest.checks.traceContract}`,
       `artifact_policy=${manifest.checks.artifactPolicy}`,
+      `workspace_change_evidence=${manifest.checks.workspaceChangeEvidence ?? "not_applicable"}`,
       `approval_policy=${manifest.checks.approvalPolicy ?? "not_applicable"}`,
       "automatic_push=false",
       "",
@@ -564,8 +609,8 @@ async function main() {
     "utf-8",
   );
 
-  if (eventContractError || traceContractError || artifactPolicyError) {
-    throw new Error(eventContractError ?? traceContractError ?? artifactPolicyError);
+  if (eventContractError || traceContractError || artifactPolicyError || workspaceChangeEvidenceError) {
+    throw new Error(eventContractError ?? traceContractError ?? artifactPolicyError ?? workspaceChangeEvidenceError);
   }
   if (child.exitCode !== 0) {
     process.exitCode = child.exitCode ?? 1;

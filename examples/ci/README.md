@@ -47,13 +47,13 @@ Headless 消费方应先读取首个 `run.started.payload.capabilities` 和 `aut
 
 | 文件 | 用途 |
 | --- | --- |
-| `manifest.json` | `coding-agent-ci/v1` 运行方式、实际 automation profile、resolved model route、固定预算、退出码、binding、capability、终态 usage completeness、trace 摘要和门禁结果。传入模型时 `checks.modelRoute=false` 表示声明模型与 Gateway 实际解析模型不一致或证据缺失；`checks.usageComplete=false` 表示费用观测不完整；`checks.traceContract=false` 表示 trace 未形成可信闭环并使 CI 失败。 |
+| `manifest.json` | `coding-agent-ci/v1` 运行方式、实际 automation profile、resolved model route、固定预算、退出码、binding、capability、终态 usage completeness、trace 摘要和门禁结果。传入模型时 `checks.modelRoute=false` 表示声明模型与 Gateway 实际解析模型不一致或证据缺失；`checks.usageComplete=false` 表示费用观测不完整；`checks.traceContract=false` 表示 trace 未形成可信闭环并使 CI 失败；完成的 `workspace-write` 还要求 `checks.workspaceChangeEvidence=true`，即 terminal changes 可用、未截断，且变更文件数与独立 Git artifact 一致。 |
 | `events.jsonl` | 通过运行时 guard 的 `AgentRunEvent v1` 规范化事件。 |
 | `trace.jsonl` | 由 Core `coding-run-trace/v1` owner 从最终事件流投影的连续元数据 trace；固定 `content.mode=none`，disconnect recovery 会按最终合并事件重算。 |
 | `result.json` | 通过 `review-output.schema.json` 的最终结构化输出；非完成终态时不存在。 |
 | `changes.patch` | tracked 与 untracked 变更组成的 Git binary patch；`plan` 模式应为空。 |
 | `diagnostics.log` | 脱敏后的 CLI stderr，不包含 Gateway 日志。 |
-| `status.txt` | 供不解析 JSON 的 CI 系统读取的最小状态摘要。 |
+| `status.txt` | 供不解析 JSON 的 CI 系统读取的最小状态摘要；`workspace_change_evidence` 对非适用运行记为 `not_applicable`。 |
 
 ## 兼容、迁移与回滚
 

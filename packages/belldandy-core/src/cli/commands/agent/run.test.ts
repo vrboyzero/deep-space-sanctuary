@@ -51,6 +51,7 @@ describe("bdd agent run", () => {
     expect(resolveAgentRunCliOptions({
       timeout: "5000",
       cwd: "packages/belldandy-core",
+      workspaceSnapshotRoot: "tmp/local-workspace-mirror",
       toolAllow: "file_read,run_command,apply_patch,file_read",
       toolDeny: "run_command",
       permissionMode: "accept-edits",
@@ -74,6 +75,7 @@ describe("bdd agent run", () => {
     })).toEqual({
       ok: true,
       timeoutMs: 5000,
+      workspaceSnapshotRoot: path.resolve("tmp/local-workspace-mirror"),
       codingRun: {
         cwd: path.resolve("packages/belldandy-core"),
         toolAllow: ["file_read", "run_command", "apply_patch"],
@@ -105,6 +107,10 @@ describe("bdd agent run", () => {
     expect(resolveAgentRunCliOptions({ permissionMode: "bypassPermissions" })).toMatchObject({
       ok: false,
       message: expect.stringContaining("permission-mode"),
+    });
+    expect(resolveAgentRunCliOptions({ workspaceSnapshotRoot: "tmp/local-workspace-mirror" })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("requires --cwd"),
     });
     expect(resolveAgentRunCliOptions({ automationProfile: "resident" })).toMatchObject({
       ok: false,
@@ -392,6 +398,60 @@ describe("bdd agent run", () => {
       expect(terminal.payload?.changes?.revisionId).toBe(terminal.binding?.agentRunId);
       await expect(fs.promises.readFile(String(terminal.payload?.changes?.artifactPath), "utf-8"))
         .resolves.toContain(String(terminal.payload?.changes?.revisionId));
+    } finally {
+      await server.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("captures headless changes from a local mirror distinct from the Gateway cwd", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-remote-change-artifact-"));
+    const localWorkspaceRoot = path.join(stateDir, "workspace");
+    const gatewayWorkspaceRoot = path.join(stateDir, "gateway-workspace");
+    await fs.promises.mkdir(localWorkspaceRoot, { recursive: true });
+    await fs.promises.mkdir(gatewayWorkspaceRoot, { recursive: true });
+    await fs.promises.writeFile(path.join(localWorkspaceRoot, "note.txt"), "before\n", "utf-8");
+    const agent: BelldandyAgent = {
+      async *run() {
+        await fs.promises.writeFile(path.join(localWorkspaceRoot, "note.txt"), "after\n", "utf-8");
+        yield { type: "final", text: "done" };
+      },
+    };
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+      agentFactory: () => agent,
+    });
+    const stdout: string[] = [];
+
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(server.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        const input = {
+          stateDir,
+          prompt: "change note through a remote Gateway",
+          jsonl: true,
+          codingRun: { cwd: gatewayWorkspaceRoot },
+          workspaceSnapshotRoot: localWorkspaceRoot,
+          writeStdout: (text: string) => stdout.push(text),
+          writeStderr: () => {},
+        };
+        expect(await runAgentRunCommand(input)).toBe(0);
+      });
+
+      const terminal = JSON.parse(stdout.join("").trim().split("\n").at(-1) ?? "{}") as {
+        payload?: { changes?: Record<string, unknown> };
+      };
+      expect(terminal.payload?.changes).toMatchObject({
+        status: "available",
+        changedFileCount: 1,
+        truncated: false,
+      });
     } finally {
       await server.close();
       await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});

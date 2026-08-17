@@ -12,6 +12,7 @@ import {
 } from "../packages/belldandy-core/src/server-testkit.ts";
 
 import {
+  assertWorkspaceWriteTerminalChangeEvidence,
   buildAgentRunArgs,
   buildBenchmarkPermissionResponseParams,
   collectWorkspaceArtifact,
@@ -266,7 +267,7 @@ describe("coding agent CI runner", () => {
     expect(args).not.toContain("--required-changed-paths");
   });
 
-  it("uses the Gateway-visible workspace only for the remote coding run cwd", () => {
+  it("uses the Gateway-visible cwd while keeping the local workspace for change snapshots", () => {
     const workspace = "/var/tmp/coding-agent-fixtures/run-1/workspace";
     const gatewayWorkspace = "\\\\wsl.localhost\\Ubuntu-22.04\\var\\tmp\\coding-agent-fixtures\\run-1\\workspace";
     const args = buildAgentRunArgs({
@@ -281,7 +282,13 @@ describe("coding agent CI runner", () => {
       "--cwd",
       gatewayWorkspace,
     ]);
-    expect(args).not.toContain(path.resolve(workspace));
+    expect(args.slice(
+      args.indexOf("--workspace-snapshot-root"),
+      args.indexOf("--workspace-snapshot-root") + 2,
+    )).toEqual([
+      "--workspace-snapshot-root",
+      path.resolve(workspace),
+    ]);
   });
 
   it("projects the frozen command-control profile without auto-approving host commands", () => {
@@ -538,6 +545,121 @@ describe("coding agent CI runner", () => {
     expect(artifact.patch).toContain("new file.txt");
     expect(artifact.patch).toContain("+changed");
     expect(artifact.patch).toContain("+new");
+  });
+
+  it("fails closed when a completed workspace-write run lacks trustworthy terminal change evidence", () => {
+    const base = {
+      mode: "workspace-write",
+      terminalType: "run.completed",
+      changedPaths: ["tracked.txt"],
+    };
+
+    expect(() => assertWorkspaceWriteTerminalChangeEvidence({
+      ...base,
+      terminalChanges: { status: "unavailable", error: "snapshot failed" },
+    })).toThrow(/available terminal change evidence/i);
+    expect(() => assertWorkspaceWriteTerminalChangeEvidence({
+      ...base,
+      terminalChanges: {
+        status: "available",
+        changedFileCount: 1,
+        truncated: true,
+        recoveryGuarantee: "exact",
+      },
+    })).toThrow(/truncated/i);
+    expect(() => assertWorkspaceWriteTerminalChangeEvidence({
+      ...base,
+      terminalChanges: {
+        status: "available",
+        changedFileCount: 2,
+        truncated: false,
+        recoveryGuarantee: "exact",
+      },
+    })).toThrow(/changed file count/i);
+  });
+
+  it("accepts complete non-truncated change evidence and preserves non-mutation terminal semantics", () => {
+    expect(assertWorkspaceWriteTerminalChangeEvidence({
+      mode: "workspace-write",
+      terminalType: "run.completed",
+      changedPaths: ["tracked.txt"],
+      terminalChanges: {
+        status: "available",
+        changedFileCount: 1,
+        truncated: false,
+        recoveryGuarantee: "exact",
+      },
+    })).toBeUndefined();
+    expect(assertWorkspaceWriteTerminalChangeEvidence({
+      mode: "workspace-write",
+      terminalType: "run.completed",
+      changedPaths: ["tracked.txt"],
+      terminalChanges: {
+        status: "available",
+        changedFileCount: 1,
+        truncated: false,
+        recoveryGuarantee: "detect_only",
+      },
+    })).toBeUndefined();
+    expect(assertWorkspaceWriteTerminalChangeEvidence({
+      mode: "workspace-write",
+      terminalType: "run.failed",
+      changedPaths: ["tracked.txt"],
+      terminalChanges: { status: "unavailable" },
+    })).toBeUndefined();
+  });
+
+  it("exits nonzero when a completed workspace-write child reports unavailable changes", async () => {
+    const workspace = await createGitFixture();
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-coding-ci-change-gate-"));
+    tempRoots.push(stateDir);
+    const artifactDir = path.join(stateDir, "artifacts");
+    const promptPath = path.join(stateDir, "prompt.md");
+    const bddEntry = path.join(stateDir, "unavailable-change-child.mjs");
+    const binding = { agentRunId: "run-change-gate", conversationId: "conv-change-gate" };
+    const events = [
+      event(1, "run.started", binding, {
+        status: "running",
+        automationProfile: "bare",
+        capabilities: fixtureCapabilities(),
+      }),
+      event(2, "run.completed", binding, {
+        output: { text: JSON.stringify({ summary: "changed", findings: [] }) },
+        usage: fixtureCompleteUsage(),
+        changes: { status: "unavailable", error: "snapshot failed" },
+      }),
+    ];
+    await fs.writeFile(promptPath, "Change the fixture.", "utf-8");
+    await fs.writeFile(bddEntry, [
+      'import fs from "node:fs";',
+      'fs.writeFileSync("tracked.txt", "changed\\n", "utf-8");',
+      `const events = ${JSON.stringify(events)};`,
+      'for (const event of events) process.stdout.write(`${JSON.stringify(event)}\\n`);',
+      "",
+    ].join("\n"), "utf-8");
+
+    const result = await runNode([
+      path.resolve("scripts/run-coding-agent-ci.mjs"),
+      "--workspace", workspace,
+      "--state-dir", stateDir,
+      "--artifact-dir", artifactDir,
+      "--prompt-file", promptPath,
+      "--output-schema", path.resolve("examples/ci/review-output.schema.json"),
+      "--bdd-entry", bddEntry,
+      "--mode", "workspace-write",
+      "--required-changed-paths", JSON.stringify(["tracked.txt"]),
+    ], workspace, {});
+
+    const manifest = JSON.parse(await fs.readFile(path.join(artifactDir, "manifest.json"), "utf-8"));
+    const status = await fs.readFile(path.join(artifactDir, "status.txt"), "utf-8");
+    expect(result.exitCode).not.toBe(0);
+    expect(manifest).toMatchObject({
+      terminalType: "run.completed",
+      changedPaths: ["tracked.txt"],
+      checks: { artifactPolicy: true, workspaceChangeEvidence: false },
+      workspaceChangeEvidenceError: expect.stringMatching(/available terminal change evidence/i),
+    });
+    expect(status).toContain("workspace_change_evidence=false");
   });
 
   it("fails closed for unexpected read-only writes and sensitive artifact paths", async () => {
