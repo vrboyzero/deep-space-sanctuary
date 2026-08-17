@@ -143,6 +143,7 @@ BELLDANDY_MODEL_CACHE_READ_USD_PER_1M=0.0025
 | `0cd7d13` Windows formal | **已执行并冻结** | 使用新高峰价，provider-reported cost=`$0.00639158`；三文件 mutation、冻结 verifier 与 exact/non-truncated changes 全绿 |
 | `0cd7d13` WSL2 formal | **已执行并冻结** | 使用新高峰价，provider-reported cost=`$0.00244161`；失败于 `unexpected_end_marker`，与费用、turn/token 或 retry 上限无关 |
 | `8a67630` Windows formal | **已执行并冻结** | Gateway readiness 前因隔离 wrapper 产生 present-empty `BELLDANDY_LOG_DIR` 而 `mkdir ''/ENOENT`；artifact/fixture/model calls=`0/0/0`、费用=`$0`，禁止重跑 |
+| `2e51cb9` Windows 无费用 Gate | **除 env residue 外通过** | detached clean install/build/verifier 与零凭证 dry-run 通过，双 preflight=`passed`、usage=`not_reached`、模型费用=`$0`；新 runtime env 两路径已回写并等待 HITL 清理确认，未安排 formal |
 | `prior=3.05342019 -> max=3.15342019` | **已替换** | 未来新 source identity 通过全部无费用 Gate 后仍使用 `3.20913136 -> 3.30913136`，不得超过 `$5.00`；当前未安排执行 |
 | WSL2 | 无新增放宽 | `0cd7d13` 无费用 Gate 和唯一 formal 均已冻结；已执行版本不重跑 |
 | 完整矩阵、candidate v4、P2-C | 否 | 继续禁止启动 |
@@ -194,7 +195,7 @@ costUsdForGuard = costCny / 8
 
 1. `0cd7d13` Windows/WSL2 formal 均已执行并冻结；Windows 全绿，WSL2 因异常 patch envelope 在写前失败，禁止重跑。
 2. 任何后续 formal 继续固定高峰价：`BELLDANDY_MODEL_INPUT_USD_PER_1M=0.375`、`BELLDANDY_MODEL_OUTPUT_USD_PER_1M=1.125`、`BELLDANDY_MODEL_CACHE_READ_USD_PER_1M=0.0125`，并让 formal preflight/artifact 记录该合同。
-3. `8a67630` Windows formal 已在 Gateway readiness 前 infrastructure failure 并冻结，禁止重跑；launcher provider env allowlist 的确定性测试/build/合同 Gate 已以零费用闭合，提交形成新 source identity 并通过全部无费用 Gate 后，才可继续使用 `prior=3.20913136`、`maxTotal=3.30913136`。
+3. `8a67630` Windows formal 已在 Gateway readiness 前 infrastructure failure 并冻结，禁止重跑；launcher provider env allowlist 已形成 `2e51cb9`，detached clean install/build/verifier 与零凭证 dry-run 均通过，待新生成 env residue 经确认回收且复核全绿后，才可评估使用 `prior=3.20913136`、`maxTotal=3.30913136` 的唯一 formal。
 4. 保持 `$5.00` 累计池、`$0.10` 单次窗口、`12 turns`、`24,000 tokens` 和 Provider retry=`0` 不变。
 5. DeepSeek 最终账单仍作为外部真源单独复核；仓库内重算结果只用于保守 Gate。
 

@@ -2793,6 +2793,47 @@ Source / Workspace Revision
 - **为什么先做它**：确定性环境隔离已经闭合，只有新 identity 的 clean 无费用 Gate 能证明真实子进程不再收到 present-empty/非 allowlist 配置，同时避免污染已冻结的 `8a67630` 证据。
 - **当前还缺的关键闭环**：新 identity 的 source/harness clean、双 preflight、credentials/usage/event/trace/patch=`false/not_reached/0/0/0`、敏感值与资源零残留；完成前不安排新 formal，不进入 WSL2、完整矩阵、candidate v4 或 P2-C。
 
+#### P0 后续阶段实现结论：`2e51cb9` Windows detached clean 无费用 Gate（2026-08-18）
+
+##### 已完成内容
+
+1. **`2e51cb9d14ae944f2e391c966b4ad954a8510080` detached clean harness 建立**：
+   - harness=`tmp/p0-required-mutation-canary-2e51cb9-clean`，source/harness 固定为同一 commit，harness 保持 detached/clean；
+   - canonical lockfile/content SHA-256=`844c0021f1c9135214c913636fd6ed6f9232593883bd5b6289f7ade51d2b7d2b` / `7cb0471e7f0636431b89be2da5e480b8e9b00b2e9a4732719b8eec648cd665ba`；
+   - 用户既有 `D盘容易增大问题与处理方法.md` 改动未进入提交或 harness，也未被覆盖。
+
+2. **frozen offline install、构建与独立 verifier 完成**：
+   - `corepack pnpm install --offline --frozen-lockfile` 为 resolved=`493`、reused=`492`、downloaded=`0`、added=`493`；
+   - workspace build 与独立 `verify:build` 均通过；构建后 HEAD/content identity 不变，tracked status 与 `git diff --check` clean。
+
+3. **新 launcher 零凭证 Windows dry-run 完成**：
+   - artifact=`artifacts/p0-required-mutation-canary-2e51cb9-ts-api-windows-dry-run-r1`，run=`real-ts-api-migration-windows-a1-1787010538362`；
+   - report SHA-256=`04137163725e76d9ad59a83a889defed9d2788b4ba0324e7fa6f4890e6974f22`，production/repository snapshot preflight 均为 `passed`；
+   - credentialsConfigured=`false`、usage=`not_reached`、event/trace/patch=`0/0/0`，任务按缺少 API key 预期失败关闭；fixture=`fd688326...` clean，source/harness dirty=`false/false`。
+
+4. **敏感值、资源与 env residue 证据**：
+   - artifact/fixture/runtime 共扫描 `12,816` 个常规文件；控制配置中的 `7` 个候选条目只命中提交内默认模板公开占位值，排除后 `3` 个非公开敏感实值精确命中=`0`、unreadable diagnostics=`0`；
+   - Gateway stderr=`0 bytes`，端口 listener/相关 Node 进程=`0/0`；dry-run 未触达 Provider，新增费用=`$0`；
+   - 新 runtime 自动生成的 `tmp/p0-required-mutation-canary-2e51cb9-ts-api-windows-dry-run-r1-runtime/gateway-state/.env` 与 `tmp/p0-required-mutation-canary-2e51cb9-ts-api-windows-dry-run-r1-runtime/gateway-state/.env.local` 当前按 HITL 规则保留未处理，SHA-256=`4579e3b7580ea74e795d8b4711c833b51f928e0b0aa47d3bb9a25c716d967e0e` / `292c3ebd62d69a3540a84d6228cf900a583800710018f9ff95c009e789feea2b`；env residue Gate 尚未闭合；
+   - 用户要求暂不处理的 `8a67630` formal runtime 两个 env 文件仍保持原路径与存在状态，本轮未触碰。
+
+5. **效果**：
+   - 新 launcher 已在真实 Windows Gateway/benchmark 子进程中越过 readiness，排除 `mkdir ''` present-empty 回归；
+   - Provider key 未进入零凭证 child、artifact、fixture 或 runtime，retry/turn/token/费用合同未放宽；
+   - `2e51cb9` 的产品 formal 尚未执行，当前证据只证明无费用基础设施 Gate。
+
+##### 验证结果
+
+- TypeScript 编译无错误：detached harness workspace build 与独立 `verify:build` 通过；
+- source 提交前 `3` 个相邻测试文件 `60/60` 通过，其中 Windows launcher `16/16`；
+- 双 preflight、零凭证/零 usage、空 event/trace/patch、fixture/harness clean、真实敏感值与进程/端口 Gate 通过；仅 env residue Gate 待确认清理。
+
+##### 后续计划
+
+- **下一步准备做什么**：等待用户确认后，仅将 `2e51cb9` dry-run 新生成的上述两个 env 文件送入 Windows 回收站并记录 cleanup log；不处理 `8a67630` formal runtime 的两个保留文件。
+- **为什么先做它**：Provider、workspace 与进程证据已闭合，当前唯一未闭合项是本轮新 runtime env residue；先精确回收可避免把旧 formal 保留证据混入清理范围。
+- **当前还缺的关键闭环**：新 dry-run env 文件归零、清理后私有敏感值/端口/进程/fixture/harness 复核；完成前不安排 `2e51cb9` formal，不进入 WSL2、完整矩阵、candidate v4 或 P2-C。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
@@ -2985,9 +3026,9 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 
 ### 9.7 后续计划
 
-- **下一步准备做什么**：按用户要求继续保留已记录路径的两个 runtime env 文件，提交已通过确定性 Gate 的 launcher allowlist 修复形成新 identity，再从 detached clean Windows 无费用 Gate 开始。
-- **为什么先做它**：源码、测试、build 与合同已证明 present-empty 和非 allowlist 项不会进入 child env；新 identity 的真实进程 dry-run 是安排任何后续 formal 前唯一剩余的基础设施证据。
-- **当前还缺的关键闭环**：detached clean install/build/verifier、双 preflight、零凭证 Provider 未触达、敏感值与 env/listener/process/Git 零残留；当前不重跑 `8a67630`、不启动 WSL2、完整矩阵、candidate v4 或 P2-C。
+- **下一步准备做什么**：等待用户确认后，只回收 `2e51cb9` dry-run 新生成且已记录路径/哈希的两个 env 文件；继续保留 `8a67630` formal runtime 的两个 env 文件。
+- **为什么先做它**：新 identity 的 install/build/verifier、双 preflight、零凭证 Provider 未触达、敏感值和进程/端口 Gate 已通过，唯一未闭合项是新 dry-run env residue。
+- **当前还缺的关键闭环**：新 env 精确回收与清理后零残留复核；完成前不执行 `2e51cb9` formal，不重跑 `8a67630`，不启动 WSL2、完整矩阵、candidate v4 或 P2-C。
 
 ## 10. 实施计划进度表
 
@@ -2995,7 +3036,7 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`8a67630` formal 已冻结；launcher 隔离确定性 Gate 全绿，待新 identity 无费用复核** | provider env 文件只读取 API key/base URL/wire API，child env 剥离其他项目配置和空值并固定 retry=`0`；相邻 `60/60`、build、独立 verifier、benchmark/CI 合同全绿，模型调用/费用=`0/$0`；两个 runtime env 路径已记录并按用户要求暂不处理 | 新 identity 与 Windows 无费用 Gate 约 0.5 人日 | 提交形成新 identity，从 detached clean frozen offline install、build、独立 verifier 与零凭证 dry-run 重建证据；禁止重跑 `8a67630`，未全绿不安排 formal/WSL2 |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **`2e51cb9` Windows 无费用 Gate 除新 env residue 外全绿；待 HITL 清理确认** | detached clean install=`493/492/0/493`，build/verifier、双 preflight、credentials/usage/event/trace/patch=`false/not_reached/0/0/0`，私有敏感值命中、进程、端口=`0/0/0`；新生成 env 两路径/哈希已记录并保留，`8a67630` formal env 未触碰 | env 精确回收与复核约 0.1 人日 | 经确认仅回收 `2e51cb9` dry-run 新 env 并复核零残留；完成前不执行 formal/WSL2，禁止重跑 `8a67630` |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | 2026-08-17：当前 HEAD `5b36691...` 的 P0-P2 源码/测试/artifact 已核查；SS 横向原始加权 `9.135`（发布分 `9.1`）；Grok Build `9.4`、Codex `9.7`、Claude Code `9.7`、OpenCode `9.3`、Hermes Agent `8.9`；竞品证据边界已记录 | - | 当前精简版与 archive-03 共同保留决策和完整历史；真实复杂任务成功率仍待新 formal 证据，不宣称达到 9.5 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
