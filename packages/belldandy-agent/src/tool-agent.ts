@@ -2425,6 +2425,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let workspaceMutationContinuationPending = false;
     let workspaceMutationContinuationAttempted = false;
     let workspaceMutationInputCorrectionPending = false;
+    let workspaceMutationInputCorrectionAttempted = false;
     let workspaceMutationVerificationPending = false;
     let workspaceMutationVerificationAttempts = 0;
     let workspaceMutationVerificationCompletedReadCount = 0;
@@ -3001,9 +3002,14 @@ export class ToolEnabledAgent implements BelldandyAgent {
         }
         let selectedMutationCandidate: WorkspaceMutationRecoveryPlan | undefined;
         if (workspaceMutationContinuationPending) {
-          if (workspaceMutationContinuationAttempted) {
+          const pendingMutationAttempted = workspaceMutationInputCorrectionPending
+            ? workspaceMutationInputCorrectionAttempted
+            : workspaceMutationContinuationAttempted;
+          if (pendingMutationAttempted) {
             yield* emitWorkspaceMutationFailure(
-              "the bounded missing-path mutation continuation was already attempted.",
+              workspaceMutationInputCorrectionPending
+                ? "the bounded atomic input correction was already attempted."
+                : "the bounded missing-path mutation continuation was already attempted.",
             );
             return;
           }
@@ -3054,7 +3060,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
           workspaceMutationRecoveryCall = true;
           if (workspaceMutationContinuationCall) {
-            workspaceMutationContinuationAttempted = true;
+            if (workspaceMutationInputCorrectionCall) {
+              workspaceMutationInputCorrectionAttempted = true;
+            } else {
+              workspaceMutationContinuationAttempted = true;
+            }
             workspaceMutationContinuationPending = false;
             workspaceMutationInputCorrectionPending = false;
           } else {
@@ -5231,14 +5241,20 @@ export class ToolEnabledAgent implements BelldandyAgent {
           if (workspaceMutationRecoveryCall) {
             if (!successfulWorkspaceMutation) {
               const missingPaths = workspaceMutationPathCoverage.missingPaths();
-              const canCorrectAtomicInputFailure = !workspaceMutationContinuationCall
-                && !workspaceMutationContinuationAttempted
+              const canCorrectRecoveryInputFailure = !workspaceMutationContinuationCall
+                && !workspaceMutationContinuationAttempted;
+              const canCorrectContinuationInputFailure = workspaceMutationContinuationCall
+                && workspaceMutationContinuationAttempted
+                && missingPaths.length < requiredChangedPaths.length;
+              const canCorrectAtomicInputFailure = !workspaceMutationInputCorrectionCall
+                && !workspaceMutationInputCorrectionAttempted
                 && request.name === "apply_patch"
                 && result.failureKind === "input_error"
                 && result.metadata?.repairAction === "apply_patch_input_invalid"
                 && !workspaceMutationObserved
                 && workspaceMutationCallRequiredPaths.length > 0
-                && missingPaths.length === workspaceMutationCallRequiredPaths.length;
+                && missingPaths.length === workspaceMutationCallRequiredPaths.length
+                && (canCorrectRecoveryInputFailure || canCorrectContinuationInputFailure);
               if (canCorrectAtomicInputFailure) {
                 workspaceMutationContinuationPending = true;
                 workspaceMutationInputCorrectionPending = true;

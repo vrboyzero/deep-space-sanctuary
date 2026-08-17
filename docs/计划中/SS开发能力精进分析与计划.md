@@ -2,11 +2,13 @@
 
 > 当前计划版（精简维护版）
 >
-> 评估日期：2026-08-05；最新进度复核：2026-08-17
+> 评估日期：2026-08-17；最新进度复核：2026-08-17
 >
-> 评估对象：Star Sanctuary（下文简称 SS）、Grok Build、OpenAI Codex、Claude Code
+> 评估对象：Star Sanctuary（下文简称 SS）、Grok Build、OpenAI Codex、Claude Code、OpenCode `1.18.13`、Hermes Agent `0.20.2`
 >
-> SS 评估基线代码快照：`72e916d062fd8917bb7a018afdf9b427c2181382`
+> SS 评估基线代码快照：`5b36691d9aba6d9286cf43e912d91b0170bbef0d`
+>
+> 本地参考快照：`tmp/opencode-1.18.13`（包版本 `1.18.13`，无 `.git` 元数据）、`tmp/hermes-agent-2026.8.16`（`pyproject.toml` 版本 `0.20.2`，无 `.git` 元数据）
 >
 > **完整回读备份**：本文件于 2026-08-17 从 5002 行完整计划压缩而来。压缩前全文已保存在 [SS开发能力精进分析与计划-03.md](../archive/SS开发能力精进分析与计划-03.md)（本机路径：`E:\project\star-sanctuary\docs\archive\SS开发能力精进分析与计划-03.md`）。逐切片实现过程、历史失败、artifact SHA-256、费用流水和每轮后续计划均可在该备份中回读。
 >
@@ -18,16 +20,18 @@
 
 ### 1.1 当前结论
 
-SS 已从上一轮 `7.4/10` 推进到安全、恢复、编辑、Headless、本地/远端交付均有可审计闭环的阶段。当前保留两个评分口径：
+SS 已从上一轮 `7.4/10` 推进到安全、恢复、编辑、验证、并行开发、Headless、本地/远端交付均有可审计闭环的阶段。本轮按当前 HEAD 复核 P0-P2 的源码、测试脚本和 artifact，并保留两个评分口径：
 
 | 口径 | 评分 | 结论 |
 | --- | ---: | --- |
 | SS 内部硬 Gate | **9.1/10**（原始加权 `9.065`） | corrected v2、类别下限、核心类别、测试、patch、回归、双平台和工程 Gate 均通过；只对既定 benchmark 与环境成立 |
-| 横向产品评分 | **9.0/10**（原始加权 `8.955`） | 对真实仓泛化、语义导航、验证控制面、并行和生态成熟度保留证据折扣；竞品未参加同环境 benchmark |
+| 横向产品评分 | **9.1/10**（原始加权 `9.135`） | CodeIntel、验证 DAG、TaskProjection、Supervisor、外部消费者和 Git/交付已有当前源码证据；真实仓完成率与 patch 接受率继续限制上限 |
 
 内部 9.1 Gate 的精确依据为 corrected v2 `72/72`、12 类各 `6/6`、测试 `60/60`、patch `18/18`、regression=`0`、Windows/WSL2 各 `36/36`，以及双平台 build、全量测试、verifier、trace、敏感值和残留审计通过。该 `72/72` 由旧任务和 successor 任务构成，属于 `cross_revision_successor_projection`、`nativeAggregate=false`；它证明内部工程门槛，不替代后续单一 HEAD 原生 aggregate 的外部有效性结论。
 
-横向评分不是模型能力排名。SS 的优势是 fail-closed 安全、durable side-effect reconciliation、双平台验证和默认无正文 trace；主要缺口是复杂真实任务的稳定成功率与可外推证据。
+横向评分不是模型能力排名，也不是六个产品的同场 benchmark。SS 使用当前源码、测试和 artifact（证据 A）；Grok Build、Codex、Claude Code 使用官方资料（证据 B）；OpenCode 与 Hermes 使用本地固定源码快照但未执行其测试或模型任务（证据 B）。因此横向分只表示产品化工作流覆盖、默认安全边界和可验证性，误差约 `+/-0.3`。
+
+SS 的主要优势是 fail-closed 安全、durable side-effect reconciliation、任务级能力闭包、双平台故障验证和默认无正文 trace；主要缺口仍是复杂真实任务的稳定完成率、patch 接受率和跨任务可外推证据。当前实现检查未发现计划所列 P1-A1/A2、P1-B、P1-C、P2-A、P2-B 只有文档没有代码的情况；真正未闭合的是 P0 失败族的稳定改善和 P2-C 两个连续冻结候选。
 
 纯 `deepseek-v4-flash` identity `edd1c8779d928879c1d3e0669f725c79fd0ebf97` 已完成单一 HEAD、Windows/WSL2 原生 `144/144` aggregate：
 
@@ -38,6 +42,8 @@ SS 已从上一轮 `7.4/10` 推进到安全、恢复、编辑、Headless、本�
 - canonical failure analysis 为 required-mutation recovery `30`、length `5`、schema `2`、unknown `0`。
 
 因此 P0 基线复核已经形成完整证据，但未证明整体 uplift，也未达到 P2-C 进入条件。
+
+当前 HEAD 的 `6f7670f` 已完成 required-mutation 重复无动作 section 的确定性修复、本地 Gate、detached clean Windows build 与零凭证 dry-run；唯一 Windows formal 只修改两个 required paths，missing-path continuation 又跨两个不相邻 context 组装 `api.ts` hunk，底层因原文不存在而失败关闭。该版本已冻结且禁止重跑，更未形成同 identity WSL2 证据；本轮评分不把该修复预先计作真实任务成功率提升。
 
 ### 1.2 当前决策
 
@@ -90,10 +96,12 @@ Context Inspector、能力闭包、freshness、revision 和 mutation authority �
 - Headless、客户端生态、Git 与交付；
 - Go/C# 和语言无关 CodeIntel 的投入收益；
 - 下一轮工作、风险、验收和关闭边界。
+- 对 `tmp/opencode-1.18.13` 与 `tmp/hermes-agent-2026.8.16` 的静态源码核查。
 
 不包含：
 
 - 竞品同仓同模型付费 benchmark；
+- OpenCode/Hermes 的安装、测试、模型调用或付费实跑；
 - 基础模型价格或速度排名；
 - 公开发布、生产部署、真实远端写入；
 - 复制竞品源码、提示词、Schema、事件字段、目录结构、专有协议或 UI。
@@ -108,18 +116,39 @@ Context Inspector、能力闭包、freshness、revision 和 mutation authority �
 - B：官方文档、release、固定 commit；
 - C：旧计划、推断或未实测行为。
 
-SS 内部评分误差约 `+/-0.15`，横向评分约 `+/-0.3`。历史 artifact 不回写，失败样本不从分母移除，阈值调整必须留痕。
+SS 内部评分误差约 `+/-0.15`，横向评分约 `+/-0.3`。历史 artifact 不回写，失败样本不从分母移除，阈值调整必须留痕。OpenCode/Hermes 的源码规模和测试文件数量只用于确认项目形态，不直接加分；未执行等同于未验证。
 
 ### 2.3 横向评分
 
 | 产品 | 检索 | 编辑/测试 | CLI/TUI | 安全/恢复 | 长任务 | Headless/生态 | Git/交付 | 原始加权 | 发布分 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| SS | 9.0 | 8.9 | 8.8 | 9.2 | 8.9 | 9.0 | 8.9 | `8.955` | **9.0** |
+| SS | 9.1 | 8.8 | 8.9 | 9.6 | 9.3 | 9.2 | 9.2 | `9.135` | **9.1** |
 | Grok Build | 9.5 | 9.4 | 9.8 | 8.5 | 9.6 | 9.6 | 9.0 | `9.350` | **9.4** |
 | OpenAI Codex | 9.7 | 9.7 | 9.5 | 9.8 | 9.7 | 9.8 | 9.6 | `9.685` | **9.7** |
 | Claude Code | 9.8 | 9.7 | 9.7 | 9.4 | 9.9 | 9.8 | 9.7 | `9.710` | **9.7** |
+| OpenCode `1.18.13` | 9.5 | 9.3 | 9.7 | 8.7 | 9.2 | 9.7 | 9.2 | `9.315` | **9.3** |
+| Hermes Agent `0.20.2` | 8.7 | 8.8 | 9.2 | 8.6 | 9.4 | 9.4 | 8.4 | `8.925` | **8.9** |
 
-竞品只提供公开机制参考。固定版本、链接和逐项证据保留在回读归档中。
+逐项判断：
+
+- **SS**：安全/恢复、能力闭包、双平台 fault matrix 和可审计交付领先于多数开源参考；但原生 aggregate 的任务完成率为 `107/144=74.3%`、测试通过率为 `77/108=71.3%`、patch 接受率为 `20/54=37.0%`，编辑/测试分不能随控制面成熟度同步上调。
+- **Grok Build**：PTY/TUI、后台任务、Dashboard、worktree、subagent/workflow 和 headless 完整；sandbox 默认关闭，计划模式不约束 Bash 写入，故安全/恢复维度保留明显折扣。
+- **OpenAI Codex**：官方资料覆盖本地 CLI/IDE、云端并行环境、子代理、MCP、代码审查、worktree、CI/JSONL/结构化输出与显式权限沙箱；未参加 SS 矩阵，因此高分只代表产品机制成熟度。
+- **Claude Code**：官方资料覆盖代码智能、会话/目标、动态工作流、Agent Teams、worktree、云端/桌面/IDE、review、SDK/CI 和广泛生态；checkpoint 与 sandbox 的公开边界使安全/恢复分低于 Codex。
+- **OpenCode**：本地源码确认 LSP、MCP、ACP、TUI/桌面/服务端、主/子 Agent、权限、snapshot/revert、worktree、GitHub 与多 Provider 接入；扣分来自未做同场任务验证，以及宿主执行、安全隔离和跨重启副作用对账证据弱于 SS。
+- **Hermes Agent**：本地源码确认 CLI/TUI、Gateway/Web、多渠道、SQLite/FTS 会话、memory、skills/plugins、并行 delegate、cron、MCP/ACP、浏览器和多 terminal backend；它更偏通用个人 Agent，缺少与 SS 同等级的编程语义导航、确定性 Git 交付和 durable mutation reconciliation 证据。
+
+### 2.4 当前 HEAD 实现核查
+
+| 能力域 | 本轮直接核查证据 | 评估结论 |
+| --- | --- | --- |
+| P0 Benchmark v3 | `scripts/coding-agent-benchmark-v3-contract.mjs`、`artifacts/p0-native-edd1c87/aggregate/benchmark-report.json`、`failure-analysis-v1-r2/failure-analysis.json` | 单一 HEAD `144/144` 可复算；`37` 个 product workflow failure 原样保留 |
+| P1-A CodeIntel | `packages/belldandy-skills/src/code-intel/`、`scripts/run-code-intel-*` | TS/JS production 与 Go canary 均有实现、故障测试和 eligibility owner；Go 仍明确 `productionEligible=false` |
+| P1-B 验证 DAG | `scripts/run-verification-dag.mjs`、`scripts/verification-browser-artifact-loader.mjs` | 验证依赖、预算、artifact 与浏览器证据有独立 owner，不只是计划描述 |
+| P1-C TaskProjection | `packages/belldandy-core/src/coding-run/task-projection-*`、`task-capability-closure.ts` | 只读投影、supporting evidence 和启动前 capability closure 已落地 |
+| P2-A Supervisor | `packages/belldandy-core/src/subtask-supervisor-*`、`managed-worktree.ts` | worktree 隔离、reattach、exact-bound control、fan-in 与进程恢复有源码/测试 |
+| P2-B 生态前置 | `packages/belldandy-core/src/coding-run-client.ts`、`scripts/run-coding-run-client-*` | 窄客户端、外部 ESM/TypeScript consumer 和 failure conformance 已落地 |
+| 当前 canary | `packages/belldandy-agent/src/react-workspace-mutation.ts`、commit `6f7670f` | 本地确定性 Gate 已完成；真实模型双平台稳定改善尚未证明 |
 
 ## 3. 目标、验收与工作边界
 
@@ -367,19 +396,19 @@ Source / Workspace Revision
 
 - `fce9b6a` 的 Go 代表任务在 Windows/WSL2 均通过，patch SHA-256 相同，只修改 `command.go`，冻结 Go test 和资源 Gate 全绿；
 - `550e0da` 的 TS 三文件任务在 Windows 全绿；同 identity WSL2 虽完成三文件写入，但 `api.ts` 第一处 import 残留旧符号，冻结 evaluator 正确拒绝；
-- 上述 WSL2 失败促成 context-only hunk 执行前 Gate；最新 `9b4fe30` 已通过 Windows 无费用前置 Gate，唯一 formal 完成三文件原子写入但因 post-write 目标残留被冻结 evaluator 拒绝。
+- 上述 WSL2 失败促成 context-only hunk 执行前 Gate；最新 `6f7670f` 已通过 Windows 无费用前置 Gate，唯一 formal 完成两个文件写入，但 `api.ts` continuation 跨不相邻 context 组装 hunk，被底层匹配 Gate 拒绝。
 
-### 6.4 最新断点：`9b4fe30` Windows formal
+### 6.4 最新断点：`6f7670f` Windows formal
 
-`9b4fe3022d4799cfd0db4aa135ebfdbed58b5d83` 的 Windows 无费用前置 Gate 全绿；唯一 formal 已执行并冻结：
+`6f7670f6e2162111663a505edd86f52a2f7e22c3` 的 Windows 无费用前置 Gate 全绿；唯一 formal 已执行并冻结：
 
-- artifact=`artifacts/p0-required-mutation-canary-9b4fe30-ts-api-windows-formal-r1`，run=`real-ts-api-migration-windows-a1-1786962403451`，report SHA-256=`a9baef60301368c769065fca5695f8834ee8e48fa19f259d0e91c994aa0c0609`；
-- route=`deepseek-v4-flash -> deepseek-v4-flash [primary]`，usage=`5/5 provider_reported`、input/output=`16377/898`、cost=`$0.00227164`；
-- 唯一 `apply_patch` 成功修改并复读三个 required paths，CLI exit=`0`、唯一终态=`run.completed`、summary 非空；changed paths=`3`、patch bytes=`3012`、SHA-256=`71c9d202823c8783431e2dbe9e62e07b9a9bb7c07382fd2e06bae94b55d7d5e9`；
-- 冻结 evaluator 失败：`jsonrpc/src/common/api.ts` 的第一处 connection import 仍保留 `TraceValues`；`connection.ts` 的 `Verbose` 行还丢失原有缩进，而 summary 错误声称两处 barrel export 均已移除；
-- event/trace=`63/65`；artifact、fixture、runtime 与 clean harness 共扫描 `48,065` 个普通文件，真实主 key 命中=`0`、不可读=`0`、重解析点=`1,281`；listener、相关 Node、根级 PID/token 与 harness/source residue 均为 `0`。
+- artifact=`artifacts/p0-required-mutation-canary-6f7670f-ts-api-windows-formal-r1`，run=`real-ts-api-migration-windows-a1-1786973937427`，report SHA-256=`5d54aee83039f6b2d2c87463090c1d7f9798fe06ae28fb8623a41bf39b48e0e0`；
+- route=`deepseek-v4-flash -> deepseek-v4-flash [primary]`，usage=`4/4 provider_reported`、input/output=`11015/760`、cost=`$0.00112784`；
+- 首次 `apply_patch` 成功修改 `connection.ts` 与 `protocol.ts`；missing-path continuation 随后为 `api.ts` 生成一个 hunk，却把 `29-40` 与 `64-68` 两个不相邻 context 的源码行拼接为连续原文；
+- `apply_patch` 因原文不存在而失败关闭，最终 changed paths=`2`、patch bytes=`1565`，冻结 evaluator 与非空 summary 均未通过，唯一终态=`run.failed`；
+- event/trace=`19/21`；artifact、fixture、runtime 与 clean harness 共扫描 `48,062` 个普通文件，真实主 key 命中=`0`、不可读=`0`；listener、相关 Node、根级 PID/token 与 harness/source residue 均为 `0`。
 
-`8c24998` 与 `9b4fe30` formal 均已冻结、禁止重跑。可信原子输入纠正已证明能完成三文件原子提交；本轮已用确定性回归闭合 post-write 复读后的目标对照与单次纠正，但新 identity 尚未完成 Windows 真实验证，因此不创建 WSL2 harness，仍不增加 `maxTurns`、`maxTokens` 或 Provider retry。
+`6f7670f` formal 已冻结、禁止重跑。运行时提供的 context 边界和禁止跨片段提示均正确，错误 hunk 也没有写入 `api.ts`；下一步只针对“continuation 的 hunk 跨 taskRelevantContexts 项”补确定性诊断与有界纠正，不创建 WSL2 harness，仍不增加 `maxTurns`、`maxTokens` 或 Provider retry。
 
 ### 6.5 恢复后的实施顺序
 
@@ -1531,20 +1560,130 @@ Source / Workspace Revision
 - **为什么先做它**：本地 Gate 只能证明当前工作区逻辑正确；唯一付费 formal 必须验证可回读 clean identity，先排除安装、构建、固定仓输入、凭据和清理问题。
 - **当前还缺的关键闭环**：`6f7670f` detached clean/dry-run 证据，以及唯一 Windows formal 的三文件 mutation、冻结 evaluator、summary、terminal、route/usage/cost、敏感值和资源零残留；Windows 全绿后才允许考虑 WSL2。
 
+#### P0 后续阶段实现结论：`6f7670f` Windows build 与零凭证 dry-run（2026-08-17）
+
+##### 已完成内容
+
+1. **detached clean Windows harness 建立**：
+   - harness=`tmp/p0-required-mutation-canary-6f7670f-clean`，精确检出 `6f7670f6e2162111663a505edd86f52a2f7e22c3`；
+   - source/harness 均为 detached clean，content SHA-256 同为 `95115e8bc938f58366bb5ad2103f1665142a8affa79a6e6dc38f1a4634c55031`；
+   - 主工作区既有未提交文档改动未进入 harness，也未被覆盖。
+
+2. **frozen offline install 与构建**：
+   - `corepack pnpm install --offline --frozen-lockfile` 完成，resolved=`493`、reused=`492`、downloaded=`0`、added=`493`；
+   - workspace build 与独立 `verify:build` 均通过；
+   - 构建后 harness 仍为 clean detached HEAD，`git diff --check` 通过。
+
+3. **零凭证 Windows dry-run**：
+   - artifact=`artifacts/p0-required-mutation-canary-6f7670f-ts-api-windows-dry-run-r1`，run=`real-ts-api-migration-windows-a1-1786973323045`；
+   - report SHA-256=`0d9924c1b2b63a83ce6de4053a34bd4a25b5f70e64d4fc4e8bbaf5973d9f1282`；
+   - production preflight 与 Windows-native repository snapshot preflight 均为 `passed`，模型固定为 `deepseek-v4-flash`、`credentialsConfigured=false`。
+
+4. **失败关闭与清理审计**：
+   - usage=`not_reached`、cost=`null`、events/trace/patch bytes=`0/0/0`、changed paths=`0`，artifact policy=`true`；
+   - frozen fixture 固定为 `fd688326f1ac2be77f8f1c62c42cd2356acaf3af`，fixture 与 prepared source 均保持 clean；
+   - artifact、fixture、runtime 与 harness 共扫描 `47,608` 个普通文件，真实主 key 精确命中=`0`、不可读=`0`；端口 `28910`、相关 Node、runtime 根级 PID/token 和 Git residue 均为 `0`。
+
+5. **效果**：
+   - `6f7670f` 可由本地 pnpm store 离线重建并满足 workspace artifact 合同；
+   - 零凭证路径在 Provider 前确定失败关闭，没有模型请求、费用或文件修改；
+   - 已满足执行唯一 `6f7670f` Windows formal 的全部无费用前置条件。
+
+##### 验证结果
+
+- TypeScript 编译无错误：workspace build 与独立 `verify:build` 通过；
+- 本环节新增/重跑测试=`0`；提交前确定性基线仍为目标 `94/94`、Agent + Skills `1579 passed + 3 skipped`；
+- production/snapshot preflight、Gateway token auth、零 Provider dispatch、敏感值和资源零残留 Gate 全绿；
+- dry-run 新增 Provider 费用=`$0`，费用账本保持 observed=`$2.24989869`、reserved=`$0.94221000`、unobservable reserve=`$0.70000000`。
+
+##### 后续计划
+
+- **下一步准备做什么**：保持 `6f7670f` identity、冻结 repository snapshot 与当前 harness 不变，按 `priorObservedCostUsd=2.94989869`、`maxTotalCostUsd=3.00000000`，仅使用 `deepseek-v4-flash` 执行且只执行一次 Windows formal。
+- **为什么先做它**：提交态离线构建、任务合同、固定仓输入、Gateway 鉴权、凭证 scrub 和资源回收均已闭合，真实三文件 mutation、verification 与 finalization 是当前唯一剩余的 Windows 证据。
+- **当前还缺的关键闭环**：Windows formal 的三文件 changed paths、冻结 evaluator、非空 summary、唯一 terminal、完整 route/usage/cost、敏感值与资源零残留；Windows 全绿后才允许考虑同 identity WSL2。
+
+#### P0 后续阶段实现结论：`6f7670f` Windows formal 跨 context continuation 失败关闭（2026-08-17）
+
+##### 已完成内容
+
+1. **唯一 Windows formal 执行**：
+   - artifact=`artifacts/p0-required-mutation-canary-6f7670f-ts-api-windows-formal-r1`，run=`real-ts-api-migration-windows-a1-1786973937427`；
+   - report SHA-256=`5d54aee83039f6b2d2c87463090c1d7f9798fe06ae28fb8623a41bf39b48e0e0`；
+   - route=`deepseek-v4-flash -> deepseek-v4-flash [primary]`，usage=`4/4 provider_reported`、input/output=`11015/760`、cost=`$0.00112784`。
+
+2. **missing-path continuation 失败定位**：
+   - 首次 `apply_patch` 成功删除 `connection.ts` 的 deprecated aliases，并把 `protocol.ts` 迁移到 `TraceValue`；
+   - trusted changed-path metadata 只覆盖两个文件，系统按合同为缺失的 `api.ts` 调度唯一 continuation；
+   - continuation 输入明确提供 `api.ts` 的 `29-40` 与 `64-68` 两个独立 context，但模型把两段源码拼成一个 hunk，底层因预期原文不存在而拒绝。
+
+3. **终态与安全审计**：
+   - 最终 changed paths=`2`、patch bytes=`1565`，`api.ts` 未发生写入，冻结 evaluator、测试和非空 summary 均未通过；
+   - event/trace=`19/21`，唯一 terminal=`run.failed`；event contract、capability handshake、bare profile、model route、usage completeness、trace contract 与 artifact policy 全部通过；
+   - artifact、fixture、runtime 与 harness 共扫描 `48,062` 个普通文件，真实主 key 精确命中=`0`、不可读=`0`；端口、相关 Node、runtime 根级 PID/token 与 harness residue 均为 `0`。
+
+4. **效果**：
+   - 跨 context 伪连续 hunk 没有误改 `api.ts`，两文件部分进度也没有被误报为成功；
+   - 失败保留完整 route、usage、费用、唯一终态和可复现 context 行范围；
+   - `6f7670f` Windows formal 已冻结且禁止重跑，未创建 WSL2 harness。
+
+##### 验证结果
+
+- TypeScript evaluator 未通过：`api.ts` 仍保留 `TraceValues`，三文件迁移不完整；
+- 本 formal 未新增测试；冻结测试状态为 failed，task/test/patch=`false/false/false`；
+- route/usage/trace/artifact、安全清理 Gate 全绿，实际新增费用=`$0.00112784`；
+- 回归行为：Given continuation 只允许修改 `api.ts` 且证据包含两个不连续 context，When hunk 跨 context 拼接，Then 工具拒绝写入、运行唯一失败终态且不得进入 WSL2。
+
+##### 后续计划
+
+- **下一步准备做什么**：先用本次 `api.ts` continuation patch 建立失败测试，要求运行时在工具执行前识别 hunk 跨 `taskRelevantContexts` 项；再复核既有可信原子输入纠正 seam，接入一次不重放失败 patch的有界纠正。
+- **为什么先做它**：提示与行范围已经正确，继续加提示或重跑相同 identity 缺少新证据；确定性诊断才能让现有纠正机制只处理可证明的原文匹配错误，同时保持部分写入和越界路径失败关闭。
+- **当前还缺的关键闭环**：失败测试红转绿、Agent/Skills/build/合同 Gate、新 clean identity 的 Windows build/dry-run/唯一 formal；Windows 全绿后才允许同 identity WSL2。下一次 runner 参数暂记 `priorObservedCostUsd=2.95102653`、`maxTotalCostUsd=3.00000000`。
+
+#### P0 后续阶段实现结论：missing-path continuation 原子 input correction（2026-08-17）
+
+##### 已完成内容
+
+1. **`tool-agent.ts` 修改**：
+   - 将 missing-path continuation 与 atomic input correction 的 attempted 状态拆开，避免 continuation 已执行后错误耗尽纠正资格；
+   - continuation 仅在 `apply_patch` 返回受信任的原子 `input_error + apply_patch_input_invalid`、失败调用未覆盖新路径、且缺失路径清单完全不变时调度一次 correction；
+   - correction 只接收仍缺失路径和保留的源证据，不重放失败 patch；correction 再失败、普通错误和越界 changed paths 继续失败关闭，未增加 `maxTurns`、`maxTokens` 或 Provider retry。
+
+2. **`tool-agent-workspace-mutation.test.ts` 扩展**：
+   - 用 `6f7670f` formal 的三文件 partial mutation、`api.ts` 两段不连续 context 和失败 hunk 建立公开 `Agent.run()` 回归；
+   - 测试模型桩按 recovery、continuation、correction、verification system phase 分派响应，避免固定请求索引掩盖状态机行为；
+   - 断言 correction 只修改 `api.ts`、不携带失败跨 context hunk，并在三文件完整复读后产生唯一成功终态。
+
+3. **效果**：
+   - 已有两文件可信进展不再因剩余路径的一次原子 patch 输入错误直接丢失整次运行；
+   - 不新增基于 patch 文本猜测 context 归属的解析器，坏 hunk 仍先由原子工具拒绝，再以可信失败合同进入一次有界纠正；
+   - `6f7670f` 继续冻结且禁止重跑，本轮模型调用=`0`、新增费用=`$0`。
+
+##### 验证结果
+
+- TypeScript 编译无错误：workspace build 与独立 `verify:build` 通过；
+- Agent `644 passed + 1 skipped`，Skills `936 passed + 2 skipped`，合计 `1580 passed + 3 skipped`；workspace-mutation 与 mutation plan 定向回归合计 `95/95` 通过（含 `1` 个新增 continuation correction 测试）；
+- `verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 通过；可信原子纠正再次失败、普通 input error、越界路径继续失败关闭。
+
+##### 后续计划
+
+- **下一步准备做什么**：提交本轮代码、测试和计划文档形成新 clean identity，再建立 detached Windows harness，依次完成 frozen offline install、workspace build、独立 `verify:build` 和零凭证 dry-run。
+- **为什么先做它**：当前结果只证明工作区中的确定性行为；唯一付费 formal 必须绑定可回读提交态，先关闭安装、构建、冻结输入、凭据 scrub 和资源清理风险。
+- **当前还缺的关键闭环**：新 identity 的 clean/dry-run 证据，以及唯一 Windows formal 的三文件 mutation、冻结 evaluator、summary、terminal、route/usage/cost、敏感值和资源零残留；Windows 全绿后才允许考虑同 identity WSL2。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
 
-- observed=`$2.24989869`；
+- observed=`$2.25102653`；
 - reserved=`$0.94221000`；
 - unobservable reserve=`$0.70000000`；
-- 守卫上界=`31.13686952 RMB < 50 RMB`。
+- 守卫上界=`31.14589224 RMB < 50 RMB`。
 
-本轮本地无费用 Gate 已全绿，但下一次付费 formal 尚未开放；还需先完成 `6f7670f` detached clean Windows 构建与零凭证 dry-run。若前置 Gate 全绿，runner 参数应为 `priorObservedCostUsd=2.94989869`、`maxTotalCostUsd=3.00000000`，进程内剩余额度=`$0.05010131`。项目账本仍按完整 `$0.10` 预留，守卫上界约 `31.93686952 RMB < 50 RMB`。项目记录不能替代 Provider 外部账单。
+`6f7670f` 唯一 Windows formal 已执行并冻结，实际新增费用=`$0.00112784`。下一次新 identity formal 尚未开放；需先完成确定性修复、本地 Gate、detached clean build 和零凭证 dry-run。若全部通过，runner 参数暂记 `priorObservedCostUsd=2.95102653`、`maxTotalCostUsd=3.00000000`，进程内剩余额度=`$0.04897347`。项目账本按完整 `$0.10` 预留后的守卫上界约 `31.94589224 RMB < 50 RMB`；项目记录不能替代 Provider 外部账单。
 
 当前明确禁止：
 
-- 重跑 `3b506ef`、`429a6eb`、`ef40901`、`a8bf150`、`a860d16`、`d642205`、`61735d4`、`b6bf0b3`、`00d2559`、`8c24998`、`9b4fe30`、`2b46799` 或 `2bfc76c` 的任一已执行 formal；
+- 重跑 `3b506ef`、`429a6eb`、`ef40901`、`a8bf150`、`a860d16`、`d642205`、`61735d4`、`b6bf0b3`、`00d2559`、`8c24998`、`9b4fe30`、`2b46799`、`2bfc76c` 或 `6f7670f` 的任一已执行 formal；
 - 增加 `maxTurns`、`maxTokens` 或 Provider 重试；
 - 未经新证据启动完整矩阵或 candidate v4；
 - 启动 P2-C、push、公开发布或生产操作。
@@ -1591,6 +1730,11 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 - [SS 多语言 CodeIntel 现成方案研究](./SS多语言CodeIntel现成方案研究.md)
 - [项目地图](../project-map.md)
 - [本计划压缩前全文](../archive/SS开发能力精进分析与计划-03.md)
+- Grok Build 官方索引：<https://docs.x.ai/llms.txt>；本轮重点核对 `build/overview`、permissions、sandbox、sessions、subagents、worktrees、background tasks 与 headless
+- Claude Code 官方索引：<https://code.claude.com/docs/llms.txt>；本轮重点核对 code intelligence、sessions/goals、agents/workflows、worktrees、review、headless/SDK 与 sandbox
+- OpenAI Docs：<https://learn.chatgpt.com/docs/codex/cli.md>、<https://learn.chatgpt.com/docs/codex/ide.md>、<https://learn.chatgpt.com/docs/cloud.md>、<https://learn.chatgpt.com/docs/code-review.md>、<https://learn.chatgpt.com/docs/customization/overview.md>、<https://learn.chatgpt.com/docs/non-interactive-mode.md>
+- OpenCode 固定源码：`tmp/opencode-1.18.13/packages/opencode/package.json`、`packages/opencode/src/agent/agent.ts`、`lsp/lsp.ts`、`mcp/index.ts`、`session/revert.ts`、`worktree/index.ts`
+- Hermes Agent 固定源码：`tmp/hermes-agent-2026.8.16/pyproject.toml`、`CONTRIBUTING.md`、`tools/file_operations.py`、`tools/delegate_tool.py`、`tools/approval.py`、`hermes_state.py`、`mcp_serve.py`
 - `artifacts/p0a-matrix-20260803-r13/9plus-scorecard.json`
 - `artifacts/p1-a1-code-intel-truth-set-20260809-r1/`
 - `artifacts/p1-a1-code-intel-resource-soak-20260809-r2/`
@@ -1644,73 +1788,65 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 ### 9.1 一句话结论
 
-SS 已经具备“做事前检查、做完后验证、出错时停止、程序中断后恢复、事后能够查清”的主体能力，当前综合水平约为 **9.0～9.1 分**。基础建设大多完成，但文档设定的 **9.5 分最终目标尚未达到**。
+截至 2026-08-17，SS 已经具备“做事前检查、做完后验证、出错时停止、程序中断后恢复、事后能够查清”的主体能力。内部硬 Gate 为 **9.1 分**，本轮六产品横向评分也是 **9.1 分**；两者口径不同，但都说明主体工程能力已经成形。文档设定的 **9.5 分最终目标仍未达到**。
 
 ### 9.2 已经具备的能力
 
-- 修改前检查必要条件，修改后核对结果；只完成一部分不会被当成成功。
-- 任务中断、程序重启或执行失败后，可以识别真实状态并给出明确动作。
-- TypeScript/JavaScript 代码理解已进入当前能力范围。
-- Go 已完成受控试用验证，但尚未默认开放为生产能力。
-- C# 等待真实需求，不影响当前目标。
-- 测试安排、浏览器检查、任务状态汇总、安全并行、外部接入和启动检查等主体阶段已经形成证据。
-- Windows 和 WSL2 的稳定性、故障恢复与资源清理经过系统验证。
+- **代码理解**：TypeScript/JavaScript 已正式接入；Go 已通过受控试用，但没有默认开放；C# 继续等待真实需求。
+- **修改与验证**：修改前读取并检查条件，修改后复读、运行定向验证；只完成部分目标不会被当成成功。
+- **安全与恢复**：危险操作、审批、沙箱、程序中断、重启和外部副作用都有明确停止或对账路径。
+- **长任务与并行**：Goal、Workflow、Subtask、后台任务和独立 worktree 已接通；并行写入不会直接共享同一工作区。
+- **多入口使用**：CLI/TUI、WebChat、VS Code、Headless、MCP 和外部客户端使用同一 Gateway 能力边界。
+- **交付控制**：本地 Git 和远端交付有预览、确认、审计及失败恢复，不会自动 merge、push、release 或 deploy。
 
 ### 9.3 最近完整矩阵说明
 
-最近统一测试包含 `144` 个任务：
+最近一次统一矩阵仍是判断真实编程效果的主要上限：
 
-- `107` 个成功；
-- `37` 个未完成；
-- `0` 个基础设施失败。
+| 指标 | 结果 | 通俗含义 |
+| --- | ---: | --- |
+| 任务完成率 | `107/144 = 74.3%` | 大约四分之三的任务完整通过 |
+| 测试通过率 | `77/108 = 71.3%` | 需要测试的任务中仍有明显失败 |
+| patch 接受率 | `20/54 = 37.0%` | 复杂真实修改的稳定性仍不足 |
+| 危险操作阻断 | `30/30 = 100%` | 已知危险行为全部被挡住 |
+| 恢复成功 | `12/12 = 100%` | 注入的恢复场景全部通过 |
+| 基础设施失败 | `0/144` | 失败来自产品工作流，不是测试平台崩溃 |
 
-失败主要集中在复杂多文件任务只完成一部分、读取材料不完整、输出长度耗尽和最终格式不符合验收。系统已经针对这些失败增加了多轮保护，但保护“能够阻止错误写入”不等于模型“已经能够稳定完成任务”。
+这组结果说明 SS 很擅长“避免错做和出事后收口”，但还没有同样稳定地做到“复杂任务一次完整做对”。后续修复已经覆盖材料截断、部分修改、补丁结构、复读和最终总结等失败形状，但尚未用新完整矩阵证明总体成功率提升。
 
-### 9.4 当前真正卡住的地方
+### 9.4 六产品横向位置
 
-Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 TypeScript 迁移任务曾在 Windows 成功，但 WSL2 暴露过遗漏旧符号的问题。
+| 产品 | 发布分 | 通俗判断 |
+| --- | ---: | --- |
+| OpenAI Codex | **9.7** | 本地、IDE、云端、审查、自动化和安全沙箱最均衡 |
+| Claude Code | **9.7** | 代码理解、长任务、多 Agent、桌面/云端和生态覆盖最广 |
+| Grok Build | **9.4** | TUI、后台任务、Dashboard 和并行控制面突出，默认沙箱较弱 |
+| OpenCode `1.18.13` | **9.3** | 开源、多模型、LSP、TUI/桌面/服务端和扩展生态完整 |
+| SS | **9.1** | 安全恢复和可审计工程闭环强，真实复杂任务成功率仍是短板 |
+| Hermes Agent `0.20.2` | **8.9** | 通用 Agent、记忆、渠道和自动化很强，专门编程控制面相对较弱 |
 
-`ef40901` 的 Windows 验证曾因 4 段只有上下文、没有真实增删的补丁内容而停止。进一步检查发现，这些段落仍承担定位作用，直接删除可能改到更早出现的同名代码；当前实现因此只在路径、结构和每个文件的真实修改都明确时保留原补丁执行，其他情况仍停止。
+这些分数不能解释为“同一个模型在同一批题上谁更聪明”。Codex、Claude Code 和 Grok Build来自官方产品资料；OpenCode、Hermes 来自本地源码静态检查；只有 SS 有本计划的当前仓库矩阵。横向排序表达的是产品机制和工程成熟度，不是统计显著的绝对排名。
 
-后继版本 `a8bf150` 已在 Windows 完成三文件修改，自动测试、最终说明、费用记录和资源清理全部通过；同版本 WSL2 的正式任务因补丁结构不满足安全条件而在写文件前停止。系统随后补充了不含正文的分类原因，并阻止 Windows Gateway 使用不兼容的 WSL 网络路径。
+### 9.5 当前真正卡住的地方
 
-再后继版本 `a860d16` 的 Windows 正式任务先正确改了一个文件，但后续处理把另一个文件的一条很长源码行从中间截断，系统因无法精确定位而停止。`d642205` 已保证只提供完整源码行；本轮模型却把两个相距较远的完整片段误当成连续内容，系统再次在写入前阻止了错误补丁。
+- 主体框架不是当前瓶颈：P1-A1/A2、P1-B、P1-C、P2-A、P2-B 都能在当前源码中找到相应实现和测试。
+- 真正瓶颈是复杂多文件任务的稳定完成率。现有 `37` 个失败不能因为单个代表任务成功或新增保护 Gate 就从分母移除。
+- 最新 `6f7670f` 已通过本地 Gate、detached clean Windows build 和零凭证 dry-run；唯一 formal 只完成两个 required paths，`api.ts` continuation 因跨不相邻 context 拼接而失败关闭。该 identity 已冻结且不会进入 WSL2；对应一次可信原子纠正已在工作区实现并通过本地 Gate，尚待新 clean identity 验证。
+- P2-C 尚未启动。只有多个失败形状出现可重复改善，并且两个连续冻结候选通过全部硬 Gate，才能宣称达到 9.5。
 
-`61735d4` 进一步标明了每个片段自己的源码行范围，并禁止一个补丁段跨片段拼接。新的 Windows 正式任务已正确修改三个目标文件，通过自动检查、最终说明、费用记录和资源清理。
+因此当前主要瓶颈是“真实效果证据还不够”，不是“再增加更多功能”。
 
-同一版本的 WSL2 前置检查已通过，但唯一正式任务仍然失败：模型为 `api.ts` 给出了两个只有定位上下文、没有真实增删的补丁段。系统在写文件前拒绝了整包修改，因此没有留下半成品，也没有误报成功。
+### 9.6 费用和发布边界
 
-自动测试现已明确要求每个目标文件和每个补丁段都必须包含真实修改，并确认固定材料预算仍能保留两个不相邻的源码片段。新版本 `b6bf0b3` 已在 Windows 正确修改三个目标文件，通过自动验收、最终说明、费用记录和资源清理。
-
-同一版本的 WSL2 离线安装、构建和无凭据检查也已通过，但唯一正式任务只完成了第一个文件。后续补丁把源码原有的一个制表符变成了两个，系统无法精确匹配，因此保留明确失败且没有把部分完成当作成功。检查已排除材料缺失、片段越界和“只有定位没有修改”等旧原因。
-
-自动测试现已规定“定位和删除行的空格、制表符必须与单一原始材料逐字相同”，并保持原有材料预算。新版本 `00d2559` 已在 Windows 正确完成三个文件的修改、自动验收、最终说明、费用记录和资源清理。
-
-同版本的 WSL2 离线安装、构建和无凭据检查也已通过，但唯一正式复验中，模型只为其中两个文件给出真实修改，`api.ts` 的两段内容只有定位信息。系统在写入前拒绝整包，没有留下半成品。自动测试和实现随后允许系统只保留白名单内已有真实修改的完整文件段，再只给缺失文件一次补齐机会；越界路径仍会在写入前停止。
-
-新版本 `8c24998` 已通过 Windows 离线安装、构建和无凭据检查，但唯一正式验证给出的修改包只有两个目标文件，遗漏第三个文件，其中 `api.ts` 的定位内容还混入了不属于该文件的信息。系统尝试原子应用时整体停止，没有修改任何文件，也没有误报成功。
-
-自动测试和实现现已闭合这类零写入输入错误：只有修改工具明确证明“在写入前因原文匹配失败”，并且所有目标文件仍未完成时，系统才在原有额度内给一次完整纠正机会；纠正必须重新依据各文件原文生成，不会照抄失败内容。若错误没有可信证明，或纠正再次失败，系统仍立即停止。
-
-新版本 `9b4fe30` 已完成 Windows 离线安装、构建和无凭据检查；唯一正式验证随后成功修改并复读了三个目标文件，但仍漏掉 `api.ts` 中第一处旧名称，还带来一处无关缩进变化。自动验收因此拒绝结果；系统没有误报成功，也没有泄漏凭据或留下进程。该版本已冻结，不会重跑，也不会进入 WSL2。
-
-系统现已在复读后再次对照原任务：若实际文件仍有遗漏，只能在目标文件内纠正一次；纠正后必须重新读取全部目标文件，最后一次检查不能再写文件。自动测试还确认，失败样本中的第一处旧名称在有限材料预算内不会被裁掉，越界文件会在执行前被拒绝。
-
-`2b46799` 完成 Windows 离线安装、构建和无凭据检查后执行了唯一真实验证。模型先正确修改一个文件，随后把剩余两个文件的修改拆成三个独立补丁调用；系统按当时的单次修改合同在第二次写入前停止，没有把部分完成当作成功。收尾又出现连接异常，导致正式报告缺少完整终态和可入账 usage；该版本已经冻结，不会重跑或进入 WSL2。
-
-系统现在只针对这种“已有可信部分进度、剩余目标完整且每段都是真实修改”的情况，把多个补丁合并为一次原子写入。任一分段涉及其他文件、遗漏目标、为空或不是普通更新，整组都会在写入前停止。新版本需先通过提交态离线构建和无凭据检查，再只执行一次 Windows 真实验证。
-
-新版本 `2bfc76c` 已通过离线安装、构建和无凭据检查。唯一真实验证中，模型这次只返回一个补丁，但在 `api.ts` 使用了重复的文件修改段，其中两段只有定位信息、没有真实增删。系统无法证明这些重复段可以安全保留，因此在任何写入前拒绝整包；没有文件变化、没有凭据泄漏，费用与最终失败状态均完整记录。该版本已冻结，不会重跑或进入 WSL2。
-
-新版本 `6f7670f` 已完成这个窄场景的本地修复和验证：系统可以删除完全不改内容的独立文件段，再原子执行其余真实修改；删除后每个文件只能保留一个真实修改段，并且都必须属于任务白名单。若同一文件仍有两段真实修改、后面出现危险路径或补丁格式异常，系统仍会在写入前停止。目标测试、Agent/Skills 全量、构建和合同检查均已通过，未调用模型、未产生新费用。
-
-按用户要求，本环节回写后暂停。`6f7670f` 尚未执行隔离环境的离线构建、无凭据检查或真实 Windows 验证；在这些证据完成前，不能说原来的 37 个失败已经解决，也不能启动最终 9.5 评审。
-
-### 9.5 费用和发布边界
-
-当前费用守卫约为 **31.14 元人民币**，低于 **50 元人民币**授权上限；下一次正式验证完整预留后的守卫约为 **31.94 元人民币**。最新 Windows formal 完整记录实际费用 `$0.00073883`；此前终态不可观测的 formal 仍保守预留完整 `$0.10`。在授权上限内无需再次申请，外部服务商账单仍需单独核对。
+当前费用守卫约为 **31.14 元人民币**，低于 **50 元人民币**授权上限；下一次正式验证完整预留后的守卫约为 **31.94 元人民币**。最新 Windows formal 完整记录实际费用 `$0.00112784`；此前终态不可观测的 formal 仍保守预留完整 `$0.10`。在授权上限内无需再次申请，外部服务商账单仍需单独核对。
 
 当前不会重跑已冻结版本，不会提高模型预算，不会启动完整付费矩阵，不会 push、公开发布或执行生产操作。
+
+### 9.7 后续计划
+
+- **下一步准备做什么**：提交已通过本地 Gate 的 continuation correction，形成新 clean identity，再重走 detached Windows frozen offline install、build、独立 verifier、零凭证 dry-run 和唯一 formal。
+- **为什么先做它**：工作区回归已证明坏 patch 原子拒绝后可以仅针对缺失路径纠正；现在必须用提交态 clean harness 排除构建、冻结输入和清理差异，再获取真实模型证据。
+- **当前还缺的关键闭环**：新 identity 的三文件真实 mutation、冻结 evaluator、结构化 summary、唯一 terminal、route/usage/cost、敏感值和资源零残留；Windows 全绿后才考虑同 identity WSL2，随后仍需覆盖其他失败族并取得两个连续原始 `>=9.500` 的冻结候选。
 
 ## 10. 实施计划进度表
 
@@ -1718,8 +1854,8 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`6f7670f` 安全转换与本地 Gate 已完成；按用户要求暂停** | 仅删除独立无动作 section；retained paths 白名单且唯一，重复 actionable/危险后续结构失败关闭；目标 `94/94`、Agent + Skills `1579 passed + 3 skipped`，build/verifier/合同/diff Gate 全绿，模型调用=`0` | 0.5-1 小时 + 1 次 formal | 恢复后先完成 `6f7670f` detached offline build、独立 verifier 与零凭证 dry-run；全绿后才开放唯一 Windows formal，runner 上限暂记 `2.94989869 -> 3.00000000 USD`；Windows 全绿后才考虑 WSL2 |
-| 本轮能力复核与 9.5 增强规划 | - | **已完成** | scorecard、目标向量 `9.510`、多语言投入收益、竞品和边界已复核 | - | 当前精简版与 archive-03 共同保留决策和完整历史 |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **continuation 原子纠正本地 Gate 全绿；待新 Windows identity** | `6f7670f` formal 已冻结；新增公开回归覆盖两文件 partial progress、`api.ts` continuation 原子失败与一次 missing-path-only correction；目标 `95/95`、Agent + Skills `1580 passed + 3 skipped`、build/verifier/合同 Gate 全绿，新增费用=`$0` | 新 Windows identity 约 1-2 小时；全绿后 WSL2 约 0.5-1 小时 + 1 次 formal | 提交形成 clean identity，依次完成 Windows offline install/build/dry-run/唯一 formal；只用 `deepseek-v4-flash`，Windows 全绿后才做 WSL2；不重跑 `6f7670f`、不启动完整矩阵或 P2-C |
+| 本轮能力复核与 9.5 增强规划 | - | **已完成** | 2026-08-17：当前 HEAD `5b36691...` 的 P0-P2 源码/测试/artifact 已核查；SS 横向原始加权 `9.135`（发布分 `9.1`）；Grok Build `9.4`、Codex `9.7`、Claude Code `9.7`、OpenCode `9.3`、Hermes Agent `8.9`；竞品证据边界已记录 | - | 当前精简版与 archive-03 共同保留决策和完整历史；真实复杂任务成功率仍待新 formal 证据，不宣称达到 9.5 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | 6-11 人日 | 生产化需独立 rollout、观察窗口和真实项目 Gate |
