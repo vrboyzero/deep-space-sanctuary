@@ -367,19 +367,19 @@ Source / Workspace Revision
 
 - `fce9b6a` 的 Go 代表任务在 Windows/WSL2 均通过，patch SHA-256 相同，只修改 `command.go`，冻结 Go test 和资源 Gate 全绿；
 - `550e0da` 的 TS 三文件任务在 Windows 全绿；同 identity WSL2 虽完成三文件写入，但 `api.ts` 第一处 import 残留旧符号，冻结 evaluator 正确拒绝；
-- 上述 WSL2 失败促成 context-only hunk 执行前 Gate；最新 `9b4fe30` 已通过 Windows clean harness、离线构建和零凭证 dry-run，尚未执行该 identity 的 formal。
+- 上述 WSL2 失败促成 context-only hunk 执行前 Gate；最新 `9b4fe30` 已通过 Windows 无费用前置 Gate，唯一 formal 完成三文件原子写入但因 post-write 目标残留被冻结 evaluator 拒绝。
 
-### 6.4 最新断点：`9b4fe30` Windows formal 前置 Gate
+### 6.4 最新断点：`9b4fe30` Windows formal
 
-`9b4fe3022d4799cfd0db4aa135ebfdbed58b5d83` 的 Windows 无费用前置 Gate 已全绿：
+`9b4fe3022d4799cfd0db4aa135ebfdbed58b5d83` 的 Windows 无费用前置 Gate 全绿；唯一 formal 已执行并冻结：
 
-- detached harness 与 source 均为 clean `9b4fe30`，content SHA-256=`163c4d74a971d2baf7d9b92600b6cb4bae81e887ab1a9902b362d3d1a97a9242`；frozen offline install、workspace build 和独立 `verify:build` 已通过；
-- artifact=`artifacts/p0-required-mutation-canary-9b4fe30-ts-api-windows-dry-run-r1`，run=`real-ts-api-migration-windows-a1-1786961972567`，report SHA-256=`d0c97a23ab44edd87470cecced8ea0836568f1600ad9ca9b6d9a005c4b481371`；
-- production preflight 与 repository snapshot preflight 均为 `passed`，固定仓 source clean、commit=`b6c62820ef4c0542e0c7118d7d64ba888e4cfee5`；provider/model=`openai/deepseek-v4-flash`、credentials=`false`；
-- Provider 未触达，usage=`not_reached`、cost=`null`、event/trace=`0/0`、changed paths/patch bytes=`0/0`、infrastructure error=`0`；
-- artifact、fixture、runtime 与 clean harness 共扫描 `47,608` 个普通文件，真实主 key 命中=`0`、不可读=`0`、重解析点=`1,281`；listener、相关 Node、根级 PID/token 和 Git residue 均为 `0`。
+- artifact=`artifacts/p0-required-mutation-canary-9b4fe30-ts-api-windows-formal-r1`，run=`real-ts-api-migration-windows-a1-1786962403451`，report SHA-256=`a9baef60301368c769065fca5695f8834ee8e48fa19f259d0e91c994aa0c0609`；
+- route=`deepseek-v4-flash -> deepseek-v4-flash [primary]`，usage=`5/5 provider_reported`、input/output=`16377/898`、cost=`$0.00227164`；
+- 唯一 `apply_patch` 成功修改并复读三个 required paths，CLI exit=`0`、唯一终态=`run.completed`、summary 非空；changed paths=`3`、patch bytes=`3012`、SHA-256=`71c9d202823c8783431e2dbe9e62e07b9a9bb7c07382fd2e06bae94b55d7d5e9`；
+- 冻结 evaluator 失败：`jsonrpc/src/common/api.ts` 的第一处 connection import 仍保留 `TraceValues`；`connection.ts` 的 `Verbose` 行还丢失原有缩进，而 summary 错误声称两处 barrel export 均已移除；
+- event/trace=`63/65`；artifact、fixture、runtime 与 clean harness 共扫描 `48,065` 个普通文件，真实主 key 命中=`0`、不可读=`0`、重解析点=`1,281`；listener、相关 Node、根级 PID/token 与 harness/source residue 均为 `0`。
 
-`8c24998` formal 继续冻结、禁止重跑。`9b4fe30` 已满足开放唯一 Windows formal 的前置条件；该 formal 仍必须保持原 `maxTurns`、`maxTokens`、Provider retry 和费用上限，只有 Windows 三文件闭环全绿才进入同 identity WSL2。
+`8c24998` 与 `9b4fe30` formal 均已冻结、禁止重跑。可信原子输入纠正已证明能完成三文件原子提交，但 post-write 复读尚未阻止目标残留、无关格式变化和失实 summary；Windows 未全绿，因此不创建同 identity WSL2。下一步先用确定性红灯定义复读后的目标一致性失败，再做最小泛化修复；仍不增加 `maxTurns`、`maxTokens` 或 Provider retry。
 
 ### 6.5 恢复后的实施顺序
 
@@ -413,6 +413,7 @@ Source / Workspace Revision
 28. **已完成但失败：`8c24998` Windows formal**。唯一 formal 的 mutation patch 只有两个目标 section、缺少 `protocol.ts`，且 `api.ts` hunk 拼入不属于该文件的组合上下文；`apply_patch` 以 `input_error` 原子失败，changed paths/patch=`0/0`。route、`4/4` usage、cost、唯一失败终态、敏感值与资源清理证据完整，禁止重跑。
 29. **已完成：可信原子输入纠正**。`apply_patch` 仅为提交前 match error 附加可信纠错标记；Agent 仅在首次 required patch、全部目标仍缺失且 continuation 未使用时安排一次完整纠正。纠正不读取、不重放失败 patch、不放宽路径或原子性；无标记错误、普通失败及第二次纠正失败仍立即关闭。目标回归 `104/104`、Agent + Skills `1569 passed + 3 skipped`，build、独立 verifier、benchmark/CI 合同和 diff Gate 全绿，模型调用=`0`、新增费用=`$0`。
 30. **已完成：`9b4fe30` Windows formal 前置 Gate**。detached clean harness 的 frozen offline install（download=`0`）、workspace build、独立 `verify:build` 和零凭证 dry-run 全绿；source/harness 与固定仓输入 clean，两层 preflight passed，Provider/usage/changed paths/patch=`0/not_reached/0/0`，敏感值、端口、Node、PID/token 和 Git residue 均为 `0`，开放唯一 Windows formal。
+31. **已完成但失败：`9b4fe30` Windows formal**。唯一 patch 成功修改并复读三个 required paths，CLI、唯一完成终态、route/usage/cost 和 summary 合同通过；但 `api.ts` 仍残留第一处 `TraceValues` import，`connection.ts` 出现缩进回退，冻结 evaluator 正确拒绝。敏感值与资源清理全绿，禁止重跑，未进入 WSL2。
 
 #### P0 后续阶段实现结论：mutation hunk 无正文诊断（2026-08-17）
 
@@ -1247,20 +1248,56 @@ Source / Workspace Revision
 - **为什么先做它**：提交态构建、任务合同、冻结仓输入和零凭证边界均已通过，真实三文件 mutation、verification 与 finalization 是当前唯一剩余的 Windows 证据。
 - **当前还缺的关键闭环**：Windows 三文件 changed paths、冻结 evaluator、非空 summary、唯一 `run.completed`、完整 route/usage/cost、敏感值与资源零残留；Windows 全绿后才创建同 identity WSL2 分层复核。
 
+#### P0 后续阶段实现结论：`9b4fe30` Windows formal 目标残留失败（2026-08-17）
+
+##### 已完成内容
+
+1. **唯一 Windows formal 审计**：
+   - artifact=`artifacts/p0-required-mutation-canary-9b4fe30-ts-api-windows-formal-r1`，run=`real-ts-api-migration-windows-a1-1786962403451`；
+   - route=`deepseek-v4-flash -> deepseek-v4-flash [primary]`，usage=`5/5 provider_reported`、input/output=`16377/898`、cost=`$0.00227164`；
+   - CLI exit=`0`、唯一终态=`run.completed`、changed paths=`3`、patch bytes=`3012`，三文件 post-write read 与非空 summary 均已形成。
+
+2. **冻结 evaluator 根因**：
+   - `api.ts` 只移除了 export block 中的 `TraceValues`，第一处从 `./connection` 导入的 `TraceValues` 仍残留；
+   - `connection.ts` 已移除 deprecated value/type alias，但 `TraceValue.Verbose` 的缩进被无关改动；
+   - `protocol.ts` 已迁回 `TraceValue`，最终 summary 却错误声称两处 barrel export 都已移除。
+
+3. **安全与资源审计**：
+   - report SHA-256=`a9baef60301368c769065fca5695f8834ee8e48fa19f259d0e91c994aa0c0609`，patch SHA-256=`71c9d202823c8783431e2dbe9e62e07b9a9bb7c07382fd2e06bae94b55d7d5e9`；
+   - `48,065` 个普通文件的真实主 key 命中=`0`、不可读=`0`，重解析点=`1,281`；
+   - listener、相关 Node、根级 PID/token 与 harness/source residue 均为 `0`。
+
+4. **效果**：
+   - 可信原子输入纠正已证明可以形成三文件原子写入，不再复现 `8c24998` 的零写入失败；
+   - 冻结 evaluator 正确区分“所有目标文件都有改动”和“迁移目标完整达成”；
+   - 新缺口被收敛为 post-write 复读后的目标残留、无关格式变化与 summary 失实，未误报 canary 成功。
+
+##### 验证结果
+
+- TypeScript 三文件已原子修改并复读，CLI、事件、trace、route、`5/5` usage 与 artifact 合同通过；
+- 冻结 evaluator 按预期失败，Windows canary 未晋级，未创建 WSL2 harness；
+- 主 key、端口、相关 Node、PID/token 与 Git residue 检查全部为 `0`，本次新增观测费用=`$0.00227164`。
+
+##### 后续计划
+
+- **下一步准备做什么**：先增加公开 Agent 红灯回归，复现“全部 required paths 已修改并复读，但 post-write 内容仍保留任务目标中的待移除符号，模型却直接 finalization”。
+- **为什么先做它**：当前原子提交、路径覆盖和复读动作都成功，继续加强 mutation parser 不能发现语义残留；必须把“复读后对照目标”接入现有有界 continuation/finalization 边界。
+- **当前还缺的关键闭环**：泛化的 post-write 目标一致性证据、最小修复、Agent/build/合同 Gate，以及新 identity 的 Windows formal；Windows 全绿后才条件式复核同 identity WSL2。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
 
-- observed=`$2.24688822`；
+- observed=`$2.24915986`；
 - reserved=`$0.94221000`；
 - unobservable reserve=`$0.60000000`；
-- 守卫上界=`30.31278576 RMB < 50 RMB`。
+- 守卫上界=`30.33095888 RMB < 50 RMB`。
 
-下一次付费 formal 的计划参数为 `priorObservedCostUsd=2.84688822`、`maxTotalCostUsd=2.94688822`；完整预留后守卫上界约 `31.11278576 RMB < 50 RMB`。项目记录不能替代 Provider 外部账单。
+下一次付费 formal 的计划参数为 `priorObservedCostUsd=2.84915986`、`maxTotalCostUsd=2.94915986`；完整预留后守卫上界约 `31.13095888 RMB < 50 RMB`。项目记录不能替代 Provider 外部账单。
 
 当前明确禁止：
 
-- 重跑 `3b506ef`、`429a6eb`、`ef40901`、`a8bf150`、`a860d16`、`d642205`、`61735d4`、`b6bf0b3`、`00d2559` 或 `8c24998` 的任一已执行 formal；
+- 重跑 `3b506ef`、`429a6eb`、`ef40901`、`a8bf150`、`a860d16`、`d642205`、`61735d4`、`b6bf0b3`、`00d2559`、`8c24998` 或 `9b4fe30` 的任一已执行 formal；
 - 增加 `maxTurns`、`maxTokens` 或 Provider 重试；
 - 未经新证据启动完整矩阵或 candidate v4；
 - 启动 P2-C、push、公开发布或生产操作。
@@ -1339,6 +1376,7 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 | 技术债 | 决策 | 处理 |
 | --- | --- | --- |
 | context-only hunk 阻断原子 patch | `fix_now` | 保留 context-only section 的零执行边界；对结构明确、路径唯一安全的其他可执行 section，测试先行接入既有单次 missing-path continuation，不放宽最终 required-path 覆盖 |
+| post-write 复读后仍有目标残留 | `fix_now` | 先用公开 Agent 红灯定义“required paths 均修改但目标未闭合不得直接 finalization”，再复用现有有界 continuation；不把冻结任务符号硬编码进通用 Agent |
 | required-mutation 其余失败改善范围 | `split_task` | 代表 canary 双平台闭合后按失败形状逐类验证，不做单任务外推 |
 | 连续候选 9.5 证据 | `split_task` | 独立进入 P2-C，不由当前 P0 费用授权自动扩大 |
 | C# 选型和生产接入 | `defer` | 真实需求、许可、安全分发和 truth set 具备后再启动 |
@@ -1405,13 +1443,13 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 自动测试和实现现已闭合这类零写入输入错误：只有修改工具明确证明“在写入前因原文匹配失败”，并且所有目标文件仍未完成时，系统才在原有额度内给一次完整纠正机会；纠正必须重新依据各文件原文生成，不会照抄失败内容。若错误没有可信证明，或纠正再次失败，系统仍立即停止。
 
-新版本 `9b4fe30` 已完成 Windows 离线安装、构建和无凭据检查；模型服务没有被调用，也没有产生费用、文件修改或进程残留。它现在只开放一次 Windows 正式验证，用来确认三文件纠正能否在真实模型输出下完成；只有该验证全部通过，才会继续同版本 WSL2 检查。
+新版本 `9b4fe30` 已完成 Windows 离线安装、构建和无凭据检查；唯一正式验证随后成功修改并复读了三个目标文件，但仍漏掉 `api.ts` 中第一处旧名称，还带来一处无关缩进变化。自动验收因此拒绝结果；系统没有误报成功，也没有泄漏凭据或留下进程。该版本已冻结，不会重跑，也不会进入 WSL2。下一步先让系统在复读后再次对照目标，发现残留时不得直接结束。
 
 在此之前，不能说原来的 37 个失败已经解决，也不能启动最终 9.5 评审。
 
 ### 9.5 费用和发布边界
 
-当前费用守卫约为 **30.31 元人民币**，低于 **50 元人民币**授权上限；下一次正式验证完整预留后的守卫约为 **31.11 元人民币**。最新 Windows formal 实际费用为 `$0.00086688`；在授权上限内无需再次申请，外部服务商账单仍需单独核对。
+当前费用守卫约为 **30.33 元人民币**，低于 **50 元人民币**授权上限；下一次正式验证完整预留后的守卫约为 **31.13 元人民币**。最新 Windows formal 实际费用为 `$0.00227164`；在授权上限内无需再次申请，外部服务商账单仍需单独核对。
 
 当前不会重跑已冻结版本，不会提高模型预算，不会启动完整付费矩阵，不会 push、公开发布或执行生产操作。
 
@@ -1421,7 +1459,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`9b4fe30` Windows formal 前置 Gate 已通过，待唯一 formal** | clean offline install/build/独立 verifier 与零凭证 dry-run 全绿；两层 preflight passed；Provider/usage/changed paths/patch=`0/not_reached/0/0`；敏感值与资源零残留 | 2-5 小时 | 仅用 `deepseek-v4-flash` 执行一次 Windows formal；三文件 evaluator、summary、唯一成功终态、route/usage/cost 与零残留全绿后，才复核同 identity WSL2 |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **`9b4fe30` Windows formal 因 post-write 目标残留失败，待确定性修复** | 三文件原子修改/复读、CLI、唯一 `run.completed`、route、`5/5` usage 和 summary 合同通过；`api.ts` 仍残留 `TraceValues` import，冻结 evaluator 拒绝；敏感值与资源零残留 | 2-5 小时 | 红灯定义复读后目标一致性，最小接入有界 continuation/finalization Gate；新 identity 重新走 Windows 前置 Gate 与唯一 formal，全绿后才复核 WSL2 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | scorecard、目标向量 `9.510`、多语言投入收益、竞品和边界已复核 | - | 当前精简版与 archive-03 共同保留决策和完整历史 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
