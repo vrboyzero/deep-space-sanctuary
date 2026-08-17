@@ -91,7 +91,7 @@ export type WorkspaceMutationRecoveryPlan = WorkspaceMutationRecoveryRequest & {
   finalizationInputTokenReserve: number;
 };
 
-const MUTATION_PATCH_HUNK_INSTRUCTION = "Each required *** Update File section and @@ hunk needs an actual - or + line; leading space is context, not an edit. No context-only hunks. Use exactly one final-line *** End Patch. Take hunk context/removals from one taskRelevantContexts item, or complete exact evidence lines. Never join items/fragments or cross the preceding header's file. Preserve unchanged replacement prefixes/suffixes.";
+const MUTATION_PATCH_HUNK_INSTRUCTION = "Each *** Update File section/@@ hunk needs actual +/-; space-prefixed lines are context only. No context-only hunk. One final *** End Patch. Copy context/removal lines exactly from one taskRelevantContexts item or exact evidence, preserving source tabs/spaces after the one diff marker. Never join items/fragments or cross file headers. Preserve replacement surroundings.";
 
 const MUTATION_RECOVERY_INSTRUCTION = [
   "Mutation-only recovery phase: the task requires a successful workspace mutation before completion.",

@@ -536,19 +536,19 @@ describe("ReAct workspace mutation recovery", () => {
     ]);
     expect(request?.messages[0]?.content).toContain("one atomic checklist");
     expect(request?.messages[0]?.content).toContain(
-      "Use exactly one final-line *** End Patch",
+      "One final *** End Patch",
     );
     expect(request?.messages[0]?.content).toContain(
-      "Take hunk context/removals from one taskRelevantContexts item",
+      "Copy context/removal lines exactly from one taskRelevantContexts item or exact evidence",
     );
     expect(request?.messages[0]?.content).toContain(
-      "Preserve unchanged replacement prefixes/suffixes",
+      "Preserve replacement surroundings",
     );
     expect(request?.messages[0]?.content).toContain(
       "exactly one non-empty *** Update File: <path> section",
     );
     expect(request?.messages[0]?.content).toContain(
-      "cross the preceding header's file",
+      "cross file headers",
     );
     expect(request?.messages[1]?.content).toContain("[tool=file_read]");
     expect(request?.messages.some((message) => message.role === ("tool" as string))).toBe(false);
@@ -583,16 +583,16 @@ describe("ReAct workspace mutation recovery", () => {
     expect(plan?.messages[0]?.content).toContain("Missing-path mutation continuation phase");
     expect(plan?.messages[0]?.content).toContain("no already-covered or unlisted path");
     expect(plan?.messages[0]?.content).toContain(
-      "Take hunk context/removals from one taskRelevantContexts item",
+      "Copy context/removal lines exactly from one taskRelevantContexts item or exact evidence",
     );
     expect(plan?.messages[0]?.content).toContain(
-      "Preserve unchanged replacement prefixes/suffixes",
+      "Preserve replacement surroundings",
     );
     expect(plan?.messages[0]?.content).toContain(
       "exactly one non-empty *** Update File: <path> section",
     );
     expect(plan?.messages[0]?.content).toContain(
-      "cross the preceding header's file",
+      "cross file headers",
     );
     expect(plan?.messages[1]?.content).toContain(
       'Trusted required changed paths still missing:\n["src/protocol.ts"]',
@@ -600,7 +600,7 @@ describe("ReAct workspace mutation recovery", () => {
     expect(plan?.outputTokens).toBeLessThanOrEqual(4_096);
   });
 
-  it("requires real additions or removals in every required update section and hunk", () => {
+  it("requires actionable hunks and exact source whitespace in required mutations", () => {
     const messages = [
       { role: "user" as const, content: "Remove TraceValues from the public API." },
       {
@@ -640,12 +640,18 @@ describe("ReAct workspace mutation recovery", () => {
       continuation?.messages[0]?.content,
     ]) {
       expect(instruction).toContain(
-        "Each required *** Update File section and @@ hunk needs an actual - or + line",
+        "Each *** Update File section/@@ hunk needs actual +/-",
       );
       expect(instruction).toContain(
-        "leading space is context, not an edit",
+        "space-prefixed lines are context only",
       );
-      expect(instruction).toContain("No context-only hunks");
+      expect(instruction).toContain("No context-only hunk");
+      expect(instruction).toContain(
+        "Copy context/removal lines exactly from one taskRelevantContexts item or exact evidence",
+      );
+      expect(instruction).toContain(
+        "preserving source tabs/spaces after the one diff marker",
+      );
     }
   });
 

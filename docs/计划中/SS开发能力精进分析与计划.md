@@ -402,6 +402,7 @@ Source / Workspace Revision
 18. **已完成：required section/hunk 真实增删提示约束**。recovery 与 continuation 明确要求每个目标 section 和每个 hunk 均有实际 `-`/`+` 行，前导空格只算 context，禁止 context-only hunk；提示长度不超过原实现，完整 evidence 与原预算保持不变，确定性 Gate 全绿。
 19. **已完成：`b6bf0b3` Windows 分层复验**。offline install、clean build、零凭证 dry-run 和唯一 formal 全绿；三文件 evaluator、唯一 `run.completed`、route/usage/cost、敏感值与资源 Gate 均通过，打开同 identity WSL2 复核。
 20. **已完成但失败：`b6bf0b3` 同 identity WSL2 复核**。ext4 offline frozen install、build、独立 `verify:build` 和零凭证 dry-run 全绿；唯一 formal 先修改 `connection.ts`，后因 `api.ts` continuation 在 diff marker 后多写一个 tab 而匹配失败，最终仅保留一个 changed path，禁止重跑。
+21. **已完成：context/removal whitespace 精确复制契约**。recovery 与 continuation 共用提示要求从单一 context/evidence 逐字复制定位和删除行，并保留 diff marker 后源码原有 tab/space；提示由 `394` 缩至 `371` 字符，确定性 Gate 全绿，未改变工具、预算或重试。
 
 #### P0 后续阶段实现结论：mutation hunk 无正文诊断（2026-08-17）
 
@@ -900,6 +901,36 @@ Source / Workspace Revision
 - **为什么先做它**：prompt snapshot、真实源码和结构化匹配错误已把失败定位到一个可测试的 whitespace 契约；先固化契约可避免再次依赖付费 formal 猜测。
 - **当前还缺的关键闭环**：新 identity 的 Windows 三文件 formal 与同 identity WSL2 三文件 formal 均成功，且终态、费用、敏感值和资源 Gate 全绿；在此之前不能形成 required-mutation 双平台代表闭环。
 
+#### P0 后续阶段实现结论：context/removal whitespace 精确复制（2026-08-17）
+
+##### 已完成内容
+
+1. **`react-workspace-mutation.ts` 修改**：
+   - recovery 与 missing-path continuation 复用同一 whitespace 契约；
+   - 要求 context/removal 行从单一 `taskRelevantContexts` 项或精确 evidence 逐字复制，并保留唯一 diff marker 后的源码 tab/space；
+   - 继续要求每个 section/hunk 有真实增删、单一最终 `*** End Patch`、不跨 item/file header，提示由 `394` 缩至 `371` 字符。
+
+2. **mutation 契约测试修改**：
+   - 新断言在修复前按预期失败，证明旧提示缺少 whitespace 约束；
+   - recovery、continuation 与 Tool Agent 接线均验证新提示，既有完整行 evidence、预算和 context 边界测试保持通过。
+
+3. **效果**：
+   - 模型收到明确且不正规化空白的 patch 生成规则，覆盖本次 WSL2 失败的直接根因；
+   - 固定 evidence 预算未被挤占，工具集、调用、turn/token、retry 和运行时边界不变；
+   - 该确定性修复只形成新 canary 条件，不外推为三文件任务或原 `37` 个失败已解决。
+
+##### 验证结果
+
+- TypeScript workspace build 与独立 `verify:build` 通过；
+- whitespace 目标回归 `79/79` 通过；Agent 包 `57` 个测试文件通过、`628` 个测试通过、`1` 个真实 Provider probe 跳过；
+- `verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 通过；本实现环节模型调用=`0`、新增费用=`$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：提交当前修复形成新 clean identity，在 detached NTFS harness 依次完成 offline frozen install、workspace build、独立 `verify:build` 和零凭证 dry-run；全部通过后执行唯一 Windows formal。
+- **为什么先做它**：确定性 Gate 只证明提示契约和预算没有回归，Windows clean formal 才能验证 `deepseek-v4-flash` 是否生成三个文件均可执行且 whitespace 精确的 patch。
+- **当前还缺的关键闭环**：新 identity 的 Windows 三文件 evaluator、唯一 `run.completed`、完整 route/usage/cost 与零敏感值/资源残留；Windows 全绿后才条件式进入同 identity WSL2。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
@@ -1050,7 +1081,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 同一版本的 WSL2 离线安装、构建和无凭据检查也已通过，但唯一正式任务只完成了第一个文件。后续补丁把源码原有的一个制表符变成了两个，系统无法精确匹配，因此保留明确失败且没有把部分完成当作成功。检查已排除材料缺失、片段越界和“只有定位没有修改”等旧原因。
 
-当前下一步是先用自动测试规定“定位和删除行的空格、制表符必须与单一原始材料逐字相同”，再形成新代码版本，从 Windows 开始分层复验。系统不会重跑已冻结 formal，也不会靠增加模型调用或输出额度碰运气。
+自动测试现已规定“定位和删除行的空格、制表符必须与单一原始材料逐字相同”，并保持原有材料预算。当前下一步是形成新代码版本，从 Windows 开始离线构建、无凭据检查和唯一正式复验；系统不会重跑已冻结 formal，也不会靠增加模型调用或输出额度碰运气。
 
 在此之前，不能说原来的 37 个失败已经解决，也不能启动最终 9.5 评审。
 
@@ -1066,7 +1097,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`b6bf0b3` Windows 全绿、WSL2 已失败关闭；待 whitespace 契约修复** | WSL2 preflight 全绿；唯一 formal 因 diff marker 后额外 tab 仅修改 `connection.ts`，唯一 `run.failed`，主 key=`0/12,279`、资源零残留 | 1-3 小时 | 测试先行锁定 context/removal 原始 whitespace 逐字复制，完成确定性 Gate 并形成新 identity；新 identity Windows 与 WSL2 三文件 formal 均通过才闭环 |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **whitespace 契约与确定性 Gate 全绿，待新 identity Windows 分层 canary** | 新提示要求 context/removal 逐字保留 tab/space；`79/79`、Agent `628 + 1 skipped`、build 与合同 Gate 全绿，提示 `371 < 394` 字符 | 1-3 小时 | 提交形成 clean identity；Windows offline install/build/独立 verify/零凭证 dry-run 全绿后执行唯一 formal，Windows 全绿才进入同 identity WSL2 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | scorecard、目标向量 `9.510`、多语言投入收益、竞品和边界已复核 | - | 当前精简版与 archive-03 共同保留决策和完整历史 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |

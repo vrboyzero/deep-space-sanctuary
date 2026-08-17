@@ -488,7 +488,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       expect.objectContaining({
         role: "system",
         content: expect.stringMatching(
-          /Mutation-only recovery phase.*Take hunk context\/removals from one taskRelevantContexts item.*Never join items/,
+          /Mutation-only recovery phase.*Copy context\/removal lines exactly from one taskRelevantContexts item or exact evidence.*Never join items/,
         ),
       }),
     ]));
