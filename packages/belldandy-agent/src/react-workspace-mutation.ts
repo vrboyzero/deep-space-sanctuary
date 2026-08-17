@@ -57,7 +57,7 @@ export type WorkspaceMutationRecoveryPlan = WorkspaceMutationRecoveryRequest & {
   finalizationInputTokenReserve: number;
 };
 
-const MUTATION_PATCH_HUNK_INSTRUCTION = "Before the next file header, include at least one @@ hunk with a real added or removed line per file unless moving it; copy context and removed lines as exact complete evidence source lines, never partial fragments, and only from the file named by that immediately preceding header; preserve unchanged replacement prefixes and suffixes.";
+const MUTATION_PATCH_HUNK_INSTRUCTION = "Every @@ hunk must contain a real added or removed line; never emit a context-only hunk. Before the next file header, include at least one @@ hunk with a real added or removed line per file unless moving it; copy context and removed lines as exact complete evidence source lines, never partial fragments, and only from the file named by that immediately preceding header; preserve unchanged replacement prefixes and suffixes.";
 
 const MUTATION_RECOVERY_INSTRUCTION = [
   "Mutation-only recovery phase: the task requires a successful workspace mutation before completion.",
@@ -172,6 +172,53 @@ export function normalizeWorkspaceMutationRecoveryToolCall<
       arguments: JSON.stringify({ ...argumentsRecord, input: normalizedPatch }),
     },
   } as T;
+}
+
+export function hasNoContextOnlyWorkspaceMutationPatchHunks(
+  toolCall: WorkspaceMutationNavigationToolCall,
+): boolean {
+  if (toolCall.function.name !== "apply_patch") {
+    return true;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(toolCall.function.arguments);
+  } catch {
+    return true;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return true;
+  }
+  const patch = (parsed as Record<string, unknown>).input;
+  if (typeof patch !== "string") {
+    return true;
+  }
+  const trimmedPatch = patch.trim();
+  if (!trimmedPatch.startsWith("*** Begin Patch")
+    || !trimmedPatch.endsWith("*** End Patch")) {
+    return true;
+  }
+
+  const lines = patch.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index++) {
+    if (!lines[index]?.startsWith("@@")) {
+      continue;
+    }
+    let actionable = false;
+    for (let hunkIndex = index + 1; hunkIndex < lines.length; hunkIndex++) {
+      const line = lines[hunkIndex] ?? "";
+      if (line.startsWith("@@") || line.startsWith("*** ")) {
+        break;
+      }
+      if (line.startsWith("+") || line.startsWith("-")) {
+        actionable = true;
+      }
+    }
+    if (!actionable) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export function selectRequiredWorkspaceMutationNavigationToolCalls<

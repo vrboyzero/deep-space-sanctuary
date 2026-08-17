@@ -138,6 +138,7 @@ import {
   buildWorkspaceMutationNavigationRequest,
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationVerificationRequest,
+  hasNoContextOnlyWorkspaceMutationPatchHunks,
   isCompleteWorkspaceMutationVerificationReadResult,
   normalizeWorkspaceMutationRecoveryToolCall,
   selectWorkspaceMutationNavigationToolDefinitions,
@@ -4122,7 +4123,14 @@ export class ToolEnabledAgent implements BelldandyAgent {
             );
             return;
           }
-          toolCalls = [normalizeWorkspaceMutationRecoveryToolCall(toolCalls[0]!)];
+          const normalizedMutationToolCall = normalizeWorkspaceMutationRecoveryToolCall(toolCalls[0]!);
+          if (!hasNoContextOnlyWorkspaceMutationPatchHunks(normalizedMutationToolCall)) {
+            yield* emitWorkspaceMutationFailure(
+              "the mutation-only apply_patch call contained a context-only hunk; every @@ hunk must include a real added or removed line.",
+            );
+            return;
+          }
+          toolCalls = [normalizedMutationToolCall];
         }
         if (workspaceMutationNavigationCall) {
           const maxFileReadCalls = workspaceMutationNavigationRequest?.maxFileReadCalls ?? 2;

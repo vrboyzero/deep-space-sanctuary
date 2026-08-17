@@ -338,6 +338,7 @@ describe("ReAct workspace mutation recovery", () => {
     ]);
     expect(request?.messages[0]?.content).toContain("one atomic checklist");
     expect(request?.messages[0]?.content).toContain("a real added or removed line per file");
+    expect(request?.messages[0]?.content).toContain("Every @@ hunk");
     expect(request?.messages[0]?.content).toContain(
       "copy context and removed lines as exact complete evidence source lines, never partial fragments",
     );
@@ -385,6 +386,7 @@ describe("ReAct workspace mutation recovery", () => {
     expect(plan).toBeDefined();
     expect(plan?.messages[0]?.content).toContain("Missing-path mutation continuation phase");
     expect(plan?.messages[0]?.content).toContain("no already-covered or unlisted path");
+    expect(plan?.messages[0]?.content).toContain("Every @@ hunk");
     expect(plan?.messages[0]?.content).toContain(
       "copy context and removed lines as exact complete evidence source lines, never partial fragments",
     );
