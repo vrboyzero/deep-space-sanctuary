@@ -1,6 +1,10 @@
 import * as fs from "node:fs/promises";
 import type { UpdateFileChunk } from "./dsl.js";
 
+export class ApplyPatchMatchError extends Error {
+    override readonly name = "ApplyPatchMatchError";
+}
+
 // 规范化标点符号，用于最宽容的匹配模式
 function normalizePunctuation(value: string): string {
     return Array.from(value)
@@ -146,7 +150,7 @@ function computeReplacements(
         if (chunk.changeContext) {
             const ctxIndex = seekSequence(originalLines, [chunk.changeContext], lineIndex, false);
             if (ctxIndex === null) {
-                throw new Error(`Failed to find context '${chunk.changeContext}' in ${filePath}`);
+                throw new ApplyPatchMatchError(`Failed to find context '${chunk.changeContext}' in ${filePath}`);
             }
             lineIndex = ctxIndex + 1;
         }
@@ -177,7 +181,7 @@ function computeReplacements(
         }
 
         if (found === null) {
-            throw new Error(
+            throw new ApplyPatchMatchError(
                 `Failed to find expected lines in ${filePath}:\n${chunk.oldLines.join("\n")}`
             );
         }

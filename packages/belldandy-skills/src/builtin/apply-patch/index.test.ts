@@ -118,6 +118,43 @@ describe("apply_patch tool", () => {
       .resolves.toBe("export const connection = false;\n");
   });
 
+  it("marks a pre-commit context mismatch as correctable without mutating any file", async () => {
+    await fs.mkdir(path.join(tempDir, "src"), { recursive: true });
+    await fs.writeFile(path.join(tempDir, "src", "api.ts"), "export const api = false;\n", "utf-8");
+    await fs.writeFile(path.join(tempDir, "src", "connection.ts"), "export const connection = false;\n", "utf-8");
+
+    const result = await applyPatchTool.execute(
+      {
+        input: [
+          "*** Begin Patch",
+          "*** Update File: src/api.ts",
+          "@@",
+          "-export const api = false;",
+          "+export const api = true;",
+          "*** Update File: src/connection.ts",
+          "@@",
+          "-export const connection = missing;",
+          "+export const connection = true;",
+          "*** End Patch",
+        ].join("\n"),
+      },
+      baseContext,
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      failureKind: "input_error",
+      metadata: {
+        repairAction: "apply_patch_input_invalid",
+      },
+    });
+    expect(result.error).toContain("Failed to find expected lines");
+    await expect(fs.readFile(path.join(tempDir, "src", "api.ts"), "utf-8"))
+      .resolves.toBe("export const api = false;\n");
+    await expect(fs.readFile(path.join(tempDir, "src", "connection.ts"), "utf-8"))
+      .resolves.toBe("export const connection = false;\n");
+  });
+
   it("uses a context-only chunk to position a later actionable chunk", async () => {
     await fs.writeFile(
       path.join(tempDir, "source.txt"),

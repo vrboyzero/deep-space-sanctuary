@@ -701,6 +701,269 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("uses one bounded correction after an atomic apply_patch input error", async () => {
+    const requiredChangedPaths = [
+      "jsonrpc/src/common/api.ts",
+      "jsonrpc/src/common/connection.ts",
+      "protocol/src/common/protocol.ts",
+    ];
+    const failedPatch = [
+      "*** Begin Patch",
+      "*** Update File: jsonrpc/src/common/api.ts",
+      "@@",
+      "-invalid context",
+      "+new api",
+      "*** Update File: jsonrpc/src/common/connection.ts",
+      "@@",
+      "-old connection",
+      "+new connection",
+      "*** End Patch",
+    ].join("\n");
+    const correctedPatch = [
+      "*** Begin Patch",
+      "*** Update File: jsonrpc/src/common/api.ts",
+      "@@",
+      "-old api",
+      "+new api",
+      "*** Update File: jsonrpc/src/common/connection.ts",
+      "@@",
+      "-old connection",
+      "+new connection",
+      "*** Update File: protocol/src/common/protocol.ts",
+      "@@",
+      "-old protocol",
+      "+new protocol",
+      "*** End Patch",
+    ].join("\n");
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, any>);
+      if (requests.length === 1) {
+        return response(modelUnanchoredVerificationReads(requiredChangedPaths));
+      }
+      if (requests.length === 2) {
+        return response(modelToolCall("patch-invalid", "apply_patch", { input: failedPatch }, 600, 90));
+      }
+      if (requests.length === 3) {
+        return response(modelToolCall("patch-corrected", "apply_patch", { input: correctedPatch }, 700, 110));
+      }
+      if (requests.length === 4) {
+        return response(modelUnanchoredVerificationReads(requiredChangedPaths));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: "corrected and verified" } }],
+        usage: { prompt_tokens: 300, completion_tokens: 30 },
+      });
+    });
+    let mutationCall = 0;
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: request.arguments?.path,
+            truncated: false,
+            content: `source context for ${String(request.arguments?.path)}`,
+          }),
+          durationMs: 1,
+        };
+      }
+      mutationCall++;
+      if (mutationCall === 1) {
+        return {
+          id: request.id,
+          name: request.name,
+          success: false,
+          output: "",
+          error: "Failed to find expected lines",
+          failureKind: "input_error" as const,
+          metadata: { repairAction: "apply_patch_input_invalid" },
+          durationMs: 1,
+        };
+      }
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: {
+            schemaVersion: 1,
+            changedPaths: requiredChangedPaths,
+          },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 3 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-atomic-input-correction",
+      text: "Apply the frozen public API migration.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 3,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(5);
+    expect(requests[2]?.tools?.map((tool: any) => tool.function.name)).toEqual(["apply_patch"]);
+    expect(requests[2]?.messages[0]?.content).toContain("Atomic input correction phase");
+    expect(requests[2]?.messages[1]?.content).toContain(
+      `Trusted required changed paths still missing:\n${JSON.stringify(requiredChangedPaths)}`,
+    );
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "file_read",
+      "file_read",
+      "file_read",
+      "apply_patch",
+      "apply_patch",
+      "file_read",
+      "file_read",
+      "file_read",
+    ]);
+    expect(execute.mock.calls[4]?.[0].arguments).toEqual({ input: correctedPatch });
+    expect(items).toContainEqual({ type: "final", text: "corrected and verified" });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("fails closed when the bounded atomic input correction also fails", async () => {
+    const requiredChangedPaths = ["src/api.ts"];
+    const patch = "*** Begin Patch\n*** Update File: src/api.ts\n@@\n-old\n+new\n*** End Patch";
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, any>);
+      if (requests.length === 1) {
+        return response(modelUnanchoredVerificationReads(requiredChangedPaths));
+      }
+      return response(modelToolCall(`patch-${requests.length}`, "apply_patch", { input: patch }, 500, 80));
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => request.name === "file_read"
+      ? {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: request.arguments?.path,
+            truncated: false,
+            content: "source context",
+          }),
+          durationMs: 1,
+        }
+      : {
+          id: request.id,
+          name: request.name,
+          success: false,
+          output: "",
+          error: "Patch context still did not match",
+          failureKind: "input_error" as const,
+          metadata: { repairAction: "apply_patch_input_invalid" },
+          durationMs: 1,
+        });
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 3 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-atomic-input-correction-failed",
+      text: "Update src/api.ts.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 3,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(3);
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "file_read",
+      "apply_patch",
+      "apply_patch",
+    ]);
+    expect(requests[2]?.messages[0]?.content).toContain("Atomic input correction phase");
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "final",
+      text: expect.stringContaining("Patch context still did not match"),
+    }));
+    expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
+  });
+
+  it("fails closed without correction for an untrusted generic input error", async () => {
+    const requiredChangedPaths = ["src/api.ts"];
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, any>);
+      if (requests.length === 1) {
+        return response(modelUnanchoredVerificationReads(requiredChangedPaths));
+      }
+      return response(modelToolCall(
+        `patch-${requests.length}`,
+        "apply_patch",
+        { input: "*** Begin Patch\n*** Update File: src/api.ts\n@@\n-old\n+new\n*** End Patch" },
+        500,
+        80,
+      ));
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => request.name === "file_read"
+      ? {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({ path: request.arguments?.path, truncated: false, content: "source context" }),
+          durationMs: 1,
+        }
+      : {
+          id: request.id,
+          name: request.name,
+          success: false,
+          output: "",
+          error: "Generic input failure without atomic evidence",
+          failureKind: "input_error" as const,
+          durationMs: 1,
+        });
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 3 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-untrusted-input-error",
+      text: "Update src/api.ts.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 3,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(2);
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual(["file_read", "apply_patch"]);
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "final",
+      text: expect.stringContaining("Generic input failure without atomic evidence"),
+    }));
+    expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
+  });
+
   it("leaves a colonless Update File header unchanged outside required mutation recovery", async () => {
     const colonlessPatch = "*** Begin Patch\n*** Update File src/api.ts\n@@\n-old\n+new\n*** End Patch";
     const requests: Array<Record<string, any>> = [];

@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { Tool, ToolCallResult, ToolContext } from "../../types.js";
 import { parsePatchText } from "./dsl.js";
-import { applyUpdateChunks } from "./match.js";
+import { ApplyPatchMatchError, applyUpdateChunks } from "./match.js";
 import { withToolContract } from "../../tool-contract.js";
 import { resolveRuntimeFilesystemScope } from "../../runtime-policy.js";
 import { readAbortReason, throwIfAborted } from "../../abort-utils.js";
@@ -449,6 +449,9 @@ export const applyPatchTool: Tool = withToolContract({
         } catch (err) {
             if (context.abortSignal?.aborted) {
                 return makeError(readAbortReason(context.abortSignal), "environment_error");
+            }
+            if (err instanceof ApplyPatchMatchError) {
+                return makeError(err.message, "input_error", buildApplyPatchInputRepairMetadata());
             }
             return makeError(err instanceof Error ? err.message : String(err));
         }

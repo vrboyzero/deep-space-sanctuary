@@ -48,7 +48,7 @@ SS 已从上一轮 `7.4/10` 推进到安全、恢复、编辑、Headless、本�
 3. 证明剩余真实仓失败族有可重复改善后，才评估 P2-C 候选。
 4. 在两个连续冻结候选版本达到全部 9.5 Gate 前，不宣称完成 9.5。
 
-当前开发环节处于暂停状态；恢复条件和顺序见第 6 节及文末进度表。
+当前开发已按第 6 节顺序恢复；精确状态和下一关闭边界以文末进度表为准。
 
 ### 1.3 9.5 目标
 
@@ -350,6 +350,7 @@ Source / Workspace Revision
 - post-write read-after-write 和 verification 规范化；
 - context-only hunk 默认在工具执行前失败关闭；仅当完整 patch 属于严格 DSL 子集、路径安全且唯一、每个文件均有真实增删时，保留原文及定位语义后原子执行；
 - 当严格解析的唯一拒绝原因是某个 update section 没有真实增删时，只保留 required path 白名单内的可执行 section 原文，并复用既有一次 missing-path continuation 补齐缺失文件；continuation 本身仍保持失败关闭；
+- 当首次 required `apply_patch` 在提交前因上下文匹配失败，并返回可信 `apply_patch_input_invalid` 标记、全部 required paths 仍未覆盖时，复用同一个 continuation 配额做且只做一次完整原子输入纠正；纠正必须按各文件源码证据重建全部 section，不重放失败 patch，第二次失败立即关闭；
 - `*** End Patch` 必须且只能作为最终行出现，重复或提前标记在工具执行前失败关闭；
 - tool-free finalization 禁用 DeepSeek thinking，并保留 summary headroom。
 
@@ -357,10 +358,10 @@ Source / Workspace Revision
 
 **确定性验证**：
 
-- 本轮 Agent 包为 `57` 个文件、`630` 个测试通过，`1` 个真实 Provider probe 跳过；Skills 包既有证据为 `110` 个文件、`935` 个测试通过，`2` 个测试跳过；
-- actionable-section 与 workspace-mutation 目标回归 `81/81` 通过；既有 recovery/ToolAgent/apply_patch 回归 `95/95`、missing-path continuation 定向回归 `77/77` 继续保留；
+- Agent + Skills 全量为 `167` 个测试文件通过、`2` 个跳过，`1569` 个测试通过、`3` 个跳过；原子纠正、request builder 与真实 apply_patch 目标回归 `104/104` 通过；
+- 红灯先证明真实上下文不匹配缺少可信原子标记、泛化 `input_error` 会被误纠正；修复后只有提交前 match error 带 `apply_patch_input_invalid`，多文件保持零写入，无该标记、普通失败或第二次纠正失败均立即关闭；
 - `corepack pnpm build`、独立 `corepack pnpm verify:build`、`verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 通过；
-- 公开行为回归证明混合 patch 只执行两个安全 section，再以既有一次 continuation 补齐第三个文件并复读三路径；required list 外路径和超过 32 条诊断投影后的第 33 个越界路径都在工具执行前拒绝。
+- 公开行为回归证明原有可信部分进度 continuation 保持不变；首次原子输入纠正覆盖完整三路径并复读，纠正再次失败时不产生第三次 mutation。
 
 **真实 canary**：
 
@@ -378,7 +379,7 @@ Source / Workspace Revision
 - event/trace=`21/23`，唯一终态=`run.failed`，report SHA-256=`76a71529e25664d98c6e156e79012d3783cb849aa248e0c3de6891b390cb25ed`；
 - artifact、fixture、runtime 与 Windows clean harness 的真实主 key 扫描=`0/48,055`、不可读文件=`0`、符号链接=`1,281`；Node、listener、根级 PID/token 与 fixture/harness residue 均为 `0`。
 
-`8c24998` formal 已冻结，禁止重跑。下一最小方向是先用公开行为回归证明：当首次 required `apply_patch` 以 `input_error` 原子失败且 changed paths=`0` 时，能否在现有一次 bounded continuation 内携带完整 required paths 纠正 patch；仍不重放失败 patch、不接受部分成功、不增加 maxTurns、maxTokens 或 Provider retry。
+`8c24998` formal 已冻结，禁止重跑。其暴露的零写入输入错误已由确定性回归和最小实现闭合；下一步只在新 identity 上先走 Windows 无费用前置 Gate，再决定是否开放唯一 formal。仍不重放失败 patch、不接受部分成功、不增加 maxTurns、maxTokens 或 Provider retry。
 
 ### 6.5 恢复后的实施顺序
 
@@ -410,6 +411,7 @@ Source / Workspace Revision
 26. **已完成：actionable section 安全保留与 continuation**。仅在严格 parser 的唯一拒绝原因为 `non_actionable_update_section` 时，保留 required path 白名单内具有真实增删的完整 section 原文；首次 mutation-only 调用成功后复用既有一次 missing-path continuation，continuation 不放宽。目标回归 `81/81`、Agent `630 passed + 1 skipped`、build 与合同 Gate 全绿，模型调用=`0`、新增费用=`$0`。
 27. **已完成：`8c24998` Windows formal 前置 Gate**。detached clean harness 的 frozen offline install（download=`0`）、workspace build、独立 `verify:build` 和零凭证 dry-run 全绿；source/harness clean、preflight passed、Provider/usage/changed paths/patch=`0/not_reached/0/0`，端口、Node、PID/token 和 fixture diff 均无残留，开放唯一 Windows formal。
 28. **已完成但失败：`8c24998` Windows formal**。唯一 formal 的 mutation patch 只有两个目标 section、缺少 `protocol.ts`，且 `api.ts` hunk 拼入不属于该文件的组合上下文；`apply_patch` 以 `input_error` 原子失败，changed paths/patch=`0/0`。route、`4/4` usage、cost、唯一失败终态、敏感值与资源清理证据完整，禁止重跑。
+29. **已完成：可信原子输入纠正**。`apply_patch` 仅为提交前 match error 附加可信纠错标记；Agent 仅在首次 required patch、全部目标仍缺失且 continuation 未使用时安排一次完整纠正。纠正不读取、不重放失败 patch、不放宽路径或原子性；无标记错误、普通失败及第二次纠正失败仍立即关闭。目标回归 `104/104`、Agent + Skills `1569 passed + 3 skipped`，build、独立 verifier、benchmark/CI 合同和 diff Gate 全绿，模型调用=`0`、新增费用=`$0`。
 
 #### P0 后续阶段实现结论：mutation hunk 无正文诊断（2026-08-17）
 
@@ -1174,6 +1176,40 @@ Source / Workspace Revision
 - **为什么先做它**：本次失败没有任何部分写入，原子性仍完整；在既有预算内给一次基于工具错误的精确纠正机会，比放宽 patch 匹配或重复执行原文更安全。
 - **当前还缺的关键闭环**：红灯、最小实现、Agent/build/合同 Gate，以及新 identity 的 Windows 三文件 formal；Windows 全绿后才复核同 identity WSL2，不启动完整矩阵、candidate v4 或 P2-C。
 
+#### P0 后续阶段实现结论：可信原子输入纠正（2026-08-17）
+
+##### 已完成内容
+
+1. **`react-workspace-mutation.ts` 与 `tool-agent.ts` 扩展**：
+   - 增加一次受限的 atomic input correction request/plan；
+   - 仅在首次 required `apply_patch`、可信提交前输入错误、全部 required paths 仍缺失且 continuation 未使用时触发；
+   - 纠正从各文件源码证据重建完整 patch，不读取或重放失败 patch，第二次失败立即关闭。
+
+2. **`apply-patch/match.ts` 与 `apply-patch/index.ts` 修改**：
+   - 用专用 match error 区分上下文不匹配与提交/环境异常；
+   - 只为提交前匹配失败返回 `input_error + apply_patch_input_invalid`，作为零写入纠正的可信依据。
+
+3. **回归测试扩展**：
+   - 覆盖三路径纠正成功并复读、第二次失败不产生第三次 mutation；
+   - 覆盖无可信标记的泛化 `input_error` 立即关闭，以及真实多文件匹配失败保持全部文件不变。
+
+4. **效果**：
+   - `8c24998` 暴露的原子输入错误可在原有一次 continuation 配额内获得一次完整纠正机会；
+   - 原有 partial-progress continuation 行为不变，普通失败与不可信错误不会被扩大为重试；
+   - 未增加 maxTurns、maxTokens、Provider retry、模型调用或费用。
+
+##### 验证结果
+
+- TypeScript 编译无错误：workspace build 与独立 `verify:build` 通过；
+- Agent + Skills `167` 个测试文件通过、`2` 个跳过，`1569` 个测试通过、`3` 个跳过；含 `4` 个新增原子纠正/可信错误测试，目标组合 `104/104` 通过；
+- `verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 通过，模型调用=`0`、新增费用=`$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：提交新 clean identity，并在 detached Windows harness 中依次执行 frozen offline install、workspace build、独立 `verify:build` 和零凭证 dry-run。
+- **为什么先做它**：只有提交态和隔离 harness 的无费用 Gate 全绿，才能确认本地工作区结果可复现并安全开放唯一付费 formal。
+- **当前还缺的关键闭环**：新 identity、Windows 前置 Gate、唯一三文件 formal 的 changed paths/evaluator/summary/route/usage/cost/敏感值/零残留；Windows 全绿后才条件式复核同 identity WSL2。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
@@ -1328,7 +1364,9 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 同版本的 WSL2 离线安装、构建和无凭据检查也已通过，但唯一正式复验中，模型只为其中两个文件给出真实修改，`api.ts` 的两段内容只有定位信息。系统在写入前拒绝整包，没有留下半成品。自动测试和实现随后允许系统只保留白名单内已有真实修改的完整文件段，再只给缺失文件一次补齐机会；越界路径仍会在写入前停止。
 
-新版本 `8c24998` 已通过 Windows 离线安装、构建和无凭据检查，但唯一正式验证给出的修改包只有两个目标文件，遗漏第三个文件，其中 `api.ts` 的定位内容还混入了不属于该文件的信息。系统尝试原子应用时整体停止，没有修改任何文件，也没有误报成功。下一步会先用自动测试验证：在第一次修改包完全没有写入且明确属于输入错误时，是否可以在原有预算内只给一次完整纠正机会；仍不会放宽文件匹配或重复执行错误内容。
+新版本 `8c24998` 已通过 Windows 离线安装、构建和无凭据检查，但唯一正式验证给出的修改包只有两个目标文件，遗漏第三个文件，其中 `api.ts` 的定位内容还混入了不属于该文件的信息。系统尝试原子应用时整体停止，没有修改任何文件，也没有误报成功。
+
+自动测试和实现现已闭合这类零写入输入错误：只有修改工具明确证明“在写入前因原文匹配失败”，并且所有目标文件仍未完成时，系统才在原有额度内给一次完整纠正机会；纠正必须重新依据各文件原文生成，不会照抄失败内容。若错误没有可信证明，或纠正再次失败，系统仍立即停止。全量测试、构建和工程检查已经通过，下一步是提交新版本并先做 Windows 无费用前置验证。
 
 在此之前，不能说原来的 37 个失败已经解决，也不能启动最终 9.5 评审。
 
@@ -1344,7 +1382,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`8c24998` Windows formal 原子失败，纠错修复待实现** | formal=`4/4` flash、event/trace=`21/23`、cost=`$0.00086688`；patch 仅 `2` 个目标 section 且 `api.ts` 上下文不可应用，changed paths/patch=`0/0`；敏感值与资源残留=`0` | 2-5 小时 | 测试先行评估零写入 `input_error` 复用一次 bounded continuation；新 identity 先走 Windows 分层 canary，全绿后才复核 WSL2 |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **可信原子输入纠正已实现并通过工程 Gate，待提交新 identity** | 仅 `apply_patch_input_invalid` 的提交前 match error 可触发一次完整纠正；目标 `104/104`、Agent + Skills `1569 passed + 3 skipped`；build、独立 verifier、benchmark/CI 合同与 diff Gate 通过；模型调用/新增费用=`0/$0` | 2-5 小时 | 提交新 identity，先走 Windows frozen offline install、build、独立 `verify:build` 与零凭证 dry-run；全绿后才开放唯一 formal，Windows formal 全绿后才复核同 identity WSL2 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | scorecard、目标向量 `9.510`、多语言投入收益、竞品和边界已复核 | - | 当前精简版与 archive-03 共同保留决策和完整历史 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |

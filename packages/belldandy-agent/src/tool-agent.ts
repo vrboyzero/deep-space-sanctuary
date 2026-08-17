@@ -135,6 +135,7 @@ import {
 import {
   areWorkspaceMutationNavigationToolCallsAllowed,
   buildWorkspaceMutationContinuationPlan,
+  buildWorkspaceMutationInputCorrectionPlan,
   buildWorkspaceMutationNavigationRequest,
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationVerificationRequest,
@@ -2420,6 +2421,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let workspaceMutationRecoveryAttempted = false;
     let workspaceMutationContinuationPending = false;
     let workspaceMutationContinuationAttempted = false;
+    let workspaceMutationInputCorrectionPending = false;
     let workspaceMutationVerificationPending = false;
     let workspaceMutationVerificationAttempts = 0;
     let workspaceMutationFinalizationPending = false;
@@ -2874,6 +2876,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
         const preflightPromptTokens = preflightSystemPromptTokens + preflightContextTokens;
         let workspaceMutationRecoveryCall = false;
         let workspaceMutationContinuationCall = false;
+        let workspaceMutationInputCorrectionCall = false;
         let workspaceMutationCallRequiredPaths: string[] = [];
         let workspaceMutationRecoveryRequest: WorkspaceMutationRecoveryRequest | undefined;
         let workspaceMutationNavigationCall = false;
@@ -2928,7 +2931,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
             tools,
             (name) => this.opts.toolExecutor.getRegisteredToolContract?.(name),
           );
-          return buildWorkspaceMutationContinuationPlan({
+          const buildPlan = workspaceMutationInputCorrectionPending
+            ? buildWorkspaceMutationInputCorrectionPlan
+            : buildWorkspaceMutationContinuationPlan;
+          return buildPlan({
             messages: mutationRecoverySourceMessages,
             tools: mutationTools,
             remainingTokenBudget: runBudget.maxTotalTokens - runBudget.totalTokens,
@@ -3000,6 +3006,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             return;
           }
           workspaceMutationContinuationCall = true;
+          workspaceMutationInputCorrectionCall = workspaceMutationInputCorrectionPending;
           workspaceMutationCallRequiredPaths = workspaceMutationPathCoverage.missingPaths();
         } else if (workspaceMutationRecoveryReadyByGate || workspaceMutationRecoveryRequiredByHeadroom) {
           selectedMutationCandidate = headroomCandidate ?? buildMutationRecoveryCandidate();
@@ -3039,6 +3046,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           if (workspaceMutationContinuationCall) {
             workspaceMutationContinuationAttempted = true;
             workspaceMutationContinuationPending = false;
+            workspaceMutationInputCorrectionPending = false;
           } else {
             workspaceMutationRecoveryAttempted = true;
             workspaceMutationRecoveryPending = false;
@@ -3046,9 +3054,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
           workspaceMutationRecoveryRequest = candidate;
           tools = candidate.tools;
           toolNames = tools.map((tool) => tool.function.name);
-          logWarn(workspaceMutationContinuationCall
-            ? "[workspace-mutation] switching to one bounded missing-path continuation"
-            : "[workspace-mutation] switching to one bounded mutation-only call", {
+          logWarn(workspaceMutationInputCorrectionCall
+            ? "[workspace-mutation] switching to one bounded atomic input correction"
+            : workspaceMutationContinuationCall
+              ? "[workspace-mutation] switching to one bounded missing-path continuation"
+              : "[workspace-mutation] switching to one bounded mutation-only call", {
             mutationInputTokens: candidate.estimatedInputTokens,
             mutationOutputTokens: mutationRecoveryOutputTokens,
             finalizationOutputReserve: finalizationOutputTokens,
@@ -5060,6 +5070,25 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
           if (workspaceMutationRecoveryCall) {
             if (!successfulWorkspaceMutation) {
+              const missingPaths = workspaceMutationPathCoverage.missingPaths();
+              const canCorrectAtomicInputFailure = !workspaceMutationContinuationCall
+                && !workspaceMutationContinuationAttempted
+                && request.name === "apply_patch"
+                && result.failureKind === "input_error"
+                && result.metadata?.repairAction === "apply_patch_input_invalid"
+                && !workspaceMutationObserved
+                && workspaceMutationCallRequiredPaths.length > 0
+                && missingPaths.length === workspaceMutationCallRequiredPaths.length;
+              if (canCorrectAtomicInputFailure) {
+                workspaceMutationContinuationPending = true;
+                workspaceMutationInputCorrectionPending = true;
+                logWarn("[workspace-mutation] bounded apply_patch failed atomically; scheduling one input correction", {
+                  missingRequiredPathCount: missingPaths.length,
+                  conversationId: input.conversationId,
+                  agentId: resolvedAgentId,
+                });
+                continue;
+              }
               yield* emitWorkspaceMutationFailure(
                 result.success
                   ? `tool ${request.name} did not satisfy the trusted workspace mutation contract.`
