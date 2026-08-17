@@ -235,6 +235,124 @@ export function normalizeWorkspaceMutationRecoveryToolCall<
   } as T;
 }
 
+export function coalesceWorkspaceMutationApplyPatchToolCalls<
+  T extends WorkspaceMutationNavigationToolCall,
+>(toolCalls: readonly T[], allowedPaths: readonly string[]): T | undefined {
+  if (toolCalls.length < 2 || toolCalls.length > 16 || allowedPaths.length === 0) {
+    return undefined;
+  }
+  const allowedPathIdentities = new Set(allowedPaths.map(normalizeSourcePath));
+  if (allowedPathIdentities.size !== allowedPaths.length) {
+    return undefined;
+  }
+
+  const sections = new Map<string, { path: string; body: string[] }>();
+  for (const sourceToolCall of toolCalls) {
+    const toolCall = normalizeWorkspaceMutationRecoveryToolCall(sourceToolCall);
+    if (toolCall.function.name !== "apply_patch") {
+      return undefined;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(toolCall.function.arguments);
+    } catch {
+      return undefined;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return undefined;
+    }
+    const argumentsRecord = parsed as Record<string, unknown>;
+    if (Object.keys(argumentsRecord).some((key) => key !== "input")
+      || typeof argumentsRecord.input !== "string") {
+      return undefined;
+    }
+    const lines = argumentsRecord.input.trim().split(/\r?\n/);
+    if (lines[0] !== "*** Begin Patch"
+      || lines.at(-1) !== "*** End Patch"
+      || lines.indexOf("*** End Patch") !== lines.length - 1) {
+      return undefined;
+    }
+
+    let currentSection: { path: string; body: string[] } | undefined;
+    let currentSectionHasHunk = false;
+    let currentHunk: { actionable: boolean; lineCount: number } | undefined;
+    let sectionCount = 0;
+    const finishHunk = (): boolean => {
+      if (!currentHunk) return true;
+      const valid = currentHunk.lineCount > 0 && currentHunk.actionable;
+      currentHunk = undefined;
+      return valid;
+    };
+
+    for (let index = 1; index < lines.length - 1; index += 1) {
+      const line = lines[index] ?? "";
+      const updateHeader = /^\*\*\* Update File:\s+(.+)$/.exec(line);
+      if (updateHeader) {
+        if (!finishHunk() || (currentSection && !currentSectionHasHunk)) return undefined;
+        const patchPath = normalizeWorkspaceMutationDiagnosticPath(updateHeader[1] ?? "");
+        const pathIdentity = normalizeSourcePath(patchPath);
+        if (patchPath === "<unsafe>" || !allowedPathIdentities.has(pathIdentity)) {
+          return undefined;
+        }
+        currentSection = sections.get(pathIdentity) ?? { path: patchPath, body: [] };
+        sections.set(pathIdentity, currentSection);
+        currentSectionHasHunk = false;
+        sectionCount += 1;
+        continue;
+      }
+      if (line.startsWith("*** ")) {
+        return undefined;
+      }
+      if (line.startsWith("@@")) {
+        if ((line !== "@@" && !line.startsWith("@@ "))
+          || !finishHunk()
+          || !currentSection) {
+          return undefined;
+        }
+        currentSection.body.push(line);
+        currentSectionHasHunk = true;
+        currentHunk = { actionable: false, lineCount: 0 };
+        continue;
+      }
+      if (!currentSection || !currentHunk) {
+        return undefined;
+      }
+      const marker = line[0];
+      if (marker && marker !== " " && marker !== "+" && marker !== "-") {
+        return undefined;
+      }
+      currentSection.body.push(line);
+      currentHunk.lineCount += 1;
+      if (marker === "+" || marker === "-") {
+        currentHunk.actionable = true;
+      }
+    }
+    if (sectionCount === 0 || !finishHunk() || !currentSectionHasHunk) {
+      return undefined;
+    }
+  }
+
+  if (sections.size !== allowedPathIdentities.size
+    || [...sections.values()].some((section) => section.body.length === 0)) {
+    return undefined;
+  }
+  const input = [
+    "*** Begin Patch",
+    ...[...sections.values()].flatMap((section) => [
+      `*** Update File: ${section.path}`,
+      ...section.body,
+    ]),
+    "*** End Patch",
+  ].join("\n");
+  return {
+    ...toolCalls[0],
+    function: {
+      ...toolCalls[0]!.function,
+      arguments: JSON.stringify({ input }),
+    },
+  } as T;
+}
+
 export function canPreserveContextOnlyWorkspaceMutationPatchHunks(
   toolCall: WorkspaceMutationNavigationToolCall,
 ): boolean {

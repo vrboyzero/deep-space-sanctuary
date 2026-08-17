@@ -140,6 +140,7 @@ import {
   buildWorkspaceMutationObjectiveReviewRequest,
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationVerificationRequest,
+  coalesceWorkspaceMutationApplyPatchToolCalls,
   formatWorkspaceMutationPatchHunkDiagnostics,
   formatWorkspaceMutationUnexpectedEndMarkerDiagnostics,
   hasOnlyWorkspaceMutationPatchPaths,
@@ -4224,6 +4225,22 @@ export class ToolEnabledAgent implements BelldandyAgent {
           toolCalls = requiredToolCalls;
         }
         if (workspaceMutationRecoveryCall || workspaceMutationObjectiveReviewCall) {
+          if (workspaceMutationContinuationCall && toolCalls.length > 1) {
+            const splitToolCallCount = toolCalls.length;
+            const coalescedToolCall = coalesceWorkspaceMutationApplyPatchToolCalls(
+              toolCalls,
+              workspaceMutationCallRequiredPaths,
+            );
+            if (coalescedToolCall) {
+              logWarn("[workspace-mutation] coalescing split missing-path apply_patch calls", {
+                splitToolCallCount,
+                requiredPathCount: workspaceMutationCallRequiredPaths.length,
+                conversationId: input.conversationId,
+                agentId: resolvedAgentId,
+              });
+              toolCalls = [coalescedToolCall];
+            }
+          }
           const requestedMutationTool = toolCalls.length === 1
             && toolNames.includes(toolCalls[0]?.function.name ?? "");
           if (!requestedMutationTool) {

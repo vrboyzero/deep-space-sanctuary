@@ -1160,6 +1160,221 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("coalesces split apply_patch calls from the bounded missing-path continuation", async () => {
+    const requiredChangedPaths = [
+      "jsonrpc/src/common/api.ts",
+      "jsonrpc/src/common/connection.ts",
+      "protocol/src/common/protocol.ts",
+    ];
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return response(modelUnanchoredVerificationReads(requiredChangedPaths));
+      }
+      if (requests.length === 2) {
+        return response(modelToolCall("patch-connection", "apply_patch", {
+          input: "*** Begin Patch\n*** Update File: jsonrpc/src/common/connection.ts\n@@\n-old connection\n+new connection\n*** End Patch",
+        }, 600, 90));
+      }
+      if (requests.length === 3) {
+        const patchCalls = [
+          modelToolCall("patch-api-import", "apply_patch", {
+            input: "*** Begin Patch\n*** Update File: jsonrpc/src/common/api.ts\n@@\n-import old\n+import new\n*** End Patch",
+          }, 0, 0).choices[0].message.tool_calls[0],
+          modelToolCall("patch-api-export", "apply_patch", {
+            input: "*** Begin Patch\n*** Update File: jsonrpc/src/common/api.ts\n@@\n-export old\n+export new\n*** End Patch",
+          }, 0, 0).choices[0].message.tool_calls[0],
+          modelToolCall("patch-protocol", "apply_patch", {
+            input: "*** Begin Patch\n*** Update File: protocol/src/common/protocol.ts\n@@\n-old protocol\n+new protocol\n*** End Patch",
+          }, 0, 0).choices[0].message.tool_calls[0],
+        ];
+        return response({
+          choices: [{
+            finish_reason: "tool_calls",
+            message: { content: null, tool_calls: patchCalls },
+          }],
+          usage: { prompt_tokens: 500, completion_tokens: 80 },
+        });
+      }
+      if (requests.length === 4) {
+        return response(modelUnanchoredVerificationReads(requiredChangedPaths));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: "fixed" } }],
+        usage: { prompt_tokens: 300, completion_tokens: 30 },
+      });
+    });
+    let mutationCall = 0;
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: request.arguments?.path,
+            truncated: false,
+            content: `source context for ${String(request.arguments?.path)}`,
+          }),
+          durationMs: 1,
+        };
+      }
+      mutationCall++;
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: {
+            schemaVersion: 1,
+            changedPaths: mutationCall === 1
+              ? [requiredChangedPaths[1]]
+              : [requiredChangedPaths[0], requiredChangedPaths[2]],
+          },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 3 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-path-split-continuation",
+      text: "Apply the frozen public API migration.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 3,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(5);
+    expect(requests[2]?.messages[0]?.content).toContain("Missing-path mutation continuation phase");
+    expect(execute.mock.calls.filter(([request]) => request.name === "apply_patch")).toHaveLength(2);
+    expect(execute.mock.calls[4]?.[0].arguments).toEqual({
+      input: [
+        "*** Begin Patch",
+        "*** Update File: jsonrpc/src/common/api.ts",
+        "@@",
+        "-import old",
+        "+import new",
+        "@@",
+        "-export old",
+        "+export new",
+        "*** Update File: protocol/src/common/protocol.ts",
+        "@@",
+        "-old protocol",
+        "+new protocol",
+        "*** End Patch",
+      ].join("\n"),
+    });
+    expect(items).toContainEqual({ type: "final", text: "fixed" });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("rejects an empty split continuation section before another mutation", async () => {
+    const requiredChangedPaths = ["src/api.ts", "src/protocol.ts"];
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return response(modelUnanchoredVerificationReads(requiredChangedPaths));
+      }
+      if (requests.length === 2) {
+        return response(modelToolCall("patch-api", "apply_patch", {
+          input: "*** Begin Patch\n*** Update File: src/api.ts\n@@\n-old api\n+new api\n*** End Patch",
+        }, 400, 70));
+      }
+      if (requests.length === 3) {
+        const patchCalls = [
+          modelToolCall("empty-protocol", "apply_patch", {
+            input: "*** Begin Patch\n*** Update File: src/protocol.ts\n*** End Patch",
+          }, 0, 0).choices[0].message.tool_calls[0],
+          modelToolCall("patch-protocol", "apply_patch", {
+            input: "*** Begin Patch\n*** Update File: src/protocol.ts\n@@\n-old protocol\n+new protocol\n*** End Patch",
+          }, 0, 0).choices[0].message.tool_calls[0],
+        ];
+        return response({
+          choices: [{
+            finish_reason: "tool_calls",
+            message: { content: null, tool_calls: patchCalls },
+          }],
+          usage: { prompt_tokens: 400, completion_tokens: 70 },
+        });
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: "unexpected retry" } }],
+        usage: { prompt_tokens: 200, completion_tokens: 30 },
+      });
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: request.arguments?.path,
+            truncated: false,
+            content: `source context for ${String(request.arguments?.path)}`,
+          }),
+          durationMs: 1,
+        };
+      }
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: {
+            schemaVersion: 1,
+            changedPaths: String(request.arguments?.input).includes("protocol")
+              ? [requiredChangedPaths[1]]
+              : [requiredChangedPaths[0]],
+          },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 3 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-path-empty-split-continuation",
+      text: "Apply the frozen public API migration.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 3,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(3);
+    expect(execute.mock.calls.filter(([request]) => request.name === "apply_patch")).toHaveLength(1);
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "final",
+      text: expect.stringContaining("exactly one allowed workspace mutation tool"),
+    }));
+    expect(items.at(-1)).toEqual({ type: "status", status: "error" });
+  });
+
   it("uses one bounded correction after an atomic apply_patch input error", async () => {
     const requiredChangedPaths = [
       "jsonrpc/src/common/api.ts",

@@ -8,6 +8,7 @@ import {
   buildWorkspaceMutationRecoveryRequest,
   buildWorkspaceMutationVerificationRequest,
   canPreserveContextOnlyWorkspaceMutationPatchHunks,
+  coalesceWorkspaceMutationApplyPatchToolCalls,
   inspectContextOnlyWorkspaceMutationPatchPreservation,
   inspectWorkspaceMutationPatchHunks,
   normalizeWorkspaceMutationRecoveryToolCall,
@@ -66,6 +67,67 @@ describe("ReAct workspace mutation recovery", () => {
     };
 
     expect(normalizeWorkspaceMutationRecoveryToolCall(call)).toBe(call);
+  });
+
+  it("fails closed for unsafe split continuation patch sets", () => {
+    const apiPatch = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/api.ts",
+      "@@",
+      "-old api",
+      "+new api",
+      "*** End Patch",
+    ]);
+    const protocolPatch = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/protocol.ts",
+      "@@",
+      "-old protocol",
+      "+new protocol",
+      "*** End Patch",
+    ]);
+    const allowedPaths = ["src/api.ts", "src/protocol.ts"];
+    const invalidPatchSets = [
+      [apiPatch, {
+        function: { name: "file_write", arguments: JSON.stringify({ path: "src/protocol.ts" }) },
+      }],
+      [apiPatch, apiPatch],
+      [apiPatch, applyPatchToolCall([
+        "*** Begin Patch",
+        "*** Update File: ../src/protocol.ts",
+        "@@",
+        "-old protocol",
+        "+new protocol",
+        "*** End Patch",
+      ])],
+      [apiPatch, applyPatchToolCall([
+        "*** Begin Patch",
+        "*** Add File: src/protocol.ts",
+        "+new protocol",
+        "*** End Patch",
+      ])],
+      [apiPatch, {
+        function: {
+          ...protocolPatch.function,
+          arguments: JSON.stringify({
+            ...JSON.parse(protocolPatch.function.arguments),
+            unexpected: true,
+          }),
+        },
+      }],
+      Array.from({ length: 17 }, () => apiPatch),
+    ];
+
+    for (const patchSet of invalidPatchSets) {
+      expect(coalesceWorkspaceMutationApplyPatchToolCalls(
+        patchSet,
+        allowedPaths,
+      )).toBeUndefined();
+    }
+    expect(coalesceWorkspaceMutationApplyPatchToolCalls(
+      [apiPatch, protocolPatch],
+      ["src/api.ts", "./src/api.ts"],
+    )).toBeUndefined();
   });
 
   it("does not guess hunk ownership for repeated empty update sections", () => {

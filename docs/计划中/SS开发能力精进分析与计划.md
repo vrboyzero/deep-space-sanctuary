@@ -1358,20 +1358,85 @@ Source / Workspace Revision
 - **为什么先做它**：提交态构建、任务合同、冻结仓输入和零凭证边界均已通过，真实三文件 mutation、post-write 目标复核、verification 与 finalization 是当前唯一剩余的 Windows 证据。
 - **当前还缺的关键闭环**：Windows 三文件 changed paths、冻结 evaluator、非空 summary、唯一 `run.completed`、完整 route/usage/cost、敏感值与资源零残留；Windows 全绿后才条件式复核同 identity WSL2。
 
+#### P0 后续阶段实现结论：`2b46799` Windows formal 部分修改失败闭环（2026-08-17）
+
+##### 已完成内容
+
+1. **唯一 Windows formal 审计**：
+   - artifact=`artifacts/p0-required-mutation-canary-2b46799-ts-api-windows-formal-r1`，run=`real-ts-api-migration-windows-a1-1786965466470`；
+   - route=`deepseek-v4-flash -> deepseek-v4-flash [primary]`，report SHA-256=`7e870924707cdf2cf634bcd5ee5aa79af6b6b90b198283be91c08373a2c8fd0f`；
+   - report=`failed/product_workflow`，changed paths=`1`，patch SHA-256=`1217b525ea8d9cf4aa6cdf5043a3906b8c42c170b2203f63bfa758764eb9ef85`。
+
+2. **结构化失败原因**：
+   - 首次 mutation 只删除了 `connection.ts` 的 deprecated aliases，`api.ts` 与 `protocol.ts` 仍待处理；
+   - 第四次模型响应把剩余修改拆成 `3` 个 `apply_patch` 调用，而 missing-path continuation 当时只允许恰好一个 mutation 调用，因此第二次写入前失败关闭；
+   - coding CLI 收尾再次出现 `read ENOTCONN`，事件流共 `16` 条且缺少唯一 terminal，未形成 evaluator、summary 与 trace 完整证据。
+
+3. **费用、安全与资源审计**：
+   - benchmark usage=`unavailable`；事件流记录 `4/4 provider_reported`、input/output=`11060/758`、cost=`$0.00111729`；
+   - 因 benchmark 终态不可观测，费用账本不采纳较小事件值抵扣，完整 `$0.10` 计入不可观测预留；
+   - artifact、fixture、runtime 与 harness 共扫描 `50,068` 个普通文件，真实主 key 命中=`0`、不可读=`0`、重解析点=`1,281`；listener、相关 Node、PID/token 均为 `0`。
+
+4. **效果**：
+   - 部分修改没有被误报为成功，`2b46799` formal 已冻结且禁止重跑；
+   - 失败形状已收敛为“可信部分进度后的 split mutation calls”，没有放宽为更多模型轮次或 Provider 重试；
+   - Windows 未闭合，因此没有进入 WSL2。
+
+##### 验证结果
+
+- TypeScript evaluator 未形成通过证据：formal 在 continuation 合同检查和 CLI 收尾阶段失败；
+- 本阶段未新增或修改测试，benchmark report 明确记录 `taskCompleted=false`、`testsPassed=false`、`patchAccepted=false`；
+- 敏感值、端口、相关 Node 与 PID/token 残留均为 `0`，失败结果和 patch 已留档。
+
+#### P0 后续阶段实现结论：split continuation 原子补丁合并（2026-08-17）
+
+##### 已完成内容
+
+1. **`react-workspace-mutation.ts` 扩展**：
+   - 新增 split `apply_patch` 合并器，把多个 Update section 组合为一次原子工具执行；
+   - 仅接受 `2..16` 个纯 `apply_patch`、严格 patch 包络和剩余 required paths 的完整覆盖；
+   - 每个原始 section/hunk 必须非空且包含真实增删，混合工具、额外参数、非 Update 操作、越界或遗漏路径全部失败关闭。
+
+2. **`tool-agent.ts` 接入**：
+   - 只在已有可信部分进度的 missing-path continuation 合并 split calls；
+   - 初始 mutation、原子输入纠正与 post-write objective correction 仍保持单调用拒绝策略；
+   - 新增仅含调用数和目标路径数、不含补丁正文的审计日志。
+
+3. **回归测试扩展**：
+   - 公开 `Agent.run()` seam 覆盖三段 split patch 合并为一次原子执行，以及空 split section 在第二次 mutation 前失败关闭；
+   - 纯函数负向用例锁定混合工具、不完整覆盖、越界路径、非 Update 包络、额外参数、重复目标和 `16` 次调用上限。
+
+4. **效果**：
+   - 模型把同一次剩余目标修改拆成多个补丁调用时，系统可在不增加模型轮次的前提下保持单次原子写入；
+   - 任一分段不满足安全合同即整组拒绝，不执行部分写入；
+   - 本次改动不扩大工具白名单、目标路径、费用预算或双平台执行范围。
+
+##### 验证结果
+
+- TypeScript 编译无错误：workspace build、Agent package build 与独立 `verify:build` 通过；
+- Agent `641 passed + 1 skipped`，Skills `936 passed + 2 skipped`，合计 `1577 passed + 3 skipped`；目标 workspace-mutation 测试 `92/92` 通过；
+- `verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 通过，未调用模型且新增费用=`$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：提交本轮代码、测试和计划文档，建立新 identity 的 detached Windows harness，依次完成离线安装、workspace build、独立 verifier 与零凭证 dry-run。
+- **为什么先做它**：真实 formal 只能证明提交态能力；先关闭所有无费用前置 Gate，才能避免把构建、冻结输入或清理问题带入唯一付费调用。
+- **当前还缺的关键闭环**：新 identity 的 clean/dry-run 证据，以及唯一 Windows formal 的三文件 mutation、evaluator、summary、terminal、usage/cost 和零残留；Windows 全绿后才允许考虑 WSL2。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
 
 - observed=`$2.24915986`；
 - reserved=`$0.94221000`；
-- unobservable reserve=`$0.60000000`；
-- 守卫上界=`30.33095888 RMB < 50 RMB`。
+- unobservable reserve=`$0.70000000`；
+- 守卫上界=`31.13095888 RMB < 50 RMB`。
 
-下一次付费 formal 的计划参数为 `priorObservedCostUsd=2.84915986`、`maxTotalCostUsd=2.94915986`；完整预留后守卫上界约 `31.13095888 RMB < 50 RMB`。项目记录不能替代 Provider 外部账单。
+下一次付费 formal 的计划参数为 `priorObservedCostUsd=2.94915986`、`maxTotalCostUsd=3.04915986`；完整预留后守卫上界约 `31.93095888 RMB < 50 RMB`。项目记录不能替代 Provider 外部账单。
 
 当前明确禁止：
 
-- 重跑 `3b506ef`、`429a6eb`、`ef40901`、`a8bf150`、`a860d16`、`d642205`、`61735d4`、`b6bf0b3`、`00d2559`、`8c24998` 或 `9b4fe30` 的任一已执行 formal；
+- 重跑 `3b506ef`、`429a6eb`、`ef40901`、`a8bf150`、`a860d16`、`d642205`、`61735d4`、`b6bf0b3`、`00d2559`、`8c24998`、`9b4fe30` 或 `2b46799` 的任一已执行 formal；
 - 增加 `maxTurns`、`maxTokens` 或 Provider 重试；
 - 未经新证据启动完整矩阵或 candidate v4；
 - 启动 P2-C、push、公开发布或生产操作。
@@ -1451,6 +1516,7 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 | --- | --- | --- |
 | context-only hunk 阻断原子 patch | `fix_now` | 保留 context-only section 的零执行边界；对结构明确、路径唯一安全的其他可执行 section，测试先行接入既有单次 missing-path continuation，不放宽最终 required-path 覆盖 |
 | post-write 复读后仍有目标残留 | `fix_now` | 已用公开 Agent 回归接入有界目标复核、一次 `apply_patch` 纠正、再次完整复读和无工具最终复核；确定性 Gate 已闭合，待新 identity Windows formal 验证真实模型行为 |
+| missing-path continuation 返回多个补丁调用 | `fix_now` | 已将完整、安全、覆盖全部剩余目标的纯 `apply_patch` 调用合并为一次原子执行；初始 mutation、post-write correction、混合或不完整调用仍失败关闭 |
 | required-mutation 其余失败改善范围 | `split_task` | 代表 canary 双平台闭合后按失败形状逐类验证，不做单任务外推 |
 | 连续候选 9.5 证据 | `split_task` | 独立进入 P2-C，不由当前 P0 费用授权自动扩大 |
 | C# 选型和生产接入 | `defer` | 真实需求、许可、安全分发和 truth set 具备后再启动 |
@@ -1459,7 +1525,7 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 | 人工 responder 与 `blocked/verifying` 时间线 | `defer` | 缺证据时保持 `incomplete` |
 | SCIP/tree-sitter/外部 MCP | `record_only` | 保留扩展位置，真实需求前不增加运行时复杂度 |
 | Provider 外部账单 | `record_only` | 项目内 usage/cost 不能替代服务商最终账单 |
-| Windows coding CLI 收尾 `read ENOTCONN` | `record_only` | 当前仅在 `a860d16` 失败收尾出现；保留证据，若新 identity 再现则拆为独立诊断任务，不与 mutation 修复混改 |
+| Windows coding CLI 收尾 `read ENOTCONN` | `split_task` | 已在 `a860d16` 与 `2b46799` 失败收尾再现；后续拆为独立诊断，不与 mutation 修复混改，终态不可观测期间按完整费用预留 |
 | Docker run `31805350776` 终态 | `record_only` | 当前凭据不可读，不推翻已验证 Quality 和本地 builder 证据 |
 | 原生 Windows sandbox 替换 OCI | `defer` | 当前 OCI fail-closed 双平台证据足够，替换风险高 |
 
@@ -1519,13 +1585,17 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 新版本 `9b4fe30` 已完成 Windows 离线安装、构建和无凭据检查；唯一正式验证随后成功修改并复读了三个目标文件，但仍漏掉 `api.ts` 中第一处旧名称，还带来一处无关缩进变化。自动验收因此拒绝结果；系统没有误报成功，也没有泄漏凭据或留下进程。该版本已冻结，不会重跑，也不会进入 WSL2。
 
-系统现已在复读后再次对照原任务：若实际文件仍有遗漏，只能在目标文件内纠正一次；纠正后必须重新读取全部目标文件，最后一次检查不能再写文件。自动测试还确认，失败样本中的第一处旧名称在有限材料预算内不会被裁掉，越界文件会在执行前被拒绝。新版本 `2b46799` 已完成 Windows 离线安装、构建和无凭据检查，确认不会在模型调用前产生费用、文件变化或资源残留；下一步只执行一次该版本的 Windows 真实验证。
+系统现已在复读后再次对照原任务：若实际文件仍有遗漏，只能在目标文件内纠正一次；纠正后必须重新读取全部目标文件，最后一次检查不能再写文件。自动测试还确认，失败样本中的第一处旧名称在有限材料预算内不会被裁掉，越界文件会在执行前被拒绝。
+
+`2b46799` 完成 Windows 离线安装、构建和无凭据检查后执行了唯一真实验证。模型先正确修改一个文件，随后把剩余两个文件的修改拆成三个独立补丁调用；系统按当时的单次修改合同在第二次写入前停止，没有把部分完成当作成功。收尾又出现连接异常，导致正式报告缺少完整终态和可入账 usage；该版本已经冻结，不会重跑或进入 WSL2。
+
+系统现在只针对这种“已有可信部分进度、剩余目标完整且每段都是真实修改”的情况，把多个补丁合并为一次原子写入。任一分段涉及其他文件、遗漏目标、为空或不是普通更新，整组都会在写入前停止。新版本需先通过提交态离线构建和无凭据检查，再只执行一次 Windows 真实验证。
 
 在此之前，不能说原来的 37 个失败已经解决，也不能启动最终 9.5 评审。
 
 ### 9.5 费用和发布边界
 
-当前费用守卫约为 **30.33 元人民币**，低于 **50 元人民币**授权上限；下一次正式验证完整预留后的守卫约为 **31.13 元人民币**。最新 Windows formal 实际费用为 `$0.00227164`；在授权上限内无需再次申请，外部服务商账单仍需单独核对。
+当前费用守卫约为 **31.13 元人民币**，低于 **50 元人民币**授权上限；下一次正式验证完整预留后的守卫约为 **31.93 元人民币**。最新 Windows formal 的事件流记录 `$0.00111729`，但正式报告 usage 不可用，因此账本保守预留完整 `$0.10`；在授权上限内无需再次申请，外部服务商账单仍需单独核对。
 
 当前不会重跑已冻结版本，不会提高模型预算，不会启动完整付费矩阵，不会 push、公开发布或执行生产操作。
 
@@ -1535,7 +1605,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`2b46799` Windows 无费用前置 Gate 已完成，待唯一 formal** | clean detached offline install/build/独立 verifier 通过；dry-run production/snapshot、fixture diff、零调用/零写入、敏感值与资源清理全绿；Agent + Skills 既有 `1574 passed + 3 skipped` | 1-2 小时 | 按既定费用参数只执行一次 `deepseek-v4-flash` Windows formal；冻结 evaluator、summary、route/usage/cost 和零残留通过后才条件式复核同 identity WSL2 |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **`2b46799` Windows formal 失败并冻结；split-call 原子合并已实现，待新 identity 无费用 Gate** | formal 仅改 `connection.ts`，后续 `3` 个 split patch 在第二次写入前失败关闭；event usage=`4/4`、benchmark usage=`unavailable`；修复后 Agent + Skills `1577 passed + 3 skipped`，build、独立 verifier、coding contracts 与 diff check 全绿 | 1-2 小时 | 提交新 identity，完成 detached offline install/build/独立 verifier/dry-run；全绿后按 `2.94915986 -> 3.04915986 USD` 只执行一次 `deepseek-v4-flash` Windows formal，Windows 全绿后才考虑 WSL2 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | scorecard、目标向量 `9.510`、多语言投入收益、竞品和边界已复核 | - | 当前精简版与 archive-03 共同保留决策和完整历史 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
