@@ -139,6 +139,7 @@ import {
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationVerificationRequest,
   formatWorkspaceMutationPatchHunkDiagnostics,
+  formatWorkspaceMutationUnexpectedEndMarkerDiagnostics,
   inspectWorkspaceMutationPatchHunks,
   isCompleteWorkspaceMutationVerificationReadResult,
   normalizeWorkspaceMutationRecoveryToolCall,
@@ -4126,6 +4127,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
           const normalizedMutationToolCall = normalizeWorkspaceMutationRecoveryToolCall(toolCalls[0]!);
           const patchDiagnostics = inspectWorkspaceMutationPatchHunks(normalizedMutationToolCall);
+          if (patchDiagnostics && patchDiagnostics.unexpectedEndMarkerCount > 0) {
+            yield* emitWorkspaceMutationFailure(
+              `the mutation-only apply_patch call contained an unexpected End Patch marker before the final marker. ${formatWorkspaceMutationUnexpectedEndMarkerDiagnostics(patchDiagnostics)}`,
+            );
+            return;
+          }
           if (patchDiagnostics && patchDiagnostics.contextOnlyHunkCount > 0) {
             yield* emitWorkspaceMutationFailure(
               `the mutation-only apply_patch call contained a context-only hunk; every @@ hunk must include a real added or removed line. ${formatWorkspaceMutationPatchHunkDiagnostics(patchDiagnostics)}`,

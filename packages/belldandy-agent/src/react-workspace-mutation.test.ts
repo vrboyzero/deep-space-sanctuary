@@ -89,6 +89,35 @@ describe("ReAct workspace mutation recovery", () => {
     expect(normalizeWorkspaceMutationRecoveryToolCall(call)).toBe(call);
   });
 
+  it("diagnoses an unexpected End Patch marker without retaining patch text", () => {
+    const call = {
+      function: {
+        name: "apply_patch",
+        arguments: JSON.stringify({
+          input: [
+            "*** Begin Patch",
+            "*** Update File: src/api.ts",
+            "@@",
+            "-old export",
+            "+new export",
+            "*** End Patch",
+            "*** End Patch",
+          ].join("\n"),
+        }),
+      },
+    };
+
+    expect(inspectWorkspaceMutationPatchHunks(call)).toEqual({
+      hunkCount: 1,
+      contextOnlyHunkCount: 0,
+      contextOnlyHunkPaths: [],
+      paths: ["src/api.ts"],
+      endMarkerCount: 2,
+      unexpectedEndMarkerCount: 1,
+      unexpectedEndMarkerPaths: ["src/api.ts"],
+    });
+  });
+
   it("bounds context-only hunk diagnostics to safe relative paths", () => {
     const call = {
       function: {
@@ -110,6 +139,9 @@ describe("ReAct workspace mutation recovery", () => {
       contextOnlyHunkCount: 1,
       contextOnlyHunkPaths: ["<unsafe>"],
       paths: ["<unsafe>"],
+      endMarkerCount: 1,
+      unexpectedEndMarkerCount: 0,
+      unexpectedEndMarkerPaths: [],
     });
   });
 
@@ -364,6 +396,9 @@ describe("ReAct workspace mutation recovery", () => {
     expect(request?.messages[0]?.content).toContain("one atomic checklist");
     expect(request?.messages[0]?.content).toContain("a real added or removed line per file");
     expect(request?.messages[0]?.content).toContain("Every @@ hunk");
+    expect(request?.messages[0]?.content).toContain(
+      "Use exactly one *** End Patch marker on the final line",
+    );
     expect(request?.messages[0]?.content).toContain(
       "copy context and removed lines as exact complete evidence source lines, never partial fragments",
     );

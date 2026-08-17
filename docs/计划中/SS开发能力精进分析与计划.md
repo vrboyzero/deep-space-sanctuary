@@ -349,15 +349,16 @@ Source / Workspace Revision
 - apply_patch CRLF/no-op/空 hunk、非空 section、header/hunk 归属检查；
 - post-write read-after-write 和 verification 规范化；
 - 每个 `@@` hunk 必须包含真实 added/removed 行，context-only hunk 在工具执行前失败关闭；
+- `*** End Patch` 必须且只能作为最终行出现，重复或提前标记在工具执行前失败关闭；
 - tool-free finalization 禁用 DeepSeek thinking，并保留 summary headroom。
 
 ### 6.3 关键验证证据
 
 **确定性验证**：
 
-- 本轮 Agent 包测试为 `57` 个文件通过、`616` 个测试通过、`1` 个真实 Provider probe 跳过；
-- 相邻 recovery/ToolAgent 目标回归由基线 `66/66` 扩展并通过为 `67/67`；
-- `corepack pnpm build`（含 `verify:build`）通过；本轮 `verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 在计划回写后复跑；
+- 本轮 Agent 包测试为 `57` 个文件通过、`618` 个测试通过、`1` 个真实 Provider probe 跳过；
+- 相邻 recovery/ToolAgent 目标回归由 `67/67` 扩展并通过为 `69/69`；
+- `corepack pnpm build`（含 `verify:build`）、`verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 通过；
 - context-only hunk 集成回归证明同文件真实 hunk 不能掩盖另一个纯上下文 hunk，并断言拒绝前不执行工具、changed paths 保持为零。
 
 **真实 canary**：
@@ -366,29 +367,29 @@ Source / Workspace Revision
 - `550e0da` 的 TS 三文件任务在 Windows 全绿；同 identity WSL2 虽完成三文件写入，但 `api.ts` 第一处 import 残留旧符号，冻结 evaluator 正确拒绝；
 - 上述 WSL2 失败促成 context-only hunk 执行前 Gate。
 
-### 6.4 最新断点：`3b506ef`
+### 6.4 最新断点：`429a6eb`
 
-`3b506ef97ac67701b8cddec1b87a5ce9af083bc6` 的 Windows detached harness：
+`429a6eb5277c2763a3cd291fe45b160b14b96966` 的 Windows detached harness：
 
 - offline frozen install、workspace build、独立 `verify:build` 和零凭证 dry-run 全绿；
-- formal 的 declared/resolved model 均为 `deepseek-v4-flash`；
-- usage=`3/3 provider_reported`，input=`7589`、output=`469`、cost=`$0.00070524`；
-- required source reads 全部到达，但第三次模型调用返回的 patch 至少含 `1` 个 context-only hunk；
-- Gate 在 `apply_patch` 执行前拒绝，唯一终态=`run.failed`、changed paths=`0`、fixture Git residue=`0`；
-- route、usage、trace、敏感值和资源零残留 Gate 通过；
-- Windows 未全绿，因此没有创建 WSL2 harness。
+- 唯一 formal `real-ts-api-migration-windows-a1-1786933275712` 的 declared/resolved model 均为 `deepseek-v4-flash`；
+- usage=`3/3 provider_reported`，input=`7575`、output=`606`、cost=`$0.00073774`；
+- `apply_patch` 在第 15 行把 `*** End Patch` 识别为非法 hunk header，符合合法外层 envelope 内存在重复或提前结束标记的形状；候选正文未持久化，不能进一步猜测；
+- 唯一终态=`run.failed`、failure=`product_workflow`、changed paths=`0`、patch 长度=`0`，fixture Git residue=`0`；
+- artifact/events 敏感值扫描、route、usage、trace、28889 listener 和资源零残留 Gate 通过；runtime 的 `.env`/`.env.local` 含本机配置，因此不宣称整个 runtime 敏感值为零；
+- Windows 未全绿，未创建 WSL2 harness。
 
-当前可观测性缺口是：拒绝发生在普通 Tool event 持久化前，artifact 未保存候选 patch，只能证明 context-only hunk `>=1`，不能可靠说明精确数量和所属路径。
-
-本轮已补齐该缺口：mutation-only 入站检查现在只解析合法 `apply_patch` envelope，输出 hunk 总数、context-only hunk 数量及经过安全投影的路径；不保存或回显 patch 正文，绝对路径、`..`、控制字符和异常路径统一投影为 `<unsafe>`。诊断通过现有失败事件文本链路持久化，公共事件 Schema 未改变。
+本轮已增加单一最终 `*** End Patch` 提示约束、结束标记精确计数及安全路径投影；重复或提前标记现在会在工具执行前 fail-closed。诊断不保存或回显 patch 正文，公共事件 Schema、模型调用数、turn/token 预算和 Provider retry 均未改变。
 
 ### 6.5 恢复后的实施顺序
 
-1. **已完成：诊断与确定性回归**。已增加无正文 hunk/path 诊断；目标回归 `67/67`，full Agent 包 `616 passed + 1 skipped`。
-2. **进行中：bounded continuation seam 检查**。当前拒绝仍在 mutation 执行前 fail-closed；只有能在原预算内形成安全、可验证的继续动作才允许恢复，否则保持失败关闭。
-3. **待执行：新 clean identity**。提交最小修复、回归测试和本计划回写；不部分写入、不猜测语义、不放宽 Gate。
-4. **待执行：Windows 验证**。按 clean build、零凭证 dry-run、唯一 formal 顺序执行，formal 固定 `deepseek-v4-flash` 和计划费用参数。
-5. **条件执行：WSL2**。仅当 Windows 三文件 patch、冻结 evaluator、summary、唯一 `run.completed`、route/usage/cost 和零残留全部通过，才创建同 identity WSL2 harness。
+1. **已完成：hunk 诊断与确定性回归**。已增加无正文 hunk/path 诊断；当时目标回归 `67/67`，Agent 包 `616 passed + 1 skipped`。
+2. **已完成：bounded continuation seam 检查**。现有 continuation 只接收“工具已成功执行且 changed paths 证明可信部分进度”的结果；context-only patch 在工具执行前整包拒绝，没有可继承的写入证据。若重试完整 patch，需要新增未预留的模型调用并可能重复无效输出，因此本轮保持显式失败关闭。
+3. **已完成：新 clean identity**。最小修复、回归测试和计划回写已提交为 `429a6eb5277c2763a3cd291fe45b160b14b96966`；canary 使用 detached clean worktree，不包含主工作区其他改动。
+4. **已完成：`429a6eb` Windows 验证**。clean build 与零凭证 dry-run 通过；唯一 formal 因重复/提前 `*** End Patch` 失败，零写入，未进入 WSL2。
+5. **已完成：结束标记最小修复与确定性验证**。增加单一最终标记提示、无正文诊断和执行前拒绝；目标回归 `69/69`、Agent 包 `618 passed + 1 skipped`、build 与合同 Gate 通过。
+6. **待执行：新 clean identity 与 Windows 复验**。提交当前修复后按 clean build、零凭证 dry-run、唯一 formal 顺序执行，formal 固定 `deepseek-v4-flash`。
+7. **条件执行：WSL2**。仅当 Windows 三文件 patch、冻结 evaluator、summary、唯一 `run.completed`、route/usage/cost 和零残留全部通过，才创建同 identity WSL2 harness。
 
 #### P0 后续阶段实现结论：mutation hunk 无正文诊断（2026-08-17）
 
@@ -414,26 +415,72 @@ Source / Workspace Revision
 - Agent 包 `57` 个测试文件通过，`616` 个测试通过，`1` 个真实 Provider probe 跳过；
 - context-only hunk 目标回归 `67/67` 通过，未调用模型、未新增费用。
 
+#### P0 后续阶段实现结论：Windows clean build、dry-run 与 formal（2026-08-17）
+
+##### 已完成内容
+
+1. **`429a6eb` detached clean harness 建立**：
+   - source/harness identity 均绑定 `429a6eb5277c2763a3cd291fe45b160b14b96966`，`workspaceDirty=false`；
+   - 离线安装复用 `492` 个包、下载 `0`，未调用 Provider。
+
+2. **Windows clean build、dry-run 与 formal**：
+   - clean build 的 TypeScript、`verify:build`、48 项 Web asset manifest 和 Agent templates 通过；
+   - dry-run 通过受控 Windows launcher 执行，`credentialsConfigured=false`、usage=`not_reached`、Provider 事件 `0`、changed paths=`0`。
+   - 唯一 formal 使用 `deepseek-v4-flash`，因第 15 行出现非法 `*** End Patch` hunk header 结束为 `run.failed/product_workflow`，changed paths=`0`。
+
+3. **bounded continuation 裁决**：
+   - context-only 入站拒绝没有可信写入结果，不能接入只接受成功部分写入的 existing continuation；
+   - 本轮不增加模型调用、turn/token 预算或 Provider 重试，继续 fail-closed。
+
+##### 验证结果
+
+- formal usage=`3/3 provider_reported`、input/output=`7575/606`、cost=`$0.00073774`；
+- 空 patch SHA-256=`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`，report SHA-256=`56857ffb3804b2f293222385086b6d88e3a64b4557b2b7cddcb68e68b00e1fbb`；
+- artifact/events 敏感值命中、28889 listener 和 fixture Git residue 均为 `0`；runtime 本机配置不纳入该零命中声明。
+
+#### P0 后续阶段实现结论：unexpected End Patch 执行前诊断（2026-08-17）
+
+##### 已完成内容
+
+1. **`react-workspace-mutation.ts` 扩展**：
+   - mutation-only 指令要求 `*** End Patch` 只在最终行出现；
+   - 诊断统计结束标记总数、额外标记数和安全路径，不保留 patch 正文。
+
+2. **`tool-agent.ts` 与回归测试接入**：
+   - 重复或提前结束标记在 `apply_patch` 执行前 fail-closed；
+   - 失败文本沿现有事件链持久化，公共 Schema、模型调用数、turn/token 和 retry 不变。
+
+3. **效果**：
+   - `429a6eb` 的同形错误会在写入工具前被准确拒绝；
+   - 明确提示降低模型重复生成错误结束标记的概率；
+   - context-only、证据预算和普通 mutation 路径保持原行为。
+
+##### 验证结果
+
+- TypeScript workspace build 与 `verify:build` 通过；
+- 目标回归 `69/69`；Agent 包 `57` 个文件、`618` 个测试通过，`1` 个真实 Provider probe 跳过；
+- `verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 通过；本实现环节模型调用=`0`、新增费用=`$0`。
+
 ##### 后续计划
 
-- **下一步准备做什么**：先复跑 coding benchmark/CI 合同 Gate，再以本次修复建立新 clean identity，执行 Windows clean build、零凭证 dry-run 和唯一 formal。
-- **为什么先做它**：诊断已经具备确定性证据，正式 canary 需要在不改变预算和 Gate 的前提下验证真实模型是否生成可接受的三文件 patch。
-- **当前还缺的关键闭环**：bounded continuation 的安全可行性、Windows formal 全部 Gate，以及 Windows 全绿后的同 identity WSL2 证据；在这些完成前不宣称 required-mutation 双平台闭环或 9.5 达标。
+- **下一步准备做什么**：提交当前修复形成新 clean identity，再执行 Windows clean build、零凭证 dry-run 和唯一 formal。
+- **为什么先做它**：确定性 Gate 已闭合，只有 clean formal 能证明真实模型输出是否已恢复为可接受的三文件 patch。
+- **当前还缺的关键闭环**：Windows formal 全部 Gate，以及 Windows 全绿后的同 identity WSL2 证据；在此之前不宣称 required-mutation 双平台闭环。
 
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
 
-- observed=`$2.23354667`；
+- observed=`$2.23428441`；
 - reserved=`$0.94221000`；
 - unobservable reserve=`$0.50000000`；
-- 守卫上界=`29.40605336 RMB < 50 RMB`。
+- 守卫上界=`29.41195528 RMB < 50 RMB`。
 
-下一次付费 formal 的计划参数为 `priorObservedCostUsd=2.73354667`、`maxTotalCostUsd=2.83354667`；完整预留后守卫上界约 `30.20605336 RMB < 50 RMB`。项目记录不能替代 Provider 外部账单。
+下一次付费 formal 的计划参数为 `priorObservedCostUsd=2.73428441`、`maxTotalCostUsd=2.83428441`；完整预留后守卫上界约 `30.21195528 RMB < 50 RMB`。项目记录不能替代 Provider 外部账单。
 
 当前明确禁止：
 
-- 重跑 `3b506ef`；
+- 重跑 `3b506ef` 或 `429a6eb`；
 - 增加 `maxTurns`、`maxTokens` 或 Provider 重试；
 - 未经新证据启动完整矩阵或 candidate v4；
 - Windows 未绿时启动 WSL2；
@@ -512,7 +559,7 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 | 技术债 | 决策 | 处理 |
 | --- | --- | --- |
-| `3b506ef` 被拒 patch 的 hunk/path 不可观测 | `split_task` | 下一轮先补无正文诊断与确定性回归，再改恢复策略 |
+| 重复/提前 `*** End Patch` 缺少执行前诊断 | `fix_now` | 已补单一最终标记约束、无正文诊断和执行前拒绝；由新 identity canary 验证真实效果 |
 | required-mutation 其余失败改善范围 | `split_task` | 代表 canary 双平台闭合后按失败形状逐类验证，不做单任务外推 |
 | 连续候选 9.5 证据 | `split_task` | 独立进入 P2-C，不由当前 P0 费用授权自动扩大 |
 | C# 选型和生产接入 | `defer` | 真实需求、许可、安全分发和 truth set 具备后再启动 |
@@ -556,20 +603,19 @@ SS 已经具备“做事前检查、做完后验证、出错时停止、程序�
 
 Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 TypeScript 迁移任务曾在 Windows 成功，但 WSL2 暴露过遗漏旧符号的问题。
 
-最新版本 `3b506ef` 已证明系统会在写入前拒绝只包含上下文、没有真实修改的 patch hunk，因此没有产生错误或部分写入。不过模型仍生成了这种无效 hunk，而且现有 artifact 没有保存足够的无正文诊断，无法确认具体是哪个文件、多少个 hunk。
+`429a6eb` 的最新 Windows 正式验证中，模型生成了重复或提前的“补丁结束标记”。旧版本在真正应用补丁时拒绝了它，因此没有修改任何文件；当前工作版本已把检查提前，并明确要求结束标记只能出现一次且必须放在最后。
 
 所以当前主要瓶颈是：
 
-1. 先把失败证据记录得足够精确；
-2. 再用确定性测试修复最小恢复路径；
-3. 用新版本先证明 Windows 全绿；
-4. 最后验证同一版本在 WSL2 也全绿。
+1. 提交当前修复，形成不混入其他改动的新版本；
+2. 用新版本先证明 Windows 全绿；
+3. 最后验证同一版本在 WSL2 也全绿。
 
 在此之前，不能说原来的 37 个失败已经解决，也不能启动最终 9.5 评审。
 
 ### 9.5 费用和发布边界
 
-当前费用守卫约为 **29.41 元人民币**，低于 **50 元人民币**授权上限；下一次正式验证完整预留后的守卫约为 **30.21 元人民币**。外部服务商账单仍需单独核对。
+当前费用守卫约为 **29.41 元人民币**，低于 **50 元人民币**授权上限；下一次正式验证完整预留后的守卫约为 **30.21 元人民币**。在该上限内无需再次申请费用授权，外部服务商账单仍需单独核对。
 
 当前不会重跑已冻结版本，不会提高模型预算，不会启动完整付费矩阵，不会 push、公开发布或执行生产操作。
 
@@ -579,7 +625,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **诊断修复完成，canary 尚未重跑** | 新诊断与回归已完成；Agent `616 passed + 1 skipped`、目标 `67/67`、build/verify:build 通过；`3b506ef` formal 仍冻结，旧 artifact 为 context-only hunk 拒绝、changed paths=`0`、未进入 WSL2 | 2-5 小时 | 先复跑合同 Gate并提交新 clean identity；再做 Windows clean build、零凭证 dry-run 和唯一 formal；Windows 全绿后才做同 identity WSL2 |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **结束标记修复完成，新 clean identity 待建立** | `429a6eb` Windows formal 因重复/提前 `*** End Patch` 失败且零写入；当前已补执行前诊断与单一最终标记约束，目标 `69/69`、Agent `618 passed + 1 skipped`、build 与合同 Gate 通过 | 2-5 小时 | 提交新 identity，再做 Windows clean build、零凭证 dry-run 和唯一 formal；全部 Gate 全绿后才做同 identity WSL2 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | scorecard、目标向量 `9.510`、多语言投入收益、竞品和边界已复核 | - | 当前精简版与 archive-03 共同保留决策和完整历史 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |

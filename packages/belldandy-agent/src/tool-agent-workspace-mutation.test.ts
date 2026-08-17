@@ -2082,6 +2082,69 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
   });
 
+  it("fails closed before executing a recovery patch with an unexpected End Patch marker", async () => {
+    const patch = [
+      "*** Begin Patch",
+      "*** Update File: src/api.ts",
+      "@@",
+      "-old export",
+      "+new export",
+      "*** End Patch",
+      "*** End Patch",
+    ].join("\n");
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, any>);
+      if (requests.length === 1) {
+        return response({
+          choices: [{ finish_reason: "stop", message: { content: "I need to change the file." } }],
+          usage: { prompt_tokens: 200, completion_tokens: 30 },
+        });
+      }
+      return response(modelToolCall("patch-1", "apply_patch", { input: patch }, 300, 60));
+    });
+    const execute = vi.fn(async (request: { id: string; name: string }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: "Patch applied successfully",
+      metadata: {
+        workspaceMutation: {
+          schemaVersion: 1,
+          changedPaths: ["src/api.ts"],
+        },
+      },
+      durationMs: 1,
+    }));
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 3 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-unexpected-end-marker",
+      text: "Change src/api.ts.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths: ["src/api.ts"],
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(2);
+    expect(execute).not.toHaveBeenCalled();
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "final",
+      text: expect.stringContaining("unexpected End Patch marker"),
+    }));
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "final",
+      text: expect.stringContaining(
+        'diagnostic=unexpected_end_marker endMarkerCount=2 unexpectedEndMarkerCount=1 paths=["src/api.ts"]',
+      ),
+    }));
+    expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
+  });
+
   it("rejects multiple mutation calls without executing either one", async () => {
     const requests: Array<Record<string, any>> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {

@@ -57,6 +57,9 @@ export type WorkspaceMutationPatchHunkDiagnostics = {
   contextOnlyHunkCount: number;
   contextOnlyHunkPaths: string[];
   paths: string[];
+  endMarkerCount: number;
+  unexpectedEndMarkerCount: number;
+  unexpectedEndMarkerPaths: string[];
 };
 
 export type WorkspaceMutationRecoveryPlan = WorkspaceMutationRecoveryRequest & {
@@ -64,7 +67,7 @@ export type WorkspaceMutationRecoveryPlan = WorkspaceMutationRecoveryRequest & {
   finalizationInputTokenReserve: number;
 };
 
-const MUTATION_PATCH_HUNK_INSTRUCTION = "Every @@ hunk must contain a real added or removed line; never emit a context-only hunk. Before the next file header, include at least one @@ hunk with a real added or removed line per file unless moving it; copy context and removed lines as exact complete evidence source lines, never partial fragments, and only from the file named by that immediately preceding header; preserve unchanged replacement prefixes and suffixes.";
+const MUTATION_PATCH_HUNK_INSTRUCTION = "Every @@ hunk needs a real added or removed line. Use exactly one *** End Patch marker on the final line. Before the next file header, include a real added or removed line per file unless moving it; copy context and removed lines as exact complete evidence source lines, never partial fragments, and only from the file named by that immediately preceding header; preserve unchanged replacement prefixes and suffixes.";
 
 const MUTATION_RECOVERY_INSTRUCTION = [
   "Mutation-only recovery phase: the task requires a successful workspace mutation before completion.",
@@ -216,9 +219,12 @@ export function inspectWorkspaceMutationPatchHunks(
   const paths: string[] = [];
   const pathSet = new Set<string>();
   const contextOnlyHunkPaths: string[] = [];
+  const unexpectedEndMarkerPaths: string[] = [];
   let currentPath = "<unknown>";
   let currentHunk: { path: string; actionable: boolean } | undefined;
   let hunkCount = 0;
+  let endMarkerCount = 0;
+  let unexpectedEndMarkerCount = 0;
 
   const rememberPath = (path: string) => {
     if (pathSet.has(path) || paths.length >= 32) return;
@@ -233,12 +239,25 @@ export function inspectWorkspaceMutationPatchHunks(
     currentHunk = undefined;
   };
 
-  for (const line of patch.split(/\r?\n/)) {
+  const lines = trimmedPatch.split(/\r?\n/);
+  const finalEndMarkerIndex = lines.lastIndexOf("*** End Patch");
+  for (const [index, line] of lines.entries()) {
     const header = /^\*\*\* (?:Update|Add|Delete) File:?\s+(.+)$/.exec(line);
     if (header) {
       finishHunk();
       currentPath = normalizeWorkspaceMutationDiagnosticPath(header[1] ?? "");
       rememberPath(currentPath);
+      continue;
+    }
+    if (line === "*** End Patch") {
+      finishHunk();
+      endMarkerCount += 1;
+      if (index !== finalEndMarkerIndex) {
+        unexpectedEndMarkerCount += 1;
+        if (unexpectedEndMarkerPaths.length < 32) {
+          unexpectedEndMarkerPaths.push(currentPath);
+        }
+      }
       continue;
     }
     if (line.startsWith("@@")) {
@@ -258,6 +277,9 @@ export function inspectWorkspaceMutationPatchHunks(
     contextOnlyHunkCount: contextOnlyHunkPaths.length,
     contextOnlyHunkPaths,
     paths,
+    endMarkerCount,
+    unexpectedEndMarkerCount,
+    unexpectedEndMarkerPaths,
   };
 }
 
@@ -269,6 +291,17 @@ export function formatWorkspaceMutationPatchHunkDiagnostics(
     `hunkCount=${diagnostics.hunkCount}`,
     `contextOnlyHunkCount=${diagnostics.contextOnlyHunkCount}`,
     `paths=${JSON.stringify(diagnostics.contextOnlyHunkPaths)}`,
+  ].join(" ");
+}
+
+export function formatWorkspaceMutationUnexpectedEndMarkerDiagnostics(
+  diagnostics: WorkspaceMutationPatchHunkDiagnostics,
+): string {
+  return [
+    "diagnostic=unexpected_end_marker",
+    `endMarkerCount=${diagnostics.endMarkerCount}`,
+    `unexpectedEndMarkerCount=${diagnostics.unexpectedEndMarkerCount}`,
+    `paths=${JSON.stringify(diagnostics.unexpectedEndMarkerPaths)}`,
   ].join(" ");
 }
 
