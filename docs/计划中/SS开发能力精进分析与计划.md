@@ -1423,6 +1423,43 @@ Source / Workspace Revision
 - **为什么先做它**：真实 formal 只能证明提交态能力；先关闭所有无费用前置 Gate，才能避免把构建、冻结输入或清理问题带入唯一付费调用。
 - **当前还缺的关键闭环**：新 identity 的 clean/dry-run 证据，以及唯一 Windows formal 的三文件 mutation、evaluator、summary、terminal、usage/cost 和零残留；Windows 全绿后才允许考虑 WSL2。
 
+#### P0 后续阶段实现结论：`2bfc76c` Windows build 与零凭证 dry-run（2026-08-17）
+
+##### 已完成内容
+
+1. **detached clean harness 验证**：
+   - source/harness 固定为 clean `2bfc76c6a4590a1149cd32b3a7e3df43917393e3`；
+   - `corepack pnpm install --offline --frozen-lockfile` 完成，resolved=`493`、reused=`492`、downloaded=`0`；
+   - workspace build 与独立 `verify:build` 通过，构建后仍为 clean detached HEAD。
+
+2. **零凭证 Windows dry-run**：
+   - artifact=`artifacts/p0-required-mutation-canary-2bfc76c-ts-api-windows-dry-run-r1`，run=`real-ts-api-migration-windows-a1-1786967406214`；
+   - report SHA-256=`b43451b792faafaf558ec7301b77416cd6df685cec5bcda4ccc7000dc42044b6`；
+   - production preflight 与 repository snapshot preflight 均为 `passed`，模型固定为 `deepseek-v4-flash`、`credentialsConfigured=false`。
+
+3. **失败关闭与清理审计**：
+   - usage=`not_reached`、cost=`null`、event/patch bytes=`0/0`、changed paths=`0`，artifact policy=`true`；
+   - frozen fixture 固定为 `fd688326f1ac2be77f8f1c62c42cd2356acaf3af`，diff/untracked=`0/0`；
+   - artifact、fixture、runtime 与 harness 共扫描 `47,748` 个普通文件，真实主 key 命中=`0`、不可读=`0`、重解析点=`1,281`；listener、相关 Node、根级 PID/token 和 Git residue 均为 `0`。
+
+4. **效果**：
+   - 新 identity 可从本地 store 离线重建并满足构建产物合同；
+   - 零凭证路径在 Provider 前确定失败关闭，没有模型调用、费用或文件修改；
+   - 已满足执行唯一 `2bfc76c` Windows formal 的全部无费用前置条件。
+
+##### 验证结果
+
+- TypeScript 编译无错误：workspace build 与独立 `verify:build` 通过；
+- 本阶段未新增或修改测试；提交前 Agent + Skills 已通过 `1577 passed + 3 skipped`；
+- Windows dry-run production/snapshot preflight、frozen fixture 与 artifact policy 通过，fixture diff=`0`；
+- Provider 调用=`0`、新增费用=`$0`，敏感值、端口、相关 Node、PID/token 和 Git residue 均为 `0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：按 `priorObservedCostUsd=2.94915986`、`maxTotalCostUsd=3.04915986`，仅使用 `deepseek-v4-flash` 执行且只执行一次 `2bfc76c` Windows formal。
+- **为什么先做它**：提交态构建、任务合同、冻结仓输入和零凭证边界均已通过，真实三文件 mutation、verification 与 finalization 是当前唯一剩余的 Windows 证据。
+- **当前还缺的关键闭环**：Windows 三文件 changed paths、冻结 evaluator、非空 summary、唯一 terminal、完整 route/usage/cost、敏感值与资源零残留；Windows 全绿后才允许考虑 WSL2。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
@@ -1605,7 +1642,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`2b46799` Windows formal 失败并冻结；split-call 原子合并已实现，待新 identity 无费用 Gate** | formal 仅改 `connection.ts`，后续 `3` 个 split patch 在第二次写入前失败关闭；event usage=`4/4`、benchmark usage=`unavailable`；修复后 Agent + Skills `1577 passed + 3 skipped`，build、独立 verifier、coding contracts 与 diff check 全绿 | 1-2 小时 | 提交新 identity，完成 detached offline install/build/独立 verifier/dry-run；全绿后按 `2.94915986 -> 3.04915986 USD` 只执行一次 `deepseek-v4-flash` Windows formal，Windows 全绿后才考虑 WSL2 |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **`2bfc76c` Windows 无费用前置 Gate 已完成，待唯一 formal** | split-call 原子合并修复后 Agent + Skills `1577 passed + 3 skipped`；clean detached offline install/build/独立 verifier 通过；dry-run 两层 preflight、fixture diff、零调用/零写入、真实主 key 与资源清理全绿 | 1-2 小时 | 按 `2.94915986 -> 3.04915986 USD` 只执行一次 `deepseek-v4-flash` Windows formal；三文件 evaluator、summary、terminal、route/usage/cost 和零残留全绿后才考虑 WSL2 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | scorecard、目标向量 `9.510`、多语言投入收益、竞品和边界已复核 | - | 当前精简版与 archive-03 共同保留决策和完整历史 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
