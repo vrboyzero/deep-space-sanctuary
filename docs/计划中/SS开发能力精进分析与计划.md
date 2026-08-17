@@ -405,6 +405,7 @@ Source / Workspace Revision
 21. **已完成：context/removal whitespace 精确复制契约**。recovery 与 continuation 共用提示要求从单一 context/evidence 逐字复制定位和删除行，并保留 diff marker 后源码原有 tab/space；提示由 `394` 缩至 `371` 字符，确定性 Gate 全绿，未改变工具、预算或重试。
 22. **已完成：`00d2559` Windows formal 前置 Gate**。detached NTFS harness 的 offline frozen install、workspace build、独立 `verify:build` 和零凭证 dry-run 全绿；Provider 未触达、敏感值与资源零残留，开放该 identity 的唯一 Windows formal。
 23. **已完成：`00d2559` Windows 三文件 formal 全绿**。唯一 formal 正确修改三个目标文件，冻结 evaluator、唯一 `run.completed`、route/usage/cost、summary、敏感值与资源 Gate 全部通过，打开同 identity WSL2 分层复核。
+24. **已完成：`00d2559` WSL2 formal 前置 Gate**。ext4 harness 的 offline frozen install、workspace build、独立 `verify:build`、mode 恢复和零凭证 dry-run 全绿；Provider 未触达，Windows/WSL2 敏感值与资源零残留，开放唯一 WSL2 formal。
 
 #### P0 后续阶段实现结论：mutation hunk 无正文诊断（2026-08-17）
 
@@ -994,6 +995,37 @@ Source / Workspace Revision
 - **为什么先做它**：Windows 已全绿，同 commit、同模型、同冻结任务在 Linux 原生文件系统上的 whitespace、mutation 和资源回收是当前唯一剩余的代表性平台证据。
 - **当前还缺的关键闭环**：WSL2 identity/build/snapshot、零凭证 Provider=`0`，以及唯一 formal 的三文件 evaluator、唯一 `run.completed`、usage/cost、敏感值与跨系统资源零残留。
 
+#### P0 后续阶段实现结论：`00d2559` WSL2 build 与零凭证 dry-run（2026-08-17）
+
+##### 已完成内容
+
+1. **WSL2 ext4 clean harness 与构建**：
+   - source/harness 固定为 clean `00d2559815aa8197e13cb6689adda7572c7f385a`，content SHA-256=`02f2540f37196856980ac449bf8c798541a3a678f5dd5a25e74069b4488f6b79`；
+   - frozen offline install 为 resolved=`494`、reused=`493`、downloaded=`0`；workspace build 与独立 `verify:build` 通过；
+   - `packages/belldandy-browser/bin/relay.mjs` mode 保持 `0644`，harness Git clean。
+
+2. **WSL2 零凭证 dry-run**：
+   - artifact=`artifacts/p0-required-mutation-canary-00d2559-ts-api-wsl-dry-run-r1`，run=`real-ts-api-migration-wsl2-linux-a1-1786952792638`；
+   - preflight/snapshot=`passed`、usage=`not_reached`、events/trace/patch=`0/0/0`，report SHA-256=`b2d9a13b2c2b6e67b6d3caa2d73d9b98aa34d99e04b2b60a3c16e357466aaf61`；
+   - WSL 原生主 key 扫描=`0/46,962`、普通文件不可读=`0`、符号链接=`1,320`。
+
+3. **效果**：
+   - WSL2 build、仓库快照、零凭证 Provider 和跨系统启动/清理 Gate 均通过；
+   - Windows/WSL2 node、listener、根级 PID/token 和 harness residue 均为 `0`；
+   - 该 identity 已满足唯一 WSL2 formal 前置条件，dry-run 冻结且不重跑。
+
+##### 验证结果
+
+- TypeScript workspace build 与独立 `verify:build` 通过；
+- dry-run preflight 和 repository snapshot 五项检查通过，usage=`not_reached`；
+- Git clean，敏感值、端口、进程、PID/token 与 patch/event/trace 残留均为 `0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：按 `priorObservedCostUsd=2.84530810`、`maxTotalCostUsd=2.94530810`，仅使用 `deepseek-v4-flash` 执行且只执行一次 `00d2559` WSL2 formal。
+- **为什么先做它**：同 identity 双平台无费用 Gate 与 Windows formal 已全绿，当前唯一剩余证据是 WSL2 真实三文件 mutation、verification 和 finalization。
+- **当前还缺的关键闭环**：WSL2 三文件 changed paths、冻结 evaluator、唯一 `run.completed`、完整 route/usage/cost、敏感值与跨系统资源零残留；全部通过才形成本轮代表性双平台闭环。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
@@ -1146,7 +1178,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 自动测试现已规定“定位和删除行的空格、制表符必须与单一原始材料逐字相同”，并保持原有材料预算。新版本 `00d2559` 已在 Windows 正确完成三个文件的修改、自动验收、最终说明、费用记录和资源清理。
 
-当前下一步是在 WSL2 原生文件系统完成同版本的离线安装、构建和无凭据检查；前置 Gate 全绿后只执行一次正式复验。系统不会重跑已冻结 formal，也不会靠增加模型调用或输出额度碰运气。
+同版本的 WSL2 离线安装、构建和无凭据检查也已通过，当前只执行一次正式复验。系统不会重跑已冻结 formal，也不会靠增加模型调用或输出额度碰运气。
 
 在此之前，不能说原来的 37 个失败已经解决，也不能启动最终 9.5 评审。
 
@@ -1162,7 +1194,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`00d2559` Windows 全绿，待同 identity WSL2 分层复核** | Windows 三文件 evaluator、唯一 `run.completed`、route=`flash -> flash`、usage=`5/5`、cost=`$0.00168515`、敏感值与资源 Gate 全绿 | 1-3 小时 | WSL2 ext4 offline install/build/独立 verify/零凭证 dry-run 全绿后执行唯一 formal；三文件与全部终态/费用/清理 Gate 通过才形成双平台闭环 |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **`00d2559` Windows 全绿、WSL2 前置 Gate 全绿，待唯一 formal** | WSL2 offline install/build/独立 verify/dry-run 全绿；preflight/snapshot passed、usage not_reached、敏感值与跨系统资源残留为 `0` | 1-3 小时 | 仅用 `deepseek-v4-flash` 执行唯一 WSL2 formal；三文件、唯一成功终态、费用和清理 Gate 全绿后形成代表性双平台闭环 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | scorecard、目标向量 `9.510`、多语言投入收益、竞品和边界已复核 | - | 当前精简版与 archive-03 共同保留决策和完整历史 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
