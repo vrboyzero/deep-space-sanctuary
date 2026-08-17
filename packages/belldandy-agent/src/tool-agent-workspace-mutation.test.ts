@@ -3341,6 +3341,193 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("drops already-covered update sections from a complete missing-path continuation", async () => {
+    const requiredChangedPaths = [
+      "jsonrpc/src/common/api.ts",
+      "jsonrpc/src/common/connection.ts",
+      "protocol/src/common/protocol.ts",
+    ];
+    const initialPatch = [
+      "*** Begin Patch",
+      "*** Update File: jsonrpc/src/common/connection.ts",
+      "@@",
+      "-export const TraceValues = TraceValue;",
+      "-export type TraceValues = TraceValue;",
+      "*** End Patch",
+    ].join("\n");
+    const continuationPatch = [
+      "*** Begin Patch",
+      "*** Update File: jsonrpc/src/common/api.ts",
+      "@@",
+      "-\tMessageStrategy, TraceValues",
+      "+\tMessageStrategy",
+      "*** Update File: jsonrpc/src/common/connection.ts",
+      "@@",
+      "-export const TraceValues = TraceValue;",
+      "-export type TraceValues = TraceValue;",
+      "*** Update File: protocol/src/common/protocol.ts",
+      "@@",
+      "-import { ProgressToken, RequestHandler, TraceValues } from 'vscode-jsonrpc';",
+      "+import { ProgressToken, RequestHandler, TraceValue } from 'vscode-jsonrpc';",
+      "*** End Patch",
+    ].join("\n");
+    const filteredContinuationPatch = [
+      "*** Begin Patch",
+      "*** Update File: jsonrpc/src/common/api.ts",
+      "@@",
+      "-\tMessageStrategy, TraceValues",
+      "+\tMessageStrategy",
+      "*** Update File: protocol/src/common/protocol.ts",
+      "@@",
+      "-import { ProgressToken, RequestHandler, TraceValues } from 'vscode-jsonrpc';",
+      "+import { ProgressToken, RequestHandler, TraceValue } from 'vscode-jsonrpc';",
+      "*** End Patch",
+    ].join("\n");
+    const incompleteCorrectionPatch = [
+      "*** Begin Patch",
+      "*** Update File: jsonrpc/src/common/api.ts",
+      "@@",
+      "-\tMessageStrategy, TraceValues",
+      "+\tMessageStrategy",
+      "*** End Patch",
+    ].join("\n");
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const isPhase = (phase: string) => body.messages?.some((message: any) => (
+        message.role === "system" && String(message.content).includes(phase)
+      ));
+      if (isPhase("Mutation-only recovery phase")) {
+        return response(modelToolCall("patch-partial", "apply_patch", { input: initialPatch }, 600, 90));
+      }
+      if (isPhase("Missing-path mutation continuation phase")) {
+        return response(modelToolCall("patch-redundant", "apply_patch", { input: continuationPatch }, 500, 80));
+      }
+      if (isPhase("Atomic input correction phase")) {
+        return response(modelToolCall("patch-incomplete", "apply_patch", {
+          input: incompleteCorrectionPatch,
+        }, 500, 80));
+      }
+      if (isPhase("Post-mutation verification phase")) {
+        return response(modelUnanchoredVerificationReads(requiredChangedPaths));
+      }
+      if (requests.length === 1) {
+        return response({
+          choices: [{ finish_reason: "stop", message: { content: "I need to change the files." } }],
+          usage: { prompt_tokens: 200, completion_tokens: 30 },
+        });
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: "migrated and verified" } }],
+        usage: { prompt_tokens: 300, completion_tokens: 30 },
+      });
+    });
+    let mutationCall = 0;
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: request.arguments?.path,
+            truncated: false,
+            content: `updated source for ${String(request.arguments?.path)}`,
+          }),
+          durationMs: 1,
+        };
+      }
+      mutationCall++;
+      const input = String(request.arguments?.input);
+      if (mutationCall === 1) {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: "Patch applied successfully",
+          metadata: {
+            workspaceMutation: {
+              schemaVersion: 1,
+              changedPaths: [requiredChangedPaths[1]],
+            },
+          },
+          durationMs: 1,
+        };
+      }
+      if (input === filteredContinuationPatch) {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: "Patch applied successfully",
+          metadata: {
+            workspaceMutation: {
+              schemaVersion: 1,
+              changedPaths: [requiredChangedPaths[0], requiredChangedPaths[2]],
+            },
+          },
+          durationMs: 1,
+        };
+      }
+      if (input.includes("jsonrpc/src/common/connection.ts")) {
+        return {
+          id: request.id,
+          name: request.name,
+          success: false,
+          output: "",
+          error: "Failed to find expected lines",
+          failureKind: "input_error" as const,
+          metadata: { repairAction: "apply_patch_input_invalid" },
+          durationMs: 1,
+        };
+      }
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: {
+            schemaVersion: 1,
+            changedPaths: [requiredChangedPaths[0]],
+          },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 4 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-continuation-covered-section",
+      text: "Remove every deprecated TraceValues import and export.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+        },
+      },
+    }));
+
+    expect(requests.some((request) => request.messages?.some((message: any) => (
+      message.role === "system" && String(message.content).includes("Atomic input correction phase")
+    )))).toBe(false);
+    const mutationCalls = execute.mock.calls
+      .map(([request]) => request)
+      .filter((request) => request.name === "apply_patch");
+    expect(mutationCalls.map((request) => request.arguments)).toEqual([
+      { input: initialPatch },
+      { input: filteredContinuationPatch },
+    ]);
+    expect(items).toContainEqual({ type: "final", text: "migrated and verified" });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("fails closed before retaining actionable sections outside the required path list", async () => {
     const requiredChangedPaths = ["src/api.ts", "src/protocol.ts"];
     const patch = [

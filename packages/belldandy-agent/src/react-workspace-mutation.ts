@@ -353,6 +353,133 @@ export function coalesceWorkspaceMutationApplyPatchToolCalls<
   } as T;
 }
 
+export function retainMissingWorkspaceMutationPatchSections<
+  T extends WorkspaceMutationNavigationToolCall,
+>(
+  sourceToolCall: T,
+  missingPaths: readonly string[],
+  requiredPaths: readonly string[],
+): T | undefined {
+  if (missingPaths.length === 0 || requiredPaths.length <= missingPaths.length) {
+    return undefined;
+  }
+  const missingPathIdentities = new Set(missingPaths.map(normalizeSourcePath));
+  const requiredPathIdentities = new Set(requiredPaths.map(normalizeSourcePath));
+  if (missingPathIdentities.size !== missingPaths.length
+    || requiredPathIdentities.size !== requiredPaths.length
+    || [...missingPathIdentities].some((path) => !requiredPathIdentities.has(path))) {
+    return undefined;
+  }
+  const coveredPathIdentities = new Set(
+    [...requiredPathIdentities].filter((path) => !missingPathIdentities.has(path)),
+  );
+  if (coveredPathIdentities.size === 0) return undefined;
+
+  const toolCall = normalizeWorkspaceMutationRecoveryToolCall(sourceToolCall);
+  if (toolCall.function.name !== "apply_patch") return undefined;
+  let argumentsRecord: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(toolCall.function.arguments) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    argumentsRecord = parsed as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+  if (Object.keys(argumentsRecord).some((key) => key !== "input")
+    || typeof argumentsRecord.input !== "string") {
+    return undefined;
+  }
+  const patch = argumentsRecord.input;
+  const lineEnding = patch.includes("\r\n") ? "\r\n" : "\n";
+  const lines = patch.split(/\r?\n/);
+  if (lines.join(lineEnding) !== patch
+    || lines[0] !== "*** Begin Patch"
+    || lines.at(-1) !== "*** End Patch"
+    || lines.indexOf("*** End Patch") !== lines.length - 1) {
+    return undefined;
+  }
+
+  const sections: Array<{
+    pathIdentity: string;
+    lines: string[];
+    hunkCount: number;
+  }> = [];
+  const seenPathIdentities = new Set<string>();
+  let currentSection: (typeof sections)[number] | undefined;
+  let currentHunk: { actionable: boolean; lineCount: number } | undefined;
+  const finishHunk = (): boolean => {
+    if (!currentHunk) return true;
+    const valid = currentHunk.lineCount > 0 && currentHunk.actionable;
+    currentHunk = undefined;
+    return valid;
+  };
+
+  for (let index = 1; index < lines.length - 1; index += 1) {
+    const line = lines[index] ?? "";
+    const updateHeader = /^\*\*\* Update File:\s+(.+)$/.exec(line);
+    if (updateHeader) {
+      if (!finishHunk() || (currentSection && currentSection.hunkCount === 0)) {
+        return undefined;
+      }
+      const patchPath = normalizeWorkspaceMutationDiagnosticPath(updateHeader[1] ?? "");
+      const pathIdentity = normalizeSourcePath(patchPath);
+      if (patchPath === "<unsafe>"
+        || seenPathIdentities.has(pathIdentity)
+        || !requiredPathIdentities.has(pathIdentity)) {
+        return undefined;
+      }
+      currentSection = { pathIdentity, lines: [line], hunkCount: 0 };
+      sections.push(currentSection);
+      seenPathIdentities.add(pathIdentity);
+      continue;
+    }
+    if (line.startsWith("*** ")) return undefined;
+    if (line.startsWith("@@")) {
+      if ((line !== "@@" && !line.startsWith("@@ "))
+        || !finishHunk()
+        || !currentSection) {
+        return undefined;
+      }
+      currentSection.lines.push(line);
+      currentSection.hunkCount += 1;
+      currentHunk = { actionable: false, lineCount: 0 };
+      continue;
+    }
+    if (!currentSection || !currentHunk) return undefined;
+    const marker = line[0];
+    if (marker && marker !== " " && marker !== "+" && marker !== "-") {
+      return undefined;
+    }
+    currentSection.lines.push(line);
+    currentHunk.lineCount += 1;
+    if (marker === "+" || marker === "-") currentHunk.actionable = true;
+  }
+  if (sections.length === 0
+    || !finishHunk()
+    || !currentSection
+    || currentSection.hunkCount === 0
+    || ![...missingPathIdentities].every((path) => seenPathIdentities.has(path))
+    || !sections.some((section) => coveredPathIdentities.has(section.pathIdentity))) {
+    return undefined;
+  }
+
+  const retainedSections = sections.filter((section) => (
+    missingPathIdentities.has(section.pathIdentity)
+  ));
+  const input = [
+    "*** Begin Patch",
+    ...retainedSections.flatMap((section) => section.lines),
+    "*** End Patch",
+  ].join(lineEnding);
+  return {
+    ...toolCall,
+    function: {
+      ...toolCall.function,
+      arguments: JSON.stringify({ ...argumentsRecord, input }),
+    },
+  } as T;
+}
+
 export function canPreserveContextOnlyWorkspaceMutationPatchHunks(
   toolCall: WorkspaceMutationNavigationToolCall,
 ): boolean {

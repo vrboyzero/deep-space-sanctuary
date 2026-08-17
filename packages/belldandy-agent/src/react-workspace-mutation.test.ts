@@ -13,6 +13,7 @@ import {
   inspectWorkspaceMutationPatchHunks,
   normalizeWorkspaceMutationRecoveryToolCall,
   retainActionableWorkspaceMutationPatchSections,
+  retainMissingWorkspaceMutationPatchSections,
   selectRequiredWorkspaceMutationNavigationToolCalls,
   selectRequiredWorkspaceMutationVerificationToolCalls,
   selectWorkspaceMutationNavigationToolDefinitions,
@@ -129,6 +130,127 @@ describe("ReAct workspace mutation recovery", () => {
       [apiPatch, protocolPatch],
       ["src/api.ts", "./src/api.ts"],
     )).toBeUndefined();
+  });
+
+  it("retains only complete missing-path sections from a continuation patch", () => {
+    const call = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/api.ts",
+      "@@",
+      "-old api",
+      "+new api",
+      "*** Update File: src/connection.ts",
+      "@@",
+      "-old connection",
+      "+new connection",
+      "*** Update File: src/protocol.ts",
+      "@@",
+      "-old protocol",
+      "+new protocol",
+      "*** End Patch",
+    ]);
+
+    const retained = retainMissingWorkspaceMutationPatchSections(
+      call,
+      ["src/api.ts", "src/protocol.ts"],
+      ["src/api.ts", "src/connection.ts", "src/protocol.ts"],
+    );
+
+    expect(JSON.parse(retained!.function.arguments)).toEqual({
+      input: [
+        "*** Begin Patch",
+        "*** Update File: src/api.ts",
+        "@@",
+        "-old api",
+        "+new api",
+        "*** Update File: src/protocol.ts",
+        "@@",
+        "-old protocol",
+        "+new protocol",
+        "*** End Patch",
+      ].join("\n"),
+    });
+  });
+
+  it("does not retain continuation sections from incomplete or untrusted patches", () => {
+    const requiredPaths = ["src/api.ts", "src/connection.ts", "src/protocol.ts"];
+    const completePatch = [
+      "*** Begin Patch",
+      "*** Update File: src/api.ts",
+      "@@",
+      "-old api",
+      "+new api",
+      "*** Update File: src/connection.ts",
+      "@@",
+      "-old connection",
+      "+new connection",
+      "*** Update File: src/protocol.ts",
+      "@@",
+      "-old protocol",
+      "+new protocol",
+      "*** End Patch",
+    ].join("\n");
+    const invalidCalls = [
+      applyPatchToolCall([
+        "*** Begin Patch",
+        "*** Update File: src/api.ts",
+        "@@",
+        "-old api",
+        "+new api",
+        "*** Update File: src/connection.ts",
+        "@@",
+        "-old connection",
+        "+new connection",
+        "*** End Patch",
+      ]),
+      applyPatchToolCall([
+        "*** Begin Patch",
+        "*** Update File: src/api.ts",
+        "@@",
+        "-old api",
+        "+new api",
+        "*** Update File: src/outside.ts",
+        "@@",
+        "-old outside",
+        "+new outside",
+        "*** Update File: src/protocol.ts",
+        "@@",
+        "-old protocol",
+        "+new protocol",
+        "*** End Patch",
+      ]),
+      applyPatchToolCall([
+        "*** Begin Patch",
+        "*** Update File: src/api.ts",
+        "@@",
+        " api context only",
+        "*** Update File: src/connection.ts",
+        "@@",
+        "-old connection",
+        "+new connection",
+        "*** Update File: src/protocol.ts",
+        "@@",
+        "-old protocol",
+        "+new protocol",
+        "*** End Patch",
+      ]),
+      {
+        ...applyPatchToolCall(completePatch.split("\n")),
+        function: {
+          name: "apply_patch",
+          arguments: JSON.stringify({ input: completePatch, unexpected: true }),
+        },
+      },
+      applyPatchToolCall(["", ...completePatch.split("\n")]),
+    ];
+
+    for (const call of invalidCalls) {
+      expect(retainMissingWorkspaceMutationPatchSections(
+        call,
+        ["src/api.ts", "src/protocol.ts"],
+        requiredPaths,
+      )).toBeUndefined();
+    }
   });
 
   it("does not guess hunk ownership for repeated empty update sections", () => {

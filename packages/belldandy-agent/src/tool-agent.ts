@@ -149,6 +149,7 @@ import {
   isCompleteWorkspaceMutationVerificationReadResult,
   normalizeWorkspaceMutationRecoveryToolCall,
   retainActionableWorkspaceMutationPatchSections,
+  retainMissingWorkspaceMutationPatchSections,
   selectWorkspaceMutationNavigationToolDefinitions,
   selectRequiredWorkspaceMutationNavigationToolCalls,
   selectRequiredWorkspaceMutationVerificationToolCalls,
@@ -4268,16 +4269,31 @@ export class ToolEnabledAgent implements BelldandyAgent {
             return;
           }
           const normalizedMutationToolCall = normalizeWorkspaceMutationRecoveryToolCall(toolCalls[0]!);
-          const patchDiagnostics = inspectWorkspaceMutationPatchHunks(normalizedMutationToolCall);
+          const missingPathMutationToolCall = workspaceMutationContinuationCall
+            ? retainMissingWorkspaceMutationPatchSections(
+                normalizedMutationToolCall,
+                workspaceMutationCallRequiredPaths,
+                requiredChangedPaths,
+              )
+            : undefined;
+          const constrainedMutationToolCall = missingPathMutationToolCall ?? normalizedMutationToolCall;
+          if (missingPathMutationToolCall) {
+            logWarn("[workspace-mutation] dropping already-covered continuation patch sections", {
+              missingRequiredPathCount: workspaceMutationCallRequiredPaths.length,
+              conversationId: input.conversationId,
+              agentId: resolvedAgentId,
+            });
+          }
+          const patchDiagnostics = inspectWorkspaceMutationPatchHunks(constrainedMutationToolCall);
           const patchPreservationDiagnostics = patchDiagnostics?.contextOnlyHunkCount
-            ? inspectContextOnlyWorkspaceMutationPatchPreservation(normalizedMutationToolCall)
+            ? inspectContextOnlyWorkspaceMutationPatchPreservation(constrainedMutationToolCall)
             : undefined;
           const actionableMutationToolCall = patchPreservationDiagnostics?.canPreserve === false
             && (patchPreservationDiagnostics.rejectionReason === "non_actionable_update_section"
               || patchPreservationDiagnostics.rejectionReason === "duplicate_update_path")
             && !workspaceMutationContinuationCall
             ? retainActionableWorkspaceMutationPatchSections(
-              normalizedMutationToolCall,
+              constrainedMutationToolCall,
               workspaceMutationCallRequiredPaths,
             )
             : undefined;
@@ -4289,7 +4305,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
           if (workspaceMutationObjectiveReviewCall
             && !hasOnlyWorkspaceMutationPatchPaths(
-              normalizedMutationToolCall,
+              constrainedMutationToolCall,
               workspaceMutationCallRequiredPaths,
             )) {
             yield* emitWorkspaceMutationFailure(
@@ -4306,7 +4322,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             );
             return;
           }
-          toolCalls = [actionableMutationToolCall ?? normalizedMutationToolCall];
+          toolCalls = [actionableMutationToolCall ?? constrainedMutationToolCall];
           if (workspaceMutationObjectiveReviewCall) {
             workspaceMutationObjectiveCorrectionAttempted = true;
           }
