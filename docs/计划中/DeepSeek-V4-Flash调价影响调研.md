@@ -11,7 +11,7 @@
 1. **不应因本次调价提高单次 `$0.10` 或累计 `$5.00` 上限。** 这两个值是货币风险上限，不是 token 配额。价格提高只会让同一费用池可支持的调用量减少；抬高上限反而会削弱 `50 RMB` 授权边界。
 2. **所有后续有凭证 formal 必须继续使用更新后的模型单价。** `de931cc`、`5200317` 与 `0cd7d13` 的 Windows/WSL2 formal 已按新高峰价 `0.375 / 1.125 / 0.0125 USD/1M` 执行；调价前的 `0.125 / 0.25 / 0.0025 USD/1M` 不得恢复使用，否则会低估 `deepseek-v4-flash` 的缓存未命中输入、输出和缓存命中费用，破坏 `maxCostUsd` 的失败关闭依据。
 3. **调价没有改变 detached clean、offline install、build、独立 verifier 和零凭证 dry-run。** `0cd7d13` 的 WSL2 无费用 Gate 已全部通过；其 formal 失败于模型返回多个提前 `*** End Patch` 的补丁结构，不是费用、turn、token 或 retry 上限导致。
-4. **formal 参数不能沿用 `3.05342019 -> 3.15342019`。** 对北京时间 2026-08-17 00:00 后的 `32` 个历史 provider-reported formal 按高峰价和输入全 miss 重算后，`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc`、`5200317` Windows/WSL2 与 `0cd7d13` Windows/WSL2 formal 均已入账；当前 observed 保守上界为 `$2.40913136`。当前未安排下一 formal；若后续新 identity 通过全部无费用 Gate，窗口只能是 `3.20913136 -> 3.30913136`，差额仍恰好 `$0.10`。
+4. **formal 参数不能沿用 `3.05342019 -> 3.15342019`。** 对北京时间 2026-08-17 00:00 后的 `32` 个历史 provider-reported formal 按高峰价和输入全 miss 重算后，`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc`、`5200317` Windows/WSL2 与 `0cd7d13` Windows/WSL2 formal 均已入账；当前 observed 保守上界为 `$2.40913136`。`8a67630` Windows formal 在 Gateway readiness 前失败，model calls/费用=`0/$0`，不改变 observed；当前不安排下一 formal。
 5. **模型名不需要改。** 当前应继续显式使用 `deepseek-v4-flash`；它对应的模型版本是 `DeepSeek-V4-Flash-0731`。旧名 `deepseek-chat`、`deepseek-reasoner` 已过官方停止使用日期，不应作为当前别名回退。
 
 ## 2. DeepSeek 官方现行价格
@@ -60,7 +60,7 @@ DeepSeek 的上下文缓存默认开启。官方响应通过 `prompt_cache_hit_t
 | 合同 | 当前值 | 证据 |
 | --- | ---: | --- |
 | Stage 0D 累计 benchmark 池 | `$5.00` | `scripts/run-coding-agent-benchmark.mjs` 的 `STAGE_0D_BENCHMARK_USAGE_BUDGET_USD` |
-| 条件式下一单次 formal 窗口 | `$0.10` | `0cd7d13` 双平台入账后若新 identity 通过全部无费用 Gate，`prior=3.20913136`、`maxTotal=3.30913136`；当前未安排执行 |
+| 条件式下一单次 formal 窗口 | `$0.10` | `8a67630` infrastructure failure 未产生费用；未来新 source identity 通过全部无费用 Gate 后仍从 `prior=3.20913136` 到 `maxTotal=3.30913136`，当前未安排执行 |
 | required-mutation token/turn | `24,000 tokens`、`12 turns` | `benchmarks/coding-agent/v3/task-manifest.json` |
 | Provider retry | `0` | 当前 Windows launcher 的 `BELLDANDY_OPENAI_MAX_RETRIES=0` |
 | 授权换算 | `50 CNY`，按 `8 CNY/USD` 并保留 `10 CNY` 缓冲 | runner 注释及 `benchmarks/coding-agent/README.md` |
@@ -128,11 +128,11 @@ BELLDANDY_MODEL_CACHE_READ_USD_PER_1M=0.0025
 
 | 当前步骤 | 是否受影响 | 处理 |
 | --- | --- | --- |
-| detached clean harness | 否 | `5200317` 双平台 formal 已冻结；本轮双根因修复提交后建立新 identity |
-| frozen offline install | 否 | 下一新 identity 继续执行 |
-| workspace build | 否 | 下一新 identity 继续执行 |
-| 独立 `verify:build` | 否 | 下一新 identity 继续执行 |
-| 零凭证 Windows dry-run | 否 | 下一新 identity 继续执行；确认 Provider/usage 均未到达 |
+| detached clean harness | 否 | `8a67630` Windows harness 已建立并保持 detached/clean |
+| frozen offline install | 否 | `493/492/0` 通过，downloaded=`0` |
+| workspace build | 否 | `8a67630` clean harness 已通过 |
+| 独立 `verify:build` | 否 | 已在 workspace build 后单独通过 |
+| 零凭证 Windows dry-run | 否 | 双 preflight 通过，credentials/usage/event/trace/patch=`false/not_reached/0/0/0`，Provider 费用=`$0` |
 | `f0615b8` 唯一 Windows formal | **已执行并冻结** | 已使用新高峰单价与 `3.17912197 -> 3.27912197`；provider-reported cost=`$0.00358616`，因 product workflow 失败未进入 WSL2 |
 | `9a7c3b3` 唯一 Windows formal | **已执行并冻结** | 已使用新高峰单价与 `3.18270813 -> 3.28270813`；provider-reported cost=`$0.00302790`，冻结 verifier 失败且未进入 WSL2 |
 | `887bcd7` 唯一 Windows formal | **已执行并冻结** | 已使用新高峰单价与 `3.18573603 -> 3.28573603`；provider-reported cost=`$0.00235180`，完整 patch 因重复 changed path 写前失败且未进入 WSL2 |
@@ -142,9 +142,17 @@ BELLDANDY_MODEL_CACHE_READ_USD_PER_1M=0.0025
 | `5200317` WSL2 formal | **已执行并冻结** | 使用新高峰价，provider-reported cost=`$0.00278265`；三路径发生变更，但漏删 `api.ts:30` 的 `TraceValues`，product workflow 失败且禁止重跑 |
 | `0cd7d13` Windows formal | **已执行并冻结** | 使用新高峰价，provider-reported cost=`$0.00639158`；三文件 mutation、冻结 verifier 与 exact/non-truncated changes 全绿 |
 | `0cd7d13` WSL2 formal | **已执行并冻结** | 使用新高峰价，provider-reported cost=`$0.00244161`；失败于 `unexpected_end_marker`，与费用、turn/token 或 retry 上限无关 |
-| `prior=3.05342019 -> max=3.15342019` | **已替换** | 条件式下一新 identity formal 使用入账后的 `3.20913136 -> 3.30913136`，仍不得超过 `$5.00`；当前未安排执行 |
+| `8a67630` Windows formal | **已执行并冻结** | Gateway readiness 前因隔离 wrapper 产生 present-empty `BELLDANDY_LOG_DIR` 而 `mkdir ''/ENOENT`；artifact/fixture/model calls=`0/0/0`、费用=`$0`，禁止重跑 |
+| `prior=3.05342019 -> max=3.15342019` | **已替换** | 未来新 source identity 通过全部无费用 Gate 后仍使用 `3.20913136 -> 3.30913136`，不得超过 `$5.00`；当前未安排执行 |
 | WSL2 | 无新增放宽 | `0cd7d13` 无费用 Gate 和唯一 formal 均已冻结；已执行版本不重跑 |
 | 完整矩阵、candidate v4、P2-C | 否 | 继续禁止启动 |
+
+`8a67630` formal 的 runtime `.env` 与 `.env.local` 当前按用户确认暂不处理，保留在：
+
+- `tmp/p0-required-mutation-canary-8a67630-ts-api-windows-formal-r1-runtime/gateway-state/.env`
+- `tmp/p0-required-mutation-canary-8a67630-ts-api-windows-formal-r1-runtime/gateway-state/.env.local`
+
+这两个文件不是项目根配置，也不改变本次 `$0` 费用结论；在后续清理完成前，env residue Gate 保持未闭合。
 
 账本复核建议按每个北京时间 2026-08-17 00:00 后的请求分别使用：
 
@@ -180,13 +188,13 @@ costUsdForGuard = costCny / 8
 | 条件式下一次 prior（含 `$0.80` 不可观测预留） | `$3.20913136` |
 | 条件式下一次 maxTotal | `$3.30913136` |
 
-当前加现有 reserved=`$0.94221000` 与 unobservable reserve=`$0.80000000` 的守卫为 `33.21073088 CNY < 50 CNY`；若以后新 identity 通过全部无费用 Gate，再加一次完整 `$0.10` 预留后为 `34.01073088 CNY < 50 CNY`。`a72f127` 虽有完整 `run.usage` 事件，但 terminal/report 不可观测，仍按既有完整 `$0.10` 不可观测预留处理，没有用局部事件值抵扣。
+当前加现有 reserved=`$0.94221000` 与 unobservable reserve=`$0.80000000` 的守卫为 `33.21073088 CNY < 50 CNY`；`8a67630` 未到达 Provider，不新增 observed 或不可观测费用。未来新 identity 若通过全部无费用 Gate，再预留完整 `$0.10` 后为 `34.01073088 CNY < 50 CNY`。`a72f127` 虽有完整 `run.usage` 事件，但 terminal/report 不可观测，仍按既有完整 `$0.10` 不可观测预留处理，没有用局部事件值抵扣。
 
 ## 7. 建议决策
 
 1. `0cd7d13` Windows/WSL2 formal 均已执行并冻结；Windows 全绿，WSL2 因异常 patch envelope 在写前失败，禁止重跑。
 2. 任何后续 formal 继续固定高峰价：`BELLDANDY_MODEL_INPUT_USD_PER_1M=0.375`、`BELLDANDY_MODEL_OUTPUT_USD_PER_1M=1.125`、`BELLDANDY_MODEL_CACHE_READ_USD_PER_1M=0.0125`，并让 formal preflight/artifact 记录该合同。
-3. 当前先测试先行处理 `unexpected_end_marker`，不安排下一付费运行；以后只有新 identity 通过全部无费用 Gate，才可使用 `prior=3.20913136`、`maxTotal=3.30913136`，无法观测者继续沿用完整 `$0.10` 预留。
+3. `8a67630` Windows formal 已在 Gateway readiness 前 infrastructure failure 并冻结，禁止重跑；launcher provider env allowlist 的确定性测试/build/合同 Gate 已以零费用闭合，提交形成新 source identity 并通过全部无费用 Gate 后，才可继续使用 `prior=3.20913136`、`maxTotal=3.30913136`。
 4. 保持 `$5.00` 累计池、`$0.10` 单次窗口、`12 turns`、`24,000 tokens` 和 Provider retry=`0` 不变。
 5. DeepSeek 最终账单仍作为外部真源单独复核；仓库内重算结果只用于保守 Gate。
 

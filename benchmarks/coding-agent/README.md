@@ -235,13 +235,18 @@ repository config 示例：
 $env:BELLDANDY_MODEL_CACHE_READ_USD_PER_1M = "<verified-cache-read-usd-per-1m>"
 $env:BELLDANDY_MODEL_INPUT_USD_PER_1M = "<verified-input-usd-per-1m>"
 $env:BELLDANDY_MODEL_OUTPUT_USD_PER_1M = "<verified-output-usd-per-1m>"
-node scripts/run-coding-agent-benchmark-windows.mjs --workspace-root <clean-harness> --source-root <clean-harness> --manifest-revision v3 --task-id real-js.bug-fix --v3-repository-config <repository-inputs.json> --fixture-root <fixture-root> --artifact-root <artifact-root> --state-root <gateway-state-root> --provider <provider-id> --model-id <model-id> --credentials-configured true
+node scripts/run-coding-agent-benchmark-windows.mjs --workspace-root <clean-harness> --source-root <clean-harness> --manifest-revision v3 --task-id real-js.bug-fix --v3-repository-config <repository-inputs.json> --fixture-root <fixture-root> --artifact-root <artifact-root> --state-root <gateway-state-root> --provider <provider-id> --model-id <model-id> --credentials-configured true --provider-env-file <control-.env.local>
 ```
 
 上述 pricing 必须来自当前 Provider/路由的已核对价格，不能使用示例值或沿用其他模型的费率。零凭证
 dry-run 可将 `--credentials-configured` 设为 `false`，此时不要求 pricing，但仍应通过同一 launcher
 验证 Gateway auth/hello 和自动回收；launcher 会从两个 child 的共享环境中清除继承的主模型 key、外部
 model config 与已知 Provider API key，确保父进程即使已经加载真实凭据也不会把 dry-run 变成真实调用。
+Windows launcher 的 child env 只转交 Windows 宿主运行键、显式 pricing、OpenAI base URL/wire API；仅当
+`credentialsConfigured=true` 时转交 `BELLDANDY_OPENAI_API_KEY`。其他父进程项目配置和空值不会进入
+Gateway/benchmark 子进程。可选的 `--provider-env-file` 也只解析上述三个 OpenAI 键，不从文件读取
+pricing；launcher 同时固定 Provider retry=`0` 并关闭非计费边界内后台能力，因此不需要用 PowerShell
+全量导入 `.env.local` 后再把其他键改成空变量。
 repository config 不保存 receipt 内容或任何凭据；receipt 由独立文件提供并在运行前复核。B/C 专属 JSON
 artifact 均限制为 1 MiB，并拒绝常见 credential 字段。命令行会为 v3 装配 native system harness；browser
 behavior、parallel read isolation、parallel write fan-in 与 restart delivery reconciliation 均按本机生产

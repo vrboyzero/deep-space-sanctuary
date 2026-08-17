@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseEnv } from "node:util";
 
 import WebSocket from "ws";
 
@@ -22,6 +23,52 @@ const REQUIRED_MODEL_PRICING_ENV_KEYS = [
   "BELLDANDY_MODEL_INPUT_USD_PER_1M",
   "BELLDANDY_MODEL_OUTPUT_USD_PER_1M",
 ];
+const FORWARDED_MODEL_PRICING_ENV_KEYS = [
+  ...REQUIRED_MODEL_PRICING_ENV_KEYS,
+  "BELLDANDY_MODEL_CACHE_READ_USD_PER_1M",
+];
+const OPENAI_ROUTING_ENV_KEYS = [
+  "BELLDANDY_OPENAI_BASE_URL",
+  "BELLDANDY_OPENAI_WIRE_API",
+];
+const OPENAI_PROVIDER_ENV_KEYS = [
+  "BELLDANDY_OPENAI_API_KEY",
+  ...OPENAI_ROUTING_ENV_KEYS,
+];
+const WINDOWS_HOST_ENV_KEYS = new Set([
+  "ALLUSERSPROFILE",
+  "APPDATA",
+  "COMMONPROGRAMFILES",
+  "COMMONPROGRAMFILES(X86)",
+  "COMMONPROGRAMW6432",
+  "COMSPEC",
+  "HOME",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "LOCALAPPDATA",
+  "NUMBER_OF_PROCESSORS",
+  "OS",
+  "PATH",
+  "PATHEXT",
+  "PROCESSOR_ARCHITECTURE",
+  "PROCESSOR_IDENTIFIER",
+  "PROCESSOR_LEVEL",
+  "PROCESSOR_REVISION",
+  "PROGRAMDATA",
+  "PROGRAMFILES",
+  "PROGRAMFILES(X86)",
+  "PROGRAMW6432",
+  "PUBLIC",
+  "SYSTEMDRIVE",
+  "SYSTEMROOT",
+  "TEMP",
+  "TMP",
+  "USERDOMAIN",
+  "USERDOMAIN_ROAMINGPROFILE",
+  "USERNAME",
+  "USERPROFILE",
+  "WINDIR",
+]);
 const ZERO_CREDENTIAL_PROVIDER_ENV_KEYS = [
   "BELLDANDY_OPENAI_API_KEY",
   "BELLDANDY_MODEL_CONFIG_FILE",
@@ -42,6 +89,8 @@ const ZERO_CREDENTIAL_PROVIDER_ENV_KEYS = [
 ];
 const CONTROLLED_GATEWAY_RUNTIME_ENV = Object.freeze({
   AUTO_OPEN_BROWSER: "false",
+  BELLDANDY_OPENAI_MAX_RETRIES: "0",
+  BELLDANDY_DANGEROUS_TOOLS_ENABLED: "true",
   BELLDANDY_PRIMARY_WARMUP_ENABLED: "false",
   BELLDANDY_MEMORY_ENABLED: "false",
   BELLDANDY_EMBEDDING_ENABLED: "false",
@@ -63,6 +112,12 @@ const CONTROLLED_GATEWAY_RUNTIME_ENV = Object.freeze({
   BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED: "false",
   BELLDANDY_DISCORD_ENABLED: "false",
   BELLDANDY_COMMUNITY_API_ENABLED: "false",
+  BELLDANDY_AGENT_BRIDGE_ENABLED: "false",
+  BELLDANDY_INJECT_MEMORY: "false",
+  BELLDANDY_EXPERIENCE_AUTO_METHOD_ENABLED: "false",
+  BELLDANDY_EXPERIENCE_AUTO_PROMOTION_ENABLED: "false",
+  BELLDANDY_EXPERIENCE_AUTO_SKILL_ENABLED: "false",
+  BELLDANDY_TOKEN_USAGE_UPLOAD_ENABLED: "false",
   BELLDANDY_FEISHU_APP_ID: "",
   BELLDANDY_FEISHU_APP_SECRET: "",
   BELLDANDY_FEISHU_AGENT_ID: "",
@@ -70,6 +125,52 @@ const CONTROLLED_GATEWAY_RUNTIME_ENV = Object.freeze({
   BELLDANDY_QQ_APP_SECRET: "",
   BELLDANDY_QQ_AGENT_ID: "",
 });
+
+export function buildWindowsChildEnvironment(baseEnv, options) {
+  const env = {};
+  for (const [key, value] of Object.entries(baseEnv ?? {})) {
+    if (WINDOWS_HOST_ENV_KEYS.has(key.toUpperCase()) && isNonEmptyEnvValue(value)) {
+      env[key] = value;
+    }
+  }
+
+  for (const key of FORWARDED_MODEL_PRICING_ENV_KEYS) {
+    copyNonEmptyEnvValue(env, baseEnv, key);
+  }
+  if (options?.provider === "openai") {
+    for (const key of OPENAI_ROUTING_ENV_KEYS) {
+      copyNonEmptyEnvValue(env, baseEnv, key);
+    }
+    if (options.credentialsConfigured === true) {
+      copyNonEmptyEnvValue(env, baseEnv, "BELLDANDY_OPENAI_API_KEY");
+    }
+  }
+  return env;
+}
+
+export async function loadWindowsProviderEnvironment(filePath, dependencies = {}) {
+  const readFile = dependencies.readFile ?? fs.readFile;
+  const parse = dependencies.parseEnv ?? parseEnv;
+  const parsed = parse(await readFile(filePath, "utf-8"));
+  const env = {};
+  for (const key of OPENAI_PROVIDER_ENV_KEYS) {
+    copyNonEmptyEnvValue(env, parsed, key);
+  }
+  return env;
+}
+
+export async function resolveWindowsBenchmarkSourceEnvironment(input, dependencies = {}) {
+  const baseEnv = dependencies.baseEnv ?? process.env;
+  if (input.providerEnvFile === undefined) return baseEnv;
+
+  const providerEnvFile = (dependencies.resolvePath ?? path.resolve)(
+    requireInput(input, "providerEnvFile"),
+  );
+  const providerFileEnv = await (
+    dependencies.loadProviderEnvironment ?? loadWindowsProviderEnvironment
+  )(providerEnvFile);
+  return { ...baseEnv, ...providerFileEnv };
+}
 
 export function buildWindowsBenchmarkInvocation(input, dependencies = {}) {
   const resolvePath = dependencies.resolvePath ?? path.resolve;
@@ -144,7 +245,7 @@ export function buildWindowsBenchmarkInvocation(input, dependencies = {}) {
     : requireInput(input, "shadowCandidateId");
 
   const env = {
-    ...baseEnv,
+    ...buildWindowsChildEnvironment(baseEnv, { credentialsConfigured, provider }),
     BELLDANDY_STATE_DIR: gatewayStateRoot,
     BELLDANDY_STATE_DIR_WINDOWS: gatewayStateRoot,
     BELLDANDY_ENV_DIR: gatewayStateRoot,
@@ -319,7 +420,11 @@ export async function runWindowsBenchmark(input, dependencies = {}) {
   if (platform !== "win32") {
     throw new Error("The Windows benchmark launcher must execute on Windows.");
   }
-  const invocation = buildWindowsBenchmarkInvocation(input, dependencies);
+  const baseEnv = await resolveWindowsBenchmarkSourceEnvironment(input, dependencies);
+  const invocation = buildWindowsBenchmarkInvocation(input, {
+    ...dependencies,
+    baseEnv,
+  });
   const spawnProcess = dependencies.spawn ?? spawn;
   await assertPortClosed(invocation.endpoint.host, invocation.endpoint.port);
   await fs.mkdir(invocation.paths.gatewayStateRoot, { recursive: true });
@@ -419,6 +524,15 @@ function hasExited(child) {
   return child.exitCode !== null || child.signalCode !== null;
 }
 
+function copyNonEmptyEnvValue(target, source, key) {
+  const value = source?.[key];
+  if (isNonEmptyEnvValue(value)) target[key] = value;
+}
+
+function isNonEmptyEnvValue(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 function normalizePort(value) {
   const port = Number(value);
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
@@ -481,6 +595,7 @@ async function main() {
     manifestRevision: values.get("manifest-revision") ?? "v1",
     sourceRoot: values.get("source-root"),
     v3RepositoryConfig: values.get("v3-repository-config"),
+    providerEnvFile: values.get("provider-env-file"),
     ...(values.has("prior-observed-cost-usd") ? {
       priorObservedCostUsd: Number(requireValue(values, "prior-observed-cost-usd")),
     } : {}),

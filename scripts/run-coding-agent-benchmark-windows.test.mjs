@@ -4,13 +4,114 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  buildWindowsChildEnvironment,
   buildWindowsBenchmarkInvocation,
+  loadWindowsProviderEnvironment,
+  resolveWindowsBenchmarkSourceEnvironment,
   stopWindowsBenchmarkGateway,
 } from "./run-coding-agent-benchmark-windows.mjs";
 
 const workspaceRoot = "E:/project/star-sanctuary/.tmp/clean-harness";
 
 describe("coding agent benchmark Windows launcher", () => {
+  it("reads only allowlisted OpenAI settings from an explicit provider env file", async () => {
+    const readFile = vi.fn(async () => [
+      "BELLDANDY_OPENAI_API_KEY=provider-key",
+      "BELLDANDY_OPENAI_BASE_URL=https://api.deepseek.com",
+      'BELLDANDY_OPENAI_WIRE_API="chat_completions"',
+      "BELLDANDY_MODEL_INPUT_USD_PER_1M=999",
+      "BELLDANDY_LOG_DIR=E:/user-state/logs",
+      "DASHSCOPE_API_KEY=other-provider-key",
+    ].join("\n"));
+
+    await expect(loadWindowsProviderEnvironment("E:/control/.env.local", { readFile }))
+      .resolves.toEqual({
+        BELLDANDY_OPENAI_API_KEY: "provider-key",
+        BELLDANDY_OPENAI_BASE_URL: "https://api.deepseek.com",
+        BELLDANDY_OPENAI_WIRE_API: "chat_completions",
+      });
+    expect(readFile).toHaveBeenCalledWith("E:/control/.env.local", "utf-8");
+  });
+
+  it("lets an explicit provider env file replace present-empty parent values", async () => {
+    const loadProviderEnvironment = vi.fn(async () => ({
+      BELLDANDY_OPENAI_API_KEY: "provider-key",
+      BELLDANDY_OPENAI_BASE_URL: "https://api.deepseek.com",
+    }));
+
+    await expect(resolveWindowsBenchmarkSourceEnvironment({
+      providerEnvFile: "E:/control/.env.local",
+    }, {
+      baseEnv: {
+        Path: "C:/Windows/System32",
+        BELLDANDY_OPENAI_API_KEY: "",
+        BELLDANDY_MODEL_INPUT_USD_PER_1M: "0.375",
+      },
+      resolvePath: (value) => path.win32.resolve(value),
+      loadProviderEnvironment,
+    })).resolves.toMatchObject({
+      Path: "C:/Windows/System32",
+      BELLDANDY_OPENAI_API_KEY: "provider-key",
+      BELLDANDY_OPENAI_BASE_URL: "https://api.deepseek.com",
+      BELLDANDY_MODEL_INPUT_USD_PER_1M: "0.375",
+    });
+    expect(loadProviderEnvironment).toHaveBeenCalledWith(
+      path.win32.resolve("E:/control/.env.local"),
+    );
+  });
+
+  it("forwards only host, pricing, and allowlisted OpenAI configuration to children", () => {
+    const childEnv = buildWindowsChildEnvironment({
+      Path: "C:/Windows/System32",
+      BELLDANDY_OPENAI_API_KEY: "sensitive-provider-key",
+      BELLDANDY_OPENAI_BASE_URL: "https://api.deepseek.com",
+      BELLDANDY_OPENAI_WIRE_API: "chat_completions",
+      BELLDANDY_MODEL_CACHE_READ_USD_PER_1M: "0.0125",
+      BELLDANDY_MODEL_INPUT_USD_PER_1M: "0.375",
+      BELLDANDY_MODEL_OUTPUT_USD_PER_1M: "1.125",
+      BELLDANDY_LOG_DIR: "",
+      BELLDANDY_MODEL_CONFIG_FILE: "E:/user-state/models.json",
+      BELLDANDY_EXTRA_WORKSPACE_ROOTS: "E:/outside-scope",
+      UNRELATED_PROJECT_SETTING: "must-not-cross-process-boundary",
+    }, {
+      credentialsConfigured: true,
+      provider: "openai",
+    });
+
+    expect(childEnv).toMatchObject({
+      Path: "C:/Windows/System32",
+      BELLDANDY_OPENAI_API_KEY: "sensitive-provider-key",
+      BELLDANDY_OPENAI_BASE_URL: "https://api.deepseek.com",
+      BELLDANDY_OPENAI_WIRE_API: "chat_completions",
+      BELLDANDY_MODEL_CACHE_READ_USD_PER_1M: "0.0125",
+      BELLDANDY_MODEL_INPUT_USD_PER_1M: "0.375",
+      BELLDANDY_MODEL_OUTPUT_USD_PER_1M: "1.125",
+    });
+    expect(childEnv).not.toHaveProperty("BELLDANDY_LOG_DIR");
+    expect(childEnv).not.toHaveProperty("BELLDANDY_MODEL_CONFIG_FILE");
+    expect(childEnv).not.toHaveProperty("BELLDANDY_EXTRA_WORKSPACE_ROOTS");
+    expect(childEnv).not.toHaveProperty("UNRELATED_PROJECT_SETTING");
+  });
+
+  it("keeps non-secret OpenAI routing but drops the API key for zero-credential children", () => {
+    const childEnv = buildWindowsChildEnvironment({
+      BELLDANDY_OPENAI_API_KEY: "sensitive-provider-key",
+      BELLDANDY_OPENAI_BASE_URL: "https://api.deepseek.com",
+      BELLDANDY_OPENAI_WIRE_API: "chat_completions",
+      BELLDANDY_MODEL_CONFIG_FILE: "E:/user-state/models.json",
+    }, {
+      credentialsConfigured: false,
+      provider: "openai",
+    });
+
+    expect(childEnv).toMatchObject({
+      BELLDANDY_OPENAI_BASE_URL: "https://api.deepseek.com",
+      BELLDANDY_OPENAI_WIRE_API: "chat_completions",
+    });
+    expect(childEnv).not.toHaveProperty("BELLDANDY_OPENAI_API_KEY");
+    expect(childEnv).not.toHaveProperty("BELLDANDY_MODEL_CONFIG_FILE");
+  });
+
   it("binds the Gateway allowlist and ephemeral token to the actual benchmark endpoint", () => {
     const invocation = buildWindowsBenchmarkInvocation({
       workspaceRoot,
@@ -35,8 +136,12 @@ describe("coding agent benchmark Windows launcher", () => {
         BELLDANDY_ALLOWED_ORIGINS: "http://127.0.0.1:28889",
         BELLDANDY_STATE_DIR_WINDOWS: "H:/user-state",
         BELLDANDY_OPENAI_API_KEY: "sensitive-provider-key",
+        BELLDANDY_OPENAI_BASE_URL: "https://api.deepseek.com",
+        BELLDANDY_OPENAI_WIRE_API: "chat_completions",
         BELLDANDY_MODEL_INPUT_USD_PER_1M: "0.125",
         BELLDANDY_MODEL_OUTPUT_USD_PER_1M: "0.25",
+        BELLDANDY_LOG_DIR: "",
+        BELLDANDY_EXTRA_WORKSPACE_ROOTS: "E:/outside-scope",
       },
       randomToken: () => "ephemeral-gateway-token",
       resolvePath: (value) => path.win32.resolve(value),
@@ -57,9 +162,13 @@ describe("coding agent benchmark Windows launcher", () => {
       BELLDANDY_STATE_DIR_WINDOWS: path.win32.resolve("E:/project/star-sanctuary/tmp/runtime"),
       BELLDANDY_AGENT_PROVIDER: "openai",
       BELLDANDY_OPENAI_MODEL: "deepseek-v4-flash",
+      BELLDANDY_OPENAI_BASE_URL: "https://api.deepseek.com",
+      BELLDANDY_OPENAI_WIRE_API: "chat_completions",
       BELLDANDY_MODEL_INPUT_USD_PER_1M: "0.125",
       BELLDANDY_MODEL_OUTPUT_USD_PER_1M: "0.25",
     });
+    expect(invocation.gateway.env).not.toHaveProperty("BELLDANDY_LOG_DIR");
+    expect(invocation.gateway.env).not.toHaveProperty("BELLDANDY_EXTRA_WORKSPACE_ROOTS");
     expect(invocation.benchmark.env).toBe(invocation.gateway.env);
     expect(invocation.benchmark.args).toEqual(expect.arrayContaining([
       "--platform", "windows-native",
@@ -114,6 +223,8 @@ describe("coding agent benchmark Windows launcher", () => {
     }, {
       baseEnv: {
         BELLDANDY_OPENAI_API_KEY: "sensitive-provider-key",
+        BELLDANDY_OPENAI_BASE_URL: "https://api.deepseek.com",
+        BELLDANDY_OPENAI_WIRE_API: "chat_completions",
         BELLDANDY_MODEL_CONFIG_FILE: "E:/user-state/models.json",
         BELLDANDY_MODEL_PREFERRED_PROVIDERS: "fallback",
       },
@@ -123,6 +234,10 @@ describe("coding agent benchmark Windows launcher", () => {
     });
 
     expect(invocation.gateway.env).not.toHaveProperty("BELLDANDY_OPENAI_API_KEY");
+    expect(invocation.gateway.env).toMatchObject({
+      BELLDANDY_OPENAI_BASE_URL: "https://api.deepseek.com",
+      BELLDANDY_OPENAI_WIRE_API: "chat_completions",
+    });
     expect(invocation.gateway.env).not.toHaveProperty("BELLDANDY_MODEL_CONFIG_FILE");
     expect(invocation.gateway.env).not.toHaveProperty("BELLDANDY_MODEL_PREFERRED_PROVIDERS");
     expect(invocation.benchmark.env).toBe(invocation.gateway.env);
@@ -184,6 +299,32 @@ describe("coding agent benchmark Windows launcher", () => {
     expect(invocation.benchmark.env).toBe(invocation.gateway.env);
   });
 
+  it("forces zero Provider retry while keeping benchmark command tools available", () => {
+    const invocation = buildWindowsBenchmarkInvocation({
+      workspaceRoot,
+      fixtureRoot: "E:/project/star-sanctuary/tmp/fixtures",
+      artifactRoot: "E:/project/star-sanctuary/artifacts/windows-formal",
+      stateRoot: "E:/project/star-sanctuary/tmp/runtime",
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      credentialsConfigured: true,
+    }, {
+      baseEnv: {
+        BELLDANDY_MODEL_INPUT_USD_PER_1M: "0.375",
+        BELLDANDY_MODEL_OUTPUT_USD_PER_1M: "1.125",
+        BELLDANDY_OPENAI_MAX_RETRIES: "9",
+        BELLDANDY_DANGEROUS_TOOLS_ENABLED: "false",
+      },
+      resolvePath: (value) => path.win32.resolve(value),
+    });
+
+    expect(invocation.gateway.env).toMatchObject({
+      BELLDANDY_OPENAI_MAX_RETRIES: "0",
+      BELLDANDY_DANGEROUS_TOOLS_ENABLED: "true",
+    });
+    expect(invocation.benchmark.env).toBe(invocation.gateway.env);
+  });
+
   it("disables unaccounted background runtime for controlled benchmark runs", () => {
     const disabledRuntimeKeys = [
       "AUTO_OPEN_BROWSER",
@@ -208,6 +349,12 @@ describe("coding agent benchmark Windows launcher", () => {
       "BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED",
       "BELLDANDY_DISCORD_ENABLED",
       "BELLDANDY_COMMUNITY_API_ENABLED",
+      "BELLDANDY_AGENT_BRIDGE_ENABLED",
+      "BELLDANDY_INJECT_MEMORY",
+      "BELLDANDY_EXPERIENCE_AUTO_METHOD_ENABLED",
+      "BELLDANDY_EXPERIENCE_AUTO_PROMOTION_ENABLED",
+      "BELLDANDY_EXPERIENCE_AUTO_SKILL_ENABLED",
+      "BELLDANDY_TOKEN_USAGE_UPLOAD_ENABLED",
     ];
     const invocation = buildWindowsBenchmarkInvocation({
       workspaceRoot,
