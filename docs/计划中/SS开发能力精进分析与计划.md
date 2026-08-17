@@ -403,6 +403,7 @@ Source / Workspace Revision
 19. **已完成：`b6bf0b3` Windows 分层复验**。offline install、clean build、零凭证 dry-run 和唯一 formal 全绿；三文件 evaluator、唯一 `run.completed`、route/usage/cost、敏感值与资源 Gate 均通过，打开同 identity WSL2 复核。
 20. **已完成但失败：`b6bf0b3` 同 identity WSL2 复核**。ext4 offline frozen install、build、独立 `verify:build` 和零凭证 dry-run 全绿；唯一 formal 先修改 `connection.ts`，后因 `api.ts` continuation 在 diff marker 后多写一个 tab 而匹配失败，最终仅保留一个 changed path，禁止重跑。
 21. **已完成：context/removal whitespace 精确复制契约**。recovery 与 continuation 共用提示要求从单一 context/evidence 逐字复制定位和删除行，并保留 diff marker 后源码原有 tab/space；提示由 `394` 缩至 `371` 字符，确定性 Gate 全绿，未改变工具、预算或重试。
+22. **已完成：`00d2559` Windows formal 前置 Gate**。detached NTFS harness 的 offline frozen install、workspace build、独立 `verify:build` 和零凭证 dry-run 全绿；Provider 未触达、敏感值与资源零残留，开放该 identity 的唯一 Windows formal。
 
 #### P0 后续阶段实现结论：mutation hunk 无正文诊断（2026-08-17）
 
@@ -931,6 +932,36 @@ Source / Workspace Revision
 - **为什么先做它**：确定性 Gate 只证明提示契约和预算没有回归，Windows clean formal 才能验证 `deepseek-v4-flash` 是否生成三个文件均可执行且 whitespace 精确的 patch。
 - **当前还缺的关键闭环**：新 identity 的 Windows 三文件 evaluator、唯一 `run.completed`、完整 route/usage/cost 与零敏感值/资源残留；Windows 全绿后才条件式进入同 identity WSL2。
 
+#### P0 后续阶段实现结论：`00d2559` Windows build 与零凭证 dry-run（2026-08-17）
+
+##### 已完成内容
+
+1. **detached clean harness 与构建**：
+   - source/harness 固定为 clean `00d2559815aa8197e13cb6689adda7572c7f385a`，content SHA-256=`02f2540f37196856980ac449bf8c798541a3a678f5dd5a25e74069b4488f6b79`；
+   - frozen offline install 为 resolved=`493`、reused=`492`、downloaded=`0`；workspace build 与独立 `verify:build` 通过，harness 保持 clean。
+
+2. **Windows 零凭证 dry-run**：
+   - artifact=`artifacts/p0-required-mutation-canary-00d2559-ts-api-windows-dry-run-r1`，run=`real-ts-api-migration-windows-a1-1786950773511`；
+   - preflight/snapshot=`passed`、usage=`not_reached`、events/trace/patch=`0/0/0`，report SHA-256=`327feeec28839869cc1bc97c3225c7c90c74d65594492fa0c3c59d079916f13a`；
+   - 主 key 扫描=`0/47,608`、普通文件不可读=`0`；listener、相关进程、根级 PID/token 和 harness residue 均为 `0`。
+
+3. **效果**：
+   - build、仓库快照、任务合同与零凭证边界均通过，未发生 Provider 调用或费用；
+   - 该 identity 已满足唯一 Windows formal 的前置条件；dry-run 冻结，不重跑、不覆盖历史 artifact；
+   - 尚未创建 WSL2 harness，Windows formal 未全绿前不进入 WSL2。
+
+##### 验证结果
+
+- TypeScript workspace build 与独立 `verify:build` 通过；
+- dry-run preflight 和 repository snapshot 五项检查通过，usage=`not_reached`；
+- Git clean，敏感值、端口、进程、PID/token 与 patch/event/trace 残留均为 `0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：按 `priorObservedCostUsd=2.84362295`、`maxTotalCostUsd=2.94362295`，仅使用 `deepseek-v4-flash` 执行且只执行一次 `00d2559` Windows formal。
+- **为什么先做它**：所有无费用 Gate 已全绿，真实三文件 mutation、verification 和 finalization 是当前唯一剩余的 Windows 证据。
+- **当前还缺的关键闭环**：三文件 changed paths、冻结 evaluator、patch acceptance、唯一 `run.completed`、完整 route/usage/cost、敏感值与资源零残留；Windows 全绿后才创建同 identity WSL2 harness。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
@@ -1081,7 +1112,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 同一版本的 WSL2 离线安装、构建和无凭据检查也已通过，但唯一正式任务只完成了第一个文件。后续补丁把源码原有的一个制表符变成了两个，系统无法精确匹配，因此保留明确失败且没有把部分完成当作成功。检查已排除材料缺失、片段越界和“只有定位没有修改”等旧原因。
 
-自动测试现已规定“定位和删除行的空格、制表符必须与单一原始材料逐字相同”，并保持原有材料预算。当前下一步是形成新代码版本，从 Windows 开始离线构建、无凭据检查和唯一正式复验；系统不会重跑已冻结 formal，也不会靠增加模型调用或输出额度碰运气。
+自动测试现已规定“定位和删除行的空格、制表符必须与单一原始材料逐字相同”，并保持原有材料预算。新版本 `00d2559` 的 Windows 离线安装、构建和无凭据检查已经通过，当前只执行一次正式复验；系统不会重跑已冻结 formal，也不会靠增加模型调用或输出额度碰运气。
 
 在此之前，不能说原来的 37 个失败已经解决，也不能启动最终 9.5 评审。
 
@@ -1097,7 +1128,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **whitespace 契约与确定性 Gate 全绿，待新 identity Windows 分层 canary** | 新提示要求 context/removal 逐字保留 tab/space；`79/79`、Agent `628 + 1 skipped`、build 与合同 Gate 全绿，提示 `371 < 394` 字符 | 1-3 小时 | 提交形成 clean identity；Windows offline install/build/独立 verify/零凭证 dry-run 全绿后执行唯一 formal，Windows 全绿才进入同 identity WSL2 |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **`00d2559` Windows 前置 Gate 全绿，待唯一 formal** | offline install/build/独立 verify/dry-run 全绿；preflight/snapshot passed、usage not_reached、事件/trace/patch 与敏感值/资源残留为 `0` | 1-3 小时 | 仅用 `deepseek-v4-flash` 执行唯一 Windows formal；三文件、唯一成功终态、费用和清理 Gate 全绿后才进入同 identity WSL2 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | scorecard、目标向量 `9.510`、多语言投入收益、竞品和边界已复核 | - | 当前精简版与 archive-03 共同保留决策和完整历史 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
