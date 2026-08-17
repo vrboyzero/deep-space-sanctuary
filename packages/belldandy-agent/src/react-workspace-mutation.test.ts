@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildWorkspaceMutationContinuationPlan,
+  buildWorkspaceMutationContinuationRequest,
   buildWorkspaceMutationNavigationRequest,
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationRecoveryRequest,
@@ -606,6 +607,66 @@ describe("ReAct workspace mutation recovery", () => {
       'Trusted required changed paths still missing:\n["src/protocol.ts"]',
     );
     expect(plan?.outputTokens).toBeLessThanOrEqual(4_096);
+  });
+
+  it("keeps bounded continuation file evidence as valid JSON with complete source lines", () => {
+    const targetLine = `\tNotificationHandler4, ${"NotificationHandler8, ".repeat(12)}TraceValue, TraceValues, TraceFormat,`;
+    const spacer = Array.from(
+      { length: 12 },
+      (_, index) => `const filler${index} = "${"x".repeat(64)}";`,
+    ).join("\n");
+    const fileContent = [
+      spacer,
+      targetLine,
+      spacer,
+      "export { TraceValues };",
+      spacer,
+      "export type PublicTrace = TraceValues;",
+      spacer,
+      "const legacyTrace: TraceValues | undefined = undefined;",
+      spacer,
+      "type TraceAlias = TraceValues;",
+      spacer,
+      "export const traceValues: TraceValues[] = [];",
+      spacer,
+    ].join("\n");
+    const request = buildWorkspaceMutationContinuationRequest({
+      maxInputTokens: 700,
+      tools: [toolDefinition("apply_patch")],
+      missingRequiredChangedPaths: ["jsonrpc/src/common/api.ts"],
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+      messages: [
+        {
+          role: "user",
+          content: "Remove every TraceValues export from the public API.",
+        },
+        {
+          role: "assistant",
+          tool_calls: [{ id: "read-api", function: { name: "file_read", arguments: "{}" } }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "read-api",
+          content: JSON.stringify({
+            path: "jsonrpc/src/common/api.ts",
+            truncated: false,
+            content: fileContent,
+          }),
+        },
+      ],
+    });
+
+    expect(request).toBeDefined();
+    const boundedEvidence = request?.messages[1]?.content.split("[tool=file_read]\n").at(-1) ?? "";
+    const parsedEvidence = JSON.parse(boundedEvidence) as {
+      path?: string;
+      taskRelevantContexts?: Array<{ context?: string }>;
+    };
+    expect(parsedEvidence.path).toBe("jsonrpc/src/common/api.ts");
+    expect(parsedEvidence.taskRelevantContexts?.some(({ context }) => (
+      context?.split("\n").includes(targetLine)
+    ))).toBe(true);
+    expect(boundedEvidence).not.toContain("chars bounded for mutation recovery");
   });
 
   it("builds a bounded source-navigation request with source-read tools only", () => {

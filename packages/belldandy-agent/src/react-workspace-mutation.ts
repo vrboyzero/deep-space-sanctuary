@@ -766,7 +766,8 @@ function buildBoundedWorkspaceMutationRequest(input: {
     );
     const label = `[tool=${item.toolName}]`;
     const focusedContent = projectFileReadEvidence(item.toolName, item.content, taskText);
-    const boundedContent = clipTextToTokenBudget(
+    const boundedContent = clipWorkspaceMutationEvidence(
+      item.toolName,
       focusedContent,
       Math.max(1, itemBudget - estimateTokens(label, input.tokenEstimateContext) - 2),
       input.tokenEstimateContext,
@@ -1251,6 +1252,56 @@ function clipTextToTokenBudget(
     }
   }
   return best;
+}
+
+function clipWorkspaceMutationEvidence(
+  toolName: string,
+  value: string,
+  maxTokens: number,
+  tokenEstimateContext?: TokenEstimateOptions,
+): string {
+  const normalized = value.trim();
+  const tokenBudget = normalizePositiveInt(maxTokens);
+  if (!normalized || tokenBudget <= 0) {
+    return "";
+  }
+  if (estimateTokens(normalized, tokenEstimateContext) <= tokenBudget) {
+    return normalized;
+  }
+  if (toolName !== "file_read") {
+    return clipTextToTokenBudget(normalized, tokenBudget, tokenEstimateContext);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(normalized);
+  } catch {
+    return clipTextToTokenBudget(normalized, tokenBudget, tokenEstimateContext);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return clipTextToTokenBudget(normalized, tokenBudget, tokenEstimateContext);
+  }
+
+  const projected = parsed as Record<string, unknown>;
+  if (!Array.isArray(projected.taskRelevantContexts)) {
+    return clipTextToTokenBudget(normalized, tokenBudget, tokenEstimateContext);
+  }
+  const { taskRelevantContexts: _omittedContexts, ...metadata } = projected;
+  const selectedContexts: unknown[] = [];
+  for (const context of projected.taskRelevantContexts) {
+    if (!context || typeof context !== "object" || Array.isArray(context)
+      || typeof (context as Record<string, unknown>).context !== "string") {
+      continue;
+    }
+    const candidateContexts = [...selectedContexts, context];
+    const candidate = JSON.stringify({ ...metadata, taskRelevantContexts: candidateContexts });
+    if (estimateTokens(candidate, tokenEstimateContext) <= tokenBudget) {
+      selectedContexts.push(context);
+    }
+  }
+  return selectedContexts.length > 0
+    ? JSON.stringify({ ...metadata, taskRelevantContexts: selectedContexts })
+    : "";
 }
 
 function estimateMessageTokens(content: string, tokenEstimateContext?: TokenEstimateOptions): number {
