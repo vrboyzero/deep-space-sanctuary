@@ -1,8 +1,13 @@
 import crypto from "node:crypto";
-import { execFile as execFileCallback, spawn } from "node:child_process";
+import {
+  execFile as execFileCallback,
+  spawn,
+  type ChildProcess,
+  type ExecFileException,
+  type ExecFileOptionsWithBufferEncoding,
+} from "node:child_process";
 import { promises as fs, createReadStream } from "node:fs";
 import path from "node:path";
-import { promisify } from "node:util";
 
 import {
   parseWorkspaceChangeRecovery,
@@ -10,8 +15,6 @@ import {
   type WorkspaceChangeRecovery,
   type WorkspaceChangeRecoveryCandidate,
 } from "./workspace-change-recovery.js";
-
-const execFile = promisify(execFileCallback);
 
 const SNAPSHOT_VERSION = 1 as const;
 const DEFAULT_MAX_FILE_BYTES = 4 * 1024 * 1024;
@@ -253,15 +256,77 @@ async function writeJson(filePath: string, value: unknown): Promise<void> {
   await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
 }
 
+type WorkspaceSnapshotGitExecFile = (
+  command: string,
+  args: string[],
+  options: ExecFileOptionsWithBufferEncoding,
+  callback: (
+    error: ExecFileException | null,
+    stdout: Buffer,
+    stderr: Buffer,
+  ) => void,
+) => ChildProcess;
+
+const defaultWorkspaceSnapshotGitExecFile: WorkspaceSnapshotGitExecFile = (
+  command,
+  args,
+  options,
+  callback,
+) => execFileCallback(command, args, options, callback);
+
+export async function runWorkspaceSnapshotGitCommand(
+  input: { args: string[]; cwd: string; maxBuffer: number },
+  execFileProcess: WorkspaceSnapshotGitExecFile = defaultWorkspaceSnapshotGitExecFile,
+): Promise<string> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await runWorkspaceSnapshotGitCommandAttempt(input, execFileProcess);
+    } catch (error) {
+      lastError = error;
+      if ((error as NodeJS.ErrnoException)?.code !== "ENOTCONN" || attempt > 0) throw error;
+      // Snapshot Git commands are read-only, so one pipe reconnect retry cannot duplicate a mutation.
+    }
+  }
+  throw lastError;
+}
+
+async function runWorkspaceSnapshotGitCommandAttempt(
+  input: { args: string[]; cwd: string; maxBuffer: number },
+  execFileProcess: WorkspaceSnapshotGitExecFile,
+): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    const child = execFileProcess("git", input.args, {
+      cwd: input.cwd,
+      windowsHide: true,
+      maxBuffer: input.maxBuffer,
+      encoding: "buffer",
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "" },
+    }, (error, stdout, stderr) => {
+      if (settled) return;
+      settled = true;
+      if (error) {
+        reject(Object.assign(error, { stdout, stderr }));
+        return;
+      }
+      resolve(String(stdout ?? ""));
+    });
+    const finishWithError = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      child.kill();
+      reject(error);
+    };
+    child.once("error", finishWithError);
+    child.stdout?.on("error", finishWithError);
+    child.stderr?.on("error", finishWithError);
+  });
+}
+
 async function runGit(args: string[], cwd: string, maxBuffer = DEFAULT_MAX_DIFF_BYTES + 256 * 1024): Promise<string> {
   try {
-    const result = await execFile("git", args, {
-      cwd,
-      windowsHide: true,
-      maxBuffer,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "" },
-    });
-    return String(result.stdout ?? "");
+    return await runWorkspaceSnapshotGitCommand({ args, cwd, maxBuffer });
   } catch (error) {
     const candidate = error as NodeJS.ErrnoException & { stdout?: string | Buffer; code?: string | number };
     if (String(candidate.code) === "1" && candidate.stdout !== undefined) return String(candidate.stdout);

@@ -1869,20 +1869,143 @@ Source / Workspace Revision
 - **为什么先做它**：确定性写路径 Gate 已闭合；提交态 clean harness 是下一次真实 `deepseek-v4-flash` formal 的 source identity、依赖离线性、构建产物与凭据失败关闭前置证据。
 - **当前还缺的关键闭环**：新 identity 的 Windows clean/dry-run 与唯一 formal 三文件成功证据；Windows 全绿后才允许同 identity WSL2，仍不重跑 `7f1cbee`、完整矩阵或 P2-C。
 
+#### P0 后续阶段实现结论：`a72f127` Windows build 与零凭证 dry-run（2026-08-17）
+
+##### 已完成内容
+
+1. **detached clean Windows harness 建立**：
+   - harness=`tmp/p0-required-mutation-canary-a72f127-clean`，精确检出 `a72f1277765932637d7e9bab84f690018528b133`；
+   - source/harness 均为 clean，content SHA-256 同为 `b95b240d04c1af2a485efd0820cce91533a00a11c709e58140e05c9fb53be753`；
+   - 主工作区既有 `D盘容易增大问题与处理方法.md` 改动未进入提交或 harness，也未被覆盖。
+
+2. **frozen offline install 与构建**：
+   - `corepack pnpm install --offline --frozen-lockfile` 完成，resolved=`493`、reused=`492`、downloaded=`0`、added=`493`；
+   - workspace build 与独立 `verify:build` 均通过；
+   - 构建后 harness 仍为 clean detached HEAD，`git diff --check` 通过。
+
+3. **零凭证 Windows dry-run**：
+   - artifact=`artifacts/p0-required-mutation-canary-a72f127-ts-api-windows-dry-run-r1`，run=`real-ts-api-migration-windows-a1-1786979754263`；
+   - report SHA-256=`d4bbad472b2e364e3464dc394057804c34d9d22c245b6e421ca1ba3ae6831dcc`；
+   - production preflight 与 repository snapshot preflight 均为 `passed`，模型固定为 `deepseek-v4-flash`、`credentialsConfigured=false`。
+
+4. **失败关闭与安全审计**：
+   - usage=`not_reached`、cost=`null`、event/trace/patch=`0/0/0`，changed paths=`0`；
+   - frozen fixture 固定为 `fd688326f1ac2be77f8f1c62c42cd2356acaf3af`，status/diff/untracked=`0/0/0`；
+   - artifact、fixture、runtime 与 harness 共扫描 `47,608` 个普通文件，真实敏感值命中=`0`、不可读=`0`、重解析点=`1,281`；listener、相关 Node、根级 PID/token 和 Git residue 均为 `0`。
+
+5. **效果**：
+   - 提交态 continuation 已覆盖 section 过滤通过 Windows 原生离线构建和冻结仓输入校验；
+   - 零凭证路径在 Provider 前确定失败关闭，没有模型调用、费用或文件修改；
+   - 已满足执行唯一 `a72f127` Windows formal 的全部无费用前置条件。
+
+##### 验证结果
+
+- TypeScript 编译无错误：workspace build 与独立 `verify:build` 通过；
+- 本环节新增/重跑测试=`0`；提交前确定性基线为目标 `98/98`、Agent + Skills `1583 passed + 3 skipped`；
+- production/snapshot preflight、Gateway token auth、零 Provider dispatch、敏感值和资源零残留 Gate 全绿；
+- dry-run 新增 Provider 费用=`$0`，费用账本保持 observed=`$2.25342019`、reserved=`$0.94221000`、unobservable reserve=`$0.70000000`。
+
+##### 后续计划
+
+- **下一步准备做什么**：保持 `a72f127` identity、冻结 repository snapshot 与当前 harness 不变，按 `priorObservedCostUsd=2.95342019`、`maxTotalCostUsd=3.00000000`，仅使用 `deepseek-v4-flash` 执行且只执行一次 Windows formal。
+- **为什么先做它**：提交态离线构建、任务合同、固定仓输入、Gateway 鉴权、凭据 scrub 和资源回收均已闭合，真实三文件 mutation、verification 与 finalization 是当前唯一剩余的 Windows 证据。
+- **当前还缺的关键闭环**：Windows formal 的三文件 changed paths、冻结 evaluator、非空 summary、唯一 terminal、完整 route/usage/cost、敏感值与资源零残留；Windows 全绿后才允许同 identity WSL2。
+
+#### P0 后续阶段实现结论：`a72f127` Windows formal 业务成功但 CLI 收尾失败（2026-08-17）
+
+##### 已完成内容
+
+1. **唯一 Windows formal 执行并冻结**：
+   - artifact=`artifacts/p0-required-mutation-canary-a72f127-ts-api-windows-formal-r1`，run=`real-ts-api-migration-windows-a1-1786980115656`；
+   - report SHA-256=`503274b94000398feef554c816c205004af70ce36c1d5c0e57e3dfe3812a7a79`；
+   - route=`deepseek-v4-flash -> deepseek-v4-flash [primary]`，未增加 turn、token 或 Provider retry。
+
+2. **产品修改与冻结验证**：
+   - 精确修改 `jsonrpc/src/common/api.ts`、`jsonrpc/src/common/connection.ts`、`protocol/src/common/protocol.ts` 三条 required paths；
+   - patch bytes=`3800`、SHA-256=`bf217e3327a1dcc1f3bb37f31e3a0f3891f0c9a87d4078a5078dacd2c934d7d7`；
+   - frozen tests/patch=`true/true`、regression=`0`，summary 为非空合法 JSON 且恰好一个。
+
+3. **CLI 收尾失败证据**：
+   - coding CLI 在 workspace change snapshot 收尾出现未处理的 `Error: read ENOTCONN`；
+   - events=`38`、seq=`1..38` 连续，包含 `run.usage=1` 与两个 `run.status(done)`，但缺少唯一 terminal；
+   - CI 因 `Agent JSONL is missing a terminal event.` 失败，report usage=`unavailable`、taskCompleted=`false`、trace bytes=`0`；
+   - 对照已成功的 `7f1cbee` Windows formal，同样的两个 `run.status(done)` 后可正常产生 `run.completed`，因此重复 status 不是本次根因。
+
+4. **费用、安全与资源审计**：
+   - event usage=`5/5 provider_reported`、input/output=`10,340/738`、event cost=`$0.00091252`；因 terminal/report usage 不可观测，不以较小事件值抵扣，完整 `$0.10` 计入不可观测预留；
+   - artifact、fixture、runtime 与 harness 共扫描 `48,241` 个普通文件，真实敏感值命中=`0`、不可读=`0`、重解析点=`1,281`；
+   - listener、相关 Node、根级 PID/token 与 harness residue 均为 `0`，Windows 未闭合，因此没有进入 WSL2。
+
+5. **效果**：
+   - `a72f127` 已证明 missing-section 过滤能让真实模型一次完成三文件 mutation、冻结测试与 summary；
+   - 当前失败已从 Agent mutation 行为收敛到 Windows coding CLI terminal 前的 workspace snapshot 子进程收尾；
+   - 该 formal 已冻结且禁止重跑，后续修复使用无模型确定性测试闭环。
+
+##### 验证结果
+
+- TypeScript 编译无错误：该 identity 的 Windows workspace build 与独立 `verify:build` 已在 formal 前通过；
+- 提交前确定性基线为目标 `98/98`、Agent + Skills `1583 passed + 3 skipped`；formal 的 frozen tests 与 patch evaluator 均通过、regression=`0`；
+- formal 合同未通过：缺少唯一 terminal、完整 report usage 与 trace，不能视为 Windows 全绿或进入 WSL2；
+- 本轮账本更新为 observed=`$2.25342019`、reserved=`$0.94221000`、unobservable reserve=`$0.80000000`、守卫上界=`31.96504152 RMB < 50 RMB`。
+
+##### 后续计划
+
+- **下一步准备做什么**：将 Windows coding CLI `read ENOTCONN` 提升为 `fix_now`，以无模型测试复现并修复 workspace change snapshot 的 `execFile`/stdio 错误生命周期，再完成相关 CLI、snapshot、coding CI 与构建 Gate。
+- **为什么先做它**：产品三文件行为已经成功，唯一阻塞是 terminal 前未处理的 pipe error；先关闭这一确定性基础设施缺陷，才能让下一次新 identity formal 的 terminal、usage、trace 与 evaluator 可观测。
+- **当前还缺的关键闭环**：ENOTCONN 回归测试红转绿、新 clean identity 的 Windows offline build/dry-run，以及在费用参数不超过授权与 runner 上限的前提下执行唯一 formal；修复前不进入 WSL2、完整矩阵或 P2-C。
+
+#### P0 后续阶段实现结论：Windows coding CLI `ENOTCONN` 确定性修复（2026-08-17）
+
+##### 已完成内容
+
+1. **`workspace-change-snapshot.ts` 修改**：
+   - 保留 snapshot 只读 Git 命令的 `execFile` 缓冲与退出码语义，改由 Promise wrapper 显式接管子进程生命周期；
+   - 同时监听 child、stdout 与 stderr error，并保留 stdout/stderr、`maxBuffer` 和退出诊断输出；
+   - 仅对 `ENOTCONN` 执行一次只读 Git 重连，第二次同错及所有其他错误继续失败关闭，不增加 Provider retry。
+
+2. **`workspace-change-snapshot.test.ts` 扩展**：
+   - 新增首次 stdout `ENOTCONN`、第二次成功的确定性回归，确认 stdout 完整且尝试次数恰好为 `2`；
+   - 新增连续两次 `ENOTCONN` 的失败关闭回归，确认不会进入无界重试；
+   - 回归测试先以缺少新接口形成红灯 `1 failed + 16 passed`，实现后转绿。
+
+3. **根因与替代假设收敛**：
+   - `a72f127` 栈停在 Node `createSocket -> ChildProcess.spawn -> execFile`，而 terminal 正被 CLI 缓存并等待 `completeHeadlessChanges`；
+   - 成功的 `7f1cbee` Windows formal 同样包含两个 `run.status(done)` 后再产生 terminal，已反证 finalize 重入假设；
+   - 关闭 stdin 后连续 `1000` 次普通 `execFile` 全部成功，已反证通用短进程必现假设，问题收敛到 snapshot 未接管的 pipe error 路径。
+
+4. **效果**：
+   - Windows snapshot 子进程 pipe 异常不再以未处理 Socket error 直接终止 coding CLI；
+   - 一次瞬时 `ENOTCONN` 可在不重复任何 mutation 的前提下恢复只读快照；
+   - 重复错误仍可诊断且失败关闭，terminal 前收尾不再依赖未监听的默认 pipe 行为。
+
+##### 验证结果
+
+- TypeScript 编译无错误：Core build、workspace build 与独立 `verify:build` 通过；
+- snapshot、Agent CLI 与 coding CI 相关测试 `58/58` 通过，其中 `2` 个为新增 ENOTCONN 回归；Core 广泛回归 `2017 passed + 1 timeout`，唯一超时为条件式 long-session A/B，用例单独选择时因既有条件保持 skipped；
+- `verify:coding-ci`、`verify:coding-benchmark` 与 `git diff --check` 通过；
+- 完整 `pnpm test` 未全绿：`15` 个 CodeIntel frozen source/hash drift 与 `1` 个 v2 disconnect fixture `writeCount=0`；后者已在 clean `a72f127` harness 同形复现，均不在本轮 diff 中；
+- 本实现未调用模型，新增 Provider 费用=`$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：提交 ENOTCONN 源码、测试与本计划文档形成新 clean identity，再建立 detached Windows harness，依次完成 frozen offline install、workspace build、独立 verifier 与零凭证 dry-run。
+- **为什么先做它**：确定性回归已关闭代码级 pipe 生命周期；提交态无费用 Gate 是证明真实 built CLI、依赖离线性、凭据失败关闭和资源清理的必要前置。
+- **当前还缺的关键闭环**：新 identity 的 Windows clean/dry-run，以及后续 formal 前 `$3.05342019` prior 上界与 Stage 0D 固定 `$3.00` 限制的预算参数闭合；未完成前不调用模型、不进入 WSL2。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
 
 - observed=`$2.25342019`；
 - reserved=`$0.94221000`；
-- unobservable reserve=`$0.70000000`；
-- 守卫上界=`31.16504152 RMB < 50 RMB`。
+- unobservable reserve=`$0.80000000`；
+- 守卫上界=`31.96504152 RMB < 50 RMB`。
 
-`7f1cbee` 唯一 WSL2 formal 已执行、失败并冻结，实际新增费用=`$0.00143975`；其 Windows/WSL2 formal 均禁止重跑。当前修复的完整确定性 Gate 已闭合，下一次新 identity formal 仍需先通过提交态 clean build 和零凭证 dry-run。若全部通过，runner 参数暂记 `priorObservedCostUsd=2.95342019`、`maxTotalCostUsd=3.00000000`，进程内剩余额度=`$0.04657981`。项目账本按完整 `$0.10` 预留后的守卫上界约 `31.96504152 RMB < 50 RMB`；项目记录不能替代 Provider 外部账单。
+`a72f127` 唯一 Windows formal 已执行、失败并冻结；产品 mutation 成功，但 terminal/report usage 因 CLI `read ENOTCONN` 不可观测，完整 `$0.10` 已计入预留。后续 runner 的 prior 上界达到 `$3.05342019`，超过当前 Stage 0D 固定 `$3.00` 上限；修复 ENOTCONN 不需要模型，任何新 formal 必须先单独关闭该预算参数阻塞。项目记录不能替代 Provider 外部账单。
 
 当前明确禁止：
 
-- 重跑 `3b506ef`、`429a6eb`、`ef40901`、`a8bf150`、`a860d16`、`d642205`、`61735d4`、`b6bf0b3`、`00d2559`、`8c24998`、`9b4fe30`、`2b46799`、`2bfc76c`、`6f7670f` 或 `7f1cbee` 的任一已执行 formal；
+- 重跑 `3b506ef`、`429a6eb`、`ef40901`、`a8bf150`、`a860d16`、`d642205`、`61735d4`、`b6bf0b3`、`00d2559`、`8c24998`、`9b4fe30`、`2b46799`、`2bfc76c`、`6f7670f`、`7f1cbee` 或 `a72f127` 的任一已执行 formal；
 - 增加 `maxTurns`、`maxTokens` 或 Provider 重试；
 - 未经新证据启动完整矩阵或 candidate v4；
 - 启动 P2-C、push、公开发布或生产操作。
@@ -1978,7 +2101,10 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 | 人工 responder 与 `blocked/verifying` 时间线 | `defer` | 缺证据时保持 `incomplete` |
 | SCIP/tree-sitter/外部 MCP | `record_only` | 保留扩展位置，真实需求前不增加运行时复杂度 |
 | Provider 外部账单 | `record_only` | 项目内 usage/cost 不能替代服务商最终账单 |
-| Windows coding CLI 收尾 `read ENOTCONN` | `split_task` | 已在 `a860d16` 与 `2b46799` 失败收尾再现；后续拆为独立诊断，不与 mutation 修复混改，终态不可观测期间按完整费用预留 |
+| Windows coding CLI 收尾 `read ENOTCONN` | `fix_now` | 已在 `execFile` wrapper 中显式接管 child/stdout/stderr error，并以一次只读 Git 重连完成确定性红绿回归；源码 Gate 已闭合，待新 clean identity Windows build/dry-run 与后续 formal 验证 terminal/usage/trace |
+| CodeIntel frozen source/hash identity drift | `split_task` | 完整测试中 `15` 个失败稳定指向既有 frozen source/hash；相关文件不在本轮 diff，不为 ENOTCONN 修复顺手更新冻结证据 |
+| v2 disconnect fixture 未触发 Agent write | `split_task` | `writeCount=0` 已在主工作区和 clean `a72f127` harness 同形复现；属于既有 benchmark fixture/dispatch 问题，不与 snapshot pipe 修复混改 |
+| Core long-session A/B 全量并发超时 | `record_only` | Core 广泛回归仅此 `60s` timeout；单独选择时因既有条件 skipped，当前无证据指向 snapshot 子进程改动，保留为测试隔离残余风险 |
 | Docker run `31805350776` 终态 | `record_only` | 当前凭据不可读，不推翻已验证 Quality 和本地 builder 证据 |
 | 原生 Windows sandbox 替换 OCI | `defer` | 当前 OCI fail-closed 双平台证据足够，替换风险高 |
 
@@ -2031,22 +2157,22 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 - 主体框架不是当前瓶颈：P1-A1/A2、P1-B、P1-C、P2-A、P2-B 都能在当前源码中找到相应实现和测试。
 - 真正瓶颈是复杂多文件任务的稳定完成率。现有 `37` 个失败不能因为单个代表任务成功或新增保护 Gate 就从分母移除。
-- `6f7670f` 唯一 formal 只完成两个 required paths；对应可信原子纠正提交 `7f1cbee` 的 Windows formal 全绿，但 WSL2 continuation 因重新携带已覆盖 `connection.ts` 使三 section 原子失败，correction 又漏 `protocol.ts`，该 identity 已冻结；结构化 missing-section 过滤的目标与完整 Gate 已全绿，尚待新 identity 真实验证。
+- `a72f127` 已在真实 `deepseek-v4-flash` 调用中精确完成三文件 mutation、冻结测试和 summary，证明结构化 missing-section 过滤有效；但 Windows coding CLI 在 terminal 前的 workspace snapshot 收尾触发 `read ENOTCONN`，导致 report usage、trace 和任务终态不可观测，当前先修这一确定性阻塞。
 - P2-C 尚未启动。只有多个失败形状出现可重复改善，并且两个连续冻结候选通过全部硬 Gate，才能宣称达到 9.5。
 
 因此当前主要瓶颈是“真实效果证据还不够”，不是“再增加更多功能”。
 
 ### 9.6 费用和发布边界
 
-当前费用守卫约为 **31.17 元人民币**，低于 **50 元人民币**授权上限；下一次正式验证完整预留后的守卫约为 **31.97 元人民币**。最新 `7f1cbee` WSL2 formal 完整记录实际费用 `$0.00143975`；此前终态不可观测的 formal 仍保守预留完整 `$0.10`。在授权上限内无需再次申请，外部服务商账单仍需单独核对。
+当前费用守卫约为 **31.97 元人民币**，低于 **50 元人民币**授权上限。`a72f127` terminal/report usage 不可观测，虽有 event cost=`$0.00091252`，仍保守预留完整 `$0.10`；后续 prior 上界 `$3.05342019` 已超过 runner 当前固定 `$3.00` 上限，任何新 formal 前必须先关闭预算参数阻塞。在授权上限内无需再次申请，外部服务商账单仍需单独核对。
 
 当前不会重跑已冻结版本，不会提高模型预算，不会启动完整付费矩阵，不会 push、公开发布或执行生产操作。
 
 ### 9.7 后续计划
 
-- **下一步准备做什么**：提交已完成完整 Gate 的 continuation section 过滤，形成新 clean identity；随后执行 Windows detached clean offline install、build、独立 verifier 与零凭证 dry-run。
-- **为什么先做它**：`7f1cbee` WSL2 formal 已把失败收敛到可信部分进展后的冗余 section 污染，确定性边界现已闭合；只有 clean 提交态能打开下一次真实模型验证。
-- **当前还缺的关键闭环**：新 identity 的 Windows clean build/dry-run/唯一 formal；Windows 全绿后才允许 WSL2，随后仍需覆盖其他失败族并取得两个连续原始 `>=9.500` 的冻结候选。
+- **下一步准备做什么**：提交 ENOTCONN 确定性修复形成新 clean identity，再建立 Windows detached harness 完成 offline install、workspace build、独立 verifier 与零凭证 dry-run。
+- **为什么先做它**：代码级 pipe error 已红绿闭合；只有提交态 built CLI 与 clean harness 能验证真实 Windows stdio、离线依赖、凭据失败关闭和资源清理没有回归。
+- **当前还缺的关键闭环**：新 identity 无费用 Gate，以及 formal 前 `$3.05342019` prior 上界与 Stage 0D `$3.00` 固定限制的预算参数闭合；完成前不调用模型、不进入 WSL2，随后仍需覆盖其他失败族并取得两个连续原始 `>=9.500` 的冻结候选。
 
 ## 10. 实施计划进度表
 
@@ -2054,7 +2180,7 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`7f1cbee` WSL2 formal 失败并冻结；已覆盖 section 过滤完整 Gate 全绿** | Windows formal=`passed`；WSL report=`32ed8e46...`，只改 `api/connection`、漏 `protocol`；根因是 continuation 携带已覆盖 `connection` 污染原子 patch；新回放红=`50/51`、绿=`98/98`；Agent/Skills=`1583 passed + 3 skipped`，build/verifier/coding/diff Gate 全绿 | 新 identity Windows 约 1-2 小时 | 提交形成新 identity，重走 Windows clean offline install/build/dry-run/唯一 formal；Windows 全绿后才做 WSL2；不重跑 `7f1cbee`、不启动完整矩阵或 P2-C |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **ENOTCONN 确定性修复 Gate 全绿，待新 identity Windows clean Gate** | formal 三路径/frozen tests/patch 成功但 terminal 缺失；新 ENOTCONN 回归 `2/2`、相关 `58/58`、Core build/workspace build/verifier/coding Gate 全绿；Core 广泛回归 `2017 passed + 1 timeout` | clean build/dry-run 约 1 小时；预算参数闭合另约 0.5 天 | 先提交并完成 Windows offline build/dry-run；再关闭 `$3.05342019 > $3.00` runner 参数阻塞；新 formal 未全绿不进 WSL2 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | 2026-08-17：当前 HEAD `5b36691...` 的 P0-P2 源码/测试/artifact 已核查；SS 横向原始加权 `9.135`（发布分 `9.1`）；Grok Build `9.4`、Codex `9.7`、Claude Code `9.7`、OpenCode `9.3`、Hermes Agent `8.9`；竞品证据边界已记录 | - | 当前精简版与 archive-03 共同保留决策和完整历史；真实复杂任务成功率仍待新 formal 证据，不宣称达到 9.5 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |

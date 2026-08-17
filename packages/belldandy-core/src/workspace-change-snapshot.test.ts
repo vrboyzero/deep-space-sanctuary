@@ -1,12 +1,17 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { execFile as execFileCallback } from "node:child_process";
+import { execFile as execFileCallback, type ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { WorkspaceChangeSnapshotRuntime } from "./workspace-change-snapshot.js";
+import {
+  runWorkspaceSnapshotGitCommand,
+  WorkspaceChangeSnapshotRuntime,
+} from "./workspace-change-snapshot.js";
 
 const temporaryDirectories: string[] = [];
 const execFile = promisify(execFileCallback);
@@ -27,6 +32,72 @@ async function createFixture(prefix: string) {
 }
 
 describe("WorkspaceChangeSnapshotRuntime", () => {
+  it("retries one ENOTCONN Git pipe read without losing stdout", async () => {
+    const fixture = await createFixture("belldandy-change-snapshot-enotconn-");
+    let attempts = 0;
+    const execFileProcess = (
+      _command: string,
+      _args: string[],
+      _options: unknown,
+      callback: (error: Error | null, stdout: Buffer, stderr: Buffer) => void,
+    ) => {
+      attempts += 1;
+      const stdout = new PassThrough();
+      const stderr = new PassThrough();
+      const child = Object.assign(new EventEmitter(), {
+        stdout,
+        stderr,
+        kill: () => true,
+      }) as unknown as ChildProcess;
+      queueMicrotask(() => {
+        if (attempts === 1) {
+          stdout.emit("error", Object.assign(new Error("read ENOTCONN"), {
+            code: "ENOTCONN",
+            syscall: "read",
+          }));
+          return;
+        }
+        callback(null, Buffer.from("fixture-root\n"), Buffer.alloc(0));
+      });
+      return child;
+    };
+
+    await expect(runWorkspaceSnapshotGitCommand({
+      args: ["rev-parse", "--show-toplevel"],
+      cwd: fixture.workspaceRoot,
+      maxBuffer: 64 * 1024,
+    }, execFileProcess)).resolves.toBe("fixture-root\n");
+    expect(attempts).toBe(2);
+  });
+
+  it("fails closed when the retried Git pipe also reports ENOTCONN", async () => {
+    const fixture = await createFixture("belldandy-change-snapshot-enotconn-repeat-");
+    let attempts = 0;
+    const execFileProcess = () => {
+      attempts += 1;
+      const stdout = new PassThrough();
+      const child = Object.assign(new EventEmitter(), {
+        stdout,
+        stderr: new PassThrough(),
+        kill: () => true,
+      }) as unknown as ChildProcess;
+      queueMicrotask(() => {
+        stdout.emit("error", Object.assign(new Error("read ENOTCONN"), {
+          code: "ENOTCONN",
+          syscall: "read",
+        }));
+      });
+      return child;
+    };
+
+    await expect(runWorkspaceSnapshotGitCommand({
+      args: ["rev-parse", "--show-toplevel"],
+      cwd: fixture.workspaceRoot,
+      maxBuffer: 64 * 1024,
+    }, execFileProcess)).rejects.toMatchObject({ code: "ENOTCONN", syscall: "read" });
+    expect(attempts).toBe(2);
+  });
+
   it("creates a hash-bound run-start snapshot and durable artifacts for a non-Git workspace", async () => {
     const fixture = await createFixture("belldandy-change-snapshot-filesystem-");
     await fs.writeFile(path.join(fixture.workspaceRoot, "note.txt"), "before\n", "utf-8");
