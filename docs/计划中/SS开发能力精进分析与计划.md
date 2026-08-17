@@ -1453,10 +1453,11 @@ Source / Workspace Revision
 - 本阶段未新增或修改测试；提交前 Agent + Skills 已通过 `1577 passed + 3 skipped`；
 - Windows dry-run production/snapshot preflight、frozen fixture 与 artifact policy 通过，fixture diff=`0`；
 - Provider 调用=`0`、新增费用=`$0`，敏感值、端口、相关 Node、PID/token 和 Git residue 均为 `0`。
+- formal 参数预检曾在 Gateway/artifact 创建前拒绝 `maxTotalCostUsd=3.04915986`，因为 runner 绝对上限为 `$3.00`；该预检没有 Provider 调用、费用或新路径，后续参数修正为 `2.94915986 -> 3.00000000 USD`。
 
 ##### 后续计划
 
-- **下一步准备做什么**：按 `priorObservedCostUsd=2.94915986`、`maxTotalCostUsd=3.04915986`，仅使用 `deepseek-v4-flash` 执行且只执行一次 `2bfc76c` Windows formal。
+- **下一步准备做什么**：按 `priorObservedCostUsd=2.94915986`、`maxTotalCostUsd=3.00000000`，仅使用 `deepseek-v4-flash` 执行且只执行一次 `2bfc76c` Windows formal。
 - **为什么先做它**：提交态构建、任务合同、冻结仓输入和零凭证边界均已通过，真实三文件 mutation、verification 与 finalization 是当前唯一剩余的 Windows 证据。
 - **当前还缺的关键闭环**：Windows 三文件 changed paths、冻结 evaluator、非空 summary、唯一 terminal、完整 route/usage/cost、敏感值与资源零残留；Windows 全绿后才允许考虑 WSL2。
 
@@ -1469,7 +1470,7 @@ Source / Workspace Revision
 - unobservable reserve=`$0.70000000`；
 - 守卫上界=`31.13095888 RMB < 50 RMB`。
 
-下一次付费 formal 的计划参数为 `priorObservedCostUsd=2.94915986`、`maxTotalCostUsd=3.04915986`；完整预留后守卫上界约 `31.93095888 RMB < 50 RMB`。项目记录不能替代 Provider 外部账单。
+下一次付费 formal 的 runner 参数为 `priorObservedCostUsd=2.94915986`、`maxTotalCostUsd=3.00000000`，进程内剩余额度=`$0.05084014`；项目账本仍按完整 `$0.10` 预留，守卫上界约 `31.93095888 RMB < 50 RMB`。项目记录不能替代 Provider 外部账单。
 
 当前明确禁止：
 
@@ -1642,7 +1643,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`2bfc76c` Windows 无费用前置 Gate 已完成，待唯一 formal** | split-call 原子合并修复后 Agent + Skills `1577 passed + 3 skipped`；clean detached offline install/build/独立 verifier 通过；dry-run 两层 preflight、fixture diff、零调用/零写入、真实主 key 与资源清理全绿 | 1-2 小时 | 按 `2.94915986 -> 3.04915986 USD` 只执行一次 `deepseek-v4-flash` Windows formal；三文件 evaluator、summary、terminal、route/usage/cost 和零残留全绿后才考虑 WSL2 |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **`2bfc76c` Windows 无费用前置 Gate 已完成，待唯一 formal** | split-call 原子合并修复后 Agent + Skills `1577 passed + 3 skipped`；clean detached offline install/build/独立 verifier 通过；dry-run 两层 preflight、fixture diff、零调用/零写入、真实主 key 与资源清理全绿 | 1-2 小时 | 按 runner `2.94915986 -> 3.00000000 USD` 只执行一次 `deepseek-v4-flash` Windows formal，项目账本仍预留完整 `$0.10`；三文件 evaluator、summary、terminal、route/usage/cost 和零残留全绿后才考虑 WSL2 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | scorecard、目标向量 `9.510`、多语言投入收益、竞品和边界已复核 | - | 当前精简版与 archive-03 共同保留决策和完整历史 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
