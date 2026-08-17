@@ -284,8 +284,11 @@ export async function runWorkspaceSnapshotGitCommand(
       return await runWorkspaceSnapshotGitCommandAttempt(input, execFileProcess);
     } catch (error) {
       lastError = error;
-      if ((error as NodeJS.ErrnoException)?.code !== "ENOTCONN" || attempt > 0) throw error;
-      // Snapshot Git commands are read-only, so one pipe reconnect retry cannot duplicate a mutation.
+      const candidate = error as NodeJS.ErrnoException;
+      const retryable = candidate.code === "ENOTCONN"
+        || (candidate.code === "ENOENT" && candidate.syscall === "spawn git");
+      if (!retryable || attempt > 0) throw error;
+      // Snapshot Git commands are read-only, so one transport/spawn retry cannot duplicate a mutation.
     }
   }
   throw lastError;

@@ -98,6 +98,96 @@ describe("WorkspaceChangeSnapshotRuntime", () => {
     expect(attempts).toBe(2);
   });
 
+  it("retries one spawn git ENOENT for a read-only snapshot command", async () => {
+    const fixture = await createFixture("belldandy-change-snapshot-enoent-");
+    let attempts = 0;
+    const execFileProcess = (
+      _command: string,
+      _args: string[],
+      _options: unknown,
+      callback: (error: Error | null, stdout: Buffer, stderr: Buffer) => void,
+    ) => {
+      attempts += 1;
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        kill: () => true,
+      }) as unknown as ChildProcess;
+      queueMicrotask(() => {
+        if (attempts === 1) {
+          child.emit("error", Object.assign(new Error("spawn git ENOENT"), {
+            code: "ENOENT",
+            syscall: "spawn git",
+          }));
+          return;
+        }
+        callback(null, Buffer.from("fixture-root\n"), Buffer.alloc(0));
+      });
+      return child;
+    };
+
+    await expect(runWorkspaceSnapshotGitCommand({
+      args: ["rev-parse", "--show-toplevel"],
+      cwd: fixture.workspaceRoot,
+      maxBuffer: 64 * 1024,
+    }, execFileProcess)).resolves.toBe("fixture-root\n");
+    expect(attempts).toBe(2);
+  });
+
+  it("fails closed when the retried snapshot Git spawn also reports ENOENT", async () => {
+    const fixture = await createFixture("belldandy-change-snapshot-enoent-repeat-");
+    let attempts = 0;
+    const execFileProcess = () => {
+      attempts += 1;
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        kill: () => true,
+      }) as unknown as ChildProcess;
+      queueMicrotask(() => {
+        child.emit("error", Object.assign(new Error("spawn git ENOENT"), {
+          code: "ENOENT",
+          syscall: "spawn git",
+        }));
+      });
+      return child;
+    };
+
+    await expect(runWorkspaceSnapshotGitCommand({
+      args: ["rev-parse", "--show-toplevel"],
+      cwd: fixture.workspaceRoot,
+      maxBuffer: 64 * 1024,
+    }, execFileProcess)).rejects.toMatchObject({ code: "ENOENT", syscall: "spawn git" });
+    expect(attempts).toBe(2);
+  });
+
+  it("does not retry an ENOENT that is not a Git spawn failure", async () => {
+    const fixture = await createFixture("belldandy-change-snapshot-non-spawn-enoent-");
+    let attempts = 0;
+    const execFileProcess = () => {
+      attempts += 1;
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        kill: () => true,
+      }) as unknown as ChildProcess;
+      queueMicrotask(() => {
+        child.emit("error", Object.assign(new Error("open fixture ENOENT"), {
+          code: "ENOENT",
+          syscall: "open",
+        }));
+      });
+      return child;
+    };
+
+    await expect(runWorkspaceSnapshotGitCommand({
+      args: ["rev-parse", "--show-toplevel"],
+      cwd: fixture.workspaceRoot,
+      maxBuffer: 64 * 1024,
+    }, execFileProcess)).rejects.toMatchObject({ code: "ENOENT", syscall: "open" });
+    expect(attempts).toBe(1);
+  });
+
   it("creates a hash-bound run-start snapshot and durable artifacts for a non-Git workspace", async () => {
     const fixture = await createFixture("belldandy-change-snapshot-filesystem-");
     await fs.writeFile(path.join(fixture.workspaceRoot, "note.txt"), "before\n", "utf-8");

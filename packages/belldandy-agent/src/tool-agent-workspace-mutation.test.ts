@@ -1259,6 +1259,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
 
     expect(requests).toHaveLength(5);
     expect(requests[2]?.messages[0]?.content).toContain("Missing-path mutation continuation phase");
+    expect(requests[2]?.tool_choice).toBe("required");
     expect(execute.mock.calls.filter(([request]) => request.name === "apply_patch")).toHaveLength(2);
     expect(execute.mock.calls[4]?.[0].arguments).toEqual({
       input: [
