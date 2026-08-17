@@ -535,10 +535,8 @@ describe("ReAct workspace mutation recovery", () => {
       }),
     ]);
     expect(request?.messages[0]?.content).toContain("one atomic checklist");
-    expect(request?.messages[0]?.content).toContain("each file needs add/remove unless moved");
-    expect(request?.messages[0]?.content).toContain("Each @@ hunk");
     expect(request?.messages[0]?.content).toContain(
-      "Use exactly one *** End Patch marker on the final line",
+      "Use exactly one final-line *** End Patch",
     );
     expect(request?.messages[0]?.content).toContain(
       "Take hunk context/removals from one taskRelevantContexts item",
@@ -548,9 +546,6 @@ describe("ReAct workspace mutation recovery", () => {
     );
     expect(request?.messages[0]?.content).toContain(
       "exactly one non-empty *** Update File: <path> section",
-    );
-    expect(request?.messages[0]?.content).toContain(
-      "Before the next file header",
     );
     expect(request?.messages[0]?.content).toContain(
       "cross the preceding header's file",
@@ -587,7 +582,6 @@ describe("ReAct workspace mutation recovery", () => {
     expect(plan).toBeDefined();
     expect(plan?.messages[0]?.content).toContain("Missing-path mutation continuation phase");
     expect(plan?.messages[0]?.content).toContain("no already-covered or unlisted path");
-    expect(plan?.messages[0]?.content).toContain("Each @@ hunk");
     expect(plan?.messages[0]?.content).toContain(
       "Take hunk context/removals from one taskRelevantContexts item",
     );
@@ -598,15 +592,61 @@ describe("ReAct workspace mutation recovery", () => {
       "exactly one non-empty *** Update File: <path> section",
     );
     expect(plan?.messages[0]?.content).toContain(
-      "Before the next file header",
-    );
-    expect(plan?.messages[0]?.content).toContain(
       "cross the preceding header's file",
     );
     expect(plan?.messages[1]?.content).toContain(
       'Trusted required changed paths still missing:\n["src/protocol.ts"]',
     );
     expect(plan?.outputTokens).toBeLessThanOrEqual(4_096);
+  });
+
+  it("requires real additions or removals in every required update section and hunk", () => {
+    const messages = [
+      { role: "user" as const, content: "Remove TraceValues from the public API." },
+      {
+        role: "assistant" as const,
+        tool_calls: [{ id: "read-api", function: { name: "file_read", arguments: "{}" } }],
+      },
+      {
+        role: "tool" as const,
+        tool_call_id: "read-api",
+        content: JSON.stringify({
+          path: "jsonrpc/src/common/api.ts",
+          truncated: false,
+          content: "export { TraceValue, TraceValues, TraceFormat };",
+        }),
+      },
+    ];
+    const recovery = buildWorkspaceMutationRecoveryRequest({
+      maxInputTokens: 1_400,
+      tools: [toolDefinition("apply_patch")],
+      missingRequiredChangedPaths: ["jsonrpc/src/common/api.ts"],
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+      messages,
+    });
+    const continuation = buildWorkspaceMutationContinuationPlan({
+      messages,
+      tools: [toolDefinition("apply_patch")],
+      remainingTokenBudget: 10_000,
+      maxOutputTokens: 4_096,
+      finalizationOutputTokens: 1_024,
+      inputSafetyFactor: 1.2,
+      missingRequiredChangedPaths: ["jsonrpc/src/common/api.ts"],
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+    });
+
+    for (const instruction of [
+      recovery?.messages[0]?.content,
+      continuation?.messages[0]?.content,
+    ]) {
+      expect(instruction).toContain(
+        "Each required *** Update File section and @@ hunk needs an actual - or + line",
+      );
+      expect(instruction).toContain(
+        "leading space is context, not an edit",
+      );
+      expect(instruction).toContain("No context-only hunks");
+    }
   });
 
   it("keeps bounded continuation file evidence as valid JSON with complete source lines", () => {
@@ -904,7 +944,7 @@ describe("ReAct workspace mutation recovery", () => {
     ))).toBe(true);
     expect(ranges[0]?.[1]).toBeLessThan((ranges[1]?.[0] ?? 0) - 1);
     expect(request?.messages[0]?.content).toContain(
-      "Never join items, use fragments",
+      "Never join items/fragments",
     );
   });
 
