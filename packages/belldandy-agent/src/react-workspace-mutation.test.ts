@@ -64,6 +64,30 @@ describe("ReAct workspace mutation recovery", () => {
     expect(normalizeWorkspaceMutationRecoveryToolCall(call)).toBe(call);
   });
 
+  it("does not guess hunk ownership for repeated empty update sections", () => {
+    const input = [
+      "*** Begin Patch",
+      "*** Update File: src/api.ts",
+      "@@",
+      "-old export",
+      "+new export",
+      "*** Update File: src/api.ts",
+      "*** Update File: src/connection.ts",
+      "@@",
+      "-old import from api",
+      "+new import from api",
+      "*** End Patch",
+    ].join("\n");
+    const call = {
+      function: {
+        name: "apply_patch",
+        arguments: JSON.stringify({ input }),
+      },
+    };
+
+    expect(normalizeWorkspaceMutationRecoveryToolCall(call)).toBe(call);
+  });
+
   it("builds one bounded read-after-write request for each required path", () => {
     const definitions = [toolDefinition("file_read"), toolDefinition("apply_patch")];
     const readTools = selectWorkspaceMutationNavigationToolDefinitions(definitions, (name) => (
@@ -312,15 +336,22 @@ describe("ReAct workspace mutation recovery", () => {
         content: expect.stringContaining("Fix the exported Go API"),
       }),
     ]);
-    expect(request?.messages[0]?.content).toContain(
-      "merely naming a required path or providing context-only lines is not coverage",
-    );
+    expect(request?.messages[0]?.content).toContain("one atomic checklist");
     expect(request?.messages[0]?.content).toContain("a real added or removed line per file");
     expect(request?.messages[0]?.content).toContain(
       "copy context and removed lines as exact complete evidence source lines, never partial fragments",
     );
     expect(request?.messages[0]?.content).toContain(
       "preserve unchanged replacement prefixes and suffixes",
+    );
+    expect(request?.messages[0]?.content).toContain(
+      "exactly one non-empty *** Update File section",
+    );
+    expect(request?.messages[0]?.content).toContain(
+      "Before the next file header",
+    );
+    expect(request?.messages[0]?.content).toContain(
+      "only from the file named by that immediately preceding header",
     );
     expect(request?.messages[1]?.content).toContain("[tool=file_read]");
     expect(request?.messages.some((message) => message.role === ("tool" as string))).toBe(false);
@@ -359,6 +390,15 @@ describe("ReAct workspace mutation recovery", () => {
     );
     expect(plan?.messages[0]?.content).toContain(
       "preserve unchanged replacement prefixes and suffixes",
+    );
+    expect(plan?.messages[0]?.content).toContain(
+      "exactly one non-empty *** Update File section",
+    );
+    expect(plan?.messages[0]?.content).toContain(
+      "Before the next file header",
+    );
+    expect(plan?.messages[0]?.content).toContain(
+      "only from the file named by that immediately preceding header",
     );
     expect(plan?.messages[1]?.content).toContain(
       'Trusted required changed paths still missing:\n["src/protocol.ts"]',

@@ -1598,7 +1598,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
         "trusted required changed paths are one atomic checklist",
       );
       expect(requests[2]?.messages[0]?.content).toContain(
-        "Partial path coverage will be rejected",
+        "never repeat a file header or rely on continuation for partial coverage",
       );
       expect(requests[3]?.tools?.map((tool: any) => tool.function.name)).toEqual(["file_read"]);
       expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
