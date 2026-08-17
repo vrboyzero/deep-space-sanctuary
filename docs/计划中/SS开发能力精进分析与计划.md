@@ -397,7 +397,8 @@ Source / Workspace Revision
 13. **已完成：missing-path continuation 完整行 evidence**。token 收紧时只保留可独立解析的完整 task-relevant context，不从 JSON/源码行中段裁剪；导航、readiness 和预算行为不变。
 14. **已完成但失败：`d642205` Windows 复验**。clean build、dry-run、route/usage 与资源 Gate 通过；唯一 formal 将两个不相邻的完整 context 拼为同一 hunk，底层拒绝且零写入，禁止重跑。
 15. **已完成：context 边界显式化**。每个任务相关 context 均携带真实源码行范围，mutation/recovery 指令禁止单个 hunk 跨 context 项拼接；失败回归、Agent 全量、build 与合同 Gate 全绿，未增加调用、turn/token 或 retry。
-16. **待执行：新 clean identity 与 Windows 复验**。提交当前最小修复，在新 detached NTFS harness 完成 offline install、clean build、零凭证 dry-run 和唯一 formal；仅 Windows 全绿后条件式复核同 identity WSL2。
+16. **已完成：`61735d4` Windows 分层复验**。offline install、clean build、dry-run 和唯一 formal 全绿；三文件 evaluator、唯一 `run.completed`、route/usage/cost、敏感值与资源 Gate 均通过。
+17. **待执行：`61735d4` 同 identity WSL2 复核**。在 ext4 clean harness 完成 offline frozen install、build、独立 `verify:build` 和零凭证 dry-run；前置 Gate 全绿后执行唯一 formal。
 
 #### P0 后续阶段实现结论：mutation hunk 无正文诊断（2026-08-17）
 
@@ -724,20 +725,54 @@ Source / Workspace Revision
 - **为什么先做它**：确定性测试已证明行范围与边界指令进入真实 recovery 请求，只有新 identity 的正式任务能验证模型是否据此生成三个文件的有效原子 patch。
 - **当前还缺的关键闭环**：Windows 三文件 evaluator、唯一 `run.completed`、完整 route/usage/cost 与零敏感值/进程/fixture 残留；全部通过前不进入 WSL2、完整矩阵或 P2-C。
 
+#### P0 后续阶段实现结论：`61735d4` Windows 三文件 canary 全绿（2026-08-17）
+
+##### 已完成内容
+
+1. **detached clean harness 建立与构建**：
+   - source/harness 固定为 clean `61735d4b2add06f132ab3ed43e0cb2cd5602068c`，content SHA-256=`8f0ab0316e34a69b58e2b759a299b4bdf8a71c4d2d739e338d5c53dbc2722008`；
+   - frozen offline install 为 resolved=`493`、reused=`492`、downloaded=`0`；workspace build 与独立 `verify:build` 通过，harness 保持 clean。
+
+2. **Windows 零凭证 dry-run**：
+   - artifact=`artifacts/p0-required-mutation-canary-61735d4-ts-api-windows-dry-run-r1`，run=`real-ts-api-migration-windows-a1-1786944716926`；
+   - preflight/snapshot=`passed`、usage=`not_reached`、events/trace/patch=`0/0/0`，report SHA-256=`2526ed6abc46b467f1c34510ae7255da5f1891c9aad38fb3cc29c5eb35213d2a`。
+
+3. **唯一 Windows formal**：
+   - artifact=`artifacts/p0-required-mutation-canary-61735d4-ts-api-windows-formal-r1`，run=`real-ts-api-migration-windows-a1-1786944947687`；
+   - route=`deepseek-v4-flash -> deepseek-v4-flash [primary]`，usage=`5/5 provider_reported`、input/output=`16306/948`、cost=`$0.00169510`；
+   - 恰好修改 `jsonrpc/src/common/api.ts`、`jsonrpc/src/common/connection.ts`、`protocol/src/common/protocol.ts`，冻结 evaluator、patch acceptance 与单一非空 summary 全部通过。
+
+4. **效果**：
+   - 行范围和禁止跨 context 拼接约束在真实任务中生效，模型完成三文件原子迁移；
+   - 旧 `TraceValues` 在三个目标文件中的剩余出现为 `0`，未改测试或依赖元数据；
+   - Windows required-mutation 代表 Gate 打开，可以复核同 identity WSL2，不外推为 37 个历史失败已解决。
+
+##### 验证结果
+
+- formal event/trace=`60/62`，唯一终态=`run.completed`，regression=`0`；changes.patch=`3,800` 字节、SHA-256=`bf217e3327a1dcc1f3bb37f31e3a0f3891f0c9a87d4078a5078dacd2c934d7d7`；
+- report SHA-256=`67a97ec2fc7dc58d375b60aec1a1a5102d9eaa9d2b7202f325784112ae615f06`，冻结 TypeScript evaluator 独立复跑退出码为 `0`；
+- dry-run/formal 真实主 key 扫描分别为 `0/12,816`、`0/13,452`，不可读文件、listener、相关 Node、根级 PID/token、prepared source 与 harness residue 均为 `0`；formal fixture 仅保留预期三文件修改。
+
+##### 后续计划
+
+- **下一步准备做什么**：在 WSL2 ext4 创建精确 checkout `61735d4` 的 clean harness，依次完成 offline frozen install、build、独立 `verify:build`、零凭证 dry-run 和条件式唯一 formal。
+- **为什么先做它**：Windows 已完整通过，同 commit、同模型和同冻结任务在 Linux 文件系统上的 mutation、verification、finalization 与资源回收是代表性双平台闭环的最后缺口。
+- **当前还缺的关键闭环**：WSL2 source/harness identity、build/snapshot、零凭证 Provider=`0`，以及唯一 formal 的三文件 evaluator、唯一 `run.completed`、usage/cost、敏感值与跨系统进程/fixture 零残留。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
 
-- observed=`$2.23829064`；
+- observed=`$2.23998574`；
 - reserved=`$0.94221000`；
 - unobservable reserve=`$0.60000000`；
-- 守卫上界=`30.24400512 RMB < 50 RMB`。
+- 守卫上界=`30.25756592 RMB < 50 RMB`。
 
-下一次付费 formal 的计划参数为 `priorObservedCostUsd=2.83829064`、`maxTotalCostUsd=2.93829064`；完整预留后守卫上界约 `31.04400512 RMB < 50 RMB`。项目记录不能替代 Provider 外部账单。
+下一次付费 formal 的计划参数为 `priorObservedCostUsd=2.83998574`、`maxTotalCostUsd=2.93998574`；完整预留后守卫上界约 `31.05756592 RMB < 50 RMB`。项目记录不能替代 Provider 外部账单。
 
 当前明确禁止：
 
-- 重跑 `3b506ef`、`429a6eb`、`ef40901`、`a8bf150`、`a860d16` 或 `d642205` 的 Windows/WSL2 formal；
+- 重跑 `3b506ef`、`429a6eb`、`ef40901`、`a8bf150`、`a860d16`、`d642205` 或 `61735d4` 的 Windows formal；
 - 增加 `maxTurns`、`maxTokens` 或 Provider 重试；
 - 未经新证据启动完整矩阵或 candidate v4；
 - 启动 P2-C、push、公开发布或生产操作。
@@ -866,17 +901,19 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 再后继版本 `a860d16` 的 Windows 正式任务先正确改了一个文件，但后续处理把另一个文件的一条很长源码行从中间截断，系统因无法精确定位而停止。`d642205` 已保证只提供完整源码行；本轮模型却把两个相距较远的完整片段误当成连续内容，系统再次在写入前阻止了错误补丁。
 
-现在每个片段都带有自己的源码行范围，系统也明确要求一个补丁段只能使用一个片段；自动测试和工程检查已经通过。当前主要瓶颈已经收敛为：
+`61735d4` 进一步标明了每个片段自己的源码行范围，并禁止一个补丁段跨片段拼接。新的 Windows 正式任务已正确修改三个目标文件，通过自动检查、最终说明、费用记录和资源清理。
 
-1. 把这项修复提交为不混入其他改动的新版本；
-2. 在本地 Windows 盘重新完成构建、无凭据检查和唯一一次正式任务；
-3. 只有 Windows 全绿，才用同一新版本再做一次 WSL2 复核。
+当前主要瓶颈只剩同一版本的 WSL2 复核：
+
+1. 在 Linux 原生文件系统完成离线安装、构建和无凭据检查；
+2. 前置检查全绿后执行唯一一次正式任务；
+3. 只有三文件修改、自动验收、唯一完成状态、费用和清理都通过，才形成双平台代表闭环。
 
 在此之前，不能说原来的 37 个失败已经解决，也不能启动最终 9.5 评审。
 
 ### 9.5 费用和发布边界
 
-当前费用守卫约为 **30.24 元人民币**，低于 **50 元人民币**授权上限；下一次正式验证完整预留后的守卫约为 **31.04 元人民币**。本轮正式验证实际费用为 `$0.00074420`；在授权上限内无需再次申请，外部服务商账单仍需单独核对。
+当前费用守卫约为 **30.26 元人民币**，低于 **50 元人民币**授权上限；下一次正式验证完整预留后的守卫约为 **31.06 元人民币**。最新 Windows formal 实际费用为 `$0.00169510`；在授权上限内无需再次申请，外部服务商账单仍需单独核对。
 
 当前不会重跑已冻结版本，不会提高模型预算，不会启动完整付费矩阵，不会 push、公开发布或执行生产操作。
 
@@ -886,7 +923,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **context 边界修复与确定性 Gate 已完成，待新 identity Windows 复验** | 每个 context 携带真实行范围且禁止跨项 hunk；Agent `627 passed + 1 skipped`，build、benchmark/CI 合同与 diff Gate 全绿；实现环节模型调用=`0` | 1-3 小时 | 提交新 identity，在 NTFS fixture 做 offline install、clean build、dry-run 和唯一 formal；仅 Windows 全绿后条件式复核 WSL2 |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **`61735d4` Windows 全绿，待同 identity WSL2 复核** | Windows 三文件 evaluator、唯一 `run.completed`、route=`deepseek-v4-flash`、usage=`5/5 provider_reported`、cost=`$0.00169510` 与敏感值/资源 Gate 全绿 | 1-3 小时 | 在 WSL2 ext4 做 offline install、build、dry-run 与条件式唯一 formal；全部通过才形成代表性双平台闭环，不外推为完整矩阵改善 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | scorecard、目标向量 `9.510`、多语言投入收益、竞品和边界已复核 | - | 当前精简版与 archive-03 共同保留决策和完整历史 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
