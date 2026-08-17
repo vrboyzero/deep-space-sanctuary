@@ -401,6 +401,7 @@ Source / Workspace Revision
 17. **已完成但失败：`61735d4` 同 identity WSL2 复核**。ext4 offline frozen install、build、独立 `verify:build` 和零凭证 `dry-run-r3` 通过；唯一 formal 因 `api.ts` 两个 hunk 只有 context、没有真实增删而在执行前失败关闭，零写入、零残留，禁止重跑。
 18. **已完成：required section/hunk 真实增删提示约束**。recovery 与 continuation 明确要求每个目标 section 和每个 hunk 均有实际 `-`/`+` 行，前导空格只算 context，禁止 context-only hunk；提示长度不超过原实现，完整 evidence 与原预算保持不变，确定性 Gate 全绿。
 19. **已完成：`b6bf0b3` Windows 分层复验**。offline install、clean build、零凭证 dry-run 和唯一 formal 全绿；三文件 evaluator、唯一 `run.completed`、route/usage/cost、敏感值与资源 Gate 均通过，打开同 identity WSL2 复核。
+20. **已完成但失败：`b6bf0b3` 同 identity WSL2 复核**。ext4 offline frozen install、build、独立 `verify:build` 和零凭证 dry-run 全绿；唯一 formal 先修改 `connection.ts`，后因 `api.ts` continuation 在 diff marker 后多写一个 tab 而匹配失败，最终仅保留一个 changed path，禁止重跑。
 
 #### P0 后续阶段实现结论：mutation hunk 无正文诊断（2026-08-17）
 
@@ -863,16 +864,52 @@ Source / Workspace Revision
 - **为什么先做它**：Windows 已全绿，同 commit、同模型、同冻结任务在 Linux 原生文件系统上的 mutation、verification、finalization 与资源回收是当前唯一剩余的代表性平台证据。
 - **当前还缺的关键闭环**：WSL2 identity/build/snapshot、零凭证 Provider=`0`，以及唯一 formal 的三文件 evaluator、唯一 `run.completed`、usage/cost、敏感值与跨系统资源零残留。
 
+#### P0 后续阶段实现结论：`b6bf0b3` WSL2 whitespace canary 失败关闭（2026-08-17）
+
+##### 已完成内容
+
+1. **WSL2 ext4 detached harness 与前置 Gate**：
+   - source/harness 固定为 clean `b6bf0b3a9ea9cfe2f7715dcec1769b66aa7fa3cd`；frozen offline install 为 resolved=`494`、reused=`493`、downloaded=`0`；
+   - workspace build、独立 `verify:build` 通过，`packages/belldandy-browser/bin/relay.mjs` mode 恢复为 `0644`，harness 保持 clean。
+
+2. **WSL2 零凭证 dry-run**：
+   - artifact=`artifacts/p0-required-mutation-canary-b6bf0b3-ts-api-wsl-dry-run-r1`，run=`real-ts-api-migration-wsl2-linux-a1-1786949092920`；
+   - preflight/snapshot=`passed`、usage=`not_reached`、events/trace/patch=`0/0/0`，report SHA-256=`30b30314dbd171cb40469cf743b3a783294674b1dba3fb760793c17daa6b6ed0`；
+   - 主 key 扫描=`0/12,268`、普通文件不可读=`0`、符号链接=`38`，Windows/WSL2 资源零残留。
+
+3. **唯一 WSL2 formal 与根因**：
+   - artifact=`artifacts/p0-required-mutation-canary-b6bf0b3-ts-api-wsl-formal-r1`，run=`real-ts-api-migration-wsl2-linux-a1-1786949351481`；
+   - route=`deepseek-v4-flash -> deepseek-v4-flash [primary]`，usage=`4/4 provider_reported`、input/output=`11041/936`、cost=`$0.00125350`；
+   - 首次 patch 成功修改 `jsonrpc/src/common/connection.ts`；continuation 的 `api.ts` patch 匹配失败，最终 changed path 仅 `connection.ts`，patch=`552` 字节、SHA-256=`1217b525ea8d9cf4aa6cdf5043a3906b8c42c170b2203f63bfa758764eb9ef85`；
+   - prompt snapshot 正确保留 `api.ts` 的 `lines=29-40` 与 `lines=64-68`；真实第 64 行以一个 tab 开头，结构化错误中的 expected line 以两个 tab 开头，证明模型在 diff marker 后额外增加了一个 tab。候选 patch 正文未持久化，不对其余内容作推断。
+
+4. **效果**：
+   - 系统没有把单文件部分修改误报为三文件成功，唯一终态保持失败；
+   - 新根因收敛为 context/removal 行的原始 tab/space 未逐字保留，不再归因于 context-only、evidence 缺失或跨 context 拼接；
+   - 该 identity 已冻结并禁止重跑，后续只通过新测试、新实现和新 identity 验证。
+
+##### 验证结果
+
+- formal event/trace=`19/21`，唯一终态=`run.failed`，冻结三文件 evaluator 未通过；report SHA-256=`5cce9f5bab9a05d94ac6cbac9cde5299e4852be8b27276a50c1253b479866ce8`；
+- formal 主 key 扫描=`0/12,279`、普通文件不可读=`0`、符号链接=`38`；Windows/WSL2 端口、进程、PID/token 和 harness residue 均为 `0`；
+- 本轮新增模型费用仅为上述唯一 formal 的 `$0.00125350`，未提高调用、turn/token 或 retry。
+
+##### 后续计划
+
+- **下一步准备做什么**：先用失败测试锁定 context/removal 行必须从单一 evidence 逐字复制，diff marker 后的原始 tab/space 不得增加、删除或正规化；再最小收紧共享提示并运行完整确定性 Gate。
+- **为什么先做它**：prompt snapshot、真实源码和结构化匹配错误已把失败定位到一个可测试的 whitespace 契约；先固化契约可避免再次依赖付费 formal 猜测。
+- **当前还缺的关键闭环**：新 identity 的 Windows 三文件 formal 与同 identity WSL2 三文件 formal 均成功，且终态、费用、敏感值和资源 Gate 全绿；在此之前不能形成 required-mutation 双平台代表闭环。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
 
-- observed=`$2.24236945`；
+- observed=`$2.24362295`；
 - reserved=`$0.94221000`；
 - unobservable reserve=`$0.60000000`；
-- 守卫上界=`30.27663560 RMB < 50 RMB`。
+- 守卫上界=`30.28666360 RMB < 50 RMB`。
 
-下一次付费 formal 的计划参数为 `priorObservedCostUsd=2.84236945`、`maxTotalCostUsd=2.94236945`；完整预留后守卫上界约 `31.07663560 RMB < 50 RMB`。项目记录不能替代 Provider 外部账单。
+下一次付费 formal 的计划参数为 `priorObservedCostUsd=2.84362295`、`maxTotalCostUsd=2.94362295`；完整预留后守卫上界约 `31.08666360 RMB < 50 RMB`。项目记录不能替代 Provider 外部账单。
 
 当前明确禁止：
 
@@ -1011,13 +1048,15 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 自动测试现已明确要求每个目标文件和每个补丁段都必须包含真实修改，并确认固定材料预算仍能保留两个不相邻的源码片段。新版本 `b6bf0b3` 已在 Windows 正确修改三个目标文件，通过自动验收、最终说明、费用记录和资源清理。
 
-当前下一步是使用同一代码版本在 WSL2 原生文件系统完成离线安装、构建和无凭据检查；前置 Gate 全绿后只执行一次正式任务。系统不会重跑已冻结 formal，也不会靠增加模型调用或输出额度碰运气。
+同一版本的 WSL2 离线安装、构建和无凭据检查也已通过，但唯一正式任务只完成了第一个文件。后续补丁把源码原有的一个制表符变成了两个，系统无法精确匹配，因此保留明确失败且没有把部分完成当作成功。检查已排除材料缺失、片段越界和“只有定位没有修改”等旧原因。
+
+当前下一步是先用自动测试规定“定位和删除行的空格、制表符必须与单一原始材料逐字相同”，再形成新代码版本，从 Windows 开始分层复验。系统不会重跑已冻结 formal，也不会靠增加模型调用或输出额度碰运气。
 
 在此之前，不能说原来的 37 个失败已经解决，也不能启动最终 9.5 评审。
 
 ### 9.5 费用和发布边界
 
-当前费用守卫约为 **30.28 元人民币**，低于 **50 元人民币**授权上限；下一次正式验证完整预留后的守卫约为 **31.08 元人民币**。最新 Windows formal 实际费用为 `$0.00166347`；在授权上限内无需再次申请，外部服务商账单仍需单独核对。
+当前费用守卫约为 **30.29 元人民币**，低于 **50 元人民币**授权上限；下一次正式验证完整预留后的守卫约为 **31.09 元人民币**。最新 WSL2 formal 实际费用为 `$0.00125350`；在授权上限内无需再次申请，外部服务商账单仍需单独核对。
 
 当前不会重跑已冻结版本，不会提高模型预算，不会启动完整付费矩阵，不会 push、公开发布或执行生产操作。
 
@@ -1027,7 +1066,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`b6bf0b3` Windows 全绿，待同 identity WSL2 分层复核** | Windows offline install/build/dry-run/formal 全绿；三文件 evaluator、唯一 `run.completed`、route/usage/cost、主 key=`0/13,452` 与资源 Gate 通过 | 1-3 小时 | WSL2 ext4 offline install/build/独立 verify/零凭证 dry-run 全绿后执行唯一 formal；三文件与全部终态/费用/清理 Gate 通过才形成代表性双平台闭环 |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **`b6bf0b3` Windows 全绿、WSL2 已失败关闭；待 whitespace 契约修复** | WSL2 preflight 全绿；唯一 formal 因 diff marker 后额外 tab 仅修改 `connection.ts`，唯一 `run.failed`，主 key=`0/12,279`、资源零残留 | 1-3 小时 | 测试先行锁定 context/removal 原始 whitespace 逐字复制，完成确定性 Gate 并形成新 identity；新 identity Windows 与 WSL2 三文件 formal 均通过才闭环 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | scorecard、目标向量 `9.510`、多语言投入收益、竞品和边界已复核 | - | 当前精简版与 archive-03 共同保留决策和完整历史 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
