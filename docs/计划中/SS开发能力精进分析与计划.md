@@ -1461,20 +1461,56 @@ Source / Workspace Revision
 - **为什么先做它**：提交态构建、任务合同、冻结仓输入和零凭证边界均已通过，真实三文件 mutation、verification 与 finalization 是当前唯一剩余的 Windows 证据。
 - **当前还缺的关键闭环**：Windows 三文件 changed paths、冻结 evaluator、非空 summary、唯一 terminal、完整 route/usage/cost、敏感值与资源零残留；Windows 全绿后才允许考虑 WSL2。
 
+#### P0 后续阶段实现结论：`2bfc76c` Windows formal 重复 Update section 失败关闭（2026-08-17）
+
+##### 已完成内容
+
+1. **唯一 Windows formal 审计**：
+   - artifact=`artifacts/p0-required-mutation-canary-2bfc76c-ts-api-windows-formal-r1`，run=`real-ts-api-migration-windows-a1-1786967919355`；
+   - route=`deepseek-v4-flash -> deepseek-v4-flash [primary]`，usage=`3/3 provider_reported`、input/output=`7611/906`、cost=`$0.00073883`；
+   - report SHA-256=`618ae4d610480ab08ae666e42824bbadf3c67c58518c2fd822bf77367bae6865`，report=`failed/product_workflow`。
+
+2. **写入前结构化失败原因**：
+   - 模型返回的是单个 `apply_patch`，因此本轮新增的 split-call 合并分支没有被触发；
+   - 补丁共 `8` 个 hunk，其中 `2` 个 `api.ts` hunk 只有上下文；同一文件又出现重复 Update section，安全保留诊断为 `duplicate_update_path`；
+   - 系统在 mutation 工具执行前拒绝整包，changed paths/patch bytes=`0/0`，没有留下部分修改。
+
+3. **终态与安全审计**：
+   - event/trace=`15/17`，唯一 terminal=`run.failed`；event contract、capability handshake、model route、usage completeness、trace contract 与 artifact policy 全部为 `true`；
+   - patch SHA-256=`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`，result=`null`，frozen fixture diff/untracked=`0/0`；
+   - artifact、fixture、runtime 与 harness 共扫描 `48,195` 个普通文件，真实主 key 命中=`0`、不可读=`0`、重解析点=`1,281`；listener、相关 Node、根级 PID/token 和 Git residue 均为 `0`。
+
+4. **效果**：
+   - 重复路径与无动作 hunk 没有绕过原子写入边界，失败没有被误报为成功；
+   - 本轮形成了完整可入账 usage 与唯一终态，未再现 `read ENOTCONN`；
+   - `2bfc76c` formal 已冻结且禁止重跑，Windows 未闭合，因此没有进入 WSL2。
+
+##### 验证结果
+
+- TypeScript evaluator 未执行成功：mutation 在工具执行前失败关闭；
+- benchmark report 记录 `taskCompleted=false`、`testsPassed=false`、`patchAccepted=false`，changed paths=`0`；
+- Provider usage 完整、实际新增费用=`$0.00073883`，敏感值、端口、相关 Node、PID/token 与 fixture/harness Git residue 均为 `0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：测试先行复核并最小修正“同一路径的独立 context-only Update section 与 actionable section 并存”场景，只有能证明删除独立无动作 section 不改变写入语义时才保留其余可执行 section。
+- **为什么先做它**：本次失败发生在任何写入之前，且已有精确 `duplicate_update_path` 诊断；先收紧这一确定性转换比增加模型轮次、token 或重试更可控。
+- **当前还缺的关键闭环**：重复路径场景的语义安全证明、公开 Agent 回归、全量构建测试和新 identity 无费用 Gate；完成前不执行新的 formal。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
 
-- observed=`$2.24915986`；
+- observed=`$2.24989869`；
 - reserved=`$0.94221000`；
 - unobservable reserve=`$0.70000000`；
-- 守卫上界=`31.13095888 RMB < 50 RMB`。
+- 守卫上界=`31.13686952 RMB < 50 RMB`。
 
-下一次付费 formal 的 runner 参数为 `priorObservedCostUsd=2.94915986`、`maxTotalCostUsd=3.00000000`，进程内剩余额度=`$0.05084014`；项目账本仍按完整 `$0.10` 预留，守卫上界约 `31.93095888 RMB < 50 RMB`。项目记录不能替代 Provider 外部账单。
+下一次付费 formal 尚未开放；若后续无费用 Gate 全绿，runner 参数应为 `priorObservedCostUsd=2.94989869`、`maxTotalCostUsd=3.00000000`，进程内剩余额度=`$0.05010131`。项目账本仍按完整 `$0.10` 预留，守卫上界约 `31.93686952 RMB < 50 RMB`。项目记录不能替代 Provider 外部账单。
 
 当前明确禁止：
 
-- 重跑 `3b506ef`、`429a6eb`、`ef40901`、`a8bf150`、`a860d16`、`d642205`、`61735d4`、`b6bf0b3`、`00d2559`、`8c24998`、`9b4fe30` 或 `2b46799` 的任一已执行 formal；
+- 重跑 `3b506ef`、`429a6eb`、`ef40901`、`a8bf150`、`a860d16`、`d642205`、`61735d4`、`b6bf0b3`、`00d2559`、`8c24998`、`9b4fe30`、`2b46799` 或 `2bfc76c` 的任一已执行 formal；
 - 增加 `maxTurns`、`maxTokens` 或 Provider 重试；
 - 未经新证据启动完整矩阵或 candidate v4；
 - 启动 P2-C、push、公开发布或生产操作。
@@ -1555,6 +1591,7 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 | context-only hunk 阻断原子 patch | `fix_now` | 保留 context-only section 的零执行边界；对结构明确、路径唯一安全的其他可执行 section，测试先行接入既有单次 missing-path continuation，不放宽最终 required-path 覆盖 |
 | post-write 复读后仍有目标残留 | `fix_now` | 已用公开 Agent 回归接入有界目标复核、一次 `apply_patch` 纠正、再次完整复读和无工具最终复核；确定性 Gate 已闭合，待新 identity Windows formal 验证真实模型行为 |
 | missing-path continuation 返回多个补丁调用 | `fix_now` | 已将完整、安全、覆盖全部剩余目标的纯 `apply_patch` 调用合并为一次原子执行；初始 mutation、post-write correction、混合或不完整调用仍失败关闭 |
+| 单个 patch 内重复路径与独立 context-only section | `fix_now` | 仅在可证明独立无动作 section 对后续 section 无定位作用、且全部 required paths 仍保留真实修改时测试先行保留可执行 section；否则继续失败关闭 |
 | required-mutation 其余失败改善范围 | `split_task` | 代表 canary 双平台闭合后按失败形状逐类验证，不做单任务外推 |
 | 连续候选 9.5 证据 | `split_task` | 独立进入 P2-C，不由当前 P0 费用授权自动扩大 |
 | C# 选型和生产接入 | `defer` | 真实需求、许可、安全分发和 truth set 具备后再启动 |
@@ -1629,11 +1666,15 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 系统现在只针对这种“已有可信部分进度、剩余目标完整且每段都是真实修改”的情况，把多个补丁合并为一次原子写入。任一分段涉及其他文件、遗漏目标、为空或不是普通更新，整组都会在写入前停止。新版本需先通过提交态离线构建和无凭据检查，再只执行一次 Windows 真实验证。
 
+新版本 `2bfc76c` 已通过离线安装、构建和无凭据检查。唯一真实验证中，模型这次只返回一个补丁，但在 `api.ts` 使用了重复的文件修改段，其中两段只有定位信息、没有真实增删。系统无法证明这些重复段可以安全保留，因此在任何写入前拒绝整包；没有文件变化、没有凭据泄漏，费用与最终失败状态均完整记录。该版本已冻结，不会重跑或进入 WSL2。
+
+下一步只研究一个更窄的情况：如果只有某个独立文件段完全不修改内容，而同一路径的其他独立段包含真实修改，删除这个无动作段是否严格不改变后续修改语义。只有自动测试能够证明安全、并且所有目标文件仍有真实修改时才会继续；否则维持当前停止策略。
+
 在此之前，不能说原来的 37 个失败已经解决，也不能启动最终 9.5 评审。
 
 ### 9.5 费用和发布边界
 
-当前费用守卫约为 **31.13 元人民币**，低于 **50 元人民币**授权上限；下一次正式验证完整预留后的守卫约为 **31.93 元人民币**。最新 Windows formal 的事件流记录 `$0.00111729`，但正式报告 usage 不可用，因此账本保守预留完整 `$0.10`；在授权上限内无需再次申请，外部服务商账单仍需单独核对。
+当前费用守卫约为 **31.14 元人民币**，低于 **50 元人民币**授权上限；下一次正式验证完整预留后的守卫约为 **31.94 元人民币**。最新 Windows formal 完整记录实际费用 `$0.00073883`；此前终态不可观测的 formal 仍保守预留完整 `$0.10`。在授权上限内无需再次申请，外部服务商账单仍需单独核对。
 
 当前不会重跑已冻结版本，不会提高模型预算，不会启动完整付费矩阵，不会 push、公开发布或执行生产操作。
 
@@ -1643,7 +1684,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`2bfc76c` Windows 无费用前置 Gate 已完成，待唯一 formal** | split-call 原子合并修复后 Agent + Skills `1577 passed + 3 skipped`；clean detached offline install/build/独立 verifier 通过；dry-run 两层 preflight、fixture diff、零调用/零写入、真实主 key 与资源清理全绿 | 1-2 小时 | 按 runner `2.94915986 -> 3.00000000 USD` 只执行一次 `deepseek-v4-flash` Windows formal，项目账本仍预留完整 `$0.10`；三文件 evaluator、summary、terminal、route/usage/cost 和零残留全绿后才考虑 WSL2 |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **`2bfc76c` Windows formal 失败并冻结；待重复 Update section 安全转换修复** | 单个 patch 含 `8` 个 hunk，`2` 个 `api.ts` hunk 只有上下文且路径重复；写入前失败关闭，changed paths/patch=`0/0`；唯一 `run.failed`、usage=`3/3`、cost=`$0.00073883`，敏感值与资源清理全绿 | 1-2 小时 | 测试先行证明并实现独立无动作重复 section 的语义安全删除，完成全量 Gate、新 identity 和零凭证 dry-run 前不执行 formal；新 formal runner 上限暂记 `2.94989869 -> 3.00000000 USD` |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | scorecard、目标向量 `9.510`、多语言投入收益、竞品和边界已复核 | - | 当前精简版与 archive-03 共同保留决策和完整历史 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
