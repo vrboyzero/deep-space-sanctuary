@@ -379,7 +379,7 @@ Source / Workspace Revision
 - 冻结 evaluator 失败：`jsonrpc/src/common/api.ts` 的第一处 connection import 仍保留 `TraceValues`；`connection.ts` 的 `Verbose` 行还丢失原有缩进，而 summary 错误声称两处 barrel export 均已移除；
 - event/trace=`63/65`；artifact、fixture、runtime 与 clean harness 共扫描 `48,065` 个普通文件，真实主 key 命中=`0`、不可读=`0`、重解析点=`1,281`；listener、相关 Node、根级 PID/token 与 harness/source residue 均为 `0`。
 
-`8c24998` 与 `9b4fe30` formal 均已冻结、禁止重跑。可信原子输入纠正已证明能完成三文件原子提交，但 post-write 复读尚未阻止目标残留、无关格式变化和失实 summary；Windows 未全绿，因此不创建同 identity WSL2。下一步先用确定性红灯定义复读后的目标一致性失败，再做最小泛化修复；仍不增加 `maxTurns`、`maxTokens` 或 Provider retry。
+`8c24998` 与 `9b4fe30` formal 均已冻结、禁止重跑。可信原子输入纠正已证明能完成三文件原子提交；本轮已用确定性回归闭合 post-write 复读后的目标对照与单次纠正，但新 identity 尚未完成 Windows 真实验证，因此不创建 WSL2 harness，仍不增加 `maxTurns`、`maxTokens` 或 Provider retry。
 
 ### 6.5 恢复后的实施顺序
 
@@ -1284,6 +1284,43 @@ Source / Workspace Revision
 - **为什么先做它**：当前原子提交、路径覆盖和复读动作都成功，继续加强 mutation parser 不能发现语义残留；必须把“复读后对照目标”接入现有有界 continuation/finalization 边界。
 - **当前还缺的关键闭环**：泛化的 post-write 目标一致性证据、最小修复、Agent/build/合同 Gate，以及新 identity 的 Windows formal；Windows 全绿后才条件式复核同 identity WSL2。
 
+#### P0 后续阶段实现结论：post-write 目标一致性复核与单次纠正（2026-08-17）
+
+##### 已完成内容
+
+1. **`react-workspace-mutation.ts` 扩展**：
+   - 新增不超过 `2,048` token 的 post-write 目标复核请求，对照原任务与 required paths 的完整复读证据；
+   - 首次复核只允许一个 `apply_patch`，最终复核不暴露工具，并明确一次纠正已经用完；
+   - 增加补丁声明路径的执行前白名单校验，非法包络、空路径或 required list 外路径均失败关闭。
+
+2. **`tool-agent.ts` 接入**：
+   - required mutation 完整复读后不再直接 finalization，先进入目标一致性复核；
+   - 发现残留时只允许一次原子纠正，成功后强制再次完整复读，再进入无工具最终复核；
+   - 纠正工具失败、执行前路径越界、执行后 metadata 越界或最终复核再次请求工具时立即失败，不产生第二次纠正。
+
+3. **`tool-agent-workspace-mutation.test.ts` 回归**：
+   - 通过公开 `Agent.run()` 覆盖 post-write 残留、一次纠正后再次复读、工具面收缩和最终无工具复核；
+   - 使用真实三文件 `TraceValues` 失败形状，证明 `2,048` token 内仍保留 `api.ts` 第一处残留 import 与三个 required paths；
+   - 覆盖纠正工具失败、补丁越界执行前拒绝和纠正额度耗尽后再次请求工具。
+
+4. **效果**：
+   - “三个目标文件都改过并复读”不再等同于“任务目标已经完成”；
+   - 复读内容仍有遗漏时，系统可在原有预算策略内纠正一次，并用第二次复读验证实际结果；
+   - 修复不硬编码 `TraceValues`，不提高 `maxTurns`、`maxTokens` 或 Provider retry，也不放宽 required path 边界。
+
+##### 验证结果
+
+- TypeScript 编译无错误：Agent 单包 build、workspace build 和独立 `verify:build` 通过；
+- workspace-mutation 定向回归 `89/89` 通过；Agent `638 passed + 1 skipped`，Skills `936 passed + 2 skipped`，合计 `1574 passed + 3 skipped`（含 `5` 个新增 post-write 目标复核测试）；
+- `verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 通过；真实三文件证据、执行前路径 Gate、单次纠正、再次复读和最终无工具 Gate 均通过；
+- 模型调用=`0`、新增费用=`$0`，尚未执行新 identity 的 Windows formal。
+
+##### 后续计划
+
+- **下一步准备做什么**：提交本轮代码、测试与计划文档形成新 identity，再创建 detached clean Windows harness，依次执行 frozen offline install、workspace build、独立 `verify:build` 和零凭证 dry-run。
+- **为什么先做它**：正式 canary 必须只验证可回读的 clean commit；先完成无费用前置 Gate，才能排除构建、仓输入、凭据和 harness 污染后安全开放唯一付费调用。
+- **当前还缺的关键闭环**：新 identity 的 Windows 前置 Gate 与唯一 `deepseek-v4-flash` formal、冻结 evaluator、route/usage/cost、敏感值与资源零残留；Windows 全绿后才条件式复核同 identity WSL2。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
@@ -1376,7 +1413,7 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 | 技术债 | 决策 | 处理 |
 | --- | --- | --- |
 | context-only hunk 阻断原子 patch | `fix_now` | 保留 context-only section 的零执行边界；对结构明确、路径唯一安全的其他可执行 section，测试先行接入既有单次 missing-path continuation，不放宽最终 required-path 覆盖 |
-| post-write 复读后仍有目标残留 | `fix_now` | 先用公开 Agent 红灯定义“required paths 均修改但目标未闭合不得直接 finalization”，再复用现有有界 continuation；不把冻结任务符号硬编码进通用 Agent |
+| post-write 复读后仍有目标残留 | `fix_now` | 已用公开 Agent 回归接入有界目标复核、一次 `apply_patch` 纠正、再次完整复读和无工具最终复核；确定性 Gate 已闭合，待新 identity Windows formal 验证真实模型行为 |
 | required-mutation 其余失败改善范围 | `split_task` | 代表 canary 双平台闭合后按失败形状逐类验证，不做单任务外推 |
 | 连续候选 9.5 证据 | `split_task` | 独立进入 P2-C，不由当前 P0 费用授权自动扩大 |
 | C# 选型和生产接入 | `defer` | 真实需求、许可、安全分发和 truth set 具备后再启动 |
@@ -1443,7 +1480,9 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 自动测试和实现现已闭合这类零写入输入错误：只有修改工具明确证明“在写入前因原文匹配失败”，并且所有目标文件仍未完成时，系统才在原有额度内给一次完整纠正机会；纠正必须重新依据各文件原文生成，不会照抄失败内容。若错误没有可信证明，或纠正再次失败，系统仍立即停止。
 
-新版本 `9b4fe30` 已完成 Windows 离线安装、构建和无凭据检查；唯一正式验证随后成功修改并复读了三个目标文件，但仍漏掉 `api.ts` 中第一处旧名称，还带来一处无关缩进变化。自动验收因此拒绝结果；系统没有误报成功，也没有泄漏凭据或留下进程。该版本已冻结，不会重跑，也不会进入 WSL2。下一步先让系统在复读后再次对照目标，发现残留时不得直接结束。
+新版本 `9b4fe30` 已完成 Windows 离线安装、构建和无凭据检查；唯一正式验证随后成功修改并复读了三个目标文件，但仍漏掉 `api.ts` 中第一处旧名称，还带来一处无关缩进变化。自动验收因此拒绝结果；系统没有误报成功，也没有泄漏凭据或留下进程。该版本已冻结，不会重跑，也不会进入 WSL2。
+
+系统现已在复读后再次对照原任务：若实际文件仍有遗漏，只能在目标文件内纠正一次；纠正后必须重新读取全部目标文件，最后一次检查不能再写文件。自动测试还确认，失败样本中的第一处旧名称在有限材料预算内不会被裁掉，越界文件会在执行前被拒绝。本轮代码、完整测试和构建均已通过，但这仍是确定性证据；下一步要先形成 clean commit 并通过 Windows 无费用前置检查，再用新版本做一次真实验证。
 
 在此之前，不能说原来的 37 个失败已经解决，也不能启动最终 9.5 评审。
 
@@ -1459,7 +1498,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`9b4fe30` Windows formal 因 post-write 目标残留失败，待确定性修复** | 三文件原子修改/复读、CLI、唯一 `run.completed`、route、`5/5` usage 和 summary 合同通过；`api.ts` 仍残留 `TraceValues` import，冻结 evaluator 拒绝；敏感值与资源零残留 | 2-5 小时 | 红灯定义复读后目标一致性，最小接入有界 continuation/finalization Gate；新 identity 重新走 Windows 前置 Gate 与唯一 formal，全绿后才复核 WSL2 |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **post-write 确定性修复与全量 Gate 已完成，待新 identity Windows 前置验证** | 有界目标复核、一次 `apply_patch` 纠正、再次完整复读、执行前 required-path Gate 与最终无工具复核已接入；定向 `89/89`、Agent + Skills `1574 passed + 3 skipped`、build/合同 Gate 全绿；模型调用=`0` | 1-3 小时 | 提交 clean identity，完成 detached Windows offline install/build/独立 verifier/零凭证 dry-run；全绿后只执行一次 Windows formal，冻结 evaluator 通过后才条件式复核 WSL2 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | scorecard、目标向量 `9.510`、多语言投入收益、竞品和边界已复核 | - | 当前精简版与 archive-03 共同保留决策和完整历史 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |

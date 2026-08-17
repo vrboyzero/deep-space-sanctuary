@@ -137,10 +137,12 @@ import {
   buildWorkspaceMutationContinuationPlan,
   buildWorkspaceMutationInputCorrectionPlan,
   buildWorkspaceMutationNavigationRequest,
+  buildWorkspaceMutationObjectiveReviewRequest,
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationVerificationRequest,
   formatWorkspaceMutationPatchHunkDiagnostics,
   formatWorkspaceMutationUnexpectedEndMarkerDiagnostics,
+  hasOnlyWorkspaceMutationPatchPaths,
   inspectContextOnlyWorkspaceMutationPatchPreservation,
   inspectWorkspaceMutationPatchHunks,
   isCompleteWorkspaceMutationVerificationReadResult,
@@ -2424,6 +2426,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let workspaceMutationInputCorrectionPending = false;
     let workspaceMutationVerificationPending = false;
     let workspaceMutationVerificationAttempts = 0;
+    let workspaceMutationVerificationCompletedReadCount = 0;
+    let workspaceMutationObjectiveReviewPending = false;
+    let workspaceMutationObjectiveReviewAttempts = 0;
+    let workspaceMutationObjectiveCorrectionAttempted = false;
     let workspaceMutationFinalizationPending = false;
     let pendingBoundedStructuredOutputRepairRequest: BoundedStructuredOutputRepairRequest | undefined;
     let lastProviderRawUsage: AgentUsage["providerRawUsage"] | undefined;
@@ -2829,6 +2835,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           && !emptyContentFinalizationPending
           && !workspaceMutationRecoveryRequested
           && !workspaceMutationVerificationPending
+          && !workspaceMutationObjectiveReviewPending
           && !workspaceMutationFinalizationPending
           ? input.steering.peekPending()
           : [];
@@ -2883,6 +2890,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
         let workspaceMutationNavigationRequest: WorkspaceMutationNavigationRequest | undefined;
         let workspaceMutationVerificationCall = false;
         let workspaceMutationVerificationRequest: WorkspaceMutationVerificationRequest | undefined;
+        let workspaceMutationObjectiveReviewCall = false;
+        let workspaceMutationObjectiveReviewRequest: WorkspaceMutationRecoveryRequest | undefined;
         let workspaceMutationFinalizationCall = false;
         let finalizationOnlyCall = false;
         let finalizationRequest: ReactFinalizationRequest | undefined;
@@ -3127,6 +3136,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           workspaceMutationVerificationCall = true;
           workspaceMutationVerificationPending = false;
           workspaceMutationVerificationAttempts++;
+          workspaceMutationVerificationCompletedReadCount = 0;
           workspaceMutationVerificationRequest = candidate;
           tools = candidate.tools;
           toolNames = tools.map((tool) => tool.function.name);
@@ -3134,6 +3144,80 @@ export class ToolEnabledAgent implements BelldandyAgent {
             verificationInputTokens: candidate.estimatedInputTokens,
             verificationOutputTokens: mutationVerificationOutputTokens,
             requiredPathCount: candidate.requiredVerificationPaths.length,
+            conversationId: input.conversationId,
+            agentId: resolvedAgentId,
+          });
+        }
+        if (workspaceMutationObjectiveReviewPending && !workspaceMutationVerificationCall) {
+          const mutationTools = selectWorkspaceMutationToolDefinitions(
+            tools,
+            (name) => this.opts.toolExecutor.getRegisteredToolContract?.(name),
+          ).filter((tool) => tool.function.name === "apply_patch");
+          const remainingReviewInputTokens = Math.min(
+            WORKSPACE_MUTATION_NAVIGATION_INPUT_TOKEN_LIMIT,
+            Math.floor(Math.max(
+              0,
+              runBudget.maxTotalTokens
+                - runBudget.totalTokens
+                - mutationVerificationOutputTokens,
+            ) / REACT_FINALIZATION_INPUT_SAFETY_FACTOR),
+          );
+          const candidate = buildWorkspaceMutationObjectiveReviewRequest({
+            messages: mutationRecoverySourceMessages,
+            tools: workspaceMutationObjectiveCorrectionAttempted ? [] : mutationTools,
+            maxInputTokens: remainingReviewInputTokens,
+            requiredChangedPaths,
+            correctionAllowed: !workspaceMutationObjectiveCorrectionAttempted,
+            tokenEstimateContext: dispatchTokenEstimateContext,
+          });
+          if (!candidate) {
+            yield* emitWorkspaceMutationFailure(
+              "the mutation was read back, but no bounded post-write objective review can be built from the allowed tools, evidence, and remaining token budget.",
+            );
+            return;
+          }
+          const candidateMinimumCost = calculateUsageCostUsd({
+            inputTokens: candidate.estimatedInputTokens,
+            outputTokens: mutationVerificationOutputTokens,
+            pricing: this.opts.usagePricing,
+          });
+          const candidatePreflight = runBudget.checkModelCallPreflight({
+            minimumInputTokens: candidate.estimatedInputTokens,
+            minimumOutputTokens: mutationVerificationOutputTokens,
+            ...(candidateMinimumCost ? { minimumCostUsd: candidateMinimumCost.totalUsd } : {}),
+          });
+          if (candidatePreflight) {
+            const error = candidatePreflight.budget === "cost_usd"
+              ? `required workspace mutation objective review exceeds the remaining cost budget (maximum $${candidatePreflight.limit.toFixed(8)}, projected $${candidatePreflight.observed.toFixed(8)}).`
+              : `required workspace mutation objective review exceeds the remaining token budget (maximum ${candidatePreflight.limit}, projected ${candidatePreflight.observed}).`;
+            yield* emitBudgetExhausted(
+              candidatePreflight.budget,
+              candidatePreflight.limit,
+              candidatePreflight.observed,
+              error,
+              {
+                policyId: candidatePreflight.policyId,
+                stage: candidatePreflight.stage,
+                reasonCode: candidatePreflight.reasonCode,
+              },
+            );
+            return;
+          }
+          workspaceMutationObjectiveReviewCall = true;
+          workspaceMutationObjectiveReviewPending = false;
+          workspaceMutationObjectiveReviewAttempts++;
+          workspaceMutationObjectiveReviewRequest = candidate;
+          workspaceMutationCallRequiredPaths = [...requiredChangedPaths];
+          tools = candidate.tools;
+          toolNames = tools.map((tool) => tool.function.name);
+          logWarn("[workspace-mutation] switching to bounded post-write objective review", {
+            reviewInputTokens: candidate.estimatedInputTokens,
+            reviewOutputTokens: mutationVerificationOutputTokens,
+            reviewAttempt: workspaceMutationObjectiveReviewAttempts,
+            correctionAttempted: workspaceMutationObjectiveCorrectionAttempted,
+            requiredPathCount: requiredChangedPaths.length,
+            evidenceCount: candidate.evidenceCount,
+            truncatedEvidenceCount: candidate.truncatedEvidenceCount,
             conversationId: input.conversationId,
             agentId: resolvedAgentId,
           });
@@ -3191,6 +3275,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           toolNames = [];
         }
         const reservedPromptTokens = workspaceMutationVerificationRequest?.estimatedInputTokens
+          ?? workspaceMutationObjectiveReviewRequest?.estimatedInputTokens
           ?? workspaceMutationNavigationRequest?.estimatedInputTokens
           ?? workspaceMutationRecoveryRequest?.estimatedInputTokens
           ?? finalizationRequest?.estimatedInputTokens
@@ -3198,6 +3283,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
           ?? preflightPromptTokens;
         const reservedOutputTokens = workspaceMutationVerificationCall
           ? mutationVerificationOutputTokens + finalizationOutputTokens
+          : workspaceMutationObjectiveReviewCall
+          ? mutationVerificationOutputTokens
           : workspaceMutationNavigationCall
           ? mutationNavigationOutputTokens
           : workspaceMutationRecoveryCall
@@ -3494,6 +3581,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           && !workspaceMutationRecoveryCall
           && !workspaceMutationNavigationCall
           && !workspaceMutationVerificationCall
+          && !workspaceMutationObjectiveReviewCall
           ? await input.steering.consumePending({ modelCallIndex: nextModelCallIndex })
           : [];
         for (const command of steerCommands) {
@@ -3501,6 +3589,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
         }
         const requestMessages = workspaceMutationVerificationRequest
           ? workspaceMutationVerificationRequest.messages as Message[]
+          : workspaceMutationObjectiveReviewRequest
+          ? workspaceMutationObjectiveReviewRequest.messages as Message[]
           : workspaceMutationNavigationRequest
           ? workspaceMutationNavigationRequest.messages as Message[]
           : workspaceMutationRecoveryRequest
@@ -3555,6 +3645,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           workspaceMutationNavigation: workspaceMutationNavigationCall,
           workspaceMutationRecovery: workspaceMutationRecoveryCall,
           workspaceMutationVerification: workspaceMutationVerificationCall,
+          workspaceMutationObjectiveReview: workspaceMutationObjectiveReviewCall,
           workspaceMutationFinalization: workspaceMutationFinalizationCall,
         });
 
@@ -3565,6 +3656,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           && !workspaceMutationNavigationCall
           && !workspaceMutationRecoveryCall
           && !workspaceMutationVerificationCall
+          && !workspaceMutationObjectiveReviewCall
           ? createModelStreamTextDelivery()
           : undefined;
         const responsePromise = this.callModel(
@@ -3613,11 +3705,14 @@ export class ToolEnabledAgent implements BelldandyAgent {
             || workspaceMutationNavigationCall
             || workspaceMutationRecoveryCall
             || workspaceMutationVerificationCall
+            || workspaceMutationObjectiveReviewCall
             || boundedStructuredOutputRepairRequest !== undefined
             ? undefined
             : providerNativeSystemBlocks,
           streamDelivery,
           workspaceMutationVerificationCall
+            ? mutationVerificationOutputTokens
+            : workspaceMutationObjectiveReviewCall
             ? mutationVerificationOutputTokens
             : workspaceMutationNavigationCall
             ? mutationNavigationOutputTokens
@@ -4128,12 +4223,20 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
           toolCalls = requiredToolCalls;
         }
-        if (workspaceMutationRecoveryCall) {
+        if (workspaceMutationRecoveryCall || workspaceMutationObjectiveReviewCall) {
           const requestedMutationTool = toolCalls.length === 1
             && toolNames.includes(toolCalls[0]?.function.name ?? "");
           if (!requestedMutationTool) {
             yield* emitWorkspaceMutationFailure(
-              "the mutation-only model call must request exactly one allowed workspace mutation tool.",
+              workspaceMutationObjectiveReviewCall
+                ? "the post-write objective review may request at most one allowed workspace mutation tool."
+                : "the mutation-only model call must request exactly one allowed workspace mutation tool.",
+            );
+            return;
+          }
+          if (workspaceMutationObjectiveReviewCall && workspaceMutationObjectiveCorrectionAttempted) {
+            yield* emitWorkspaceMutationFailure(
+              "the post-write objective review requested another correction after its one allowed correction was already attempted.",
             );
             return;
           }
@@ -4156,6 +4259,16 @@ export class ToolEnabledAgent implements BelldandyAgent {
             );
             return;
           }
+          if (workspaceMutationObjectiveReviewCall
+            && !hasOnlyWorkspaceMutationPatchPaths(
+              normalizedMutationToolCall,
+              workspaceMutationCallRequiredPaths,
+            )) {
+            yield* emitWorkspaceMutationFailure(
+              "the post-write objective correction patch targeted an unlisted path or did not contain a valid required-path file section.",
+            );
+            return;
+          }
           if (patchDiagnostics
             && patchDiagnostics.contextOnlyHunkCount > 0
             && patchPreservationDiagnostics?.canPreserve === false
@@ -4166,6 +4279,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
             return;
           }
           toolCalls = [actionableMutationToolCall ?? normalizedMutationToolCall];
+          if (workspaceMutationObjectiveReviewCall) {
+            workspaceMutationObjectiveCorrectionAttempted = true;
+          }
         }
         if (workspaceMutationNavigationCall) {
           const maxFileReadCalls = workspaceMutationNavigationRequest?.maxFileReadCalls ?? 2;
@@ -5040,6 +5156,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             && resultContract?.isReadOnly === false
             && (resultContract.family === "workspace-write" || resultContract.family === "patch");
           const mutationCallStayedWithinRequiredPaths = !workspaceMutationRecoveryCall
+            && !workspaceMutationObjectiveReviewCall
             || hasOnlyWorkspaceMutationChangedPaths(
               result.metadata,
               workspaceMutationCallRequiredPaths,
@@ -5052,10 +5169,27 @@ export class ToolEnabledAgent implements BelldandyAgent {
             );
             return;
           }
+          if (workspaceMutationObjectiveReviewCall
+            && successfulWorkspaceMutation
+            && !mutationCallStayedWithinRequiredPaths) {
+            yield* emitWorkspaceMutationFailure(
+              "the post-write objective correction changed an unlisted path.",
+            );
+            return;
+          }
           if (successfulWorkspaceMutation) {
             workspaceMutationObserved = workspaceMutationObserved
               || workspaceMutationPathCoverage.observeSuccessfulMutation(result.metadata);
-            if (workspaceMutationObserved
+            if (workspaceMutationObjectiveReviewCall
+              && workspaceMutationVerificationEligible
+              && workspaceMutationVerificationAttempts < 2) {
+              workspaceMutationVerificationPending = true;
+              lastToolCallFingerprint = undefined;
+              lastToolCallName = undefined;
+              consecutiveDuplicateToolCalls = 0;
+              recentToolCallTraces.length = 0;
+              lastSuccessfulToolResult = undefined;
+            } else if (workspaceMutationObserved
               && workspaceMutationVerificationEligible
               && workspaceMutationVerificationAttempts === 0) {
               workspaceMutationVerificationPending = true;
@@ -5067,6 +5201,14 @@ export class ToolEnabledAgent implements BelldandyAgent {
             } else if (workspaceMutationObserved && workspaceMutationVerificationAttempts > 0) {
               workspaceMutationFinalizationPending = true;
             }
+          }
+          if (workspaceMutationObjectiveReviewCall && !successfulWorkspaceMutation) {
+            yield* emitWorkspaceMutationFailure(
+              result.success
+                ? `tool ${request.name} did not satisfy the trusted post-write correction contract.`
+                : `post-write correction tool ${request.name} failed: ${result.error || "unknown tool failure"}`,
+            );
+            return;
           }
           if (workspaceMutationRecoveryCall) {
             if (!successfulWorkspaceMutation) {
@@ -5135,16 +5277,22 @@ export class ToolEnabledAgent implements BelldandyAgent {
             );
             return;
           }
-          if (workspaceMutationVerificationCall
-            && result.success
-            && !isCompleteWorkspaceMutationVerificationReadResult({
+          if (workspaceMutationVerificationCall && result.success) {
+            const completeRead = isCompleteWorkspaceMutationVerificationReadResult({
               arguments: request.arguments,
               output: result.output,
-            })) {
-            yield* emitWorkspaceMutationFailure(
-              "the bounded read-after-write tool did not return the complete post-mutation file for the requested path.",
-            );
-            return;
+            });
+            if (!completeRead) {
+              yield* emitWorkspaceMutationFailure(
+                "the bounded read-after-write tool did not return the complete post-mutation file for the requested path.",
+              );
+              return;
+            }
+            workspaceMutationVerificationCompletedReadCount++;
+            if (workspaceMutationVerificationCompletedReadCount
+              === workspaceMutationVerificationRequest?.requiredVerificationPaths.length) {
+              workspaceMutationObjectiveReviewPending = true;
+            }
           }
           if (isRunStopRequested(input.abortSignal)) {
             yield* emitRunAbort();
