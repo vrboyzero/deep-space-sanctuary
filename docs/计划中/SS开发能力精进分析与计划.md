@@ -2506,22 +2506,203 @@ Source / Workspace Revision
 - **为什么先做它**：`5200317` 双平台 formal 已全部冻结；修复只有进入新的 source/harness identity 才能形成有效证据，先走无费用 Gate 可在 Provider 调用前关闭依赖、构建、路径与凭据隔离风险。
 - **当前还缺的关键闭环**：新 identity 尚未完成 Windows clean/dry-run；其全绿后仍只允许唯一 Windows formal，必须完成三文件 mutation、frozen verifier、exact/non-truncated changes、完整 usage/trace 与零残留，再条件式进入同 identity 唯一 WSL2 formal。完整矩阵、candidate v4 与 P2-C 继续不启动。
 
+#### P0 后续阶段实现结论：`0cd7d13` Windows detached clean 无费用 Gate（2026-08-18）
+
+##### 已完成内容
+
+1. **`0cd7d13fcda668249fa44856657ac65ac25d4352` detached clean harness 建立**：
+   - harness=`tmp/p0-required-mutation-canary-0cd7d13-clean`，source/harness 精确绑定同一 commit；
+   - lockfile/content SHA-256=`844c0021f1c9135214c913636fd6ed6f9232593883bd5b6289f7ade51d2b7d2b` / `aeeb8100e013e7433f97977430a19ff0328647f6740d4e75cce7c0223a89acbe`；
+   - 主工作区既有 `D盘容易增大问题与处理方法.md` 改动未进入提交或 harness，也未被覆盖。
+
+2. **frozen offline install、构建与独立 verifier 完成**：
+   - `corepack pnpm install --offline --frozen-lockfile` 为 resolved=`493`、reused=`492`、downloaded=`0`、added=`493`；
+   - workspace build 与独立 `verify:build` 均通过；
+   - 构建后 harness 仍 detached/clean，commit 与 content hash 未漂移，`git diff --check` 通过。
+
+3. **隔离的零凭证 Windows dry-run 完成**：
+   - artifact=`artifacts/p0-required-mutation-canary-0cd7d13-ts-api-windows-dry-run-r1`，run=`real-ts-api-migration-windows-a1-1786997848923`；
+   - report SHA-256=`c90a762c541d5d8a63f7a63187cf1c5c22041d54cdc95863081d031dc9ef7e3f`，production/repository snapshot preflight 均为 `passed`；
+   - credentialsConfigured=`false`、usage=`not_reached`、event/trace/patch=`0/0/0`，source/harness dirty=`false/false`，fixture=`fd688326...` clean。
+
+4. **效果**：
+   - objective review 与跨宿主 recovery 修复已进入可审计的新 source/build identity；
+   - dry-run 未触达 Provider，新增费用=`$0`；runtime 生成的 `.env/.env.local` 已送入 Windows 回收站并记录 cleanup log；
+   - runtime/fixture/artifact 共扫描 `12,814` 个文件，unreadable/真实敏感值命中=`0/0`，env/listener/相关 Node 进程=`0/0/0`。
+
+##### 验证结果
+
+- TypeScript 编译无错误：detached harness workspace build 与独立 `verify:build` 通过；
+- source 提交前 `10` 个相关测试文件 `168/168` 通过；
+- Windows dry-run 双 preflight、source/harness identity、fixture clean、零凭证/零 usage、空 event/trace/patch 与资源清理 Gate 全绿。
+
+##### 后续计划
+
+- **下一步准备做什么**：以 `deepseek-v4-flash`、高峰价 `0.0125/0.375/1.125 USD/1M`、Provider retry=`0` 和 `3.20029817 -> 3.30029817` 执行 `0cd7d13` 唯一 Windows formal。
+- **为什么先做它**：新 identity 的依赖、构建、checkpoint identity、snapshot、凭据隔离和资源清理风险已在零费用条件下关闭，下一步只需验证真实模型能否在既有预算内完成冻结三文件任务和 objective correction。
+- **当前还缺的关键闭环**：Windows formal 必须完成三路径 patch、清除全部 `TraceValues`、通过 frozen verifier、形成 available/exact/non-truncated changes 且数量与独立 Git artifact 一致，并具备完整 provider-reported usage/terminal/trace 与零残留；任一失败即冻结，不进入 WSL2、完整矩阵、candidate v4 或 P2-C。
+
+#### P0 后续阶段实现结论：`0cd7d13` Windows formal（2026-08-18）
+
+##### 已完成内容
+
+1. **`0cd7d13` 唯一 Windows formal 执行并冻结**：
+   - artifact=`artifacts/p0-required-mutation-canary-0cd7d13-ts-api-windows-formal-r1`，run=`real-ts-api-migration-windows-a1-1786998084997`；
+   - report SHA-256=`5df30396983472f5f577ca9efe2f119e5364c8dc45852fbcd5531bc56115d05a`；
+   - terminal/status=`run.completed/passed`，task/tests/patch=`true/true/true`，regressionCount=`0`。
+
+2. **真实 mutation 与 changes Gate 闭合**：
+   - terminal changes=`available/exact/non-truncated`、changedFileCount=`3`；
+   - terminal、coding CI manifest 与独立 Git diff 均只包含三个 required paths，untracked=`0`、required paths 的 `TraceValues` 残留=`0`；
+   - 单次 `apply_patch` 完成三文件修改，后续完整复读与 objective review 未发现需 correction 的残留，frozen verifier 通过。
+
+3. **费用、trace 与安全审计完成**：
+   - model calls=`6/6 provider_reported`，input/output=`16481/1920`，高峰保守价 cost=`$0.00639158`；
+   - event/trace=`63/65`，各自唯一终态=`run.completed`，usage/model route/artifact/workspace change Gate 均为 `true`；
+   - runtime/fixture/artifact 共扫描 `13,444` 个文件，unreadable/真实敏感值命中=`0/0`；runtime env、listener、相关 Node 进程与 harness residue 均为 `0`。
+
+4. **效果**：
+   - 新 identity 已在真实 `deepseek-v4-flash` Windows run 中完成冻结三文件任务，并生成可精确恢复、未截断的可信 changes；
+   - 本次未触发 correction，但大上下文回归已证明 objective review 如发现残留仍保留唯一修正工具；
+   - `0cd7d13` Windows formal 已永久冻结，禁止重跑。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本 identity 的 clean workspace build 与独立 `verify:build` 已通过；
+- source 提交前 `10` 个相关测试文件 `168/168` 通过；
+- Windows formal 的三文件 mutation、frozen verifier、exact snapshot、完整 usage/trace、敏感值扫描和资源清理 Gate 全绿。
+
+##### 后续计划
+
+- **下一步准备做什么**：在 WSL2 ext4 创建精确 checkout `0cd7d13` 的 detached clean harness，依次完成 frozen offline install、workspace build、独立 `verify:build` 和零凭证 dry-run；全部无费用 Gate 通过后才执行同 identity 唯一 WSL2 formal。
+- **为什么先做它**：Windows 已证明真实 mutation、objective review 与 snapshot Gate 可同时通过；Linux 原生文件系统上的依赖、构建、foreign checkpoint identity、snapshot mirror 和凭据隔离是 WSL2 formal 前最后一组无费用风险。
+- **当前还缺的关键闭环**：WSL2 source/harness identity、offline install、build/snapshot、零凭证 Provider=`0`，以及后续唯一 formal 的完整三文件 patch、frozen verifier、exact/non-truncated changes、完整 usage/trace 与双侧零残留；任一失败即冻结，不启动完整矩阵、candidate v4 或 P2-C。
+
+#### P0 后续阶段实现结论：`0cd7d13` WSL2 detached clean 无费用 Gate（2026-08-18）
+
+##### 已完成内容
+
+1. **`0cd7d13fcda668249fa44856657ac65ac25d4352` WSL2 ext4 detached clean harness 建立**：
+   - harness=`/home/vrboyzero/ss-p0-required-mutation-canary-0cd7d13-clean`，source/harness 精确绑定同一 commit；
+   - lockfile/content SHA-256=`844c0021f1c9135214c913636fd6ed6f9232593883bd5b6289f7ade51d2b7d2b` / `aeeb8100e013e7433f97977430a19ff0328647f6740d4e75cce7c0223a89acbe`；
+   - 主工作区既有文档改动未进入 harness，最终 `git status --porcelain` 为空。
+
+2. **frozen offline install、构建与独立 verifier 完成**：
+   - `corepack pnpm install --offline --frozen-lockfile` 为 resolved=`494`、reused=`493`、downloaded=`0`；
+   - workspace build 与独立 `verify:build` 均通过；
+   - build 产生的 `relay.mjs` mode 漂移已从 `0755` 恢复为 repository 的 `0644`，harness 最终仍 detached/clean。
+
+3. **隔离的零凭证 WSL2 dry-run 完成**：
+   - artifact=`artifacts/p0-required-mutation-canary-0cd7d13-ts-api-wsl-dry-run-r1`，run=`real-ts-api-migration-wsl2-linux-a1-1786998566811`；
+   - report SHA-256=`ce5c5881389852a4715d66e713534a19040ecfb3229b324fcdba5318252452bf`，production/repository snapshot preflight 均为 `passed`；
+   - credentialsConfigured=`false`、usage=`not_reached`、event/trace/patch=`0/0/0`，source/harness dirty=`false/false`，未触达 Provider。
+
+4. **敏感值扫描误报校正与效果**：
+   - 初次 `7` 条命中均被逐项归类为三个公开占位值和一个不含认证信息的配置 URL，不属于真实凭据泄漏；
+   - 重新只取 `.env.local` 中非空、非占位的敏感值扫描 Windows harness、WSL2 harness 和本次 dry-run artifact，真实敏感值命中均为 `0`、unreadable=`0`；WSL2 harness regular/symlink=`34695/1267`；
+   - WSL2 env/listener/相关进程残留=`0/0/0`，本轮新增 Provider 费用=`$0`。
+
+##### 验证结果
+
+- TypeScript 编译无错误：WSL2 detached harness workspace build 与独立 `verify:build` 通过；
+- source 提交前 `10` 个相关测试文件 `168/168` 通过；
+- WSL2 dry-run 双 preflight、source/harness identity、零凭证/零 usage、空 event/trace/patch、有效敏感值扫描与资源清理 Gate 全绿。
+
+##### 后续计划
+
+- **下一步准备做什么**：以 `deepseek-v4-flash`、高峰价 `0.0125/0.375/1.125 USD/1M`、Provider retry=`0` 和 `3.20668975 -> 3.30668975` 执行且只执行一次 `0cd7d13` WSL2 formal。
+- **为什么先做它**：同 identity 的 WSL2 原生依赖、构建、foreign checkpoint identity、snapshot preflight、凭据隔离与资源清理已在零费用条件下闭合，现在只剩真实模型 mutation 和终态证据需要验证。
+- **当前还缺的关键闭环**：唯一 WSL2 formal 必须完成三路径 patch、清除全部 `TraceValues`、通过 frozen verifier、形成 available/exact/non-truncated changes，并具备完整 provider-reported usage/trace 与双侧零残留；无论成功或失败均永久冻结，不重跑、不启动完整矩阵、candidate v4 或 P2-C。
+
+#### P0 后续阶段实现结论：`0cd7d13` WSL2 formal（2026-08-18）
+
+##### 已完成内容
+
+1. **`0cd7d13` 唯一 WSL2 formal 执行并冻结**：
+   - artifact=`artifacts/p0-required-mutation-canary-0cd7d13-ts-api-wsl-formal-r1`，run=`real-ts-api-migration-wsl2-linux-a1-1786999830294`；
+   - report SHA-256=`869aed81c1d8c81dc401c2a81f463542bcf75f27de378124f5914310a958b27f`；
+   - terminal/status=`run.failed/product_workflow`，task/tests/patch=`false/false/false`，infrastructure error=`0`。
+
+2. **失败形状与 workspace 证据冻结**：
+   - 模型先完成 `list_files`、冻结 verifier 与三个 required paths 的 `file_read`，随后 mutation-only `apply_patch` 包含 `3` 个 `*** End Patch`，其中 `2` 个位于最终结束标记之前；
+   - 运行以 `diagnostic=unexpected_end_marker` 失败关闭，未执行 mutation；fixture/terminal/CI changed paths=`0/0/0`，patch bytes=`0`；
+   - terminal changes=`available/non-truncated`、changedFileCount=`0`、recovery=`detect_only/no_changes`，独立 Git fixture clean；冻结 verifier 独立执行 exit=`1`，确认迁移未完成。
+
+3. **费用、trace 与安全审计完成**：
+   - route=`deepseek-v4-flash -> deepseek-v4-flash [primary]`，model calls=`3/3 provider_reported`，input/output=`7514/738`，高峰保守价 cost=`$0.00244161`；
+   - event/trace=`15/17`，各自唯一终态=`run.failed`，双 preflight、usage/model route、trace/artifact contract 均通过；
+   - artifact/fixture/runtime 共扫描 `13149` 个常规文件，unreadable/真实敏感值命中=`0/0`；runtime env、listener、Windows/WSL 相关进程、双 harness 与 fixture 残留均为 `0`。
+
+4. **效果**：
+   - Windows 的三文件成功未在同 identity WSL2 复现，当前仍不能宣称 required-mutation 双平台代表闭环；
+   - 失败发生在任何写入之前，原子拒绝与零残留合同生效，没有把结构异常的 patch 部分应用；
+   - `0cd7d13` WSL2 formal 已永久冻结，禁止重跑；本次失败与调价或费用/turn/token 上限无关。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本 identity 的 WSL2 clean workspace build 与独立 `verify:build` 已通过；
+- source 提交前 `10` 个相关测试文件 `168/168` 通过；
+- formal 的 source/harness identity、双 preflight、完整 usage/trace、零真实敏感值与资源清理 Gate 全绿，但产品任务、冻结 verifier 和 patch evaluator 未通过。
+
+##### 后续计划
+
+- **下一步准备做什么**：测试先行评估 mutation-only 单个 Tool call 中多个完整 patch envelope 的安全合并条件，仅在结构可证明独立、完整且无额外正文时规范化为一个原子 patch。
+- **为什么先做它**：本次失败已精确缩小到写前 patch envelope 结构，费用、依赖、路径、snapshot、恢复和资源问题均已排除；先关闭该确定性结构问题比再次调用模型更有信息增益。
+- **当前还缺的关键闭环**：必须证明规范化不会吞掉非法正文、跨 envelope 上下文依赖或部分 patch，并继续保持未知路径、缺 required path、重复/非法 section 与执行失败的原子拒绝；实现需经定向测试、build/contract Gate 和新 identity 无费用验证，当前不安排下一 formal。
+
+#### P0 后续阶段实现结论：多个完整 patch envelope 有界规范化（2026-08-18）
+
+##### 已完成内容
+
+1. **`packages/belldandy-agent/src/react-workspace-mutation.ts` 扩展**：
+   - 新增 `coalesceWorkspaceMutationApplyPatchEnvelopes`，只处理单个 `apply_patch` Tool call 内 `2-16` 个首尾完整的 patch envelope；
+   - 每个 envelope 必须只包含 required-path 范围内、可独立执行且具备真实增删行的 `Update File` hunk，随后复用既有严格 coalescer 形成一次原子 patch；
+   - 额外参数、包络间正文、孤立或缺失 marker、空 envelope、未知路径、非 Update 操作和第 `17` 个 envelope 均不规范化，继续进入既有失败关闭路径。
+
+2. **`packages/belldandy-agent/src/tool-agent.ts` 接入**：
+   - 在 required-mutation 的 missing-path retention、End Patch diagnostics、context-only preservation 和执行 Gate 前接入有界规范化；
+   - 成功规范化后仍经过既有 required-path 覆盖、trusted mutation metadata、原子工具执行和 post-write verification；
+   - 未增加模型调用、turn/token、Provider retry、工具权限或费用上限。
+
+3. **`react-workspace-mutation.test.ts` 与 `tool-agent-workspace-mutation.test.ts` 扩展**：
+   - 纯函数回归覆盖三个完整 envelope 的单 patch 合并，以及额外 End、额外正文、不完整/空 envelope、未知路径、额外参数和数量上限的拒绝；
+   - 公开 `Agent.run()` 集成回放证明三 envelope 只触发一次 `apply_patch`，随后完成三路径复读和正常终态；
+   - helper 尚不存在时原始 `7` 条新增回归按预期失败、既有 `98` 条通过；实现后连同补充上限边界共 `107/107` 通过。
+
+4. **效果**：
+   - 对“多个完整、纯净、独立 envelope”这一可证明子形状，可在写入前安全规范化并保持单次原子 mutation；
+   - 单 Begin 加多个 End、孤立 marker、部分 envelope 或含额外正文的输入仍原子拒绝，不猜测模型原意；
+   - `0cd7d13` formal 未保留原始 patch 正文，现有诊断不能证明当时存在三个 Begin marker，因此本实现不宣称已完整复现或完全修复该历史样本。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build` 与独立 `corepack pnpm verify:build` 通过；
+- `4` 个 required-mutation 相邻测试文件 `123/123` 通过，包含 `9` 个本轮新增 envelope 规范化与失败关闭测试；
+- `verify:coding-ci`、`verify:coding-benchmark` 通过；本实现环节模型调用=`0`、新增 Provider 费用=`$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：只提交本轮 Agent 源码、测试、DeepSeek 调价记录与计划文档形成新 identity；随后从 Windows detached clean harness 依次完成 frozen offline install、workspace build、独立 `verify:build` 和零凭证 dry-run。
+- **为什么先做它**：确定性规范化 Gate 已闭合，但只有新提交态才能隔离主工作区改动并形成可复核的 source/harness identity；先走无费用 Gate 可在任何 Provider 调用前关闭依赖、构建、snapshot 和凭据隔离风险。
+- **当前还缺的关键闭环**：新 identity 尚无 detached clean 证据，也没有真实模型证明其输出属于本次支持的完整-envelope 子形状；当前不安排 formal，不重跑 `0cd7d13`，不启动完整矩阵、candidate v4 或 P2-C。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
 
-- observed conservative upper=`$2.40029817`；
+- observed conservative upper=`$2.40913136`；
 - reserved=`$0.94221000`；
 - unobservable reserve=`$0.80000000`；
-- 守卫上界=`33.14006536 RMB < 50 RMB`。
+- 守卫上界=`33.21073088 RMB < 50 RMB`。
 
-`a72f127` 唯一 Windows formal 已执行、失败并冻结；产品 mutation 成功，但 terminal/report usage 因 CLI `read ENOTCONN` 不可观测，完整 `$0.10` 已计入预留。DeepSeek 新价格自 `2026-08-17 00:00` 生效，生效后 `32` 个历史可观测 formal 已统一按高峰价和输入全 miss 重算，差额 `$0.12570178` 已加入保守 observed 上界。`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc` Windows/WSL2 与 `5200317` Windows/WSL2 formal 的 provider-reported cost=`$0.00358616/$0.00302790/$0.00235180/$0.00316938/$0.00334516/$0.00291315/$0.00278265` 均已加入 observed。Stage 0D 累计池仍为 `$5.00`，最坏累计池加 reserved 守卫=`47.53768 RMB < 50 RMB`；下一新 identity formal 只允许 `priorObservedCostUsd=3.20029817`、`maxTotalCostUsd=3.30029817`，本次额度仍恰好 `$0.10`，完整预留守卫=`33.94006536 RMB`。项目记录不能替代 Provider 外部账单。
+`a72f127` 唯一 Windows formal 已执行、失败并冻结；产品 mutation 成功，但 terminal/report usage 因 CLI `read ENOTCONN` 不可观测，完整 `$0.10` 已计入预留。DeepSeek 新价格自 `2026-08-17 00:00` 生效，生效后 `32` 个历史可观测 formal 已统一按高峰价和输入全 miss 重算，差额 `$0.12570178` 已加入保守 observed 上界。`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc` Windows/WSL2、`5200317` Windows/WSL2 与 `0cd7d13` Windows/WSL2 formal 的 provider-reported cost=`$0.00358616/$0.00302790/$0.00235180/$0.00316938/$0.00334516/$0.00291315/$0.00278265/$0.00639158/$0.00244161` 均已加入 observed。Stage 0D 累计池仍为 `$5.00`，最坏累计池加 reserved 守卫=`47.53768 RMB < 50 RMB`；若后续新 identity 通过全部无费用 Gate，下一 formal 也只能从 `priorObservedCostUsd=3.20913136` 到 `maxTotalCostUsd=3.30913136`，单次窗口仍恰好 `$0.10`，完整预留守卫=`34.01073088 RMB`。当前未安排下一 formal，项目记录不能替代 Provider 外部账单。
 
 当前明确禁止：
 
 - 重跑 `3b506ef`、`429a6eb`、`ef40901`、`a8bf150`、`a860d16`、`d642205`、`61735d4`、`b6bf0b3`、`00d2559`、`8c24998`、`9b4fe30`、`2b46799`、`2bfc76c`、`6f7670f`、`7f1cbee`、`a72f127`、`f0615b8`、`9a7c3b3` 或 `887bcd7` 的任一已执行 formal；
 - 重跑 `de931cc` 已执行的 Windows 或 WSL2 formal；
 - 重跑 `5200317` 已执行的 Windows 或 WSL2 formal；
+- 重跑 `0cd7d13` 已执行的 Windows 或 WSL2 formal；
 - 增加 `maxTurns`、`maxTokens` 或 Provider 重试；
 - 使用调价前 `0.0025/0.125/0.25 USD/1M` 旧单价启动任何新付费 formal；
 - 未经新证据启动完整矩阵或 candidate v4；
@@ -2610,6 +2791,7 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 | missing-path continuation 返回多个补丁调用 | `fix_now` | 已将完整、安全、覆盖全部剩余目标的纯 `apply_patch` 调用合并为一次原子执行；初始 mutation、post-write correction、混合或不完整调用仍失败关闭 |
 | missing-path continuation 携带已覆盖 path | `fix_now` | 测试先行按可信 required/missing 集合保留完整、唯一、可执行的 missing-path sections；未知路径、缺路径、重复/非法结构继续不保留，完整确定性 Gate 已闭合，待新 identity 验证 |
 | 单个 patch 内重复路径与独立 context-only section | `fix_now` | 仅在可证明独立无动作 section 对后续 section 无定位作用、且全部 required paths 仍保留真实修改时测试先行保留可执行 section；否则继续失败关闭 |
+| 单个 mutation-only Tool call 包含多个完整 patch envelope | `fix_now` | 已仅对 `2-16` 个完整、纯净、required-path 范围内且各自可执行的 envelope 合并为一次原子 patch；畸形 marker、额外正文/参数、未知路径与超限输入继续拒绝。历史 formal 正文未保留，不外推为根因完全修复 |
 | required-mutation 其余失败改善范围 | `split_task` | 代表 canary 双平台闭合后按失败形状逐类验证，不做单任务外推 |
 | 连续候选 9.5 证据 | `split_task` | 独立进入 P2-C，不由当前 P0 费用授权自动扩大 |
 | C# 选型和生产接入 | `defer` | 真实需求、许可、安全分发和 truth set 具备后再启动 |
@@ -2681,22 +2863,22 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 - 主体框架不是当前瓶颈：P1-A1/A2、P1-B、P1-C、P2-A、P2-B 都能在当前源码中找到相应实现和测试。
 - 真正瓶颈是复杂多文件任务的稳定完成率。现有 `37` 个失败不能因为单个代表任务成功或新增保护 Gate 就从分母移除。
-- `a72f127` 已在真实 `deepseek-v4-flash` 调用中精确完成三文件 mutation、冻结测试和 summary，但 workspace snapshot 收尾触发 `read ENOTCONN`。`f0615b8` 只修改一文件且 missing-path continuation 未返回唯一 mutation tool。`9a7c3b3` 修改三个路径但漏删第二处 barrel export。`887bcd7` 已生成完整三文件 patch，却因同一 `api.ts` 的两个 Update section 被 changed-path metadata 原子拒绝；`de931cc` 已在 Windows 与 WSL2 都完成完整三文件 mutation、测试和 patch evaluator，但 WSL2 terminal snapshot unavailable，严格 Gate 失败。`5200317` Windows formal 已完成三文件任务并形成 available/exact/non-truncated changes；其 WSL2 formal 修改三路径但漏删一处 `TraceValues`，且跨宿主 checkpoint identity 被误报为 missing。objective review correction 与 foreign absolute path identity 已修复并通过真实冻结 state replay，仍待新 clean identity 双平台验证。
+- `a72f127` 已在真实 `deepseek-v4-flash` 调用中精确完成三文件 mutation、冻结测试和 summary，但 workspace snapshot 收尾触发 `read ENOTCONN`。`f0615b8` 只修改一文件且 missing-path continuation 未返回唯一 mutation tool。`9a7c3b3` 修改三个路径但漏删第二处 barrel export。`887bcd7` 已生成完整三文件 patch，却因同一 `api.ts` 的两个 Update section 被 changed-path metadata 原子拒绝；`de931cc` 已在 Windows 与 WSL2 都完成完整三文件 mutation、测试和 patch evaluator，但 WSL2 terminal snapshot unavailable，严格 Gate 失败。`5200317` Windows formal 已完成三文件任务并形成 available/exact/non-truncated changes；其 WSL2 formal 修改三路径但漏删一处 `TraceValues`，且跨宿主 checkpoint identity 被误报为 missing。objective review correction 与 foreign absolute path identity 已修复，`0cd7d13` Windows formal 已完成完整三文件任务与 exact/non-truncated changes；同 identity WSL2 formal 因单个 mutation-only Tool call 内出现多个提前 `*** End Patch` 而在写前失败，changed paths=`0`。
 - P2-C 尚未启动。只有多个失败形状出现可重复改善，并且两个连续冻结候选通过全部硬 Gate，才能宣称达到 9.5。
 
 因此当前主要瓶颈是“真实效果证据还不够”，不是“再增加更多功能”。
 
 ### 9.6 费用和发布边界
 
-DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算，`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc` Windows/WSL2 与 `5200317` Windows/WSL2 formal 的 provider-reported `$0.00358616/$0.00302790/$0.00235180/$0.00316938/$0.00334516/$0.00291315/$0.00278265` 也已入账；当前费用守卫为 **33.14 元人民币**，低于 **50 元人民币**授权上限。`a72f127` terminal/report usage 不可观测，仍保守预留完整 `$0.10`；runner 累计池保持 `$5.00`，加现有 reserved 后的最坏守卫仍为 **47.54 元人民币**。下一新 identity formal 仍只增加 `$0.10`，对应完整预留守卫约 **33.94 元人民币**；在授权上限内无需再次申请，外部服务商账单仍需单独核对。
+DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算，`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc` Windows/WSL2、`5200317` Windows/WSL2 与 `0cd7d13` Windows/WSL2 formal 的 provider-reported `$0.00358616/$0.00302790/$0.00235180/$0.00316938/$0.00334516/$0.00291315/$0.00278265/$0.00639158/$0.00244161` 也已入账；当前费用守卫为 **33.21 元人民币**，低于 **50 元人民币**授权上限。`a72f127` terminal/report usage 不可观测，仍保守预留完整 `$0.10`；runner 累计池保持 `$5.00`，加现有 reserved 后的最坏守卫仍为 **47.54 元人民币**。若后续新 identity 获得执行条件，下一单次窗口仍只能是 `$0.10`，对应完整预留守卫约 **34.01 元人民币**；当前没有安排下一 formal，外部服务商账单仍需单独核对。
 
 当前不会重跑已冻结版本，不会提高模型预算，不会启动完整付费矩阵，不会 push、公开发布或执行生产操作。
 
 ### 9.7 后续计划
 
-- **下一步准备做什么**：提交 objective review correction 与跨宿主 checkpoint identity 修复形成新 identity，再建立 Windows detached clean harness，依次完成 frozen offline install、workspace build、独立 `verify:build` 和零凭证 dry-run。
-- **为什么先做它**：`5200317` WSL2 formal 已执行并因不完整 mutation 冻结；新实现只有进入新 source/harness identity 后才能获得有效验证，先走无费用 Gate 可在 Provider 调用前关闭依赖、构建、路径和隔离风险。
-- **当前还缺的关键闭环**：新 identity 尚未完成 Windows clean/dry-run；只有这些 Gate 全绿后才执行唯一 Windows formal，并要求完整三文件 patch、frozen verifier、exact/non-truncated changes、完整 usage/trace 与零残留，再条件式进入同 identity WSL2。
+- **下一步准备做什么**：提交多个完整 patch envelope 的有界规范化形成新 identity，再从 Windows detached clean harness 依次完成 frozen offline install、workspace build、独立 `verify:build` 和零凭证 dry-run。
+- **为什么先做它**：源码、集成回归、build 与 contract Gate 已全绿；提交态 clean harness 是后续验证 source identity、离线依赖、构建产物、snapshot 和凭据失败关闭的必要前提。
+- **当前还缺的关键闭环**：新 identity 的 Windows 无费用 Gate 尚未建立；历史 formal 正文未保留，因此仍需未来新样本区分“多个完整 envelope”与其他 marker 畸形。当前不安排 formal、不重跑 `0cd7d13`、不启动完整矩阵、candidate v4 或 P2-C。
 
 ## 10. 实施计划进度表
 
@@ -2704,7 +2886,7 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`5200317` 双平台 formal 已冻结；双根因修复全绿，待新 identity Windows 无费用 Gate** | WSL2 formal changedFileCount=`3`、cost=`$0.00278265`，但 `api.ts:30` 残留 `TraceValues`；objective review correction tool 与 foreign absolute path identity 已修复，相关测试=`168/168`，build、独立 verifier、两个 contract Gate 和冻结 state replay=`exact` 全绿 | 新 identity 与 Windows clean/dry-run 约 30-60 分钟 | 提交形成新 identity；依次执行 Windows offline install、build、独立 verifier、零凭证 dry-run。全绿后才执行唯一 Windows formal，再条件式进入同 identity WSL2；任一失败冻结且不重跑 |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **多个完整 patch envelope 有界规范化已实现并全绿；待新 identity Windows 无费用 Gate** | `0cd7d13` WSL2 formal 冻结于 `unexpected_end_marker`、changed paths=`0`；现仅合并 `2-16` 个完整/纯净/可执行 envelope，畸形输入继续拒绝；相邻测试=`123/123`，build、独立 verifier 与两个 contract Gate 全绿，模型调用/费用=`0/$0` | 提交与 Windows clean/dry-run 约 30-60 分钟 | 提交形成新 identity；依次执行 Windows offline install、build、独立 verifier、零凭证 dry-run。当前不安排 formal；无费用 Gate 后另行按唯一执行条件评估，不重跑 `0cd7d13` |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | 2026-08-17：当前 HEAD `5b36691...` 的 P0-P2 源码/测试/artifact 已核查；SS 横向原始加权 `9.135`（发布分 `9.1`）；Grok Build `9.4`、Codex `9.7`、Claude Code `9.7`、OpenCode `9.3`、Hermes Agent `8.9`；竞品证据边界已记录 | - | 当前精简版与 archive-03 共同保留决策和完整历史；真实复杂任务成功率仍待新 formal 证据，不宣称达到 9.5 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |

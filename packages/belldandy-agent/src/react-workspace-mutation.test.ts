@@ -8,6 +8,7 @@ import {
   buildWorkspaceMutationRecoveryRequest,
   buildWorkspaceMutationVerificationRequest,
   canPreserveContextOnlyWorkspaceMutationPatchHunks,
+  coalesceWorkspaceMutationApplyPatchEnvelopes,
   coalesceWorkspaceMutationApplyPatchToolCalls,
   inspectContextOnlyWorkspaceMutationPatchPreservation,
   inspectWorkspaceMutationPatchHunks,
@@ -69,6 +70,174 @@ describe("ReAct workspace mutation recovery", () => {
     };
 
     expect(normalizeWorkspaceMutationRecoveryToolCall(call)).toBe(call);
+  });
+
+  it("coalesces multiple complete apply_patch envelopes from one tool call", () => {
+    const call = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/api.ts",
+      "@@",
+      "-old api",
+      "+new api",
+      "*** End Patch",
+      "*** Begin Patch",
+      "*** Update File: src/protocol.ts",
+      "@@",
+      "-old protocol",
+      "+new protocol",
+      "*** End Patch",
+    ]);
+
+    const coalesced = coalesceWorkspaceMutationApplyPatchEnvelopes(call, [
+      "src/api.ts",
+      "src/protocol.ts",
+    ]);
+
+    expect(JSON.parse(coalesced?.function.arguments ?? "{}")).toEqual({
+      input: [
+        "*** Begin Patch",
+        "*** Update File: src/api.ts",
+        "@@",
+        "-old api",
+        "+new api",
+        "*** Update File: src/protocol.ts",
+        "@@",
+        "-old protocol",
+        "+new protocol",
+        "*** End Patch",
+      ].join("\n"),
+    });
+  });
+
+  it.each([
+    {
+      name: "an extra End Patch marker",
+      lines: [
+        "*** Begin Patch",
+        "*** Update File: src/api.ts",
+        "@@",
+        "-old",
+        "+new",
+        "*** End Patch",
+        "*** End Patch",
+      ],
+      allowedPaths: ["src/api.ts"],
+    },
+    {
+      name: "text between envelopes",
+      lines: [
+        "*** Begin Patch",
+        "*** Update File: src/api.ts",
+        "@@",
+        "-old",
+        "+new",
+        "*** End Patch",
+        "apply the next patch too",
+        "*** Begin Patch",
+        "*** Update File: src/protocol.ts",
+        "@@",
+        "-old",
+        "+new",
+        "*** End Patch",
+      ],
+      allowedPaths: ["src/api.ts", "src/protocol.ts"],
+    },
+    {
+      name: "an incomplete final envelope",
+      lines: [
+        "*** Begin Patch",
+        "*** Update File: src/api.ts",
+        "@@",
+        "-old",
+        "+new",
+        "*** End Patch",
+        "*** Begin Patch",
+        "*** Update File: src/protocol.ts",
+        "@@",
+        "-old",
+        "+new",
+      ],
+      allowedPaths: ["src/api.ts", "src/protocol.ts"],
+    },
+    {
+      name: "an empty envelope",
+      lines: [
+        "*** Begin Patch",
+        "*** Update File: src/api.ts",
+        "@@",
+        "-old",
+        "+new",
+        "*** End Patch",
+        "*** Begin Patch",
+        "*** End Patch",
+      ],
+      allowedPaths: ["src/api.ts"],
+    },
+    {
+      name: "a path outside the required set",
+      lines: [
+        "*** Begin Patch",
+        "*** Update File: src/api.ts",
+        "@@",
+        "-old",
+        "+new",
+        "*** End Patch",
+        "*** Begin Patch",
+        "*** Update File: src/outside.ts",
+        "@@",
+        "-old",
+        "+new",
+        "*** End Patch",
+      ],
+      allowedPaths: ["src/api.ts"],
+    },
+  ])("rejects multiple patch envelopes with $name", ({ lines, allowedPaths }) => {
+    expect(coalesceWorkspaceMutationApplyPatchEnvelopes(
+      applyPatchToolCall(lines),
+      allowedPaths,
+    )).toBeUndefined();
+  });
+
+  it("rejects multiple patch envelopes with extra tool arguments", () => {
+    const call = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/api.ts",
+      "@@",
+      "-old api",
+      "+new api",
+      "*** End Patch",
+      "*** Begin Patch",
+      "*** Update File: src/protocol.ts",
+      "@@",
+      "-old protocol",
+      "+new protocol",
+      "*** End Patch",
+    ]);
+    call.function.arguments = JSON.stringify({
+      ...JSON.parse(call.function.arguments),
+      unexpected: true,
+    });
+
+    expect(coalesceWorkspaceMutationApplyPatchEnvelopes(call, [
+      "src/api.ts",
+      "src/protocol.ts",
+    ])).toBeUndefined();
+  });
+
+  it("rejects more than sixteen complete patch envelopes", () => {
+    const lines = Array.from({ length: 17 }, (_, index) => [
+      "*** Begin Patch",
+      `*** Update File: src/file-${index}.ts`,
+      "@@",
+      "-old",
+      "+new",
+      "*** End Patch",
+    ]).flat();
+
+    expect(coalesceWorkspaceMutationApplyPatchEnvelopes(
+      applyPatchToolCall(lines),
+      Array.from({ length: 17 }, (_, index) => `src/file-${index}.ts`),
+    )).toBeUndefined();
   });
 
   it("fails closed for unsafe split continuation patch sets", () => {

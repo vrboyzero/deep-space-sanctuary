@@ -353,6 +353,100 @@ export function coalesceWorkspaceMutationApplyPatchToolCalls<
   } as T;
 }
 
+export function coalesceWorkspaceMutationApplyPatchEnvelopes<
+  T extends WorkspaceMutationNavigationToolCall,
+>(sourceToolCall: T, allowedPaths: readonly string[]): T | undefined {
+  if (allowedPaths.length === 0) return undefined;
+  const allowedPathIdentities = new Set(allowedPaths.map(normalizeSourcePath));
+  if (allowedPathIdentities.size !== allowedPaths.length) return undefined;
+
+  const toolCall = normalizeWorkspaceMutationRecoveryToolCall(sourceToolCall);
+  if (toolCall.function.name !== "apply_patch") return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(toolCall.function.arguments);
+  } catch {
+    return undefined;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+  const argumentsRecord = parsed as Record<string, unknown>;
+  if (Object.keys(argumentsRecord).some((key) => key !== "input")
+    || typeof argumentsRecord.input !== "string") {
+    return undefined;
+  }
+
+  const patch = argumentsRecord.input.trim();
+  const lineEnding = patch.includes("\r\n") ? "\r\n" : "\n";
+  const lines = patch.split(/\r?\n/);
+  const envelopeLines: string[][] = [];
+  let currentEnvelope: string[] | undefined;
+  for (const line of lines) {
+    if (line === "*** Begin Patch") {
+      if (currentEnvelope) return undefined;
+      currentEnvelope = [line];
+      continue;
+    }
+    if (line === "*** End Patch") {
+      if (!currentEnvelope) return undefined;
+      currentEnvelope.push(line);
+      envelopeLines.push(currentEnvelope);
+      currentEnvelope = undefined;
+      continue;
+    }
+    if (!currentEnvelope) {
+      if (line.trim()) return undefined;
+      continue;
+    }
+    currentEnvelope.push(line);
+  }
+  if (currentEnvelope
+    || envelopeLines.length < 2
+    || envelopeLines.length > 16) {
+    return undefined;
+  }
+
+  const envelopeToolCalls = envelopeLines.map((envelope) => ({
+    ...toolCall,
+    function: {
+      ...toolCall.function,
+      arguments: JSON.stringify({ input: envelope.join(lineEnding) }),
+    },
+  } as T));
+  const retainedPaths: string[] = [];
+  const retainedPathIdentities = new Set<string>();
+  for (const envelopeToolCall of envelopeToolCalls) {
+    const diagnostics = inspectWorkspaceMutationPatchHunks(envelopeToolCall);
+    if (!diagnostics
+      || diagnostics.paths.length === 0
+      || diagnostics.unexpectedEndMarkerCount > 0) {
+      return undefined;
+    }
+    for (const path of diagnostics.paths) {
+      const pathIdentity = normalizeSourcePath(path);
+      if (path === "<unsafe>" || !allowedPathIdentities.has(pathIdentity)) {
+        return undefined;
+      }
+      if (!retainedPathIdentities.has(pathIdentity)) {
+        retainedPathIdentities.add(pathIdentity);
+        retainedPaths.push(path);
+      }
+    }
+  }
+
+  const coalesced = coalesceWorkspaceMutationApplyPatchToolCalls(
+    envelopeToolCalls,
+    retainedPaths,
+  );
+  if (!coalesced) return undefined;
+  return {
+    ...sourceToolCall,
+    function: {
+      ...sourceToolCall.function,
+      arguments: coalesced.function.arguments,
+    },
+  } as T;
+}
+
 export function retainMissingWorkspaceMutationPatchSections<
   T extends WorkspaceMutationNavigationToolCall,
 >(

@@ -3730,6 +3730,113 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
   });
 
+  it("coalesces complete patch envelopes from one mutation-only tool call", async () => {
+    const requiredChangedPaths = [
+      "jsonrpc/src/common/api.ts",
+      "jsonrpc/src/common/connection.ts",
+      "protocol/src/common/protocol.ts",
+    ];
+    const splitEnvelopePatch = [
+      "*** Begin Patch",
+      "*** Update File: jsonrpc/src/common/connection.ts",
+      "@@",
+      "-old connection",
+      "+new connection",
+      "*** End Patch",
+      "*** Begin Patch",
+      "*** Update File: jsonrpc/src/common/api.ts",
+      "@@",
+      "-old api",
+      "+new api",
+      "*** End Patch",
+      "*** Begin Patch",
+      "*** Update File: protocol/src/common/protocol.ts",
+      "@@",
+      "-old protocol",
+      "+new protocol",
+      "*** End Patch",
+    ].join("\n");
+    const coalescedPatch = [
+      "*** Begin Patch",
+      "*** Update File: jsonrpc/src/common/connection.ts",
+      "@@",
+      "-old connection",
+      "+new connection",
+      "*** Update File: jsonrpc/src/common/api.ts",
+      "@@",
+      "-old api",
+      "+new api",
+      "*** Update File: protocol/src/common/protocol.ts",
+      "@@",
+      "-old protocol",
+      "+new protocol",
+      "*** End Patch",
+    ].join("\n");
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, any>);
+      if (requests.length === 1) {
+        return response({
+          choices: [{ finish_reason: "stop", message: { content: "I need to change the files." } }],
+          usage: { prompt_tokens: 200, completion_tokens: 30 },
+        });
+      }
+      if (requests.length === 2) {
+        return response(modelToolCall("patch-1", "apply_patch", { input: splitEnvelopePatch }, 300, 60));
+      }
+      if (requests.length === 3) {
+        return response(modelUnanchoredVerificationReads(requiredChangedPaths));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: "updated and verified" } }],
+        usage: { prompt_tokens: 200, completion_tokens: 30 },
+      });
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: request.name === "file_read"
+        ? JSON.stringify({ path: request.arguments?.path, truncated: false, content: "updated source" })
+        : "Patch applied successfully",
+      ...(request.name === "apply_patch" ? {
+        metadata: {
+          workspaceMutation: {
+            schemaVersion: 1,
+            changedPaths: requiredChangedPaths,
+          },
+        },
+      } : {}),
+      durationMs: 1,
+    }));
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 4 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-coalesce-patch-envelopes",
+      text: "Remove every deprecated alias occurrence.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(4);
+    expect(execute.mock.calls.filter(([request]) => request.name === "apply_patch")).toHaveLength(1);
+    expect(execute.mock.calls[0]?.[0]).toMatchObject({
+      name: "apply_patch",
+      arguments: { input: coalescedPatch },
+    });
+    expect(items).toContainEqual({ type: "final", text: "updated and verified" });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("rejects multiple mutation calls without executing either one", async () => {
     const requests: Array<Record<string, any>> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {

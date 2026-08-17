@@ -140,6 +140,7 @@ import {
   buildWorkspaceMutationObjectiveReviewRequest,
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationVerificationRequest,
+  coalesceWorkspaceMutationApplyPatchEnvelopes,
   coalesceWorkspaceMutationApplyPatchToolCalls,
   formatWorkspaceMutationPatchHunkDiagnostics,
   formatWorkspaceMutationUnexpectedEndMarkerDiagnostics,
@@ -4270,14 +4271,28 @@ export class ToolEnabledAgent implements BelldandyAgent {
             return;
           }
           const normalizedMutationToolCall = normalizeWorkspaceMutationRecoveryToolCall(toolCalls[0]!);
+          const coalescedEnvelopeToolCall = coalesceWorkspaceMutationApplyPatchEnvelopes(
+            normalizedMutationToolCall,
+            requiredChangedPaths,
+          );
+          const envelopeNormalizedMutationToolCall = coalescedEnvelopeToolCall
+            ?? normalizedMutationToolCall;
+          if (coalescedEnvelopeToolCall) {
+            logWarn("[workspace-mutation] coalescing complete apply_patch envelopes", {
+              requiredPathCount: requiredChangedPaths.length,
+              conversationId: input.conversationId,
+              agentId: resolvedAgentId,
+            });
+          }
           const missingPathMutationToolCall = workspaceMutationContinuationCall
             ? retainMissingWorkspaceMutationPatchSections(
-                normalizedMutationToolCall,
+                envelopeNormalizedMutationToolCall,
                 workspaceMutationCallRequiredPaths,
                 requiredChangedPaths,
               )
             : undefined;
-          const constrainedMutationToolCall = missingPathMutationToolCall ?? normalizedMutationToolCall;
+          const constrainedMutationToolCall = missingPathMutationToolCall
+            ?? envelopeNormalizedMutationToolCall;
           if (missingPathMutationToolCall) {
             logWarn("[workspace-mutation] dropping already-covered continuation patch sections", {
               missingRequiredPathCount: workspaceMutationCallRequiredPaths.length,
