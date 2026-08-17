@@ -118,6 +118,34 @@ describe("apply_patch tool", () => {
       .resolves.toBe("export const connection = false;\n");
   });
 
+  it("uses a context-only chunk to position a later actionable chunk", async () => {
+    await fs.writeFile(
+      path.join(tempDir, "source.txt"),
+      ["target", "anchor", "target", ""].join("\n"),
+      "utf-8",
+    );
+
+    const result = await applyPatchTool.execute(
+      {
+        input: [
+          "*** Begin Patch",
+          "*** Update File: source.txt",
+          "@@",
+          " anchor",
+          "@@",
+          "-target",
+          "+updated",
+          "*** End Patch",
+        ].join("\n"),
+      },
+      baseContext,
+    );
+
+    expect(result.success).toBe(true);
+    await expect(fs.readFile(path.join(tempDir, "source.txt"), "utf-8"))
+      .resolves.toBe(["target", "anchor", "updated", ""].join("\n"));
+  });
+
   it("should unwrap an apply_patch wrapper around raw patch text", async () => {
     const result = await applyPatchTool.execute(
       {

@@ -2004,16 +2004,112 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
   });
 
-  it("fails closed before executing a recovery patch with a context-only hunk", async () => {
+  it("preserves context-only hunks for one atomic recovery patch execution", async () => {
+    const requiredChangedPaths = [
+      "jsonrpc/src/common/api.ts",
+      "jsonrpc/src/common/connection.ts",
+      "protocol/src/common/protocol.ts",
+    ];
+    const patch = [
+      "*** Begin Patch",
+      "*** Update File: jsonrpc/src/common/api.ts",
+      "@@",
+      " api context only",
+      "@@",
+      "-\tNotificationHandler9, Trace, TraceValue, TraceValues, TraceFormat,",
+      "+\tNotificationHandler9, Trace, TraceValue, TraceFormat,",
+      "*** Update File: jsonrpc/src/common/connection.ts",
+      "@@",
+      "-export const TraceValues = TraceValue;",
+      "-export type TraceValues = TraceValue;",
+      "*** Update File: protocol/src/common/protocol.ts",
+      "@@",
+      "-import { TraceValues } from 'vscode-jsonrpc';",
+      "+import { TraceValue } from 'vscode-jsonrpc';",
+      "*** End Patch",
+    ].join("\n");
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, any>);
+      if (requests.length === 1) {
+        return response({
+          choices: [{ finish_reason: "stop", message: { content: "I need to change the files." } }],
+          usage: { prompt_tokens: 200, completion_tokens: 30 },
+        });
+      }
+      if (requests.length === 2) {
+        return response(modelToolCall("patch-1", "apply_patch", { input: patch }, 300, 60));
+      }
+      if (requests.length === 3) {
+        return response(modelUnanchoredVerificationReads(requiredChangedPaths));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: "corrected and verified" } }],
+        usage: { prompt_tokens: 200, completion_tokens: 30 },
+      });
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: request.name === "file_read"
+        ? JSON.stringify({
+            path: request.arguments?.path,
+            truncated: false,
+            content: "updated source",
+          })
+        : "Patch applied successfully",
+      ...(request.name === "apply_patch" ? {
+        metadata: {
+          workspaceMutation: {
+            schemaVersion: 1,
+            changedPaths: requiredChangedPaths,
+          },
+        },
+      } : {}),
+      durationMs: 1,
+    }));
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 4 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-remove-context-only-hunk",
+      text: "Remove every deprecated alias occurrence.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(4);
+    expect(execute.mock.calls.filter(([request]) => request.name === "apply_patch")).toHaveLength(1);
+    expect(execute.mock.calls[0]?.[0]).toMatchObject({
+      name: "apply_patch",
+      arguments: { input: patch },
+    });
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "apply_patch",
+      "file_read",
+      "file_read",
+      "file_read",
+    ]);
+    expect(items).toContainEqual({ type: "final", text: "corrected and verified" });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("fails closed when one recovery patch file has only a context-only hunk", async () => {
     const patch = [
       "*** Begin Patch",
       "*** Update File: jsonrpc/src/common/api.ts",
       "@@",
       " \tCancellationReceiverStrategy, IdCancellationReceiverStrategy, RequestCancellationReceiverStrategy, CancellationSenderStrategy, CancellationStrategy, MessageStrategy, TraceValues",
       " } from './connection';",
-      "@@",
-      "-\tNotificationHandler9, Trace, TraceValue, TraceValues, TraceFormat,",
-      "+\tNotificationHandler9, Trace, TraceValue, TraceFormat,",
       "*** Update File: jsonrpc/src/common/connection.ts",
       "@@",
       "-export const TraceValues = TraceValue;",
@@ -2076,7 +2172,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items).toContainEqual(expect.objectContaining({
       type: "final",
       text: expect.stringContaining(
-        'diagnostic=context_only_hunk hunkCount=4 contextOnlyHunkCount=1 paths=["jsonrpc/src/common/api.ts"]',
+        'diagnostic=context_only_hunk hunkCount=3 contextOnlyHunkCount=1 paths=["jsonrpc/src/common/api.ts"]',
       ),
     }));
     expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });

@@ -184,6 +184,103 @@ export function normalizeWorkspaceMutationRecoveryToolCall<
   } as T;
 }
 
+export function canPreserveContextOnlyWorkspaceMutationPatchHunks(
+  toolCall: WorkspaceMutationNavigationToolCall,
+): boolean {
+  if (toolCall.function.name !== "apply_patch") {
+    return false;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(toolCall.function.arguments);
+  } catch {
+    return false;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return false;
+  }
+  const patch = (parsed as Record<string, unknown>).input;
+  if (typeof patch !== "string") {
+    return false;
+  }
+
+  const lineEnding = patch.includes("\r\n") ? "\r\n" : "\n";
+  const lines = patch.split(/\r?\n/);
+  if (lines.join(lineEnding) !== patch
+    || lines[0] !== "*** Begin Patch"
+    || lines.at(-1) !== "*** End Patch"
+    || lines.indexOf("*** End Patch") !== lines.length - 1) {
+    return false;
+  }
+
+  const sections: Array<{ actionable: boolean; hunkCount: number }> = [];
+  const seenPathIdentities = new Set<string>();
+  let currentSection: (typeof sections)[number] | undefined;
+  let currentHunk: { actionable: boolean; lineCount: number } | undefined;
+  let contextOnlyHunkCount = 0;
+  let structurallyValid = true;
+
+  const finishHunk = () => {
+    if (!currentHunk) return;
+    if (currentHunk.lineCount === 0) {
+      structurallyValid = false;
+    } else if (!currentHunk.actionable) {
+      contextOnlyHunkCount += 1;
+    }
+    currentHunk = undefined;
+  };
+
+  for (let index = 1; index < lines.length - 1; index += 1) {
+    const line = lines[index] ?? "";
+    const updateHeader = /^\*\*\* Update File:\s+(.+)$/.exec(line);
+    if (updateHeader) {
+      finishHunk();
+      const safePath = normalizeWorkspaceMutationDiagnosticPath(updateHeader[1] ?? "");
+      const pathIdentity = normalizeSourcePath(safePath);
+      if (safePath === "<unsafe>" || seenPathIdentities.has(pathIdentity)) {
+        return false;
+      }
+      currentSection = { actionable: false, hunkCount: 0 };
+      sections.push(currentSection);
+      seenPathIdentities.add(pathIdentity);
+      continue;
+    }
+    if (line.startsWith("*** ")) {
+      return false;
+    }
+    if (line.startsWith("@@")) {
+      if (line !== "@@" && !line.startsWith("@@ ")) {
+        return false;
+      }
+      finishHunk();
+      if (!currentSection) {
+        return false;
+      }
+      currentSection.hunkCount += 1;
+      currentHunk = { actionable: false, lineCount: 0 };
+      continue;
+    }
+    if (!currentHunk || !currentSection) {
+      return false;
+    }
+    const marker = line[0];
+    if (marker && marker !== " " && marker !== "+" && marker !== "-") {
+      return false;
+    }
+    currentHunk.lineCount += 1;
+    if (line.startsWith("+") || line.startsWith("-")) {
+      currentHunk.actionable = true;
+      currentSection.actionable = true;
+    }
+  }
+  finishHunk();
+
+  return structurallyValid
+    && contextOnlyHunkCount > 0
+    && sections.length > 0
+    && sections.every((section) => section.actionable && section.hunkCount > 0);
+}
+
 export function hasNoContextOnlyWorkspaceMutationPatchHunks(
   toolCall: WorkspaceMutationNavigationToolCall,
 ): boolean {

@@ -6,6 +6,7 @@ import {
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationRecoveryRequest,
   buildWorkspaceMutationVerificationRequest,
+  canPreserveContextOnlyWorkspaceMutationPatchHunks,
   inspectWorkspaceMutationPatchHunks,
   normalizeWorkspaceMutationRecoveryToolCall,
   selectRequiredWorkspaceMutationNavigationToolCalls,
@@ -87,6 +88,125 @@ describe("ReAct workspace mutation recovery", () => {
     };
 
     expect(normalizeWorkspaceMutationRecoveryToolCall(call)).toBe(call);
+  });
+
+  it("preserves a context-only hunk when the same file retains an actionable hunk", () => {
+    const call = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/api.ts",
+      "@@",
+      " unchanged import",
+      "@@",
+      "-old export",
+      "+new export",
+      "*** End Patch",
+    ]);
+
+    const normalized = normalizeWorkspaceMutationRecoveryToolCall(call);
+
+    expect(normalized).toBe(call);
+    expect(canPreserveContextOnlyWorkspaceMutationPatchHunks(normalized)).toBe(true);
+    expect(inspectWorkspaceMutationPatchHunks(normalized)?.contextOnlyHunkCount).toBe(1);
+  });
+
+  it("preserves context-only hunks only when every file retains an actionable hunk", () => {
+    const call = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/api.ts",
+      "@@",
+      " api context",
+      "@@",
+      "-old api",
+      "+new api",
+      "*** Update File: src/protocol.ts",
+      "@@",
+      " protocol context",
+      "@@",
+      "-old protocol",
+      "+new protocol",
+      "*** End Patch",
+    ]);
+
+    const normalized = normalizeWorkspaceMutationRecoveryToolCall(call);
+
+    expect(normalized).toBe(call);
+    expect(canPreserveContextOnlyWorkspaceMutationPatchHunks(normalized)).toBe(true);
+    expect(inspectWorkspaceMutationPatchHunks(normalized)).toMatchObject({
+      hunkCount: 4,
+      contextOnlyHunkCount: 2,
+      paths: ["src/api.ts", "src/protocol.ts"],
+    });
+  });
+
+  it("does not remove no-op hunks when any file would have no actionable hunk", () => {
+    const call = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/api.ts",
+      "@@",
+      "-old api",
+      "+new api",
+      "*** Update File: src/protocol.ts",
+      "@@",
+      " protocol context",
+      "*** End Patch",
+    ]);
+
+    expect(normalizeWorkspaceMutationRecoveryToolCall(call)).toBe(call);
+    expect(canPreserveContextOnlyWorkspaceMutationPatchHunks(call)).toBe(false);
+    expect(inspectWorkspaceMutationPatchHunks(call)).toMatchObject({
+      hunkCount: 2,
+      contextOnlyHunkCount: 1,
+      contextOnlyHunkPaths: ["src/protocol.ts"],
+    });
+  });
+
+  it.each([
+    {
+      name: "unknown hunk ownership",
+      lines: [
+        "*** Begin Patch",
+        "@@",
+        " unknown context",
+        "*** Update File: src/api.ts",
+        "@@",
+        "-old api",
+        "+new api",
+        "*** End Patch",
+      ],
+    },
+    {
+      name: "a repeated file section",
+      lines: [
+        "*** Begin Patch",
+        "*** Update File: src/api.ts",
+        "@@",
+        " context",
+        "*** Update File: src/api.ts",
+        "@@",
+        "-old api",
+        "+new api",
+        "*** End Patch",
+      ],
+    },
+    {
+      name: "an invalid context line",
+      lines: [
+        "*** Begin Patch",
+        "*** Update File: src/api.ts",
+        "@@",
+        "invalid context without a patch marker",
+        "@@",
+        "-old api",
+        "+new api",
+        "*** End Patch",
+      ],
+    },
+  ])("does not remove no-op hunks with $name", ({ lines }) => {
+    const call = applyPatchToolCall(lines);
+
+    expect(normalizeWorkspaceMutationRecoveryToolCall(call)).toBe(call);
+    expect(canPreserveContextOnlyWorkspaceMutationPatchHunks(call)).toBe(false);
+    expect(inspectWorkspaceMutationPatchHunks(call)?.contextOnlyHunkCount).toBe(1);
   });
 
   it("diagnoses an unexpected End Patch marker without retaining patch text", () => {
@@ -748,6 +868,15 @@ function toolDefinition(name: string) {
       name,
       description: `${name} description`,
       parameters: { type: "object", properties: {} },
+    },
+  };
+}
+
+function applyPatchToolCall(lines: string[]) {
+  return {
+    function: {
+      name: "apply_patch",
+      arguments: JSON.stringify({ input: lines.join("\n") }),
     },
   };
 }

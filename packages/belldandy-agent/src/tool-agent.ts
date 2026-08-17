@@ -138,6 +138,7 @@ import {
   buildWorkspaceMutationNavigationRequest,
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationVerificationRequest,
+  canPreserveContextOnlyWorkspaceMutationPatchHunks,
   formatWorkspaceMutationPatchHunkDiagnostics,
   formatWorkspaceMutationUnexpectedEndMarkerDiagnostics,
   inspectWorkspaceMutationPatchHunks,
@@ -4133,9 +4134,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
             );
             return;
           }
-          if (patchDiagnostics && patchDiagnostics.contextOnlyHunkCount > 0) {
+          if (patchDiagnostics
+            && patchDiagnostics.contextOnlyHunkCount > 0
+            && !canPreserveContextOnlyWorkspaceMutationPatchHunks(normalizedMutationToolCall)) {
             yield* emitWorkspaceMutationFailure(
-              `the mutation-only apply_patch call contained a context-only hunk; every @@ hunk must include a real added or removed line. ${formatWorkspaceMutationPatchHunkDiagnostics(patchDiagnostics)}`,
+              `the mutation-only apply_patch call contained a context-only hunk that could not be preserved safely; use unique safe Update File sections, valid hunk structure, and at least one real added or removed line per file. ${formatWorkspaceMutationPatchHunkDiagnostics(patchDiagnostics)}`,
             );
             return;
           }
