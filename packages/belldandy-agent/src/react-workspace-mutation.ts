@@ -330,6 +330,65 @@ export function inspectContextOnlyWorkspaceMutationPatchPreservation(
   };
 }
 
+export function retainActionableWorkspaceMutationPatchSections<
+  T extends WorkspaceMutationNavigationToolCall,
+>(toolCall: T, allowedPaths: readonly string[]): T | undefined {
+  const diagnostics = inspectContextOnlyWorkspaceMutationPatchPreservation(toolCall);
+  if (diagnostics.rejectionReason !== "non_actionable_update_section"
+    || diagnostics.actionableSectionCount === 0
+    || allowedPaths.length === 0) {
+    return undefined;
+  }
+
+  const argumentsRecord = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
+  const patch = argumentsRecord.input as string;
+  const lineEnding = patch.includes("\r\n") ? "\r\n" : "\n";
+  const lines = patch.split(/\r?\n/);
+  const retainedLines = ["*** Begin Patch"];
+  const retainedPaths: string[] = [];
+  let currentSection: string[] | undefined;
+  let currentPath: string | undefined;
+
+  const retainCurrentSection = () => {
+    if (currentSection?.some((line) => line.startsWith("+") || line.startsWith("-"))) {
+      retainedLines.push(...currentSection);
+      retainedPaths.push(currentPath!);
+    }
+  };
+
+  for (let index = 1; index < lines.length - 1; index += 1) {
+    const line = lines[index] ?? "";
+    if (line.startsWith("*** Update File:")) {
+      retainCurrentSection();
+      currentSection = [line];
+      currentPath = normalizeWorkspaceMutationDiagnosticPath(
+        line.slice("*** Update File:".length),
+      );
+    } else {
+      currentSection?.push(line);
+    }
+  }
+  retainCurrentSection();
+  retainedLines.push("*** End Patch");
+
+  const allowedPathIdentities = new Set(allowedPaths.map((path) => path.toLowerCase()));
+  if (retainedPaths.length === 0
+    || retainedPaths.some((path) => !allowedPathIdentities.has(path.toLowerCase()))) {
+    return undefined;
+  }
+
+  return {
+    ...toolCall,
+    function: {
+      ...toolCall.function,
+      arguments: JSON.stringify({
+        ...argumentsRecord,
+        input: retainedLines.join(lineEnding),
+      }),
+    },
+  } as T;
+}
+
 export function hasNoContextOnlyWorkspaceMutationPatchHunks(
   toolCall: WorkspaceMutationNavigationToolCall,
 ): boolean {

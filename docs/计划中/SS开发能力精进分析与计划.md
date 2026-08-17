@@ -349,6 +349,7 @@ Source / Workspace Revision
 - apply_patch CRLF/no-op/空 hunk、非空 section、header/hunk 归属检查；
 - post-write read-after-write 和 verification 规范化；
 - context-only hunk 默认在工具执行前失败关闭；仅当完整 patch 属于严格 DSL 子集、路径安全且唯一、每个文件均有真实增删时，保留原文及定位语义后原子执行；
+- 当严格解析的唯一拒绝原因是某个 update section 没有真实增删时，只保留 required path 白名单内的可执行 section 原文，并复用既有一次 missing-path continuation 补齐缺失文件；continuation 本身仍保持失败关闭；
 - `*** End Patch` 必须且只能作为最终行出现，重复或提前标记在工具执行前失败关闭；
 - tool-free finalization 禁用 DeepSeek thinking，并保留 summary headroom。
 
@@ -356,10 +357,10 @@ Source / Workspace Revision
 
 **确定性验证**：
 
-- 本轮 Agent 包为 `57` 个文件、`626` 个测试通过，`1` 个真实 Provider probe 跳过；Skills 包为 `110` 个文件、`935` 个测试通过，`2` 个测试跳过；
-- recovery/ToolAgent/apply_patch 既有目标回归 `95/95` 通过，missing-path continuation 定向回归 `77/77` 通过；
-- `corepack pnpm build`（含 `verify:build`）、`verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 通过；
-- context-only hunk 回归证明其会推进后续 patch 搜索游标，因此禁止剔除；安全混合 patch 原文只执行一次且原子覆盖 required paths，文件仅含 no-op、归属不明、重复 section 或结构异常时仍零执行拒绝。
+- 本轮 Agent 包为 `57` 个文件、`630` 个测试通过，`1` 个真实 Provider probe 跳过；Skills 包既有证据为 `110` 个文件、`935` 个测试通过，`2` 个测试跳过；
+- actionable-section 与 workspace-mutation 目标回归 `81/81` 通过；既有 recovery/ToolAgent/apply_patch 回归 `95/95`、missing-path continuation 定向回归 `77/77` 继续保留；
+- `corepack pnpm build`、独立 `corepack pnpm verify:build`、`verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 通过；
+- 公开行为回归证明混合 patch 只执行两个安全 section，再以既有一次 continuation 补齐第三个文件并复读三路径；required list 外路径和超过 32 条诊断投影后的第 33 个越界路径都在工具执行前拒绝。
 
 **真实 canary**：
 
@@ -406,6 +407,7 @@ Source / Workspace Revision
 23. **已完成：`00d2559` Windows 三文件 formal 全绿**。唯一 formal 正确修改三个目标文件，冻结 evaluator、唯一 `run.completed`、route/usage/cost、summary、敏感值与资源 Gate 全部通过，打开同 identity WSL2 分层复核。
 24. **已完成：`00d2559` WSL2 formal 前置 Gate**。ext4 harness 的 offline frozen install、workspace build、独立 `verify:build`、mode 恢复和零凭证 dry-run 全绿；Provider 未触达，Windows/WSL2 敏感值与资源零残留，开放唯一 WSL2 formal。
 25. **已完成但失败：`00d2559` WSL2 formal**。唯一 formal 的 `api.ts` 含 `2` 个 context-only hunk，其余两个文件 section 可执行；系统在工具执行前拒绝整包，changed paths/patch=`0/0`、唯一终态=`run.failed`，route/usage/cost、敏感值和资源清理证据完整，禁止重跑。
+26. **已完成：actionable section 安全保留与 continuation**。仅在严格 parser 的唯一拒绝原因为 `non_actionable_update_section` 时，保留 required path 白名单内具有真实增删的完整 section 原文；首次 mutation-only 调用成功后复用既有一次 missing-path continuation，continuation 不放宽。目标回归 `81/81`、Agent `630 passed + 1 skipped`、build 与合同 Gate 全绿，模型调用=`0`、新增费用=`$0`。
 
 #### P0 后续阶段实现结论：mutation hunk 无正文诊断（2026-08-17）
 
@@ -1058,9 +1060,45 @@ Source / Workspace Revision
 
 ##### 后续计划
 
-- **下一步准备做什么**：在 `ToolEnabledAgent.run()` 公开行为 seam 增加红灯回归，复现“两个安全可执行 section + 一个 context-only required path”，再实现安全部分执行并复用一次 missing-path continuation。
-- **为什么先做它**：提示约束已被真实模型再次忽略；运行时已有可信部分进度和单次补齐机制，复用它比继续叠加提示更可确定，且不提高预算或重试上限。
-- **当前还缺的关键闭环**：红灯、最小实现、Agent/build/合同 Gate、新 clean identity 的 Windows 三文件 formal 与同 identity WSL2 复核；完成前不启动完整矩阵、candidate v4 或 P2-C。
+- **下一步准备做什么**：提交上述最小修复形成新 clean identity，先在 detached Windows harness 完成 offline frozen install、workspace build、独立 `verify:build` 和零凭证 dry-run；全部通过后才执行唯一 Windows formal。
+- **为什么先做它**：确定性实现与合同 Gate 已全绿，Windows 分层 canary 是在发生新费用前验证 clean checkout、构建、任务合同和敏感值边界的最小下一步。
+- **当前还缺的关键闭环**：新 identity 的 Windows 三文件 formal 与同 identity WSL2 三文件 formal 均成功，且冻结 evaluator、唯一终态、route/usage/cost、敏感值和资源 Gate 全绿；完成前不启动完整矩阵、candidate v4 或 P2-C。
+
+#### P0 后续阶段实现结论：actionable section 安全保留与 continuation（2026-08-17）
+
+##### 已完成内容
+
+1. **`react-workspace-mutation.ts` 扩展**：
+   - 新增 `retainActionableWorkspaceMutationPatchSections()`；
+   - 仅接受严格 parser 唯一拒绝原因为 `non_actionable_update_section` 的混合 patch；
+   - 完整保留具有真实增删的 section 原文、hunk 与 CRLF/LF，并以完整 trusted required path 集合校验全部保留路径。
+
+2. **`tool-agent.ts` 接入**：
+   - 只在首次 mutation-only 调用启用安全保留，不放宽 continuation；
+   - 安全部分成功后复用既有一次 bounded missing-path continuation；
+   - 未增加 `maxTurns`、`maxTokens`、Provider retry 或模型调用上限。
+
+3. **`tool-agent-workspace-mutation.test.ts` 修改**：
+   - 覆盖“两个可执行 section + 一个 context-only required path”的执行、单次补齐和三文件复读成功路径；
+   - 覆盖 required list 外路径在工具执行前失败关闭；
+   - 覆盖超过 32 个 retained paths 时仍检查完整路径集合，避免诊断投影截断影响授权判断。
+
+4. **效果**：
+   - 安全可执行的文件不再因另一个文件只有定位上下文而整包丢失；
+   - 缺失文件仍只有一次受限补齐机会，最终必须覆盖并复读全部 required paths；
+   - 越界路径、其他 parser 拒绝原因和 continuation 异常继续在写入前失败关闭。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build` 与独立 `corepack pnpm verify:build` 通过；
+- workspace-mutation 目标回归 `81/81` 通过；Agent 包 `57` 个文件、`630 passed + 1 skipped`；
+- `corepack pnpm verify:coding-benchmark`、`corepack pnpm verify:coding-ci` 与 `git diff --check` 通过；本实现阶段模型调用=`0`、新增费用=`$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：提交新 identity，并先执行 detached Windows clean harness 的离线安装、构建、独立 build 合同和零凭证 dry-run；前置 Gate 全绿后，仅使用 `deepseek-v4-flash` 执行唯一 Windows formal。
+- **为什么先做它**：先证明提交态代码、fixture 与任务合同在零凭证环境可重复，避免把构建或装配问题带入付费验证。
+- **当前还缺的关键闭环**：新 identity 的 Windows 和 WSL2 三文件 formal 需依次全绿；两端都必须满足 changed paths、冻结 evaluator、唯一 `run.completed`、完整 route/usage/cost、敏感值与资源零残留。
 
 ### 6.6 费用与禁止范围
 
@@ -1214,7 +1252,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 自动测试现已规定“定位和删除行的空格、制表符必须与单一原始材料逐字相同”，并保持原有材料预算。新版本 `00d2559` 已在 Windows 正确完成三个文件的修改、自动验收、最终说明、费用记录和资源清理。
 
-同版本的 WSL2 离线安装、构建和无凭据检查也已通过，但唯一正式复验中，模型只为其中两个文件给出真实修改，`api.ts` 的两段内容只有定位信息。系统在写入前拒绝整包，没有留下半成品。下一步将用自动测试验证：先安全执行已有真实修改，再只给缺失文件一次补齐机会；最终仍必须三个文件全部完成才算成功。
+同版本的 WSL2 离线安装、构建和无凭据检查也已通过，但唯一正式复验中，模型只为其中两个文件给出真实修改，`api.ts` 的两段内容只有定位信息。系统在写入前拒绝整包，没有留下半成品。现在自动测试和实现已完成：系统只保留白名单内已有真实修改的完整文件段，再只给缺失文件一次补齐机会；越界路径会在写入前停止，最终仍必须三个文件全部完成并复读才算成功。下一步先用新提交版本做 Windows 离线构建和无凭据检查，通过后才执行一次正式验证；Windows 全绿后再复核 WSL2。
 
 在此之前，不能说原来的 37 个失败已经解决，也不能启动最终 9.5 评审。
 
@@ -1230,7 +1268,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`00d2559` Windows 全绿、WSL2 formal 结构化失败，修复中** | WSL2 formal=`3/3` flash、`15/17` event/trace、cost=`$0.00071324`；`api.ts` 为 `2` 个 context-only hunk，执行前拒绝、changed paths/patch=`0/0`；敏感值与跨系统资源残留为 `0` | 2-5 小时 | 测试先行安全执行已有 actionable sections，并复用一次 missing-path continuation；新 identity 重走 Windows 分层 canary，全绿后才复核 WSL2 |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **`00d2559` WSL2 失败的对应实现修复已完成，待新 identity 分层复验** | actionable-section 目标回归=`81/81`，Agent=`630 passed + 1 skipped`；build、独立 `verify:build` 与合同 Gate 全绿；模型调用=`0`、新增费用=`$0` | 2-5 小时 | 提交新 identity，先走 Windows offline build/零凭证 dry-run/唯一 formal；Windows 全绿后才复核同 identity WSL2，双平台 formal 全绿为完成边界 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | scorecard、目标向量 `9.510`、多语言投入收益、竞品和边界已复核 | - | 当前精简版与 archive-03 共同保留决策和完整历史 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
