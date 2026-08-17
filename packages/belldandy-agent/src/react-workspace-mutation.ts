@@ -52,6 +52,13 @@ export type WorkspaceMutationNavigationToolCall = {
   };
 };
 
+export type WorkspaceMutationPatchHunkDiagnostics = {
+  hunkCount: number;
+  contextOnlyHunkCount: number;
+  contextOnlyHunkPaths: string[];
+  paths: string[];
+};
+
 export type WorkspaceMutationRecoveryPlan = WorkspaceMutationRecoveryRequest & {
   outputTokens: number;
   finalizationInputTokenReserve: number;
@@ -177,48 +184,92 @@ export function normalizeWorkspaceMutationRecoveryToolCall<
 export function hasNoContextOnlyWorkspaceMutationPatchHunks(
   toolCall: WorkspaceMutationNavigationToolCall,
 ): boolean {
+  const diagnostics = inspectWorkspaceMutationPatchHunks(toolCall);
+  return diagnostics === undefined || diagnostics.contextOnlyHunkCount === 0;
+}
+
+export function inspectWorkspaceMutationPatchHunks(
+  toolCall: WorkspaceMutationNavigationToolCall,
+): WorkspaceMutationPatchHunkDiagnostics | undefined {
   if (toolCall.function.name !== "apply_patch") {
-    return true;
+    return undefined;
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(toolCall.function.arguments);
   } catch {
-    return true;
+    return undefined;
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return true;
+    return undefined;
   }
   const patch = (parsed as Record<string, unknown>).input;
   if (typeof patch !== "string") {
-    return true;
+    return undefined;
   }
   const trimmedPatch = patch.trim();
   if (!trimmedPatch.startsWith("*** Begin Patch")
     || !trimmedPatch.endsWith("*** End Patch")) {
-    return true;
+    return undefined;
   }
 
-  const lines = patch.split(/\r?\n/);
-  for (let index = 0; index < lines.length; index++) {
-    if (!lines[index]?.startsWith("@@")) {
+  const paths: string[] = [];
+  const pathSet = new Set<string>();
+  const contextOnlyHunkPaths: string[] = [];
+  let currentPath = "<unknown>";
+  let currentHunk: { path: string; actionable: boolean } | undefined;
+  let hunkCount = 0;
+
+  const rememberPath = (path: string) => {
+    if (pathSet.has(path) || paths.length >= 32) return;
+    pathSet.add(path);
+    paths.push(path);
+  };
+  const finishHunk = () => {
+    if (!currentHunk) return;
+    if (!currentHunk.actionable && contextOnlyHunkPaths.length < 32) {
+      contextOnlyHunkPaths.push(currentHunk.path);
+    }
+    currentHunk = undefined;
+  };
+
+  for (const line of patch.split(/\r?\n/)) {
+    const header = /^\*\*\* (?:Update|Add|Delete) File:?\s+(.+)$/.exec(line);
+    if (header) {
+      finishHunk();
+      currentPath = normalizeWorkspaceMutationDiagnosticPath(header[1] ?? "");
+      rememberPath(currentPath);
       continue;
     }
-    let actionable = false;
-    for (let hunkIndex = index + 1; hunkIndex < lines.length; hunkIndex++) {
-      const line = lines[hunkIndex] ?? "";
-      if (line.startsWith("@@") || line.startsWith("*** ")) {
-        break;
-      }
-      if (line.startsWith("+") || line.startsWith("-")) {
-        actionable = true;
-      }
+    if (line.startsWith("@@")) {
+      finishHunk();
+      currentHunk = { path: currentPath, actionable: false };
+      hunkCount += 1;
+      continue;
     }
-    if (!actionable) {
-      return false;
+    if (currentHunk && (line.startsWith("+") || line.startsWith("-"))) {
+      currentHunk.actionable = true;
     }
   }
-  return true;
+  finishHunk();
+
+  return {
+    hunkCount,
+    contextOnlyHunkCount: contextOnlyHunkPaths.length,
+    contextOnlyHunkPaths,
+    paths,
+  };
+}
+
+export function formatWorkspaceMutationPatchHunkDiagnostics(
+  diagnostics: WorkspaceMutationPatchHunkDiagnostics,
+): string {
+  return [
+    "diagnostic=context_only_hunk",
+    `hunkCount=${diagnostics.hunkCount}`,
+    `contextOnlyHunkCount=${diagnostics.contextOnlyHunkCount}`,
+    `paths=${JSON.stringify(diagnostics.contextOnlyHunkPaths)}`,
+  ].join(" ");
 }
 
 export function selectRequiredWorkspaceMutationNavigationToolCalls<
@@ -930,6 +981,19 @@ function collectStructuredSourcePaths(value: unknown): string[] {
 
 function normalizeSourcePath(value: string): string {
   return value.trim().replaceAll("\\", "/").replace(/^\.\//, "").toLowerCase();
+}
+
+function normalizeWorkspaceMutationDiagnosticPath(value: string): string {
+  const normalized = value.trim().replaceAll("\\", "/").replace(/^\.\//, "");
+  if (!normalized
+    || normalized.length > 256
+    || /[\u0000-\u001f\u007f]/.test(normalized)
+    || normalized.startsWith("/")
+    || /^[A-Za-z]:\//.test(normalized)
+    || normalized.split("/").includes("..")) {
+    return "<unsafe>";
+  }
+  return normalized;
 }
 
 function readFileReadToolCallArguments(argumentsJson: string): Record<string, unknown> & { path: string } | undefined {

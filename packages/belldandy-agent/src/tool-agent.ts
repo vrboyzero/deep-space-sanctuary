@@ -138,7 +138,8 @@ import {
   buildWorkspaceMutationNavigationRequest,
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationVerificationRequest,
-  hasNoContextOnlyWorkspaceMutationPatchHunks,
+  formatWorkspaceMutationPatchHunkDiagnostics,
+  inspectWorkspaceMutationPatchHunks,
   isCompleteWorkspaceMutationVerificationReadResult,
   normalizeWorkspaceMutationRecoveryToolCall,
   selectWorkspaceMutationNavigationToolDefinitions,
@@ -4124,9 +4125,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
             return;
           }
           const normalizedMutationToolCall = normalizeWorkspaceMutationRecoveryToolCall(toolCalls[0]!);
-          if (!hasNoContextOnlyWorkspaceMutationPatchHunks(normalizedMutationToolCall)) {
+          const patchDiagnostics = inspectWorkspaceMutationPatchHunks(normalizedMutationToolCall);
+          if (patchDiagnostics && patchDiagnostics.contextOnlyHunkCount > 0) {
             yield* emitWorkspaceMutationFailure(
-              "the mutation-only apply_patch call contained a context-only hunk; every @@ hunk must include a real added or removed line.",
+              `the mutation-only apply_patch call contained a context-only hunk; every @@ hunk must include a real added or removed line. ${formatWorkspaceMutationPatchHunkDiagnostics(patchDiagnostics)}`,
             );
             return;
           }

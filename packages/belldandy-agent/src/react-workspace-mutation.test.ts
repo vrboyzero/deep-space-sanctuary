@@ -6,6 +6,7 @@ import {
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationRecoveryRequest,
   buildWorkspaceMutationVerificationRequest,
+  inspectWorkspaceMutationPatchHunks,
   normalizeWorkspaceMutationRecoveryToolCall,
   selectRequiredWorkspaceMutationNavigationToolCalls,
   selectRequiredWorkspaceMutationVerificationToolCalls,
@@ -86,6 +87,30 @@ describe("ReAct workspace mutation recovery", () => {
     };
 
     expect(normalizeWorkspaceMutationRecoveryToolCall(call)).toBe(call);
+  });
+
+  it("bounds context-only hunk diagnostics to safe relative paths", () => {
+    const call = {
+      function: {
+        name: "apply_patch",
+        arguments: JSON.stringify({
+          input: [
+            "*** Begin Patch",
+            "*** Update File: C:\\\\secrets\\\\prompt.txt",
+            "@@",
+            " unchanged",
+            "*** End Patch",
+          ].join("\n"),
+        }),
+      },
+    };
+
+    expect(inspectWorkspaceMutationPatchHunks(call)).toEqual({
+      hunkCount: 1,
+      contextOnlyHunkCount: 1,
+      contextOnlyHunkPaths: ["<unsafe>"],
+      paths: ["<unsafe>"],
+    });
   });
 
   it("builds one bounded read-after-write request for each required path", () => {

@@ -2073,6 +2073,12 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       type: "final",
       text: expect.stringContaining("context-only hunk"),
     }));
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "final",
+      text: expect.stringContaining(
+        'diagnostic=context_only_hunk hunkCount=4 contextOnlyHunkCount=1 paths=["jsonrpc/src/common/api.ts"]',
+      ),
+    }));
     expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
   });
 
