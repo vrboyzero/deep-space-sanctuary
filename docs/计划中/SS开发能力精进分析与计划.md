@@ -367,18 +367,17 @@ Source / Workspace Revision
 - `550e0da` 的 TS 三文件任务在 Windows 全绿；同 identity WSL2 虽完成三文件写入，但 `api.ts` 第一处 import 残留旧符号，冻结 evaluator 正确拒绝；
 - 上述 WSL2 失败促成 context-only hunk 执行前 Gate。
 
-### 6.4 最新断点：`d642205` Windows formal
+### 6.4 最新断点：`00d2559` WSL2 formal
 
-`d642205653f23aefa9d00f9f6a865f02bc003b22` 的 NTFS detached harness：
+`00d2559815aa8197e13cb6689adda7572c7f385a` 已在 Windows 完成三文件 formal，同 identity WSL2 前置 Gate 也全绿；唯一 WSL2 formal：
 
-- offline frozen install 为 resolved=`493`、reused=`492`、downloaded=`0`；clean build、独立 `verify:build` 和零凭证 dry-run 全绿；
-- dry-run `real-ts-api-migration-windows-a1-1786943001636` 的 preflight/snapshot=`passed`、usage=`not_reached`、events/trace/patch=`0/0/0`；
-- 唯一 formal `real-ts-api-migration-windows-a1-1786943168915` 的 `3/3` 次请求均路由到 `deepseek-v4-flash`；usage=`provider_reported`、input/output=`7607/804`、cost=`$0.00074420`；
-- 完整行 evidence 已生效，但模型把 `api.ts` 两个不相邻的完整 context 拼成同一 hunk，形成“单行真实、整段不存在”的搜索块；底层 `apply_patch` 精确拒绝，changed paths/patch=`0/0`；
-- formal event/trace=`17/19`，唯一终态=`run.failed`，未复现 `read ENOTCONN`；冻结 evaluator 未通过，未进入 WSL2；
-- dry-run/formal 真实主 key 扫描分别为 `0/12,816`、`0/13,263`，listener、相关 Node 和根级 PID/token 均为 `0`，两个 fixture 均保持 Git clean。
+- run=`real-ts-api-migration-wsl2-linux-a1-1786953681342`，`3/3` 次请求均路由到 `deepseek-v4-flash`；usage=`provider_reported`、input/output=`7465/563`、cost=`$0.00071324`；
+- mutation-only 输出包含 `3` 个 update section、`5` 个 hunk，其中 `api.ts` 的 `2` 个 hunk 只有 context、没有真实增删；另外 `2` 个文件 section 可执行，固定诊断为 `context_only_hunk`、`non_actionable_update_section`；
+- 候选 `apply_patch` 在任何 `tool.started` 或写入前被拒绝，changed paths/patch=`0/0`；event/trace=`15/17`，唯一终态=`run.failed`，冻结 evaluator 未通过；
+- report SHA-256=`b3583db487e4f249a8ea6b9cba2b4de9aaca5714f8bf9518ebbbea5b8a6b4428`，空 patch SHA-256=`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`；
+- artifact、fixture、runtime 与 WSL clean harness 的真实主 key 扫描=`0/46,945`、不可读文件=`0`、符号链接=`1,320`；两端 Node、listener、根级 PID/token、fixture/harness/prepared source residue 均为 `0`。
 
-当前最小修复方向是在每个 `taskRelevantContexts` 项中加入真实源码行范围，并明确禁止单个 hunk 跨 context 拼接；不增加调用、turn/token 或 retry。需先用失败测试锁定边界，再完成确定性 Gate 并形成新 identity。
+当前最小修复方向是：仅在路径唯一安全、section/hunk 结构有效时执行已有真实增删的文件 section，再复用现有一次 bounded missing-path continuation 补齐 `api.ts`；仍禁止执行 context-only section，不增加 maxTurns、maxTokens 或 Provider retry。先以公开 Agent 行为测试锁定“安全部分进度 + 单次补齐 + 最终三路径覆盖”。
 
 ### 6.5 恢复后的实施顺序
 
@@ -406,6 +405,7 @@ Source / Workspace Revision
 22. **已完成：`00d2559` Windows formal 前置 Gate**。detached NTFS harness 的 offline frozen install、workspace build、独立 `verify:build` 和零凭证 dry-run 全绿；Provider 未触达、敏感值与资源零残留，开放该 identity 的唯一 Windows formal。
 23. **已完成：`00d2559` Windows 三文件 formal 全绿**。唯一 formal 正确修改三个目标文件，冻结 evaluator、唯一 `run.completed`、route/usage/cost、summary、敏感值与资源 Gate 全部通过，打开同 identity WSL2 分层复核。
 24. **已完成：`00d2559` WSL2 formal 前置 Gate**。ext4 harness 的 offline frozen install、workspace build、独立 `verify:build`、mode 恢复和零凭证 dry-run 全绿；Provider 未触达，Windows/WSL2 敏感值与资源零残留，开放唯一 WSL2 formal。
+25. **已完成但失败：`00d2559` WSL2 formal**。唯一 formal 的 `api.ts` 含 `2` 个 context-only hunk，其余两个文件 section 可执行；系统在工具执行前拒绝整包，changed paths/patch=`0/0`、唯一终态=`run.failed`，route/usage/cost、敏感值和资源清理证据完整，禁止重跑。
 
 #### P0 后续阶段实现结论：mutation hunk 无正文诊断（2026-08-17）
 
@@ -1026,20 +1026,56 @@ Source / Workspace Revision
 - **为什么先做它**：同 identity 双平台无费用 Gate 与 Windows formal 已全绿，当前唯一剩余证据是 WSL2 真实三文件 mutation、verification 和 finalization。
 - **当前还缺的关键闭环**：WSL2 三文件 changed paths、冻结 evaluator、唯一 `run.completed`、完整 route/usage/cost、敏感值与跨系统资源零残留；全部通过才形成本轮代表性双平台闭环。
 
+#### P0 后续阶段实现结论：`00d2559` WSL2 formal 结构化失败闭环（2026-08-17）
+
+##### 已完成内容
+
+1. **唯一 WSL2 formal 审计**：
+   - artifact=`artifacts/p0-required-mutation-canary-00d2559-ts-api-wsl-formal-r1`，run=`real-ts-api-migration-wsl2-linux-a1-1786953681342`；
+   - route=`deepseek-v4-flash -> deepseek-v4-flash [primary]`，usage=`3/3 provider_reported`、input/output=`7465/563`、cost=`$0.00071324`；
+   - event/trace=`15/17`，唯一终态=`run.failed`，changed paths/patch bytes=`0/0`。
+
+2. **无正文结构化根因**：
+   - mutation-only 候选为 `3` 个 section、`5` 个 hunk；`api.ts` 的 `2` 个 hunk 只有 context，其余 `2` 个 section 可执行；
+   - 固定诊断=`context_only_hunk`、preservation reason=`non_actionable_update_section`、section/actionable=`3/2`；
+   - 候选 patch 未进入 `tool.started`，没有部分写入，也没有记录 patch 正文。
+
+3. **敏感值与资源审计**：
+   - report SHA-256=`b3583db487e4f249a8ea6b9cba2b4de9aaca5714f8bf9518ebbbea5b8a6b4428`，空 patch SHA-256=`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`；
+   - artifact、fixture、runtime 与 WSL clean harness 共扫描 `46,945` 个普通文件，真实主 key 命中=`0`、不可读=`0`、符号链接=`1,320`；
+   - Windows/WSL2 相关 Node、`19645` listener、runtime 根级 PID/token、fixture/harness/prepared source residue 均为 `0`。
+
+4. **效果**：
+   - 失败被收敛为可确定复现的“部分文件可执行、一个 required path 只有 context-only hunk”形状；
+   - 原子安全 Gate 正确阻止不完整 patch，未留下半成品或误报成功；
+   - `00d2559` formal 已冻结，后续只在新 identity 验证修复。
+
+##### 验证结果
+
+- TypeScript 编译无错误：同 identity WSL2 workspace build 与独立 `verify:build` 已在 formal 前通过；
+- 本 formal 冻结 evaluator 通过数=`0`，任务按预期以 product workflow failure 结束；route、`3/3` usage、唯一失败终态和 artifact 合同通过；
+- 主 key、端口、进程、PID/token 与 Git residue 检查全部为 `0`，本次新增观测费用=`$0.00071324`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在 `ToolEnabledAgent.run()` 公开行为 seam 增加红灯回归，复现“两个安全可执行 section + 一个 context-only required path”，再实现安全部分执行并复用一次 missing-path continuation。
+- **为什么先做它**：提示约束已被真实模型再次忽略；运行时已有可信部分进度和单次补齐机制，复用它比继续叠加提示更可确定，且不提高预算或重试上限。
+- **当前还缺的关键闭环**：红灯、最小实现、Agent/build/合同 Gate、新 clean identity 的 Windows 三文件 formal 与同 identity WSL2 复核；完成前不启动完整矩阵、candidate v4 或 P2-C。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
 
-- observed=`$2.24530810`；
+- observed=`$2.24602134`；
 - reserved=`$0.94221000`；
 - unobservable reserve=`$0.60000000`；
-- 守卫上界=`30.30014480 RMB < 50 RMB`。
+- 守卫上界=`30.30585072 RMB < 50 RMB`。
 
-下一次付费 formal 的计划参数为 `priorObservedCostUsd=2.84530810`、`maxTotalCostUsd=2.94530810`；完整预留后守卫上界约 `31.10014480 RMB < 50 RMB`。项目记录不能替代 Provider 外部账单。
+下一次付费 formal 的计划参数为 `priorObservedCostUsd=2.84602134`、`maxTotalCostUsd=2.94602134`；完整预留后守卫上界约 `31.10585072 RMB < 50 RMB`。项目记录不能替代 Provider 外部账单。
 
 当前明确禁止：
 
-- 重跑 `3b506ef`、`429a6eb`、`ef40901`、`a8bf150`、`a860d16`、`d642205`、`61735d4` 或 `b6bf0b3` 的任一已执行 formal；
+- 重跑 `3b506ef`、`429a6eb`、`ef40901`、`a8bf150`、`a860d16`、`d642205`、`61735d4`、`b6bf0b3` 或 `00d2559` 的任一已执行 formal；
 - 增加 `maxTurns`、`maxTokens` 或 Provider 重试；
 - 未经新证据启动完整矩阵或 candidate v4；
 - 启动 P2-C、push、公开发布或生产操作。
@@ -1117,7 +1153,7 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 | 技术债 | 决策 | 处理 |
 | --- | --- | --- |
-| context-only hunk 阻断原子 patch | `fix_now` | 已证明其承担搜索游标语义；仅对结构明确、路径唯一安全且每个文件均有真实增删的 patch 保留原文放行，其他形状继续 fail-closed |
+| context-only hunk 阻断原子 patch | `fix_now` | 保留 context-only section 的零执行边界；对结构明确、路径唯一安全的其他可执行 section，测试先行接入既有单次 missing-path continuation，不放宽最终 required-path 覆盖 |
 | required-mutation 其余失败改善范围 | `split_task` | 代表 canary 双平台闭合后按失败形状逐类验证，不做单任务外推 |
 | 连续候选 9.5 证据 | `split_task` | 独立进入 P2-C，不由当前 P0 费用授权自动扩大 |
 | C# 选型和生产接入 | `defer` | 真实需求、许可、安全分发和 truth set 具备后再启动 |
@@ -1178,13 +1214,13 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 自动测试现已规定“定位和删除行的空格、制表符必须与单一原始材料逐字相同”，并保持原有材料预算。新版本 `00d2559` 已在 Windows 正确完成三个文件的修改、自动验收、最终说明、费用记录和资源清理。
 
-同版本的 WSL2 离线安装、构建和无凭据检查也已通过，当前只执行一次正式复验。系统不会重跑已冻结 formal，也不会靠增加模型调用或输出额度碰运气。
+同版本的 WSL2 离线安装、构建和无凭据检查也已通过，但唯一正式复验中，模型只为其中两个文件给出真实修改，`api.ts` 的两段内容只有定位信息。系统在写入前拒绝整包，没有留下半成品。下一步将用自动测试验证：先安全执行已有真实修改，再只给缺失文件一次补齐机会；最终仍必须三个文件全部完成才算成功。
 
 在此之前，不能说原来的 37 个失败已经解决，也不能启动最终 9.5 评审。
 
 ### 9.5 费用和发布边界
 
-当前费用守卫约为 **30.30 元人民币**，低于 **50 元人民币**授权上限；下一次正式验证完整预留后的守卫约为 **31.10 元人民币**。最新 Windows formal 实际费用为 `$0.00168515`；在授权上限内无需再次申请，外部服务商账单仍需单独核对。
+当前费用守卫约为 **30.31 元人民币**，低于 **50 元人民币**授权上限；下一次正式验证完整预留后的守卫约为 **31.11 元人民币**。最新 WSL2 formal 实际费用为 `$0.00071324`；在授权上限内无需再次申请，外部服务商账单仍需单独核对。
 
 当前不会重跑已冻结版本，不会提高模型预算，不会启动完整付费矩阵，不会 push、公开发布或执行生产操作。
 
@@ -1194,7 +1230,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`00d2559` Windows 全绿、WSL2 前置 Gate 全绿，待唯一 formal** | WSL2 offline install/build/独立 verify/dry-run 全绿；preflight/snapshot passed、usage not_reached、敏感值与跨系统资源残留为 `0` | 1-3 小时 | 仅用 `deepseek-v4-flash` 执行唯一 WSL2 formal；三文件、唯一成功终态、费用和清理 Gate 全绿后形成代表性双平台闭环 |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **`00d2559` Windows 全绿、WSL2 formal 结构化失败，修复中** | WSL2 formal=`3/3` flash、`15/17` event/trace、cost=`$0.00071324`；`api.ts` 为 `2` 个 context-only hunk，执行前拒绝、changed paths/patch=`0/0`；敏感值与跨系统资源残留为 `0` | 2-5 小时 | 测试先行安全执行已有 actionable sections，并复用一次 missing-path continuation；新 identity 重走 Windows 分层 canary，全绿后才复核 WSL2 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | scorecard、目标向量 `9.510`、多语言投入收益、竞品和边界已复核 | - | 当前精简版与 archive-03 共同保留决策和完整历史 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
