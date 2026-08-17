@@ -4263,7 +4263,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
             ? inspectContextOnlyWorkspaceMutationPatchPreservation(normalizedMutationToolCall)
             : undefined;
           const actionableMutationToolCall = patchPreservationDiagnostics?.canPreserve === false
-            && patchPreservationDiagnostics.rejectionReason === "non_actionable_update_section"
+            && (patchPreservationDiagnostics.rejectionReason === "non_actionable_update_section"
+              || patchPreservationDiagnostics.rejectionReason === "duplicate_update_path")
             && !workspaceMutationContinuationCall
             ? retainActionableWorkspaceMutationPatchSections(
               normalizedMutationToolCall,

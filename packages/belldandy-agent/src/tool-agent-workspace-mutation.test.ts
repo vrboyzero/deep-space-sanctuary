@@ -3040,7 +3040,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
-  it("continues once after retaining actionable sections from a mixed recovery patch", async () => {
+  it("continues once after dropping repeated independent context-only sections", async () => {
     const requiredChangedPaths = [
       "jsonrpc/src/common/api.ts",
       "jsonrpc/src/common/connection.ts",
@@ -3056,6 +3056,9 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       "@@",
       "-export const TraceValues = TraceValue;",
       "-export type TraceValues = TraceValue;",
+      "*** Update File: jsonrpc/src/common/api.ts",
+      "@@",
+      " } from './connection';",
       "*** Update File: protocol/src/common/protocol.ts",
       "@@",
       "-import { TraceValues } from 'vscode-jsonrpc';",

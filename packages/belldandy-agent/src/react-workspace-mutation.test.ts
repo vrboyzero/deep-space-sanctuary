@@ -12,6 +12,7 @@ import {
   inspectContextOnlyWorkspaceMutationPatchPreservation,
   inspectWorkspaceMutationPatchHunks,
   normalizeWorkspaceMutationRecoveryToolCall,
+  retainActionableWorkspaceMutationPatchSections,
   selectRequiredWorkspaceMutationNavigationToolCalls,
   selectRequiredWorkspaceMutationVerificationToolCalls,
   selectWorkspaceMutationNavigationToolDefinitions,
@@ -236,6 +237,119 @@ describe("ReAct workspace mutation recovery", () => {
     });
   });
 
+  it("drops independent no-op duplicate sections only when retained paths stay unique", () => {
+    const safeCall = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/api.ts",
+      "@@",
+      " api context only",
+      "*** Update File: src/connection.ts",
+      "@@",
+      "-old connection",
+      "+new connection",
+      "*** Update File: src/api.ts",
+      "@@",
+      "-old api",
+      "+new api",
+      "*** End Patch",
+    ]);
+    const retained = retainActionableWorkspaceMutationPatchSections(
+      safeCall,
+      ["src/api.ts", "src/connection.ts"],
+    );
+
+    expect(inspectContextOnlyWorkspaceMutationPatchPreservation(safeCall)).toEqual({
+      canPreserve: false,
+      rejectionReason: "duplicate_update_path",
+      sectionCount: 3,
+      actionableSectionCount: 2,
+    });
+    expect(JSON.parse(retained?.function.arguments ?? "{}")).toEqual({
+      input: [
+        "*** Begin Patch",
+        "*** Update File: src/connection.ts",
+        "@@",
+        "-old connection",
+        "+new connection",
+        "*** Update File: src/api.ts",
+        "@@",
+        "-old api",
+        "+new api",
+        "*** End Patch",
+      ].join("\n"),
+    });
+
+    const unsafeCall = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/api.ts",
+      "@@",
+      " api context only",
+      "*** Update File: src/api.ts",
+      "@@",
+      "-old import",
+      "+new import",
+      "*** Update File: src/api.ts",
+      "@@",
+      "-old export",
+      "+new export",
+      "*** End Patch",
+    ]);
+    expect(retainActionableWorkspaceMutationPatchSections(
+      unsafeCall,
+      ["src/api.ts"],
+    )).toBeUndefined();
+    expect(inspectContextOnlyWorkspaceMutationPatchPreservation(unsafeCall)).toEqual({
+      canPreserve: false,
+      rejectionReason: "duplicate_update_path",
+      sectionCount: 3,
+      actionableSectionCount: 2,
+    });
+  });
+
+  it.each([
+    {
+      name: "an unsafe later path",
+      rejectionReason: "unsafe_update_path",
+      trailingLines: [
+        "*** Update File: ../outside.ts",
+        "@@",
+        "-old outside",
+        "+new outside",
+      ],
+    },
+    {
+      name: "an invalid later hunk line",
+      rejectionReason: "invalid_hunk_line",
+      trailingLines: [
+        "*** Update File: src/connection.ts",
+        "@@",
+        "invalid context without a patch marker",
+      ],
+    },
+  ])("validates $name after detecting a repeated path", ({ rejectionReason, trailingLines }) => {
+    const call = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/api.ts",
+      "@@",
+      " api context only",
+      "*** Update File: src/api.ts",
+      "@@",
+      "-old api",
+      "+new api",
+      ...trailingLines,
+      "*** End Patch",
+    ]);
+
+    expect(inspectContextOnlyWorkspaceMutationPatchPreservation(call)).toMatchObject({
+      canPreserve: false,
+      rejectionReason,
+    });
+    expect(retainActionableWorkspaceMutationPatchSections(call, [
+      "src/api.ts",
+      "src/connection.ts",
+    ])).toBeUndefined();
+  });
+
   it.each([
     {
       name: "unknown hunk ownership",
@@ -244,21 +358,6 @@ describe("ReAct workspace mutation recovery", () => {
         "*** Begin Patch",
         "@@",
         " unknown context",
-        "*** Update File: src/api.ts",
-        "@@",
-        "-old api",
-        "+new api",
-        "*** End Patch",
-      ],
-    },
-    {
-      name: "a repeated file section",
-      rejectionReason: "duplicate_update_path",
-      lines: [
-        "*** Begin Patch",
-        "*** Update File: src/api.ts",
-        "@@",
-        " context",
         "*** Update File: src/api.ts",
         "@@",
         "-old api",

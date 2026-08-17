@@ -399,6 +399,7 @@ export function inspectContextOnlyWorkspaceMutationPatchPreservation(
 
   const sections: Array<{ actionable: boolean; hunkCount: number }> = [];
   const seenPathIdentities = new Set<string>();
+  let hasDuplicateUpdatePath = false;
   let currentSection: (typeof sections)[number] | undefined;
   let currentHunk: { actionable: boolean; lineCount: number } | undefined;
   let contextOnlyHunkCount = 0;
@@ -424,7 +425,9 @@ export function inspectContextOnlyWorkspaceMutationPatchPreservation(
       const safePath = normalizeWorkspaceMutationDiagnosticPath(updateHeader[1] ?? "");
       const pathIdentity = normalizeSourcePath(safePath);
       if (safePath === "<unsafe>") return reject("unsafe_update_path", sections);
-      if (seenPathIdentities.has(pathIdentity)) return reject("duplicate_update_path", sections);
+      if (seenPathIdentities.has(pathIdentity)) {
+        hasDuplicateUpdatePath = true;
+      }
       currentSection = { actionable: false, hunkCount: 0 };
       sections.push(currentSection);
       seenPathIdentities.add(pathIdentity);
@@ -463,6 +466,7 @@ export function inspectContextOnlyWorkspaceMutationPatchPreservation(
   if (hunkRejection) return reject(hunkRejection, sections);
 
   if (sections.length === 0) return reject("no_update_section", sections);
+  if (hasDuplicateUpdatePath) return reject("duplicate_update_path", sections);
   if (contextOnlyHunkCount === 0) return reject("no_context_only_hunk", sections);
   if (!sections.every((section) => section.actionable && section.hunkCount > 0)) {
     return reject("non_actionable_update_section", sections);
@@ -479,7 +483,8 @@ export function retainActionableWorkspaceMutationPatchSections<
   T extends WorkspaceMutationNavigationToolCall,
 >(toolCall: T, allowedPaths: readonly string[]): T | undefined {
   const diagnostics = inspectContextOnlyWorkspaceMutationPatchPreservation(toolCall);
-  if (diagnostics.rejectionReason !== "non_actionable_update_section"
+  if ((diagnostics.rejectionReason !== "non_actionable_update_section"
+      && diagnostics.rejectionReason !== "duplicate_update_path")
     || diagnostics.actionableSectionCount === 0
     || allowedPaths.length === 0) {
     return undefined;
@@ -516,9 +521,11 @@ export function retainActionableWorkspaceMutationPatchSections<
   retainCurrentSection();
   retainedLines.push("*** End Patch");
 
-  const allowedPathIdentities = new Set(allowedPaths.map((path) => path.toLowerCase()));
+  const allowedPathIdentities = new Set(allowedPaths.map(normalizeSourcePath));
+  const retainedPathIdentities = retainedPaths.map(normalizeSourcePath);
   if (retainedPaths.length === 0
-    || retainedPaths.some((path) => !allowedPathIdentities.has(path.toLowerCase()))) {
+    || new Set(retainedPathIdentities).size !== retainedPathIdentities.length
+    || retainedPathIdentities.some((path) => !allowedPathIdentities.has(path))) {
     return undefined;
   }
 
