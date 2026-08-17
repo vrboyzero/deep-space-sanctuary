@@ -1497,6 +1497,40 @@ Source / Workspace Revision
 - **为什么先做它**：本次失败发生在任何写入之前，且已有精确 `duplicate_update_path` 诊断；先收紧这一确定性转换比增加模型轮次、token 或重试更可控。
 - **当前还缺的关键闭环**：重复路径场景的语义安全证明、公开 Agent 回归、全量构建测试和新 identity 无费用 Gate；完成前不执行新的 formal。
 
+#### P0 后续阶段实现结论：`6f7670f` 重复无动作 Update section 安全删除（2026-08-17）
+
+##### 已完成内容
+
+1. **`react-workspace-mutation.ts` 修改**：
+   - 发现重复路径后继续严格解析后续 section、路径和 hunk，并返回完整 section/actionable 计数；
+   - 仅删除完全没有 `+/-` 的独立 section；保留后的标准化路径必须位于 required 白名单且彼此唯一；
+   - 同一路径存在两个 actionable section 时仍拒绝，不合并可能互相覆盖的修改。
+
+2. **`tool-agent.ts` 接入**：
+   - 首次 mutation-only patch 可对 `non_actionable_update_section` 和 `duplicate_update_path` 尝试同一确定性安全转换；
+   - continuation、越界路径、非法结构和重复 actionable section 继续失败关闭，未增加模型轮次、token 或 Provider retry。
+
+3. **回归测试扩展**：
+   - 纯函数覆盖安全删除、保留路径唯一性、后续危险路径/非法 hunk 继续校验；
+   - 公开 `Agent.run()` 覆盖删除两个重复无动作 `api.ts` section、原子执行其余两文件并用既有一次 continuation 补齐 `api.ts`。
+
+4. **效果**：
+   - `2bfc76c` formal 暴露的确定形态不再因无动作重复 section 整包停止；
+   - 转换不会让重复真实修改、越界路径或非法 patch 绕过原子写入边界；
+   - 本轮仅执行本地确定性验证，模型调用=`0`、新增费用=`$0`。
+
+##### 验证结果
+
+- TypeScript workspace build 与独立 `verify:build` 通过；
+- 目标 workspace-mutation 回归 `94/94` 通过；Agent `643 passed + 1 skipped`，Skills `936 passed + 2 skipped`，合计 `1579 passed + 3 skipped`；
+- `verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 通过；重复 actionable、后续危险路径和非法 hunk 均保持执行前失败关闭。
+
+##### 后续计划
+
+- **下一步准备做什么**：按用户要求本次回写后暂停；恢复后为 `6f7670f` 建立 detached clean Windows harness，依次完成 frozen offline install、workspace build、独立 `verify:build` 和零凭证 dry-run。
+- **为什么先做它**：本地 Gate 只能证明当前工作区逻辑正确；唯一付费 formal 必须验证可回读 clean identity，先排除安装、构建、固定仓输入、凭据和清理问题。
+- **当前还缺的关键闭环**：`6f7670f` detached clean/dry-run 证据，以及唯一 Windows formal 的三文件 mutation、冻结 evaluator、summary、terminal、route/usage/cost、敏感值和资源零残留；Windows 全绿后才允许考虑 WSL2。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
@@ -1506,7 +1540,7 @@ Source / Workspace Revision
 - unobservable reserve=`$0.70000000`；
 - 守卫上界=`31.13686952 RMB < 50 RMB`。
 
-下一次付费 formal 尚未开放；若后续无费用 Gate 全绿，runner 参数应为 `priorObservedCostUsd=2.94989869`、`maxTotalCostUsd=3.00000000`，进程内剩余额度=`$0.05010131`。项目账本仍按完整 `$0.10` 预留，守卫上界约 `31.93686952 RMB < 50 RMB`。项目记录不能替代 Provider 外部账单。
+本轮本地无费用 Gate 已全绿，但下一次付费 formal 尚未开放；还需先完成 `6f7670f` detached clean Windows 构建与零凭证 dry-run。若前置 Gate 全绿，runner 参数应为 `priorObservedCostUsd=2.94989869`、`maxTotalCostUsd=3.00000000`，进程内剩余额度=`$0.05010131`。项目账本仍按完整 `$0.10` 预留，守卫上界约 `31.93686952 RMB < 50 RMB`。项目记录不能替代 Provider 外部账单。
 
 当前明确禁止：
 
@@ -1668,9 +1702,9 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 新版本 `2bfc76c` 已通过离线安装、构建和无凭据检查。唯一真实验证中，模型这次只返回一个补丁，但在 `api.ts` 使用了重复的文件修改段，其中两段只有定位信息、没有真实增删。系统无法证明这些重复段可以安全保留，因此在任何写入前拒绝整包；没有文件变化、没有凭据泄漏，费用与最终失败状态均完整记录。该版本已冻结，不会重跑或进入 WSL2。
 
-下一步只研究一个更窄的情况：如果只有某个独立文件段完全不修改内容，而同一路径的其他独立段包含真实修改，删除这个无动作段是否严格不改变后续修改语义。只有自动测试能够证明安全、并且所有目标文件仍有真实修改时才会继续；否则维持当前停止策略。
+新版本 `6f7670f` 已完成这个窄场景的本地修复和验证：系统可以删除完全不改内容的独立文件段，再原子执行其余真实修改；删除后每个文件只能保留一个真实修改段，并且都必须属于任务白名单。若同一文件仍有两段真实修改、后面出现危险路径或补丁格式异常，系统仍会在写入前停止。目标测试、Agent/Skills 全量、构建和合同检查均已通过，未调用模型、未产生新费用。
 
-在此之前，不能说原来的 37 个失败已经解决，也不能启动最终 9.5 评审。
+按用户要求，本环节回写后暂停。`6f7670f` 尚未执行隔离环境的离线构建、无凭据检查或真实 Windows 验证；在这些证据完成前，不能说原来的 37 个失败已经解决，也不能启动最终 9.5 评审。
 
 ### 9.5 费用和发布边界
 
@@ -1684,7 +1718,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`2bfc76c` Windows formal 失败并冻结；待重复 Update section 安全转换修复** | 单个 patch 含 `8` 个 hunk，`2` 个 `api.ts` hunk 只有上下文且路径重复；写入前失败关闭，changed paths/patch=`0/0`；唯一 `run.failed`、usage=`3/3`、cost=`$0.00073883`，敏感值与资源清理全绿 | 1-2 小时 | 测试先行证明并实现独立无动作重复 section 的语义安全删除，完成全量 Gate、新 identity 和零凭证 dry-run 前不执行 formal；新 formal runner 上限暂记 `2.94989869 -> 3.00000000 USD` |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **`6f7670f` 安全转换与本地 Gate 已完成；按用户要求暂停** | 仅删除独立无动作 section；retained paths 白名单且唯一，重复 actionable/危险后续结构失败关闭；目标 `94/94`、Agent + Skills `1579 passed + 3 skipped`，build/verifier/合同/diff Gate 全绿，模型调用=`0` | 0.5-1 小时 + 1 次 formal | 恢复后先完成 `6f7670f` detached offline build、独立 verifier 与零凭证 dry-run；全绿后才开放唯一 Windows formal，runner 上限暂记 `2.94989869 -> 3.00000000 USD`；Windows 全绿后才考虑 WSL2 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | scorecard、目标向量 `9.510`、多语言投入收益、竞品和边界已复核 | - | 当前精简版与 archive-03 共同保留决策和完整历史 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
