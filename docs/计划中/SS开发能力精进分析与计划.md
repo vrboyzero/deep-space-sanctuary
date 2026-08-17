@@ -2144,20 +2144,63 @@ Source / Workspace Revision
 - **为什么先做它**：`f0615b8` 已执行并冻结，当前修复不在其 source identity 内；只有新的 clean source/harness 证据才能验证 `spawn git ENOENT` 收尾修复并承载下一次 formal。
 - **当前还缺的关键闭环**：新 identity 的 Windows clean/dry-run，以及唯一 formal 的三文件完成、冻结测试、patch acceptance、完整 usage/terminal/trace 与资源零残留；Windows 未全绿仍不进入 WSL2。
 
+#### P0 后续阶段实现结论：`9a7c3b3` Windows formal 失败冻结与 snapshot `MAX_PATH` 根因闭合（2026-08-18）
+
+##### 已完成内容
+
+1. **`9a7c3b3bc3ea4d52c96a96498f35a405172cfae7` detached Windows clean Gate 完成**：
+   - lockfile/content SHA-256=`844c0021f1c9135214c913636fd6ed6f9232593883bd5b6289f7ade51d2b7d2b` / `098f5fb9f92da947d637926813c4a625e56809ac7ece701bc09df30edd868503`；
+   - frozen offline install=`493/492/0`，workspace build 与独立 `verify:build` 通过，构建后仍 detached/clean 且 content hash 未漂移；
+   - dry-run r2 artifact=`artifacts/p0-required-mutation-canary-9a7c3b3-ts-api-windows-dry-run-r2`，report SHA-256=`f269163de238e1f3152d180a01d77fc48002f9a9f1a3bddcc2336b6ac200dbee`。
+
+2. **dry-run 环境隔离缺口完成处置**：
+   - r1 发现 base launcher 全量导入主 `.env.local` 后，隔离 Gateway 会把其他渠道凭据镜像到 runtime state `.env/.env.local`；未修改主配置，两个本轮生成文件已送入 Windows 回收站并记录 cleanup log；
+   - r2 在 Gateway 启动前清除所有从主 `.env.local` 导入的变量，dry-run 不恢复模型 key，formal 只恢复 DeepSeek API key/base URL/wire API；
+   - r2 credentialsConfigured=`false`、usage=`not_reached`、event/trace/patch=`0/0/0`，严格凭据实值、state env、listener、相关进程与 PID/token 残留均为 `0`。
+
+3. **`9a7c3b3` 唯一 Windows formal 已执行并冻结**：
+   - artifact=`artifacts/p0-required-mutation-canary-9a7c3b3-ts-api-windows-formal-r1`，run=`real-ts-api-migration-windows-a1-1786987042404`，report SHA-256=`5a5c43c3231e9fbc2e9121052ff13ccc48acaa0409b668cd6c193e54580555d7`；
+   - terminal=`run.completed`、5/5 次 model calls 均 provider-reported，input/output=`10344/852`、cost=`$0.00302790`；
+   - 三个 required paths 均被修改，但 `jsonrpc/src/common/api.ts:30` 仍保留另一处 `TraceValues` barrel export；冻结 verifier 稳定报 `Deprecated TraceValues API migration is incomplete.`，因此 task/tests/patch acceptance 按 `product_workflow` 正确失败。
+
+4. **`workspace-change-snapshot.ts` Windows 长路径根因修复**：
+   - formal 的嵌套临时 diff cwd 长度约 `265`、子路径约 `275`，超过传统 Windows `MAX_PATH=260`；同一 fixture 的短 cwd Git `100/100` 成功，而原 baseline `createSnapshot()` 稳定复现 `git diff --no-index` 的 `spawn git ENOENT`；
+   - diff 临时目录改为 state 根下唯一隐藏目录，成功与异常路径都清理，不改变持久 artifact 布局、patch 语义或 retry 次数；
+   - 原 formal baseline 源码级 replay 现得到 changed paths=`3`、hunks=`4`、truncated=`false`，临时 diff 残留=`0`。
+
+5. **效果**：
+   - snapshot 收尾失败已从“疑似 Git 瞬态错误”收缩为可重复的 Windows 长路径问题，并形成同形红绿回归；
+   - formal 的模型遗漏与 snapshot 基础设施问题已分离，未把任一失败误报为成功；
+   - observed conservative upper 更新为 `$2.38573603`，下一 identity 若通过全部无费用 Gate，只允许 `3.18573603 -> 3.28573603`。
+
+##### 验证结果
+
+- TypeScript 编译无错误：workspace build 与独立 `verify:build` 通过；
+- 相关测试 `73/73` 通过，新增 Windows 长 stateDir snapshot 测试先稳定红灯再转绿；
+- `verify:coding-ci`、`verify:coding-benchmark` 与 `git diff --check` 通过；benchmark verifier 仅保留既有 `date-time` format 忽略提示；
+- formal production/snapshot preflight、terminal/usage/trace 均可观测，但冻结任务 verifier 明确失败，因此本 identity 已冻结且不进入 WSL2；
+- formal 后严格凭据实值、state env、端口 listener、相关进程与 PID/token 残留均为 `0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：提交本次 Windows 长路径修复与文档形成新 identity，再完成 detached clean offline install、build、独立 verifier 和已隔离的零凭证 dry-run；无费用 Gate 全绿前不再调用模型。
+- **为什么先做它**：`9a7c3b3` 已执行并冻结，当前确定性修复不在其 source identity 内；先证明新 source 的 snapshot diff 可在长 Windows 路径中稳定生成，才能考虑下一 formal。
+- **当前还缺的关键闭环**：新 identity 的 Windows formal 必须同时无 `TraceValues` 残留、冻结 verifier 通过、snapshot changes 可观测、patch accepted、usage/trace 完整且资源零残留；未闭合前不进入 WSL2，也不扩大到完整矩阵。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
 
-- observed conservative upper=`$2.38270813`；
+- observed conservative upper=`$2.38573603`；
 - reserved=`$0.94221000`；
 - unobservable reserve=`$0.80000000`；
-- 守卫上界=`32.99934504 RMB < 50 RMB`。
+- 守卫上界=`33.02356824 RMB < 50 RMB`。
 
-`a72f127` 唯一 Windows formal 已执行、失败并冻结；产品 mutation 成功，但 terminal/report usage 因 CLI `read ENOTCONN` 不可观测，完整 `$0.10` 已计入预留。DeepSeek 新价格自 `2026-08-17 00:00` 生效，生效后 `32` 个可观测 formal 已统一按高峰价和输入全 miss 重算，差额 `$0.12570178` 已加入保守 observed 上界。`f0615b8` 唯一 Windows formal 也已执行并冻结，provider-reported cost=`$0.00358616` 已加入 observed。Stage 0D 累计池仍为 `$5.00`，最坏累计池加 reserved 守卫=`47.53768 RMB < 50 RMB`；下一 identity 的唯一 formal 只允许 `priorObservedCostUsd=3.18270813`、`maxTotalCostUsd=3.28270813`，本次额度仍恰好 `$0.10`，完整预留守卫=`33.79934504 RMB`。项目记录不能替代 Provider 外部账单。
+`a72f127` 唯一 Windows formal 已执行、失败并冻结；产品 mutation 成功，但 terminal/report usage 因 CLI `read ENOTCONN` 不可观测，完整 `$0.10` 已计入预留。DeepSeek 新价格自 `2026-08-17 00:00` 生效，生效后 `32` 个可观测 formal 已统一按高峰价和输入全 miss 重算，差额 `$0.12570178` 已加入保守 observed 上界。`f0615b8` 与 `9a7c3b3` 唯一 Windows formal 也已执行并冻结，provider-reported cost=`$0.00358616/$0.00302790` 均已加入 observed。Stage 0D 累计池仍为 `$5.00`，最坏累计池加 reserved 守卫=`47.53768 RMB < 50 RMB`；下一 identity 的唯一 formal 只允许 `priorObservedCostUsd=3.18573603`、`maxTotalCostUsd=3.28573603`，本次额度仍恰好 `$0.10`，完整预留守卫=`33.82356824 RMB`。项目记录不能替代 Provider 外部账单。
 
 当前明确禁止：
 
-- 重跑 `3b506ef`、`429a6eb`、`ef40901`、`a8bf150`、`a860d16`、`d642205`、`61735d4`、`b6bf0b3`、`00d2559`、`8c24998`、`9b4fe30`、`2b46799`、`2bfc76c`、`6f7670f`、`7f1cbee`、`a72f127` 或 `f0615b8` 的任一已执行 formal；
+- 重跑 `3b506ef`、`429a6eb`、`ef40901`、`a8bf150`、`a860d16`、`d642205`、`61735d4`、`b6bf0b3`、`00d2559`、`8c24998`、`9b4fe30`、`2b46799`、`2bfc76c`、`6f7670f`、`7f1cbee`、`a72f127`、`f0615b8` 或 `9a7c3b3` 的任一已执行 formal；
 - 增加 `maxTurns`、`maxTokens` 或 Provider 重试；
 - 使用调价前 `0.0025/0.125/0.25 USD/1M` 旧单价启动任何新付费 formal；
 - 未经新证据启动完整矩阵或 candidate v4；
@@ -2254,9 +2297,11 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 | 人工 responder 与 `blocked/verifying` 时间线 | `defer` | 缺证据时保持 `incomplete` |
 | SCIP/tree-sitter/外部 MCP | `record_only` | 保留扩展位置，真实需求前不增加运行时复杂度 |
 | Provider 外部账单 | `record_only` | 项目内 usage/cost 不能替代服务商最终账单 |
-| Windows coding CLI snapshot 收尾瞬态错误 | `fix_now` | `read ENOTCONN` 与精确 `spawn git ENOENT` 均只对只读 Git 命令重试一次；永久/非 spawn 错误继续失败关闭，新增 3 个 ENOENT 边界回归，待新 identity formal 验证 terminal changes 可观测 |
+| Windows coding CLI snapshot 收尾错误 | `fix_now` | `read ENOTCONN` 保留一次只读重试；`spawn git ENOENT` 已确定为嵌套 diff cwd/文件路径超过 Windows `MAX_PATH`，临时 diff 提升到 state 根并在双路径清理，长路径红绿回归和原 baseline replay 已闭合，待新 identity formal 验证 terminal changes 可观测 |
+| canary launcher 全量导入 `.env.local` | `fix_now` | dry-run r1 发现隔离 state 镜像其他渠道凭据；本轮生成 env 文件已送回收站，r2/formal wrapper 启动前清除全部导入变量并只为 formal 恢复 DeepSeek 必需项，严格凭据值与 state env 残留=`0`；后续 launcher 必须沿用隔离模板 |
+| `api.ts` 双 barrel export 漏删一处 | `record_only` | `9a7c3b3` 已完整读取 frozen verifier 与三个目标文件，也完成 post-write 复读，但仍残留 `api.ts:30`；冻结 verifier 正确拒绝。单一模型样本不修改通用合同，下一 identity 继续以原任务验证 |
 | missing-path continuation 未返回 mutation tool | `record_only` | `f0615b8` 真实样本已冻结；源码调用链和专属回归均证明 payload 为 `tool_choice="required"`，单样本不足以修改合同，不增加 retry、turn/token 或放宽唯一 mutation tool 约束 |
-| Stage 0D 累计预算固定 `$3.00` | `fix_now` | 已按 `50 RMB` 授权、8 RMB/USD 与 20% 预留更新为 `$5.00`，边界回归和合同 Gate 全绿；`f0615b8` 后下一 formal 显式限制为 `3.18270813 -> 3.28270813`，不放宽单次 `$0.10`、turn/token 或 Provider retry |
+| Stage 0D 累计预算固定 `$3.00` | `fix_now` | 已按 `50 RMB` 授权、8 RMB/USD 与 20% 预留更新为 `$5.00`，边界回归和合同 Gate 全绿；`9a7c3b3` 后下一 formal 显式限制为 `3.18573603 -> 3.28573603`，不放宽单次 `$0.10`、turn/token 或 Provider retry |
 | DeepSeek-V4-Flash 旧单价 | `fix_now` | 官方调价证据、`32` 个历史 formal 的高峰价保守重算及 `f0615b8` 新价实跑已闭合；后续 formal 固定 `0.0125/0.375/1.125 USD/1M`，不提高任何费用或执行预算 |
 | CodeIntel frozen source/hash identity drift | `split_task` | 完整测试中 `15` 个失败稳定指向既有 frozen source/hash；相关文件不在本轮 diff，不为 ENOTCONN 修复顺手更新冻结证据 |
 | v2 disconnect fixture 未触发 Agent write | `split_task` | `writeCount=0` 已在主工作区和 clean `a72f127` harness 同形复现；属于既有 benchmark fixture/dispatch 问题，不与 snapshot pipe 修复混改 |
@@ -2313,22 +2358,22 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 - 主体框架不是当前瓶颈：P1-A1/A2、P1-B、P1-C、P2-A、P2-B 都能在当前源码中找到相应实现和测试。
 - 真正瓶颈是复杂多文件任务的稳定完成率。现有 `37` 个失败不能因为单个代表任务成功或新增保护 Gate 就从分母移除。
-- `a72f127` 已在真实 `deepseek-v4-flash` 调用中精确完成三文件 mutation、冻结测试和 summary，但 workspace snapshot 收尾触发 `read ENOTCONN`。`f0615b8` 已取得完整 terminal/usage/trace，却只修改一文件，missing-path continuation 未返回唯一 mutation tool；同次 `spawn git ENOENT` 二级收尾错误已完成确定性修复。当前仍缺一个新 identity 的完整 Windows 成功样本。
+- `a72f127` 已在真实 `deepseek-v4-flash` 调用中精确完成三文件 mutation、冻结测试和 summary，但 workspace snapshot 收尾触发 `read ENOTCONN`。`f0615b8` 只修改一文件且 missing-path continuation 未返回唯一 mutation tool。`9a7c3b3` 修改了三个路径并正常 terminal，却漏删 `api.ts:30` 的第二处 barrel export，冻结 verifier 正确失败；同次 snapshot `ENOENT` 已确定为 Windows 长路径并完成红绿修复。当前仍缺一个新 identity 的完整 Windows 成功样本。
 - P2-C 尚未启动。只有多个失败形状出现可重复改善，并且两个连续冻结候选通过全部硬 Gate，才能宣称达到 9.5。
 
 因此当前主要瓶颈是“真实效果证据还不够”，不是“再增加更多功能”。
 
 ### 9.6 费用和发布边界
 
-DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算，`f0615b8` 新价 formal 的 provider-reported `$0.00358616` 也已入账；当前费用守卫为 **33.00 元人民币**，低于 **50 元人民币**授权上限。`a72f127` terminal/report usage 不可观测，仍保守预留完整 `$0.10`；runner 累计池保持 `$5.00`，加现有 reserved 后的最坏守卫仍为 **47.54 元人民币**。下一 identity 的唯一 formal 仍只增加 `$0.10`，对应完整预留守卫约 **33.80 元人民币**；在授权上限内无需再次申请，外部服务商账单仍需单独核对。
+DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算，`f0615b8` 与 `9a7c3b3` 新价 formal 的 provider-reported `$0.00358616/$0.00302790` 也已入账；当前费用守卫为 **33.02 元人民币**，低于 **50 元人民币**授权上限。`a72f127` terminal/report usage 不可观测，仍保守预留完整 `$0.10`；runner 累计池保持 `$5.00`，加现有 reserved 后的最坏守卫仍为 **47.54 元人民币**。下一 identity 的唯一 formal 仍只增加 `$0.10`，对应完整预留守卫约 **33.82 元人民币**；在授权上限内无需再次申请，外部服务商账单仍需单独核对。
 
 当前不会重跑已冻结版本，不会提高模型预算，不会启动完整付费矩阵，不会 push、公开发布或执行生产操作。
 
 ### 9.7 后续计划
 
-- **下一步准备做什么**：提交 snapshot `spawn git ENOENT` 修复形成新 identity，重走 detached Windows offline install、build、独立 verifier 和零凭证 dry-run；全部通过后才允许下一次唯一 formal。
-- **为什么先做它**：`f0615b8` 已执行并冻结，且未包含本次修复；新 clean identity 是验证收尾修复、避免重复旧 formal 的必要前置。
-- **当前还缺的关键闭环**：新 identity 的 Windows formal 必须同时完成三文件 mutation、冻结测试、patch acceptance、完整 usage/terminal/trace 和资源零残留；未全绿不进入 WSL2，之后仍需覆盖其他失败族和两个连续原始 `>=9.500` 候选。
+- **下一步准备做什么**：提交 Windows 长路径 snapshot 修复形成新 identity，重走 detached Windows offline install、build、独立 verifier 和已隔离的零凭证 dry-run；全部通过后才考虑下一次唯一 formal。
+- **为什么先做它**：`9a7c3b3` 已执行并冻结，且未包含本次 `MAX_PATH` 根因修复；新 clean identity 是验证 terminal changes 可观测、避免重复旧 formal 的必要前置。
+- **当前还缺的关键闭环**：新 identity 的 Windows formal 必须同时清除全部 `TraceValues`、通过冻结 verifier、生成可信 snapshot patch、完整 usage/terminal/trace 并资源零残留；未全绿不进入 WSL2，之后仍需覆盖其他失败族和两个连续原始 `>=9.500` 候选。
 
 ## 10. 实施计划进度表
 
@@ -2336,7 +2381,7 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`f0615b8` Windows formal 已失败冻结，snapshot ENOENT 修复 Gate 全绿，待新 identity clean Gate** | formal=`product_workflow`、usage=`provider_reported`、cost=`$0.00358616`、仅改 `connection.ts`；continuation 已确认 `tool_choice=required` 但模型未返回唯一 mutation tool；snapshot `spawn git ENOENT` 回归、相关 `72/72`、build/独立 verifier 全绿；下一次 `3.18270813 -> 3.28270813` | 新 identity clean build/dry-run 与 formal 约 2-3 小时 | 提交当前修复后重走 Windows clean build/dry-run；仅全部无费用 Gate 通过才执行唯一 formal，未全绿不进 WSL2 |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **`9a7c3b3` Windows formal 已失败冻结，snapshot MAX_PATH 修复 Gate 全绿，待新 identity clean Gate** | clean install/build/dry-run r2 全绿；formal terminal=`run.completed`、usage=`provider_reported`、cost=`$0.00302790`、改 3 paths，但残留 `api.ts:30 TraceValues` 被 frozen verifier 拒绝；snapshot 265/275 字符长路径同形红绿回归、原 baseline replay=`3 paths/4 hunks/non-truncated`、相关 `73/73`、build/独立 verifier/coding Gate 全绿；下一次 `3.18573603 -> 3.28573603` | 新 identity clean build/dry-run 与 formal 约 2-3 小时 | 提交当前修复后重走 Windows clean build/dry-run；仅全部无费用 Gate 通过才执行唯一 formal，必须同时关闭模型残留与 snapshot changes，未全绿不进 WSL2 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | 2026-08-17：当前 HEAD `5b36691...` 的 P0-P2 源码/测试/artifact 已核查；SS 横向原始加权 `9.135`（发布分 `9.1`）；Grok Build `9.4`、Codex `9.7`、Claude Code `9.7`、OpenCode `9.3`、Hermes Agent `8.9`；竞品证据边界已记录 | - | 当前精简版与 archive-03 共同保留决策和完整历史；真实复杂任务成功率仍待新 formal 证据，不宣称达到 9.5 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |

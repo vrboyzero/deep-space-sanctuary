@@ -993,6 +993,7 @@ function decodeCursor(cursor: string, snapshotId: string): number {
 
 export class WorkspaceChangeSnapshotRuntime {
   private readonly storageRoot: string;
+  private readonly transientRoot: string;
   private readonly maxFileBytes: number;
   private readonly maxTotalBytes: number;
   private readonly maxFiles: number;
@@ -1001,6 +1002,7 @@ export class WorkspaceChangeSnapshotRuntime {
 
   constructor(options: WorkspaceChangeSnapshotRuntimeOptions) {
     this.storageRoot = path.resolve(options.stateDir, "artifacts", "workspace-change-snapshots");
+    this.transientRoot = path.resolve(options.stateDir);
     this.maxFileBytes = normalizePositiveInteger(options.maxFileBytes, DEFAULT_MAX_FILE_BYTES);
     this.maxTotalBytes = normalizePositiveInteger(options.maxTotalBytes, DEFAULT_MAX_TOTAL_BYTES);
     this.maxFiles = normalizePositiveInteger(options.maxFiles, DEFAULT_MAX_FILES);
@@ -1079,6 +1081,8 @@ export class WorkspaceChangeSnapshotRuntime {
     const snapshotId = makeId("snapshot");
     const snapshotDirectory = path.join(this.storageRoot, baseline.baselineId, "snapshots", snapshotId);
     const temporaryDirectory = path.join(this.storageRoot, baseline.baselineId, "snapshots", `.${snapshotId}.tmp`);
+    // Keep the Git cwd and its child files below the legacy Windows MAX_PATH limit.
+    const diffDirectory = path.join(this.transientRoot, `.workspace-change-diff-${snapshotId}.tmp`);
     try {
       await fs.mkdir(path.join(temporaryDirectory, "current"), { recursive: true, mode: 0o700 });
       const repository: RepositoryInfo = {
@@ -1108,7 +1112,6 @@ export class WorkspaceChangeSnapshotRuntime {
         const current = captured.entries.find((entry) => entry.path === change.path);
         diffAliases.push({ alias: String(index + 1).padStart(6, "0"), change, baseline: before, current });
       }
-      const diffDirectory = path.join(temporaryDirectory, "diff");
       await fs.mkdir(path.join(diffDirectory, "diff-base"), { recursive: true, mode: 0o700 });
       await fs.mkdir(path.join(diffDirectory, "diff-current"), { recursive: true, mode: 0o700 });
       for (const alias of diffAliases) {
@@ -1146,6 +1149,7 @@ export class WorkspaceChangeSnapshotRuntime {
           }
         }
       }
+      await fs.rm(diffDirectory, { recursive: true, force: true });
       const hunks: WorkspaceChangeHunk[] = [];
       if (!diffLimited && rawPatch) {
         const blocks = rawPatch.split(/(?=^diff --git )/m).filter((block) => block.startsWith("diff --git "));
@@ -1212,6 +1216,7 @@ export class WorkspaceChangeSnapshotRuntime {
       await fs.rename(temporaryDirectory, snapshotDirectory);
       return summary;
     } catch (error) {
+      await fs.rm(diffDirectory, { recursive: true, force: true }).catch(() => {});
       await fs.rm(temporaryDirectory, { recursive: true, force: true }).catch(() => {});
       throw error;
     }

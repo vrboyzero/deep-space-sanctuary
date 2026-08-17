@@ -234,6 +234,42 @@ describe("WorkspaceChangeSnapshotRuntime", () => {
     await expect(fs.readFile(snapshot.artifacts.patchPath, "utf-8")).resolves.toContain("diff --git a/note.txt b/note.txt");
   });
 
+  it.runIf(process.platform === "win32")("keeps the temporary Git diff cwd below the Windows legacy path limit", async () => {
+    const fixture = await createFixture("belldandy-change-snapshot-long-state-");
+    const targetStateDirLength = 150;
+    const stateDir = path.join(
+      fixture.rootDir,
+      "state",
+      "x".repeat(Math.max(8, targetStateDirLength - fixture.rootDir.length - "\\state\\".length)),
+    );
+    await fs.writeFile(path.join(fixture.workspaceRoot, "note.txt"), "before\n", "utf-8");
+    const runtime = new WorkspaceChangeSnapshotRuntime({ stateDir });
+    const baseline = await runtime.captureBaseline({
+      baselineId: "long-path-baseline",
+      workspaceRoot: fixture.workspaceRoot,
+      source: "run_start",
+    });
+    const legacyDiffCwd = path.join(
+      stateDir,
+      "artifacts",
+      "workspace-change-snapshots",
+      baseline.baselineId,
+      "snapshots",
+      `.snapshot-${"0".repeat(36)}.tmp`,
+      "diff",
+    );
+    expect(legacyDiffCwd.length).toBeGreaterThan(260);
+
+    await fs.writeFile(path.join(fixture.workspaceRoot, "note.txt"), "after\n", "utf-8");
+    const snapshot = await runtime.createSnapshot({
+      baselineId: baseline.baselineId,
+      revisionId: "long-path-revision",
+    });
+
+    expect(snapshot.files).toMatchObject([{ path: "note.txt", status: "modified" }]);
+    expect(snapshot.hunkCount).toBe(1);
+  });
+
   it("projects a unique bounded text near-rename with its similarity and content hunk", async () => {
     const fixture = await createFixture("belldandy-change-snapshot-near-rename-");
     const previousPath = path.join(fixture.workspaceRoot, "docs", "guide.txt");
