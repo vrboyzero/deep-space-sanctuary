@@ -367,18 +367,18 @@ Source / Workspace Revision
 - `550e0da` 的 TS 三文件任务在 Windows 全绿；同 identity WSL2 虽完成三文件写入，但 `api.ts` 第一处 import 残留旧符号，冻结 evaluator 正确拒绝；
 - 上述 WSL2 失败促成 context-only hunk 执行前 Gate。
 
-### 6.4 最新断点：`a860d16` Windows formal
+### 6.4 最新断点：`d642205` Windows formal
 
-`a860d1689850543ee8a90e178388f63e2d90ec24` 的 NTFS detached harness：
+`d642205653f23aefa9d00f9f6a865f02bc003b22` 的 NTFS detached harness：
 
 - offline frozen install 为 resolved=`493`、reused=`492`、downloaded=`0`；clean build、独立 `verify:build` 和零凭证 dry-run 全绿；
-- dry-run `real-ts-api-migration-windows-a1-1786941798926` 的 preflight/snapshot=`passed`、usage=`not_reached`、events/trace/patch=`0/0/0`；
-- 唯一 formal `real-ts-api-migration-windows-a1-1786941923793` 的 4 次请求均路由到 `deepseek-v4-flash` 并收到 HTTP 200；首个 patch 成功修改 `connection.ts`，missing-path continuation 随后因 `api.ts` 超长 export 行只保留中段而被底层精确拒绝；
-- formal 只留下 `1` 个 changed path，patch=`552` 字节；冻结 evaluator 未通过，未进入 WSL2；
-- coding CLI 在错误收尾阶段发生 Windows `read ENOTCONN`，导致 terminal/trace 缺失，报告 usage=`unavailable`、input/output=`11198/771`、cost=`null`；本轮按完整 `$0.10` 上限进入不可观测预留，不把日志估算冒充 Provider 完整费用；
-- formal 真实主 key 扫描=`0/13,264`，listener、相关 Node 和根级 PID/token 均为 `0`；fixture 仅保留预期可审计的 `connection.ts` 部分修改。
+- dry-run `real-ts-api-migration-windows-a1-1786943001636` 的 preflight/snapshot=`passed`、usage=`not_reached`、events/trace/patch=`0/0/0`；
+- 唯一 formal `real-ts-api-migration-windows-a1-1786943168915` 的 `3/3` 次请求均路由到 `deepseek-v4-flash`；usage=`provider_reported`、input/output=`7607/804`、cost=`$0.00074420`；
+- 完整行 evidence 已生效，但模型把 `api.ts` 两个不相邻的完整 context 拼成同一 hunk，形成“单行真实、整段不存在”的搜索块；底层 `apply_patch` 精确拒绝，changed paths/patch=`0/0`；
+- formal event/trace=`17/19`，唯一终态=`run.failed`，未复现 `read ENOTCONN`；冻结 evaluator 未通过，未进入 WSL2；
+- dry-run/formal 真实主 key 扫描分别为 `0/12,816`、`0/13,263`，listener、相关 Node 和根级 PID/token 均为 `0`，两个 fixture 均保持 Git clean。
 
-当前最小修复把任务相关 `file_read` 投影按完整结构化 context 项装入 token 预算，禁止在 JSON 字符串或源码行中段插入裁剪标记；source readiness、导航次数、模型预算和 Provider retry 不变。下一步需提交形成新 clean identity，再从 Windows clean build/dry-run/唯一 formal 开始验证。
+当前最小修复方向是在每个 `taskRelevantContexts` 项中加入真实源码行范围，并明确禁止单个 hunk 跨 context 拼接；不增加调用、turn/token 或 retry。需先用失败测试锁定边界，再完成确定性 Gate 并形成新 identity。
 
 ### 6.5 恢复后的实施顺序
 
@@ -395,7 +395,9 @@ Source / Workspace Revision
 11. **已完成：结构化拒绝原因与 UNC fixture preflight**。诊断新增固定原因、section 数和可执行 section 数，不记录 patch 正文；WSL launcher 在 Gateway 与费用发生前拒绝非本地 Windows 盘 fixture。
 12. **已完成但失败：`a860d16` NTFS Windows 分层验证**。离线安装、clean build 和 dry-run 通过；唯一 formal 先修改 `connection.ts`，再因 continuation 收到半截 `api.ts` 长行而失败，usage 因 CLI `ENOTCONN` 终态缺失记为 `unavailable`，禁止重跑。
 13. **已完成：missing-path continuation 完整行 evidence**。token 收紧时只保留可独立解析的完整 task-relevant context，不从 JSON/源码行中段裁剪；导航、readiness 和预算行为不变。
-14. **待执行：新 clean identity 与 Windows 复验**。提交当前确定性修复，重新执行 clean build、零凭证 dry-run 和唯一 formal；只有三文件 evaluator、唯一终态、usage 与零残留全部通过才条件式复核 WSL2。
+14. **已完成但失败：`d642205` Windows 复验**。clean build、dry-run、route/usage 与资源 Gate 通过；唯一 formal 将两个不相邻的完整 context 拼为同一 hunk，底层拒绝且零写入，禁止重跑。
+15. **已完成：context 边界显式化**。每个任务相关 context 均携带真实源码行范围，mutation/recovery 指令禁止单个 hunk 跨 context 项拼接；失败回归、Agent 全量、build 与合同 Gate 全绿，未增加调用、turn/token 或 retry。
+16. **待执行：新 clean identity 与 Windows 复验**。提交当前最小修复，在新 detached NTFS harness 完成 offline install、clean build、零凭证 dry-run 和唯一 formal；仅 Windows 全绿后条件式复核同 identity WSL2。
 
 #### P0 后续阶段实现结论：mutation hunk 无正文诊断（2026-08-17）
 
@@ -657,20 +659,85 @@ Source / Workspace Revision
 - **为什么先做它**：确定性回归已锁定裁剪边界，只有新 identity 的真实正式任务能证明模型获得完整源码行后可完成三文件原子修改和终态收敛。
 - **当前还缺的关键闭环**：Windows 三文件 evaluator、唯一 `run.completed`、完整 usage/cost 与零残留；只有这些全部通过才条件式复核同 identity WSL2。
 
+#### P0 后续阶段实现结论：`d642205` Windows 分层验证与跨 context 失败诊断（2026-08-17）
+
+##### 已完成内容
+
+1. **detached clean harness 建立与构建**：
+   - source/harness 均固定为 clean `d642205653f23aefa9d00f9f6a865f02bc003b22`，content SHA-256=`59c9a9578d7d6436d0e9af2b95017753f439e0284cb869a48a2c3ba489aca9b7`；
+   - frozen offline install 为 resolved=`493`、reused=`492`、downloaded=`0`，workspace build 与独立 `verify:build` 通过。
+
+2. **Windows 零凭证 dry-run**：
+   - artifact=`artifacts/p0-required-mutation-canary-d642205-ts-api-windows-dry-run-r1`，run=`real-ts-api-migration-windows-a1-1786943001636`；
+   - preflight/snapshot=`passed`、usage=`not_reached`、events/trace/patch=`0/0/0`，report SHA-256=`47a79cbf2c6a9db007821a39d7ca5f8aa831a470a15f08620ff96cfe5608cd41`。
+
+3. **唯一 Windows formal**：
+   - artifact=`artifacts/p0-required-mutation-canary-d642205-ts-api-windows-formal-r1`，run=`real-ts-api-migration-windows-a1-1786943168915`；
+   - route=`deepseek-v4-flash -> deepseek-v4-flash [primary]`，usage=`3/3 provider_reported`、input/output=`7607/804`、cost=`$0.00074420`；
+   - 模型在 `api.ts` hunk 中把前一 context 的末行与后一 context 的首段当作相邻源码，底层返回 `input_error`；workspace 零写入，冻结 evaluator 正确拒绝。
+
+4. **效果**：
+   - 证明上一轮完整行修复消除了半行证据，但 context 之间的非连续边界仍需显式表达；
+   - 错误 patch 未触发部分写入或成功误报；
+   - Windows Gate 保持关闭，该 identity 禁止重跑且未进入 WSL2。
+
+##### 验证结果
+
+- formal event/trace=`17/19`，唯一终态=`run.failed`，changes.patch 为空，SHA-256=`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`；
+- report SHA-256=`ae85554a4610a1ecd406d6cbd870e50ee6d3202b2ae2777e9a1809c023280112`；
+- dry-run/formal 真实主 key 扫描分别为 `0/12,816`、`0/13,263`，不可读文件、listener、相关 Node、根级 PID/token 和 fixture residue 均为 `0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：先增加一个证明两个非相邻 context 必须携带独立行范围且 mutation 指令禁止跨项拼接的失败测试，再实现最小元数据与提示约束。
+- **为什么先做它**：本轮每条证据行都正确，失败只发生在 context 邻接关系被误解；显式边界能直接约束该根因且不扩大调用或预算。
+- **当前还缺的关键闭环**：确定性回归、Agent 全量测试、build/合同 Gate 和后继 clean identity；完成前不启动下一 formal、WSL2、完整矩阵或 P2-C。
+
+#### P0 后续阶段实现结论：task context 行范围与 hunk 边界约束（2026-08-17）
+
+##### 已完成内容
+
+1. **`react-workspace-mutation.ts` 修改**：
+   - 为每个 `taskRelevantContexts` 项增加紧凑的真实源码 `lines=start-end` 范围；
+   - mutation 与 missing-path recovery 指令要求单个 hunk 只从一个 context 项取证，禁止跨项、片段或文件拼接；
+   - 等价压缩原子清单和 hunk 说明，保持原输入预算、调用次数、turn、输出 token 与 Provider retry 不变。
+
+2. **mutation 回归测试修改**：
+   - 新增两个非相邻目标片段的失败回归，验证独立行范围和禁止跨 context hunk；
+   - 保留 900-token 压力用例对全部任务相关出现的覆盖；
+   - 同步工具代理测试中的提示词契约，不放宽 mutation 成功、原子路径或终态断言。
+
+3. **效果**：
+   - 模型可区分同一文件中相距较远的证据片段，不再把 JSON 中相邻的 context 项误解为源码连续行；
+   - 超预算策略仍只保留完整源码行，错误 patch 仍由底层精确、原子地失败关闭；
+   - 本实现环节未调用模型，未新增费用。
+
+##### 验证结果
+
+- 新回归在修复前按预期失败，修复后 `react-workspace-mutation.test.ts` 为 `41/41` 通过；
+- Agent 包 `57` 个测试文件通过，`627` 个测试通过，`1` 个真实 Provider probe 跳过；
+- TypeScript workspace build 与 `verify:build`、`verify:coding-benchmark`、`verify:coding-ci`、`git diff --check` 全部通过。
+
+##### 后续计划
+
+- **下一步准备做什么**：提交当前修复形成新 clean identity，再在 detached NTFS harness 依次完成 offline install、clean build、零凭证 dry-run 和唯一 Windows formal。
+- **为什么先做它**：确定性测试已证明行范围与边界指令进入真实 recovery 请求，只有新 identity 的正式任务能验证模型是否据此生成三个文件的有效原子 patch。
+- **当前还缺的关键闭环**：Windows 三文件 evaluator、唯一 `run.completed`、完整 route/usage/cost 与零敏感值/进程/fixture 残留；全部通过前不进入 WSL2、完整矩阵或 P2-C。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
 
-- observed=`$2.23754644`；
+- observed=`$2.23829064`；
 - reserved=`$0.94221000`；
 - unobservable reserve=`$0.60000000`；
-- 守卫上界=`30.23805152 RMB < 50 RMB`。
+- 守卫上界=`30.24400512 RMB < 50 RMB`。
 
-下一次付费 formal 的计划参数为 `priorObservedCostUsd=2.83754644`、`maxTotalCostUsd=2.93754644`；完整预留后守卫上界约 `31.03805152 RMB < 50 RMB`。项目记录不能替代 Provider 外部账单。
+下一次付费 formal 的计划参数为 `priorObservedCostUsd=2.83829064`、`maxTotalCostUsd=2.93829064`；完整预留后守卫上界约 `31.04400512 RMB < 50 RMB`。项目记录不能替代 Provider 外部账单。
 
 当前明确禁止：
 
-- 重跑 `3b506ef`、`429a6eb`、`ef40901`、`a8bf150` 或 `a860d16` 的 Windows/WSL2 formal；
+- 重跑 `3b506ef`、`429a6eb`、`ef40901`、`a8bf150`、`a860d16` 或 `d642205` 的 Windows/WSL2 formal；
 - 增加 `maxTurns`、`maxTokens` 或 Provider 重试；
 - 未经新证据启动完整矩阵或 candidate v4；
 - 启动 P2-C、push、公开发布或生产操作。
@@ -797,11 +864,11 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 后继版本 `a8bf150` 已在 Windows 完成三文件修改，自动测试、最终说明、费用记录和资源清理全部通过；同版本 WSL2 的正式任务因补丁结构不满足安全条件而在写文件前停止。系统随后补充了不含正文的分类原因，并阻止 Windows Gateway 使用不兼容的 WSL 网络路径。
 
-再后继版本 `a860d16` 的 Windows 构建和无凭据检查通过。正式任务先正确改了一个文件，但后续处理把另一个文件的一条很长源码行从中间截断，系统因无法精确定位而停止，没有把不完整修改误报为成功。当前修复改为只提供完整、可单独解析的源码片段；若预算放不下，就舍弃整段，而不是交给模型半截内容。
+再后继版本 `a860d16` 的 Windows 正式任务先正确改了一个文件，但后续处理把另一个文件的一条很长源码行从中间截断，系统因无法精确定位而停止。`d642205` 已保证只提供完整源码行；本轮模型却把两个相距较远的完整片段误当成连续内容，系统再次在写入前阻止了错误补丁。
 
-所以当前主要瓶颈已经收敛为：
+现在每个片段都带有自己的源码行范围，系统也明确要求一个补丁段只能使用一个片段；自动测试和工程检查已经通过。当前主要瓶颈已经收敛为：
 
-1. 提交完整源码行修复，形成不混入其他改动的新版本；
+1. 把这项修复提交为不混入其他改动的新版本；
 2. 在本地 Windows 盘重新完成构建、无凭据检查和唯一一次正式任务；
 3. 只有 Windows 全绿，才用同一新版本再做一次 WSL2 复核。
 
@@ -809,7 +876,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 ### 9.5 费用和发布边界
 
-当前费用守卫约为 **30.24 元人民币**，低于 **50 元人民币**授权上限；下一次正式验证完整预留后的守卫约为 **31.04 元人民币**。在该上限内无需再次申请费用授权，外部服务商账单仍需单独核对。
+当前费用守卫约为 **30.24 元人民币**，低于 **50 元人民币**授权上限；下一次正式验证完整预留后的守卫约为 **31.04 元人民币**。本轮正式验证实际费用为 `$0.00074420`；在授权上限内无需再次申请，外部服务商账单仍需单独核对。
 
 当前不会重跑已冻结版本，不会提高模型预算，不会启动完整付费矩阵，不会 push、公开发布或执行生产操作。
 
@@ -819,7 +886,7 @@ Go 代表任务已经在 Windows/WSL2 双平台成功。更复杂的三文件 Ty
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`a860d16` Windows formal 失败，完整行 evidence 修复已完成，待新 identity** | NTFS build/dry-run 通过；唯一 formal 因 continuation 收到半截长行而仅修改 `1` 个文件；修复后定向 `77/77`、Agent `626 passed + 1 skipped`、build 与合同 Gate 全绿 | 1-3 小时 | 提交新 identity，在 NTFS fixture 做 Windows clean build/dry-run/唯一 formal；仅 Windows 全绿后条件式复核 WSL2，禁止重跑旧 formal |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **context 边界修复与确定性 Gate 已完成，待新 identity Windows 复验** | 每个 context 携带真实行范围且禁止跨项 hunk；Agent `627 passed + 1 skipped`，build、benchmark/CI 合同与 diff Gate 全绿；实现环节模型调用=`0` | 1-3 小时 | 提交新 identity，在 NTFS fixture 做 offline install、clean build、dry-run 和唯一 formal；仅 Windows 全绿后条件式复核 WSL2 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | scorecard、目标向量 `9.510`、多语言投入收益、竞品和边界已复核 | - | 当前精简版与 archive-03 共同保留决策和完整历史 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |

@@ -488,7 +488,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       expect.objectContaining({
         role: "system",
         content: expect.stringMatching(
-          /Mutation-only recovery phase.*copy context and removed lines as exact complete evidence source lines, never partial fragments/,
+          /Mutation-only recovery phase.*Take hunk context\/removals from one taskRelevantContexts item.*Never join items/,
         ),
       }),
     ]));
@@ -1595,10 +1595,10 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       expect(requests).toHaveLength(5);
       expect(requests[2]?.tools?.map((tool: any) => tool.function.name)).toEqual(["apply_patch"]);
       expect(requests[2]?.messages[0]?.content).toContain(
-        "trusted required changed paths are one atomic checklist",
+        "trusted required paths are one atomic checklist",
       );
       expect(requests[2]?.messages[0]?.content).toContain(
-        "never repeat a file header or rely on continuation for partial coverage",
+        "never repeat headers or rely on continuation",
       );
       expect(requests[3]?.tools?.map((tool: any) => tool.function.name)).toEqual(["file_read"]);
       expect(execute.mock.calls.map(([request]) => request.name)).toEqual([

@@ -535,25 +535,25 @@ describe("ReAct workspace mutation recovery", () => {
       }),
     ]);
     expect(request?.messages[0]?.content).toContain("one atomic checklist");
-    expect(request?.messages[0]?.content).toContain("a real added or removed line per file");
-    expect(request?.messages[0]?.content).toContain("Every @@ hunk");
+    expect(request?.messages[0]?.content).toContain("each file needs add/remove unless moved");
+    expect(request?.messages[0]?.content).toContain("Each @@ hunk");
     expect(request?.messages[0]?.content).toContain(
       "Use exactly one *** End Patch marker on the final line",
     );
     expect(request?.messages[0]?.content).toContain(
-      "copy context and removed lines as exact complete evidence source lines, never partial fragments",
+      "Take hunk context/removals from one taskRelevantContexts item",
     );
     expect(request?.messages[0]?.content).toContain(
-      "preserve unchanged replacement prefixes and suffixes",
+      "Preserve unchanged replacement prefixes/suffixes",
     );
     expect(request?.messages[0]?.content).toContain(
-      "exactly one non-empty *** Update File section",
+      "exactly one non-empty *** Update File: <path> section",
     );
     expect(request?.messages[0]?.content).toContain(
       "Before the next file header",
     );
     expect(request?.messages[0]?.content).toContain(
-      "only from the file named by that immediately preceding header",
+      "cross the preceding header's file",
     );
     expect(request?.messages[1]?.content).toContain("[tool=file_read]");
     expect(request?.messages.some((message) => message.role === ("tool" as string))).toBe(false);
@@ -587,21 +587,21 @@ describe("ReAct workspace mutation recovery", () => {
     expect(plan).toBeDefined();
     expect(plan?.messages[0]?.content).toContain("Missing-path mutation continuation phase");
     expect(plan?.messages[0]?.content).toContain("no already-covered or unlisted path");
-    expect(plan?.messages[0]?.content).toContain("Every @@ hunk");
+    expect(plan?.messages[0]?.content).toContain("Each @@ hunk");
     expect(plan?.messages[0]?.content).toContain(
-      "copy context and removed lines as exact complete evidence source lines, never partial fragments",
+      "Take hunk context/removals from one taskRelevantContexts item",
     );
     expect(plan?.messages[0]?.content).toContain(
-      "preserve unchanged replacement prefixes and suffixes",
+      "Preserve unchanged replacement prefixes/suffixes",
     );
     expect(plan?.messages[0]?.content).toContain(
-      "exactly one non-empty *** Update File section",
+      "exactly one non-empty *** Update File: <path> section",
     );
     expect(plan?.messages[0]?.content).toContain(
       "Before the next file header",
     );
     expect(plan?.messages[0]?.content).toContain(
-      "only from the file named by that immediately preceding header",
+      "cross the preceding header's file",
     );
     expect(plan?.messages[1]?.content).toContain(
       'Trusted required changed paths still missing:\n["src/protocol.ts"]',
@@ -847,6 +847,65 @@ describe("ReAct workspace mutation recovery", () => {
     expect(request?.missingRequiredSourceEvidencePaths).toEqual([]);
     expect(request?.messages[1]?.content).toContain(importContext);
     expect(request?.messages[1]?.content).toContain(exportContext);
+  });
+
+  it("labels disjoint task contexts with source lines and forbids cross-context hunks", () => {
+    const fileContent = [
+      ...Array.from({ length: 40 }, (_, index) => `const before${index} = true;`),
+      "import { TraceValue, TraceValues } from './connection';",
+      ...Array.from({ length: 260 }, (_, index) => `const between${index} = true;`),
+      "export { TraceValue, TraceValues, TraceFormat };",
+      ...Array.from({ length: 40 }, (_, index) => `const after${index} = true;`),
+    ].join("\n");
+    const request = buildWorkspaceMutationRecoveryRequest({
+      maxInputTokens: 1_400,
+      tools: [toolDefinition("apply_patch")],
+      missingRequiredChangedPaths: ["jsonrpc/src/common/api.ts"],
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+      messages: [
+        {
+          role: "user",
+          content: "Remove every TraceValues import and export from the public API.",
+        },
+        {
+          role: "assistant",
+          tool_calls: [{
+            id: "read-api",
+            function: { name: "file_read", arguments: "{}" },
+          }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "read-api",
+          content: JSON.stringify({
+            path: "jsonrpc/src/common/api.ts",
+            truncated: false,
+            content: fileContent,
+          }),
+        },
+      ],
+    });
+
+    const projectedEvidence = JSON.parse(
+      request?.messages[1]?.content.split("[tool=file_read]\n").at(-1) ?? "{}",
+    ) as {
+      taskRelevantContexts?: Array<{
+        context: string;
+        lines?: string;
+      }>;
+    };
+    const contexts = projectedEvidence.taskRelevantContexts ?? [];
+    expect(contexts).toHaveLength(2);
+    const ranges = contexts.map(({ lines }) => (
+      lines?.split("-").map((value) => Number.parseInt(value, 10)) ?? []
+    ));
+    expect(ranges.every(([startLine, endLine]) => (
+      Number.isInteger(startLine) && Number.isInteger(endLine)
+    ))).toBe(true);
+    expect(ranges[0]?.[1]).toBeLessThan((ranges[1]?.[0] ?? 0) - 1);
+    expect(request?.messages[0]?.content).toContain(
+      "Never join items, use fragments",
+    );
   });
 
   it("keeps projected task contexts aligned to complete source lines", () => {
