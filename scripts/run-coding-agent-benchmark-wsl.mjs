@@ -23,6 +23,9 @@ export function buildWslBenchmarkInvocation(input, dependencies = {}) {
   const toWslPath = dependencies.toWslPath ?? ((value) => resolveWslPath(value, distribution));
   const workspaceRootWsl = toWslPath(workspaceRoot);
   const fixtureRoot = resolvePath(requireInput(input, "fixtureRoot"));
+  if (!/^[A-Za-z]:[\\/]/.test(fixtureRoot)) {
+    throw new Error("fixtureRoot must use a local Windows drive path for the Windows Gateway workspace snapshot.");
+  }
   const fixtureRootWsl = toWslPath(fixtureRoot);
   const artifactRootWsl = toWslPath(requireInput(input, "artifactRoot"));
   const stateRootWsl = toWslPath(requireInput(input, "stateRoot"));

@@ -7,6 +7,7 @@ import {
   buildWorkspaceMutationRecoveryRequest,
   buildWorkspaceMutationVerificationRequest,
   canPreserveContextOnlyWorkspaceMutationPatchHunks,
+  inspectContextOnlyWorkspaceMutationPatchPreservation,
   inspectWorkspaceMutationPatchHunks,
   normalizeWorkspaceMutationRecoveryToolCall,
   selectRequiredWorkspaceMutationNavigationToolCalls,
@@ -106,6 +107,12 @@ describe("ReAct workspace mutation recovery", () => {
 
     expect(normalized).toBe(call);
     expect(canPreserveContextOnlyWorkspaceMutationPatchHunks(normalized)).toBe(true);
+    expect(inspectContextOnlyWorkspaceMutationPatchPreservation(normalized)).toEqual({
+      canPreserve: true,
+      rejectionReason: null,
+      sectionCount: 1,
+      actionableSectionCount: 1,
+    });
     expect(inspectWorkspaceMutationPatchHunks(normalized)?.contextOnlyHunkCount).toBe(1);
   });
 
@@ -153,6 +160,12 @@ describe("ReAct workspace mutation recovery", () => {
 
     expect(normalizeWorkspaceMutationRecoveryToolCall(call)).toBe(call);
     expect(canPreserveContextOnlyWorkspaceMutationPatchHunks(call)).toBe(false);
+    expect(inspectContextOnlyWorkspaceMutationPatchPreservation(call)).toEqual({
+      canPreserve: false,
+      rejectionReason: "non_actionable_update_section",
+      sectionCount: 2,
+      actionableSectionCount: 1,
+    });
     expect(inspectWorkspaceMutationPatchHunks(call)).toMatchObject({
       hunkCount: 2,
       contextOnlyHunkCount: 1,
@@ -163,6 +176,7 @@ describe("ReAct workspace mutation recovery", () => {
   it.each([
     {
       name: "unknown hunk ownership",
+      rejectionReason: "hunk_without_update_section",
       lines: [
         "*** Begin Patch",
         "@@",
@@ -176,6 +190,7 @@ describe("ReAct workspace mutation recovery", () => {
     },
     {
       name: "a repeated file section",
+      rejectionReason: "duplicate_update_path",
       lines: [
         "*** Begin Patch",
         "*** Update File: src/api.ts",
@@ -190,6 +205,7 @@ describe("ReAct workspace mutation recovery", () => {
     },
     {
       name: "an invalid context line",
+      rejectionReason: "invalid_hunk_line",
       lines: [
         "*** Begin Patch",
         "*** Update File: src/api.ts",
@@ -201,11 +217,15 @@ describe("ReAct workspace mutation recovery", () => {
         "*** End Patch",
       ],
     },
-  ])("does not remove no-op hunks with $name", ({ lines }) => {
+  ])("does not remove no-op hunks with $name", ({ lines, rejectionReason }) => {
     const call = applyPatchToolCall(lines);
 
     expect(normalizeWorkspaceMutationRecoveryToolCall(call)).toBe(call);
     expect(canPreserveContextOnlyWorkspaceMutationPatchHunks(call)).toBe(false);
+    expect(inspectContextOnlyWorkspaceMutationPatchPreservation(call)).toMatchObject({
+      canPreserve: false,
+      rejectionReason,
+    });
     expect(inspectWorkspaceMutationPatchHunks(call)?.contextOnlyHunkCount).toBe(1);
   });
 

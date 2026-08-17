@@ -116,6 +116,19 @@ describe("coding agent benchmark WSL launcher", () => {
     ]));
   });
 
+  it("rejects a UNC fixture root before launching a Windows Gateway snapshot", () => {
+    expect(() => buildWslBenchmarkInvocation({
+      distribution: "Ubuntu-22.04",
+      workspaceRoot: "E:/project/star-sanctuary",
+      fixtureRoot: "\\\\wsl.localhost\\Ubuntu-22.04\\var\\tmp\\coding-agent-fixtures-wsl",
+      artifactRoot: "E:/project/star-sanctuary/artifacts/coding-agent-wsl",
+      stateRoot: "E:/project/star-sanctuary/artifacts/coding-agent-state-wsl",
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      credentialsConfigured: false,
+    }, windowsPathDependencies())).toThrow(/fixtureRoot must use a local Windows drive path/i);
+  });
+
   it("prepends one explicit WSL toolchain bin without accepting PATH-list injection", () => {
     const baseInput = {
       distribution: "Ubuntu-22.04",

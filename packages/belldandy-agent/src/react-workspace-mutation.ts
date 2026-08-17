@@ -62,6 +62,30 @@ export type WorkspaceMutationPatchHunkDiagnostics = {
   unexpectedEndMarkerPaths: string[];
 };
 
+export type WorkspaceMutationPatchPreservationRejectionReason =
+  | "not_apply_patch"
+  | "invalid_arguments"
+  | "invalid_patch_input"
+  | "invalid_envelope"
+  | "unsafe_update_path"
+  | "duplicate_update_path"
+  | "unsupported_file_section"
+  | "invalid_hunk_header"
+  | "hunk_without_update_section"
+  | "content_outside_hunk"
+  | "invalid_hunk_line"
+  | "empty_hunk"
+  | "no_update_section"
+  | "no_context_only_hunk"
+  | "non_actionable_update_section";
+
+export type WorkspaceMutationPatchPreservationDiagnostics = {
+  canPreserve: boolean;
+  rejectionReason: WorkspaceMutationPatchPreservationRejectionReason | null;
+  sectionCount: number;
+  actionableSectionCount: number;
+};
+
 export type WorkspaceMutationRecoveryPlan = WorkspaceMutationRecoveryRequest & {
   outputTokens: number;
   finalizationInputTokenReserve: number;
@@ -187,21 +211,36 @@ export function normalizeWorkspaceMutationRecoveryToolCall<
 export function canPreserveContextOnlyWorkspaceMutationPatchHunks(
   toolCall: WorkspaceMutationNavigationToolCall,
 ): boolean {
+  return inspectContextOnlyWorkspaceMutationPatchPreservation(toolCall).canPreserve;
+}
+
+export function inspectContextOnlyWorkspaceMutationPatchPreservation(
+  toolCall: WorkspaceMutationNavigationToolCall,
+): WorkspaceMutationPatchPreservationDiagnostics {
+  const reject = (
+    rejectionReason: WorkspaceMutationPatchPreservationRejectionReason,
+    sections: Array<{ actionable: boolean }> = [],
+  ): WorkspaceMutationPatchPreservationDiagnostics => ({
+    canPreserve: false,
+    rejectionReason,
+    sectionCount: sections.length,
+    actionableSectionCount: sections.filter((section) => section.actionable).length,
+  });
   if (toolCall.function.name !== "apply_patch") {
-    return false;
+    return reject("not_apply_patch");
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(toolCall.function.arguments);
   } catch {
-    return false;
+    return reject("invalid_arguments");
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return false;
+    return reject("invalid_arguments");
   }
   const patch = (parsed as Record<string, unknown>).input;
   if (typeof patch !== "string") {
-    return false;
+    return reject("invalid_patch_input");
   }
 
   const lineEnding = patch.includes("\r\n") ? "\r\n" : "\n";
@@ -210,7 +249,7 @@ export function canPreserveContextOnlyWorkspaceMutationPatchHunks(
     || lines[0] !== "*** Begin Patch"
     || lines.at(-1) !== "*** End Patch"
     || lines.indexOf("*** End Patch") !== lines.length - 1) {
-    return false;
+    return reject("invalid_envelope");
   }
 
   const sections: Array<{ actionable: boolean; hunkCount: number }> = [];
@@ -218,54 +257,56 @@ export function canPreserveContextOnlyWorkspaceMutationPatchHunks(
   let currentSection: (typeof sections)[number] | undefined;
   let currentHunk: { actionable: boolean; lineCount: number } | undefined;
   let contextOnlyHunkCount = 0;
-  let structurallyValid = true;
 
-  const finishHunk = () => {
-    if (!currentHunk) return;
+  const finishHunk = (): WorkspaceMutationPatchPreservationRejectionReason | undefined => {
+    if (!currentHunk) return undefined;
     if (currentHunk.lineCount === 0) {
-      structurallyValid = false;
+      currentHunk = undefined;
+      return "empty_hunk";
     } else if (!currentHunk.actionable) {
       contextOnlyHunkCount += 1;
     }
     currentHunk = undefined;
+    return undefined;
   };
 
   for (let index = 1; index < lines.length - 1; index += 1) {
     const line = lines[index] ?? "";
     const updateHeader = /^\*\*\* Update File:\s+(.+)$/.exec(line);
     if (updateHeader) {
-      finishHunk();
+      const hunkRejection = finishHunk();
+      if (hunkRejection) return reject(hunkRejection, sections);
       const safePath = normalizeWorkspaceMutationDiagnosticPath(updateHeader[1] ?? "");
       const pathIdentity = normalizeSourcePath(safePath);
-      if (safePath === "<unsafe>" || seenPathIdentities.has(pathIdentity)) {
-        return false;
-      }
+      if (safePath === "<unsafe>") return reject("unsafe_update_path", sections);
+      if (seenPathIdentities.has(pathIdentity)) return reject("duplicate_update_path", sections);
       currentSection = { actionable: false, hunkCount: 0 };
       sections.push(currentSection);
       seenPathIdentities.add(pathIdentity);
       continue;
     }
     if (line.startsWith("*** ")) {
-      return false;
+      return reject("unsupported_file_section", sections);
     }
     if (line.startsWith("@@")) {
       if (line !== "@@" && !line.startsWith("@@ ")) {
-        return false;
+        return reject("invalid_hunk_header", sections);
       }
-      finishHunk();
+      const hunkRejection = finishHunk();
+      if (hunkRejection) return reject(hunkRejection, sections);
       if (!currentSection) {
-        return false;
+        return reject("hunk_without_update_section", sections);
       }
       currentSection.hunkCount += 1;
       currentHunk = { actionable: false, lineCount: 0 };
       continue;
     }
     if (!currentHunk || !currentSection) {
-      return false;
+      return reject("content_outside_hunk", sections);
     }
     const marker = line[0];
     if (marker && marker !== " " && marker !== "+" && marker !== "-") {
-      return false;
+      return reject("invalid_hunk_line", sections);
     }
     currentHunk.lineCount += 1;
     if (line.startsWith("+") || line.startsWith("-")) {
@@ -273,12 +314,20 @@ export function canPreserveContextOnlyWorkspaceMutationPatchHunks(
       currentSection.actionable = true;
     }
   }
-  finishHunk();
+  const hunkRejection = finishHunk();
+  if (hunkRejection) return reject(hunkRejection, sections);
 
-  return structurallyValid
-    && contextOnlyHunkCount > 0
-    && sections.length > 0
-    && sections.every((section) => section.actionable && section.hunkCount > 0);
+  if (sections.length === 0) return reject("no_update_section", sections);
+  if (contextOnlyHunkCount === 0) return reject("no_context_only_hunk", sections);
+  if (!sections.every((section) => section.actionable && section.hunkCount > 0)) {
+    return reject("non_actionable_update_section", sections);
+  }
+  return {
+    canPreserve: true,
+    rejectionReason: null,
+    sectionCount: sections.length,
+    actionableSectionCount: sections.length,
+  };
 }
 
 export function hasNoContextOnlyWorkspaceMutationPatchHunks(
@@ -382,12 +431,20 @@ export function inspectWorkspaceMutationPatchHunks(
 
 export function formatWorkspaceMutationPatchHunkDiagnostics(
   diagnostics: WorkspaceMutationPatchHunkDiagnostics,
+  preservationDiagnostics?: WorkspaceMutationPatchPreservationDiagnostics,
 ): string {
   return [
     "diagnostic=context_only_hunk",
     `hunkCount=${diagnostics.hunkCount}`,
     `contextOnlyHunkCount=${diagnostics.contextOnlyHunkCount}`,
     `paths=${JSON.stringify(diagnostics.contextOnlyHunkPaths)}`,
+    ...(preservationDiagnostics
+      ? [
+          `preservationReason=${preservationDiagnostics.rejectionReason ?? "none"}`,
+          `sectionCount=${preservationDiagnostics.sectionCount}`,
+          `actionableSectionCount=${preservationDiagnostics.actionableSectionCount}`,
+        ]
+      : []),
   ].join(" ");
 }
 

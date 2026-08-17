@@ -138,9 +138,9 @@ import {
   buildWorkspaceMutationNavigationRequest,
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationVerificationRequest,
-  canPreserveContextOnlyWorkspaceMutationPatchHunks,
   formatWorkspaceMutationPatchHunkDiagnostics,
   formatWorkspaceMutationUnexpectedEndMarkerDiagnostics,
+  inspectContextOnlyWorkspaceMutationPatchPreservation,
   inspectWorkspaceMutationPatchHunks,
   isCompleteWorkspaceMutationVerificationReadResult,
   normalizeWorkspaceMutationRecoveryToolCall,
@@ -4128,6 +4128,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
           const normalizedMutationToolCall = normalizeWorkspaceMutationRecoveryToolCall(toolCalls[0]!);
           const patchDiagnostics = inspectWorkspaceMutationPatchHunks(normalizedMutationToolCall);
+          const patchPreservationDiagnostics = patchDiagnostics?.contextOnlyHunkCount
+            ? inspectContextOnlyWorkspaceMutationPatchPreservation(normalizedMutationToolCall)
+            : undefined;
           if (patchDiagnostics && patchDiagnostics.unexpectedEndMarkerCount > 0) {
             yield* emitWorkspaceMutationFailure(
               `the mutation-only apply_patch call contained an unexpected End Patch marker before the final marker. ${formatWorkspaceMutationUnexpectedEndMarkerDiagnostics(patchDiagnostics)}`,
@@ -4136,9 +4139,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
           if (patchDiagnostics
             && patchDiagnostics.contextOnlyHunkCount > 0
-            && !canPreserveContextOnlyWorkspaceMutationPatchHunks(normalizedMutationToolCall)) {
+            && patchPreservationDiagnostics?.canPreserve === false) {
             yield* emitWorkspaceMutationFailure(
-              `the mutation-only apply_patch call contained a context-only hunk that could not be preserved safely; use unique safe Update File sections, valid hunk structure, and at least one real added or removed line per file. ${formatWorkspaceMutationPatchHunkDiagnostics(patchDiagnostics)}`,
+              `the mutation-only apply_patch call contained a context-only hunk that could not be preserved safely; use unique safe Update File sections, valid hunk structure, and at least one real added or removed line per file. ${formatWorkspaceMutationPatchHunkDiagnostics(patchDiagnostics, patchPreservationDiagnostics)}`,
             );
             return;
           }
