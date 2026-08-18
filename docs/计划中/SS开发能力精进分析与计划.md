@@ -3573,14 +3573,56 @@ Source / Workspace Revision
 - **为什么先做它**：全部无费用 Gate 已闭合，真实 Web mutation、pre-execution objective input correction、再次复读和 final review 是验证本次修复的最小剩余证据；
 - **当前还缺的关键闭环**：formal 的 mutation/tests/patch、合法唯一 terminal、完整 Provider usage/cost、真实敏感值与零残留审计；无论结果如何均永久冻结该 formal，Windows 未全绿不进入 WSL2，也不进入完整矩阵、candidate v4 或 P2-C。
 
+#### P0 Web 代表验证结论：`09b5498` Windows formal（2026-08-18）
+
+##### 已完成内容
+
+1. **唯一 Windows formal 执行并冻结**：
+   - artifact=`artifacts/p0-web-local-objective-retry-canary-09b5498-preact-windows-formal-r1`，run=`real-web-ui-regression-windows-a1-1787032488744`，report SHA-256=`e3c6dbb6e1f325303622dbd4439d5d13be980f2690a44811ad7bd997f872b989`；
+   - source/harness 均固定为 `09b5498c9212ba6d39173a2108017d330cb09486`，唯一终态=`run.failed`；event/trace=`17/19`、`result.json=null`，该 identity 禁止重跑或启动 WSL2；
+   - route/model 固定为 `deepseek-v4-flash`，Provider usage=`5/5` complete、input/output=`10,577/850` tokens、实际费用=`$0.00353063`。
+
+2. **pre-execution 恢复生效，但两次 correction 均未形成可执行上下文**：
+   - 初始 patch 只为 `aria-*` / `data-*` 的布尔 `false` 增加序列化分支，冻结测试通过，但没有恢复 evaluator 要求的 `value != NULL && (value !== false || name[4] == '-')` 语义；
+   - 第一次 objective correction 通过本地 required-path/valid-section 校验，进入 executor 后因目标上下文不匹配返回可信 `apply_patch_input_invalid`，既有一次 input correction 被正确触发；
+   - 第二次 correction 仍引用不匹配的上下文并返回同一可信 input error，状态机按合同立即失败关闭；两个失败 patch 都未执行，没有追加复读、final review、turn、token 或 Provider retry。
+
+3. **冻结 evaluator 与 patch 证据完成**：
+   - changes patch SHA-256=`86219fa848487f1ae278035e0c7f19012d932bf0d1bc1656f591c35bc5e0fcd5`，只修改 `src/diff/props.js`，fixture untracked=`0`；
+   - benchmark 与独立冻结 evaluator 均得到 tests=`true`、regression=`0`、patchAccepted/taskCompleted=`false/false`，独立 evaluator 同样输出 `3` 条 diagnostics；
+   - failureCategory=`product_workflow`，不是 infrastructure、usage、readiness、schema 或敏感值失败。
+
+4. **readiness、费用、敏感值与资源审计完成**：
+   - Gateway readiness SHA-256=`2ba0ee7702296ac27c1780f9b6241a72dbacfabc961f74a49e74ddcde8035c73`，首 stdout/端口/认证=`2.035/10.807/10.815s`、stderr=`0 bytes`，stop 后 `15ms` 受控退出；
+   - artifact/fixture/runtime 扫描常规文件=`8,376`，unreadable/真实 Provider key 精确命中=`0/0`；
+   - formal 新生成 `.env` / `.env.local` 经 containment、普通文件、无 reparse point 与 SHA-256 校验后，已按持续授权送入 Windows 回收站；cleanup log=`tmp/p0-web-local-objective-retry-canary-09b5498-preact-windows-formal-r1-sensitive-cleanup.log`，listener/相关 Node/剩余 env=`0/0/0`；
+   - observed conservative upper 更新为 `$2.43762086`，一般费用守卫=`33.43864688 RMB < 50 RMB`，单 run、Stage 0D、turn/token/retry 合同均未放宽。
+
+5. **效果**：
+   - `09b5498` 真实证明 executor 前的本地拒绝恢复已接通，首次 correction 可进入 executor，并在可信 input error 后消费唯一一次有界 input correction；
+   - formal 同时证明“增加一次输入纠正”不足以完成该任务：模型生成的 correction 上下文连续两次与当前 workspace 不匹配，测试通过也不能替代隐藏语义验收；
+   - 技术债裁决：objective input correction 的 stale/incorrect context=`fix_now`；先做确定性复现和最小修复，不重跑 `09b5498`，不增加预算或 retry，不进入 WSL2、完整矩阵、candidate v4 或 P2-C。
+
+##### 验证结果
+
+- TypeScript 编译无错误：同 identity 的 detached `corepack pnpm build` 与独立 `corepack pnpm verify:build` 已在 formal 前通过；
+- `171` 个 Agent 定向测试与 `28` 个 launcher/fixture 测试全部通过（本 formal 环节新增测试=`0`）；冻结任务测试和独立 evaluator 均确认 tests=`true`、regression=`0`；
+- terminal、usage、patch、evaluator、readiness、费用、敏感值、env 回收站清理与资源收敛均已审计；formal 结论为产品工作流失败，不能表述为 Web 代表任务成功。
+
+##### 后续计划
+
+- **下一步准备做什么**：暂停后从确定性测试开始，复现 objective input correction 连续生成 stale/incorrect context 的路径，区分提示材料陈旧、复读证据投影和 correction 输入构造问题，再做最小修复；
+- **为什么先做它**：本地拒绝恢复和可信 executor input retry 已经真实生效，当前最小失败点是 retry 仍无法定位现有源码；继续增加重试或重跑冻结 identity 只会重复费用，不能产生新证据；
+- **当前还缺的关键闭环**：失败测试红转绿、Agent/structured-output 回归、clean build、新 source identity 零模型 Gate，以及其全部通过后才允许的一次新 Windows formal；在此之前不启动 WSL2、完整矩阵、candidate v4 或 P2-C。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
 
-- observed conservative upper=`$2.43409023`；
+- observed conservative upper=`$2.43762086`；
 - reserved=`$0.94221000`；
 - unobservable reserve=`$0.80000000`；
-- 守卫上界=`33.41040184 RMB < 50 RMB`。
+- 守卫上界=`33.43864688 RMB < 50 RMB`。
 
 持续授权边界（用户于 `2026-08-18` 明确确认）：
 
@@ -3589,7 +3631,7 @@ Source / Workspace Revision
 - 模型固定为 `deepseek-v4-flash`；单 run `$0.10`、`12 turns / 24,000 tokens`、Provider retry=`0`、已执行 run 禁止重跑等既有合同保持不变；
 - 上述费用持续授权适用于后续计划内模型调用，包括未来在阶段 Gate 通过后执行的完整矩阵、candidate v4 或 P2-C，但不跳过任何阶段 Gate；push、公开发布和生产操作不在授权内。
 
-`a72f127` 唯一 Windows formal 已执行、失败并冻结；产品 mutation 成功，但 terminal/report usage 因 CLI `read ENOTCONN` 不可观测，完整 `$0.10` 已计入预留。DeepSeek 新价格自 `2026-08-17 00:00` 生效，生效后 `32` 个历史可观测 formal 已统一按高峰价和输入全 miss 重算，差额 `$0.12570178` 已加入保守 observed 上界。`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc` Windows/WSL2、`5200317` Windows/WSL2、`0cd7d13` Windows/WSL2、`2977780` Windows/WSL2、`d6d7367`、`d01030a` 与 `8cee589` Windows formal 的 provider-reported cost=`$0.00358616/$0.00302790/$0.00235180/$0.00316938/$0.00334516/$0.00291315/$0.00278265/$0.00639158/$0.00244161/$0.00635007/$0.00606781/$0.00690650/$0.00292393/$0.00271056` 均已加入 observed。`8a67630` 与 `2e51cb9` Windows formal 均在 benchmark/model spawn 前以 infrastructure failure 冻结，model calls=`0`、仓库本地新增费用=`$0`，不改变 observed。Stage 0D 累计池仍为 `$5.00`，最坏累计池加 reserved 守卫=`47.53768 RMB < 50 RMB`；`2977780` 双平台以及 `d6d7367`、`d01030a`、`8cee589` Windows formal 均已冻结，项目记录不能替代 Provider 外部账单。
+`a72f127` 唯一 Windows formal 已执行、失败并冻结；产品 mutation 成功，但 terminal/report usage 因 CLI `read ENOTCONN` 不可观测，完整 `$0.10` 已计入预留。DeepSeek 新价格自 `2026-08-17 00:00` 生效，生效后 `32` 个历史可观测 formal 已统一按高峰价和输入全 miss 重算，差额 `$0.12570178` 已加入保守 observed 上界。`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc` Windows/WSL2、`5200317` Windows/WSL2、`0cd7d13` Windows/WSL2、`2977780` Windows/WSL2、`d6d7367`、`d01030a`、`8cee589` 与 `09b5498` Windows formal 的 provider-reported cost=`$0.00358616/$0.00302790/$0.00235180/$0.00316938/$0.00334516/$0.00291315/$0.00278265/$0.00639158/$0.00244161/$0.00635007/$0.00606781/$0.00690650/$0.00292393/$0.00271056/$0.00353063` 均已加入 observed。`8a67630` 与 `2e51cb9` Windows formal 均在 benchmark/model spawn 前以 infrastructure failure 冻结，model calls=`0`、仓库本地新增费用=`$0`，不改变 observed。Stage 0D 累计池仍为 `$5.00`，最坏累计池加 reserved 守卫=`47.53768 RMB < 50 RMB`；`2977780` 双平台以及 `d6d7367`、`d01030a`、`8cee589`、`09b5498` Windows formal 均已冻结，项目记录不能替代 Provider 外部账单。
 
 当前明确禁止：
 
@@ -3603,6 +3645,7 @@ Source / Workspace Revision
 - 重跑 `d6d7367` 已执行的 Windows dry-run 或 Windows formal，或为该失败 identity 启动 WSL2；
 - 重跑 `d01030a` 已执行的 Windows dry-run/formal，或为该失败 identity 启动 WSL2；
 - 重跑 `8cee589` 已执行的 Windows dry-run/formal，或为该失败 identity 启动 WSL2；
+- 重跑 `09b5498` 已执行的 Windows dry-run/formal，或为该失败 identity 启动 WSL2；
 - 增加 `maxTurns`、`maxTokens` 或 Provider 重试；
 - 使用调价前 `0.0025/0.125/0.25 USD/1M` 旧单价启动任何新付费 formal；
 - 未经新证据启动完整矩阵或 candidate v4；
@@ -3696,7 +3739,8 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 | required-mutation 其余失败改善范围 | `split_task` | 代表 canary 双平台闭合后按失败形状逐类验证，不做单任务外推 |
 | Web finalization reasoning 挤占正文与截断 schema | `record_only` | `d6d7367` 已真实证明 finalization-only 禁用 DeepSeek thinking 后可生成合法终态；`d01030a` 的 objective-review 也不再出现 reasoning-only length，历史终态修复保持闭合，不重复改合同 |
 | objective-review 返回空 correction patch | `fix_now` | `8cee589` 已仅为无 mutation 的可信 `apply_patch_input_invalid` 接入一次有界输入纠正；成功后完整复读/final review，二次失败立即关闭；`169/169` 定向测试、build 与 verify Gate 全绿，不接受空 patch 成功、不增加 maxTurns/maxTokens/retry |
-| objective correction 在 executor 前被本地 patch 校验拒绝 | `fix_now` | `09b5498` 已将首次 required-path/valid-section 本地拒绝接入既有一次 input correction；非法/越界 patch 始终不执行，二次本地拒绝立即关闭，成功后仍完整复读/final review；`171/171` 定向测试、build 与 verify Gate 全绿，待新 identity 真实验证 |
+| objective correction 在 executor 前被本地 patch 校验拒绝 | `fix_now` | `09b5498` 已将首次 required-path/valid-section 本地拒绝接入既有一次 input correction；非法/越界 patch 始终不执行，`171/171` 定向测试、build 与 verify Gate 全绿；同 identity formal 已真实到达 executor 和 input retry，证明该恢复接线生效 |
+| objective input correction 连续使用 stale/incorrect context | `fix_now` | `09b5498` formal 的首次 correction 与唯一 retry 均因当前 workspace 中找不到目标上下文而可信失败；先以确定性测试区分提示材料、复读投影和 correction 输入构造，再做最小修复；不增加 turn/token/Provider retry，不重跑冻结 identity |
 | detached worktree 首次 pnpm offline 链接超时 | `record_only` | `09b5498` clean harness 首次安装在依赖已链接、无残留进程且 Git clean 后触达 `180s` 工具超时；同一命令幂等续跑 `608ms` 退出 `0`，随后 build、verify 与 `28/28` 测试全绿，暂无产品或锁文件失败证据 |
 | parallel-read 唯一 repair 后仍超长 | `record_only` | Windows a2 的完整 JSON `summary` 超过 `maxLength: 1000`，Validator 正确拒绝且唯一 repair 已消费；不增加模型 turn、Provider retry 或第二次 repair，同 task 其余冻结样本不据此改写 |
 | 旧 failure analysis 的 `unknown=30` | `record_only` | 旧 artifact 保持冻结；当前 `56d8713` 分类器在新路径重算得到 `required_mutation_recovery_failed=30`、`unknown=0`，独立 verifier 通过，不回写历史 artifact 或升级 Schema 版本 |
@@ -3771,22 +3815,22 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 - 主体框架不是当前瓶颈：P1-A1/A2、P1-B、P1-C、P2-A、P2-B 都能在当前源码中找到相应实现和测试。
 - 真正瓶颈是复杂多文件任务的稳定完成率。现有 `37` 个失败不能因为单个代表任务成功或新增保护 Gate 就从分母移除。
-- `a72f127`、`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc`、`5200317`、`0cd7d13`、`2e51cb9`、`d6d7367`、`d01030a` 和 `8cee589` 的失败证据均保持冻结；后继 `2977780` 已关闭 required-mutation 双平台代表 canary。当前离线重算已将全部 `37` 个历史失败稳定分类为 `30/5/2`，`unknown=0`；`d6d7367` 证明 bounded finalization 能关闭 `length/schema` 终态，`d01030a` 证明 objective-review thinking 截断已消失，`8cee589` 则把剩余缺口收敛到 executor 前的本地 correction patch 校验拒绝。
+- `a72f127`、`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc`、`5200317`、`0cd7d13`、`2e51cb9`、`d6d7367`、`d01030a`、`8cee589` 和 `09b5498` 的失败证据均保持冻结；后继 `2977780` 已关闭 required-mutation 双平台代表 canary。当前离线重算已将全部 `37` 个历史失败稳定分类为 `30/5/2`，`unknown=0`；`d6d7367` 证明 bounded finalization 能关闭 `length/schema` 终态，`d01030a` 证明 objective-review thinking 截断已消失，`09b5498` 证明 executor 前恢复与唯一 input retry 已生效，并把当前缺口进一步收敛为 correction 连续使用 stale/incorrect context。
 - P2-C 尚未启动。只有多个失败形状出现可重复改善，并且两个连续冻结候选通过全部硬 Gate，才能宣称达到 9.5。
 
 因此当前主要瓶颈是“真实效果证据还不够”，不是“再增加更多功能”。
 
 ### 9.6 费用和发布边界
 
-DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算，`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc` Windows/WSL2、`5200317` Windows/WSL2、`0cd7d13` Windows/WSL2、`2977780` Windows/WSL2、`d6d7367`、`d01030a` 与 `8cee589` Windows formal 的 provider-reported `$0.00358616/$0.00302790/$0.00235180/$0.00316938/$0.00334516/$0.00291315/$0.00278265/$0.00639158/$0.00244161/$0.00635007/$0.00606781/$0.00690650/$0.00292393/$0.00271056` 也已入账；当前费用守卫为 **33.41 元人民币**，低于 **50 元人民币**授权上限。`a72f127` terminal/report usage 不可观测，仍保守预留完整 `$0.10`；runner 累计池保持 `$5.00`，加现有 reserved 后的最坏守卫仍为 **47.54 元人民币**。`8a67630` 与 `2e51cb9` Windows formal 均未启动 benchmark/model、仓库本地新增费用=`$0`；`2977780` 双平台以及 `d6d7367`、`d01030a`、`8cee589` Windows formal 已永久冻结，未提高费用、turn/token 或 retry，外部服务商账单仍需单独核对。
+DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算，`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc` Windows/WSL2、`5200317` Windows/WSL2、`0cd7d13` Windows/WSL2、`2977780` Windows/WSL2、`d6d7367`、`d01030a`、`8cee589` 与 `09b5498` Windows formal 的 provider-reported `$0.00358616/$0.00302790/$0.00235180/$0.00316938/$0.00334516/$0.00291315/$0.00278265/$0.00639158/$0.00244161/$0.00635007/$0.00606781/$0.00690650/$0.00292393/$0.00271056/$0.00353063` 也已入账；当前费用守卫为 **33.44 元人民币**，低于 **50 元人民币**授权上限。`a72f127` terminal/report usage 不可观测，仍保守预留完整 `$0.10`；runner 累计池保持 `$5.00`，加现有 reserved 后的最坏守卫仍为 **47.54 元人民币**。`8a67630` 与 `2e51cb9` Windows formal 均未启动 benchmark/model、仓库本地新增费用=`$0`；`2977780` 双平台以及 `d6d7367`、`d01030a`、`8cee589`、`09b5498` Windows formal 已永久冻结，未提高费用、turn/token 或 retry，外部服务商账单仍需单独核对。
 
 当前不会重跑已冻结版本，不会提高模型预算，不会启动完整付费矩阵，不会 push、公开发布或执行生产操作。
 
 ### 9.7 后续计划
 
-- **下一步准备做什么**：具体状态以文末唯一进度表为准；当前沿用已通过的 `09b5498` formal prepare-only 输入，执行且只执行一次 Windows formal。
-- **为什么先做它**：detached build、fixture/evaluator、双 preflight、Gateway readiness/auth、固定 route、费用、敏感值与资源 Gate 已全部闭合，真实模型执行是验证 pre-execution input correction 是否改善 Web 代表任务的唯一剩余证据。
-- **当前还缺的关键闭环**：formal 的 mutation/tests/patch、合法唯一 terminal、完整 Provider usage/cost、真实敏感值扫描、env 回收站清理和资源收敛；formal 后永久冻结，Windows 未全绿不进入 WSL2、完整矩阵、candidate v4 或 P2-C。
+- **下一步准备做什么**：具体状态以文末唯一进度表为准；暂停后先以确定性测试复现 objective input correction 连续使用 stale/incorrect context，再做最小修复。
+- **为什么先做它**：`09b5498` 已证明本地拒绝恢复和唯一 input retry 确实到达 executor，当前最小失败点已变为 correction 无法命中当前 workspace；重跑同 identity 或增加 retry 不会关闭该缺口。
+- **当前还缺的关键闭环**：失败测试红转绿、Agent/structured-output 回归、clean build、新 identity 零模型 Gate 与其后唯一 Windows formal；这些证据形成前不进入 WSL2、完整矩阵、candidate v4 或 P2-C。
 
 ## 10. 实施计划进度表
 
@@ -3796,7 +3840,7 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 | --- | --- | --- | --- | ---: | --- |
 | P0 后续：required-mutation 双平台代表 canary | P0 | **已完成并冻结** | `2977780` Windows/WSL2 formal 均完成同一三文件任务；evaluator、唯一 `run.completed`、available/exact/non-truncated snapshot、`6/6` usage、真实 key 与零残留全绿；cost=`$0.00635007/$0.00606781`，WSL readiness 端口/认证=`10.100/10.108s` | - | 禁止重跑 `8a67630`/`2e51cb9`/`2977780` 已执行 run；该 canary 不外推为其余 `37` 个失败改善 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | 2026-08-17：当前 HEAD `5b36691...` 的 P0-P2 源码/测试/artifact 已核查；SS 横向原始加权 `9.135`（发布分 `9.1`）；Grok Build `9.4`、Codex `9.7`、Claude Code `9.7`、OpenCode `9.3`、Hermes Agent `8.9`；竞品证据边界已记录 | - | 当前精简版与 archive-03 共同保留决策和完整历史；真实复杂任务成功率仍待新 formal 证据，不宣称达到 9.5 |
-| P0：Benchmark v3 与外部有效性 | P0 | **`09b5498` 零模型 Gate 已完成；唯一 Windows formal 待执行** | detached build/verify、launcher/fixture `28/28`、双 preflight、readiness/auth、固定 `deepseek-v4-flash`、零 usage、敏感值/env/资源收敛与 prepare-only 全绿；formal 费用窗口=`3.23409023 -> 3.33409023 USD` | 唯一 formal 与审计约 0.5 人日 | 执行且只执行一次 `09b5498` Windows formal；结果后永久冻结，禁止重跑 `8cee589`/`d01030a`/`d6d7367` 或启动其 WSL2，不直接创建 candidate v4 |
+| P0：Benchmark v3 与外部有效性 | P0 | **`09b5498` Windows formal 已失败并冻结；correction context 待修复** | formal 唯一终态=`run.failed`，usage=`5/5`、tokens=`10,577/850`、cost=`$0.00353063`；tests=`true`、regression=`0`，但 patchAccepted/taskCompleted=`false/false`；首次 correction 到达 executor 并触发唯一 input retry，第二次仍因上下文不匹配失败；敏感值/env/资源=`0/0/0` | 确定性诊断与最小修复约 0.5-1 人日；新 Gate/formal 另约 0.5 人日 | 暂停后先测试先行修复 stale/incorrect correction context，再以新 identity 完成零模型 Gate；禁止重跑 `09b5498` 或启动其 WSL2，不增加 turn/token/retry，不直接创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | 6-11 人日 | 生产化需独立 rollout、观察窗口和真实项目 Gate |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild、restore/联网和生命周期边界 |
