@@ -532,6 +532,119 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("disables DeepSeek thinking so objective review can issue its bounded correction", async () => {
+    const requiredChangedPaths = ["src/diff/props.js"];
+    const requests: Array<Record<string, any>> = [];
+    let mutationCount = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return response(modelToolCall("patch-props", "apply_patch", {
+          input: "initial broad patch",
+        }, 300, 60));
+      }
+      if (requests.length === 2 || requests.length === 4) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
+      const postWriteReview = body.messages?.some((message: any) => (
+        message.role === "system"
+        && String(message.content).includes("Post-mutation objective review phase")
+      ));
+      if (requests.length === 3 && postWriteReview) {
+        if ((body.thinking as { type?: unknown } | undefined)?.type !== "disabled") {
+          return response({
+            choices: [{
+              finish_reason: "length",
+              message: { content: null, reasoning_content: "R".repeat(3_533) },
+            }],
+            usage: { prompt_tokens: 1_838, completion_tokens: Number(body.max_tokens) },
+          });
+        }
+        return response(modelToolCall("correct-props", "apply_patch", {
+          input: [
+            "*** Begin Patch",
+            "*** Update File: src/diff/props.js",
+            "@@",
+            "-value != NULL && value !== false",
+            "+value != NULL && (value !== false || name[4] == '-')",
+            "*** End Patch",
+          ].join("\n"),
+        }, 1_838, 120));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: "corrected and verified" } }],
+        usage: { prompt_tokens: 500, completion_tokens: 40 },
+      });
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "apply_patch") {
+        mutationCount++;
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: "Patch applied successfully",
+          metadata: {
+            workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+          },
+          durationMs: 1,
+        };
+      }
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: JSON.stringify({
+          path: request.arguments?.path,
+          truncated: false,
+          content: mutationCount > 1
+            ? "value != NULL && (value !== false || name[4] == '-')"
+            : "value != NULL && value !== false",
+        }),
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 1,
+      thinking: { type: "enabled" },
+      mutationToolNames: ["apply_patch"],
+      readToolNames: ["file_read"],
+    });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-objective-review-thinking",
+      text: "Restore false aria attribute serialization without changing null handling.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 1,
+        },
+      },
+    }));
+
+    expect(requests[2]?.messages[0]?.content).toContain("Post-mutation objective review phase");
+    expect(requests[2]?.tools?.map((tool: any) => tool.function.name)).toEqual(["apply_patch"]);
+    expect(requests[2]?.thinking).toEqual({ type: "disabled" });
+    expect(requests).toHaveLength(5);
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "apply_patch",
+      "file_read",
+      "apply_patch",
+      "file_read",
+    ]);
+    expect(items).toContainEqual({ type: "final", text: "corrected and verified" });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("retains the three-file canary residual in the bounded post-write review", async () => {
     const requiredChangedPaths = [
       "jsonrpc/src/common/api.ts",
@@ -2586,7 +2699,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     }
   });
 
-  it("disables DeepSeek thinking for finalization after required-path verification", async () => {
+  it("disables DeepSeek thinking for objective review and finalization after verification", async () => {
     const requiredChangedPaths = [
       "jsonrpc/src/common/api.ts",
       "jsonrpc/src/common/connection.ts",
@@ -2638,6 +2751,15 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       }
       if (requests.length === 4) {
         return response(modelVerificationReads(requiredChangedPaths));
+      }
+      if (requests.length === 5) {
+        return response({
+          choices: [{
+            finish_reason: "length",
+            message: { content: null, reasoning_content: "R".repeat(Number(body.max_tokens)) },
+          }],
+          usage: { prompt_tokens: 500, completion_tokens: Number(body.max_tokens) },
+        });
       }
       if ((body.thinking as { type?: unknown } | undefined)?.type !== "disabled") {
         return response({
@@ -2736,6 +2858,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(requests.slice(1, 4).every((request) => request.thinking?.type === "disabled")).toBe(true);
     expect(requests[4]?.messages[0]?.content).toContain("Post-mutation objective review phase");
     expect(requests[4]?.tools?.map((tool: any) => tool.function.name)).toEqual(["apply_patch"]);
+    expect(requests[4]?.thinking).toEqual({ type: "disabled" });
     expect(requests[5]).not.toHaveProperty("tools");
     expect(requests[5]?.max_tokens).toBe(1_024);
     expect(requests[5]?.thinking).toEqual({ type: "disabled" });
