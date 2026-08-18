@@ -3501,6 +3501,37 @@ Source / Workspace Revision
 - **为什么先做它**：真实证据表明 correction tool call 已到达 Agent，但失败发生在 executor 之前；继续增强 executor 错误识别或重跑同 identity 都无法覆盖这个确定性分支；
 - **当前还缺的关键闭环**：pre-execution 失败 seam、一次 input correction、二次本地拒绝立即关闭、成功后完整复读/final review、Agent/structured-output 回归与 clean build；这些证据形成前不启动新 formal，不重跑 `8cee589`/`d01030a`/`d6d7367`，不进入 WSL2、完整矩阵、candidate v4 或 P2-C。
 
+#### P0 Web 代表实现结论：pre-execution objective correction 输入恢复（2026-08-18）
+
+##### 已完成内容
+
+1. **`tool-agent.ts` 接入本地 patch 校验失败恢复**：
+   - objective correction 首次因 unlisted path 或无有效 required-path section 被 executor 前本地校验拒绝时，复用既有一次 objective input-correction pending/attempted 状态；
+   - 非法 patch 保持不执行，仅清空重复调用痕迹并发起固定 `tool_choice=required`、DeepSeek thinking 禁用的有界 correction retry；
+   - 当前调用已经是 input correction 或额度已消费时保留原错误并立即关闭，不增加 `maxTurns`、`maxTokens` 或 Provider retry。
+
+2. **`tool-agent-workspace-mutation.test.ts` 扩展**：
+   - 新增首次 unlisted-path 本地拒绝后纠正为 required path、完整复读并 final review 成功的回归；
+   - 新增 correction retry 仍无有效 required-path section 时立即失败的边界，并更新既有越界 correction 用例以验证第二次本地拒绝不执行；
+   - 测试先行确认旧实现均在第 `3` 次请求后提前失败，新实现分别形成唯一成功终态与唯一失败终态。
+
+3. **效果**：
+   - `8cee589` formal 暴露的 executor 前失败分支现在可达既有一次输入纠正，不再依赖 tool executor 先返回 `apply_patch_input_invalid`；
+   - 首次和 retry 的非法 patch 均不会进入 executor，required-path 白名单与有效 section 合同没有放宽；
+   - 代码提交=`09b5498`，模型调用=`0`、新增费用=`$0`，用户已有的 D 盘文档改动未暂存、未修改。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build:incremental` 通过；独立 `corepack pnpm verify:build` 通过；
+- `171` 个定向测试全部通过（含 `2` 个新增 pre-execution objective correction 测试）：workspace mutation `57`、ToolEnabledAgent `84`、streaming/structured-output/openai-tool-choice `30`；
+- `git diff --check` 通过；首次本地拒绝的一次纠正、非法 patch 零执行、成功后完整复读/final review 与二次本地拒绝关闭均形成确定性证据。
+
+##### 后续计划
+
+- **下一步准备做什么**：以 `09b5498` 为新 detached source identity 建立 clean harness，执行 offline install、完整 build、独立 `verify:build`、launcher/fixture 定向测试和 Windows 零凭证 dry-run；
+- **为什么先做它**：本地确定性 Gate 已关闭真实失败分支，但新 source identity 仍须先证明 clean build、Gateway readiness/auth、fixture、敏感值与资源边界可审计，才可消费新的 `deepseek-v4-flash` formal；
+- **当前还缺的关键闭环**：detached build、双 preflight、fixture/evaluator、readiness/auth、固定 route、费用窗口、敏感值扫描、env 回收站清理、资源收敛与 formal prepare-only receipt；全部零模型 Gate 通过后才允许一次新 Windows formal，仍禁止重跑 `8cee589`/`d01030a`/`d6d7367` 或启动其 WSL2。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
@@ -3624,7 +3655,7 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 | required-mutation 其余失败改善范围 | `split_task` | 代表 canary 双平台闭合后按失败形状逐类验证，不做单任务外推 |
 | Web finalization reasoning 挤占正文与截断 schema | `record_only` | `d6d7367` 已真实证明 finalization-only 禁用 DeepSeek thinking 后可生成合法终态；`d01030a` 的 objective-review 也不再出现 reasoning-only length，历史终态修复保持闭合，不重复改合同 |
 | objective-review 返回空 correction patch | `fix_now` | `8cee589` 已仅为无 mutation 的可信 `apply_patch_input_invalid` 接入一次有界输入纠正；成功后完整复读/final review，二次失败立即关闭；`169/169` 定向测试、build 与 verify Gate 全绿，不接受空 patch 成功、不增加 maxTurns/maxTokens/retry |
-| objective correction 在 executor 前被本地 patch 校验拒绝 | `fix_now` | `8cee589` formal 第 4 次调用返回 correction tool call，但 required-path/valid-section 校验先于 executor 失败，既有 input retry 未触发；先测试先行复用同一次纠正额度，非法/越界 patch 仍不执行，二次本地拒绝立即关闭 |
+| objective correction 在 executor 前被本地 patch 校验拒绝 | `fix_now` | `09b5498` 已将首次 required-path/valid-section 本地拒绝接入既有一次 input correction；非法/越界 patch 始终不执行，二次本地拒绝立即关闭，成功后仍完整复读/final review；`171/171` 定向测试、build 与 verify Gate 全绿，待新 identity 真实验证 |
 | parallel-read 唯一 repair 后仍超长 | `record_only` | Windows a2 的完整 JSON `summary` 超过 `maxLength: 1000`，Validator 正确拒绝且唯一 repair 已消费；不增加模型 turn、Provider retry 或第二次 repair，同 task 其余冻结样本不据此改写 |
 | 旧 failure analysis 的 `unknown=30` | `record_only` | 旧 artifact 保持冻结；当前 `56d8713` 分类器在新路径重算得到 `required_mutation_recovery_failed=30`、`unknown=0`，独立 verifier 通过，不回写历史 artifact 或升级 Schema 版本 |
 | 连续候选 9.5 证据 | `split_task` | 独立进入 P2-C；费用可沿用 `< 50 RMB` 持续授权，但 P0 通过不自动等于阶段 Gate 通过 |
@@ -3711,9 +3742,9 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 
 ### 9.7 后续计划
 
-- **下一步准备做什么**：具体状态以文末唯一进度表为准；当前先为 objective correction 的 pre-execution required-path/valid-section 拒绝补确定性失败测试，再把该原子失败接入既有一次 input-correction 阶段。
-- **为什么先做它**：`8cee589` formal 已证明模型发出了 correction tool call，但失败发生在 executor 之前；只有覆盖本地校验分支，现有一次纠正能力才对真实失败形状可达。
-- **当前还缺的关键闭环**：本地拒绝 seam、一次纠正、二次拒绝失败关闭、成功后完整复读/final review、Agent/structured-output 回归与 clean build；零模型证据形成前不启动新 formal，不重跑 `8cee589`/`d01030a`/`d6d7367`，不进入 WSL2、完整矩阵、candidate v4 或 P2-C。
+- **下一步准备做什么**：具体状态以文末唯一进度表为准；当前以 `09b5498` 建立 detached clean harness，先完成 offline build、fixture/evaluator、Windows 零凭证 dry-run 与 formal prepare-only。
+- **为什么先做它**：确定性测试已证明 executor 前本地拒绝可获得且只能获得一次 input correction；下一步必须先验证新 identity 的真实 Gateway readiness/auth、隔离与资源边界，再消费模型费用。
+- **当前还缺的关键闭环**：detached build、双 preflight、fixture/evaluator、readiness/auth、固定 route、formal receipt、敏感值扫描、env 回收站清理和资源收敛；零模型证据全绿前不启动新 formal，不重跑 `8cee589`/`d01030a`/`d6d7367`，不进入 WSL2、完整矩阵、candidate v4 或 P2-C。
 
 ## 10. 实施计划进度表
 
@@ -3723,7 +3754,7 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 | --- | --- | --- | --- | ---: | --- |
 | P0 后续：required-mutation 双平台代表 canary | P0 | **已完成并冻结** | `2977780` Windows/WSL2 formal 均完成同一三文件任务；evaluator、唯一 `run.completed`、available/exact/non-truncated snapshot、`6/6` usage、真实 key 与零残留全绿；cost=`$0.00635007/$0.00606781`，WSL readiness 端口/认证=`10.100/10.108s` | - | 禁止重跑 `8a67630`/`2e51cb9`/`2977780` 已执行 run；该 canary 不外推为其余 `37` 个失败改善 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | 2026-08-17：当前 HEAD `5b36691...` 的 P0-P2 源码/测试/artifact 已核查；SS 横向原始加权 `9.135`（发布分 `9.1`）；Grok Build `9.4`、Codex `9.7`、Claude Code `9.7`、OpenCode `9.3`、Hermes Agent `8.9`；竞品证据边界已记录 | - | 当前精简版与 archive-03 共同保留决策和完整历史；真实复杂任务成功率仍待新 formal 证据，不宣称达到 9.5 |
-| P0：Benchmark v3 与外部有效性 | P0 | **`8cee589` formal 已冻结失败；pre-execution correction 恢复修复中** | Windows formal tests=`true`、regression=`0`，但初始 patch 不完整；第 4 次 objective correction 在 executor 前被 required-path/valid-section 校验拒绝，唯一 `run.failed`、`4/4` usage、cost=`$0.00271056`、敏感值/残留全绿 | 确定性修复约 0.5 人日；后续代表另计 | 先补本地原子拒绝回归并接入既有一次 input correction；禁止重跑 `8cee589`/`d01030a`/`d6d7367` 或启动其 WSL2，不直接创建 candidate v4 |
+| P0：Benchmark v3 与外部有效性 | P0 | **`09b5498` 确定性修复已完成；零模型 Gate 待执行** | 首次 required-path/valid-section 本地拒绝现复用既有一次 input correction，非法 patch 零执行、二次拒绝关闭、成功后完整复读/final review；定向测试 `171/171`、build/verify/diff Gate 全绿，模型调用=`0` | 零模型 Gate 约 0.5 人日；后续代表另计 | 以 `09b5498` 建立 detached clean harness 并完成 Windows dry-run/prepare-only；全绿后只允许一次新 formal，禁止重跑 `8cee589`/`d01030a`/`d6d7367` 或启动其 WSL2 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | 6-11 人日 | 生产化需独立 rollout、观察窗口和真实项目 Gate |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild、restore/联网和生命周期边界 |
