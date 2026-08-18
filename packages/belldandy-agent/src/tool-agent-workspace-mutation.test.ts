@@ -920,6 +920,223 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
   });
 
+  it("retries one atomic post-write correction input error before re-verifying", async () => {
+    const requiredChangedPaths = ["src/api.ts"];
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return response(modelToolCall("patch-api", "apply_patch", { input: "initial patch" }, 300, 60));
+      }
+      if (requests.length === 2 || requests.length === 5) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
+      if (requests.length === 3) {
+        return response(modelToolCall("empty-correction", "apply_patch", {
+          input: "*** Begin Patch\n*** Update File: src/api.ts\n*** End Patch",
+        }, 300, 60));
+      }
+      if (requests.length === 4) {
+        return response(modelToolCall("correct-api", "apply_patch", {
+          input: "*** Begin Patch\n*** Update File: src/api.ts\n@@\n-old\n+new\n*** End Patch",
+        }, 300, 60));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: "corrected and verified" } }],
+        usage: { prompt_tokens: 500, completion_tokens: 40 },
+      });
+    });
+    let mutationCount = 0;
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: request.arguments?.path,
+            truncated: false,
+            content: mutationCount >= 3 ? "new" : "old",
+          }),
+          durationMs: 1,
+        };
+      }
+      mutationCount++;
+      if (mutationCount === 2) {
+        return {
+          id: request.id,
+          name: request.name,
+          success: false,
+          output: "",
+          error: "Invalid patch hunk at line 2: Update file hunk is empty",
+          failureKind: "input_error" as const,
+          metadata: {
+            repairAction: "apply_patch_input_invalid",
+          },
+          durationMs: 1,
+        };
+      }
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 1,
+      thinking: { type: "enabled" },
+    });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-post-write-input-correction",
+      text: "Replace old with new in src/api.ts.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 1,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(6);
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "Post-mutation objective correction input retry phase",
+    );
+    expect(requests[3]?.tools?.map((tool: any) => tool.function.name)).toEqual(["apply_patch"]);
+    expect(requests[3]?.tool_choice).toBe("required");
+    expect(requests[3]?.thinking).toEqual({ type: "disabled" });
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "apply_patch",
+      "file_read",
+      "apply_patch",
+      "apply_patch",
+      "file_read",
+    ]);
+    expect(items).toContainEqual({ type: "final", text: "corrected and verified" });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("fails closed when the post-write objective input correction also fails", async () => {
+    const requiredChangedPaths = ["src/api.ts"];
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return response(modelToolCall("patch-api", "apply_patch", { input: "initial patch" }, 300, 60));
+      }
+      if (requests.length === 2) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
+      if (requests.length === 3) {
+        return response(modelToolCall("empty-correction", "apply_patch", {
+          input: "*** Begin Patch\n*** Update File: src/api.ts\n*** End Patch",
+        }, 300, 60));
+      }
+      return response(modelToolCall("invalid-input-correction", "apply_patch", {
+        input: "*** Begin Patch\n*** Update File: src/api.ts\n@@\n-stale\n+new\n*** End Patch",
+      }, 300, 60));
+    });
+    let mutationCount = 0;
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: request.arguments?.path,
+            truncated: false,
+            content: "old",
+          }),
+          durationMs: 1,
+        };
+      }
+      mutationCount++;
+      if (mutationCount > 1) {
+        return {
+          id: request.id,
+          name: request.name,
+          success: false,
+          output: "",
+          error: mutationCount === 2
+            ? "Invalid patch hunk at line 2: Update file hunk is empty"
+            : "Corrected patch context still did not match",
+          failureKind: "input_error" as const,
+          metadata: {
+            repairAction: "apply_patch_input_invalid",
+          },
+          durationMs: 1,
+        };
+      }
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 1,
+      thinking: { type: "enabled" },
+    });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-post-write-input-correction-failed",
+      text: "Replace old with new in src/api.ts.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 1,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(4);
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "Post-mutation objective correction input retry phase",
+    );
+    expect(requests[3]?.tool_choice).toBe("required");
+    expect(requests[3]?.thinking).toEqual({ type: "disabled" });
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "apply_patch",
+      "file_read",
+      "apply_patch",
+      "apply_patch",
+    ]);
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "final",
+      text: expect.stringContaining("Corrected patch context still did not match"),
+    }));
+    expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
+  });
+
   it("rejects another tool call after the post-write correction is exhausted", async () => {
     const requiredChangedPaths = ["src/api.ts"];
     const requests: Array<Record<string, any>> = [];

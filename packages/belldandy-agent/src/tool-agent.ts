@@ -137,6 +137,7 @@ import {
   buildWorkspaceMutationContinuationPlan,
   buildWorkspaceMutationInputCorrectionPlan,
   buildWorkspaceMutationNavigationRequest,
+  buildWorkspaceMutationObjectiveInputCorrectionRequest,
   buildWorkspaceMutationObjectiveReviewRequest,
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationVerificationRequest,
@@ -2434,6 +2435,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let workspaceMutationObjectiveReviewPending = false;
     let workspaceMutationObjectiveReviewAttempts = 0;
     let workspaceMutationObjectiveCorrectionAttempted = false;
+    let workspaceMutationObjectiveInputCorrectionPending = false;
+    let workspaceMutationObjectiveInputCorrectionAttempted = false;
     let workspaceMutationFinalizationPending = false;
     let pendingBoundedStructuredOutputRepairRequest: BoundedStructuredOutputRepairRequest | undefined;
     let lastProviderRawUsage: AgentUsage["providerRawUsage"] | undefined;
@@ -2664,6 +2667,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
             + workspaceMutationVerificationAttempts * 2
             + (workspaceMutationVerificationPending ? 2 : 0)
             + (workspaceMutationFinalizationPending && workspaceMutationVerificationAttempts > 0 ? 1 : 0)
+            + (workspaceMutationObjectiveInputCorrectionPending
+              || workspaceMutationObjectiveInputCorrectionAttempted ? 1 : 0)
           : 0;
         const workspaceMutationRecoveryRequiredByGate = workspaceMutationRequired
           && !workspaceMutationObserved
@@ -2895,6 +2900,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
         let workspaceMutationVerificationCall = false;
         let workspaceMutationVerificationRequest: WorkspaceMutationVerificationRequest | undefined;
         let workspaceMutationObjectiveReviewCall = false;
+        let workspaceMutationObjectiveInputCorrectionCall = false;
         let workspaceMutationObjectiveReviewRequest: WorkspaceMutationRecoveryRequest | undefined;
         let workspaceMutationFinalizationCall = false;
         let finalizationOnlyCall = false;
@@ -3175,14 +3181,23 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 - mutationVerificationOutputTokens,
             ) / REACT_FINALIZATION_INPUT_SAFETY_FACTOR),
           );
-          const candidate = buildWorkspaceMutationObjectiveReviewRequest({
-            messages: mutationRecoverySourceMessages,
-            tools: workspaceMutationObjectiveCorrectionAttempted ? [] : mutationTools,
-            maxInputTokens: remainingReviewInputTokens,
-            requiredChangedPaths,
-            correctionAllowed: !workspaceMutationObjectiveCorrectionAttempted,
-            tokenEstimateContext: dispatchTokenEstimateContext,
-          });
+          workspaceMutationObjectiveInputCorrectionCall = workspaceMutationObjectiveInputCorrectionPending;
+          const candidate = workspaceMutationObjectiveInputCorrectionCall
+            ? buildWorkspaceMutationObjectiveInputCorrectionRequest({
+                messages: mutationRecoverySourceMessages,
+                tools: mutationTools,
+                maxInputTokens: remainingReviewInputTokens,
+                requiredChangedPaths,
+                tokenEstimateContext: dispatchTokenEstimateContext,
+              })
+            : buildWorkspaceMutationObjectiveReviewRequest({
+                messages: mutationRecoverySourceMessages,
+                tools: workspaceMutationObjectiveCorrectionAttempted ? [] : mutationTools,
+                maxInputTokens: remainingReviewInputTokens,
+                requiredChangedPaths,
+                correctionAllowed: !workspaceMutationObjectiveCorrectionAttempted,
+                tokenEstimateContext: dispatchTokenEstimateContext,
+              });
           if (!candidate) {
             yield* emitWorkspaceMutationFailure(
               "the mutation was read back, but no bounded post-write objective review can be built from the allowed tools, evidence, and remaining token budget.",
@@ -3218,6 +3233,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
           workspaceMutationObjectiveReviewCall = true;
           workspaceMutationObjectiveReviewPending = false;
+          if (workspaceMutationObjectiveInputCorrectionCall) {
+            workspaceMutationObjectiveInputCorrectionPending = false;
+            workspaceMutationObjectiveInputCorrectionAttempted = true;
+          }
           workspaceMutationObjectiveReviewAttempts++;
           workspaceMutationObjectiveReviewRequest = candidate;
           workspaceMutationCallRequiredPaths = [...requiredChangedPaths];
@@ -3228,6 +3247,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             reviewOutputTokens: mutationVerificationOutputTokens,
             reviewAttempt: workspaceMutationObjectiveReviewAttempts,
             correctionAttempted: workspaceMutationObjectiveCorrectionAttempted,
+            inputCorrection: workspaceMutationObjectiveInputCorrectionCall,
             requiredPathCount: requiredChangedPaths.length,
             evidenceCount: candidate.evidenceCount,
             truncatedEvidenceCount: candidate.truncatedEvidenceCount,
@@ -3735,7 +3755,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
             : finalizationOnlyCall || boundedStructuredOutputRepairRequest
               ? finalizationOutputTokens
               : undefined,
-          workspaceMutationNavigationCall || workspaceMutationRecoveryCall || workspaceMutationVerificationCall
+          workspaceMutationNavigationCall
+            || workspaceMutationRecoveryCall
+            || workspaceMutationVerificationCall
+            || workspaceMutationObjectiveInputCorrectionCall
             ? "required"
             : undefined,
           finalizationOnlyCall || workspaceMutationObjectiveReviewCall,
@@ -4264,7 +4287,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
             );
             return;
           }
-          if (workspaceMutationObjectiveReviewCall && workspaceMutationObjectiveCorrectionAttempted) {
+          if (workspaceMutationObjectiveReviewCall
+            && workspaceMutationObjectiveCorrectionAttempted
+            && !workspaceMutationObjectiveInputCorrectionCall) {
             yield* emitWorkspaceMutationFailure(
               "the post-write objective review requested another correction after its one allowed correction was already attempted.",
             );
@@ -5263,6 +5288,26 @@ export class ToolEnabledAgent implements BelldandyAgent {
             }
           }
           if (workspaceMutationObjectiveReviewCall && !successfulWorkspaceMutation) {
+            const canCorrectObjectiveInputFailure = !workspaceMutationObjectiveInputCorrectionCall
+              && !workspaceMutationObjectiveInputCorrectionAttempted
+              && request.name === "apply_patch"
+              && result.failureKind === "input_error"
+              && result.metadata?.repairAction === "apply_patch_input_invalid";
+            if (canCorrectObjectiveInputFailure) {
+              workspaceMutationObjectiveReviewPending = true;
+              workspaceMutationObjectiveInputCorrectionPending = true;
+              lastToolCallFingerprint = undefined;
+              lastToolCallName = undefined;
+              consecutiveDuplicateToolCalls = 0;
+              recentToolCallTraces.length = 0;
+              lastSuccessfulToolResult = undefined;
+              logWarn("[workspace-mutation] post-write correction failed atomically; scheduling one input correction", {
+                requiredPathCount: workspaceMutationCallRequiredPaths.length,
+                conversationId: input.conversationId,
+                agentId: resolvedAgentId,
+              });
+              continue;
+            }
             yield* emitWorkspaceMutationFailure(
               result.success
                 ? `tool ${request.name} did not satisfy the trusted post-write correction contract.`
