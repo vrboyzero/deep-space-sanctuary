@@ -11,7 +11,7 @@
 1. **不应因本次调价提高单次 `$0.10` 或累计 `$5.00` 上限。** 这两个值是货币风险上限，不是 token 配额。价格提高只会让同一费用池可支持的调用量减少；抬高上限反而会削弱 `50 RMB` 授权边界。
 2. **所有后续有凭证 formal 必须继续使用更新后的模型单价。** `de931cc`、`5200317` 与 `0cd7d13` 的 Windows/WSL2 formal 已按新高峰价 `0.375 / 1.125 / 0.0125 USD/1M` 执行；调价前的 `0.125 / 0.25 / 0.0025 USD/1M` 不得恢复使用，否则会低估 `deepseek-v4-flash` 的缓存未命中输入、输出和缓存命中费用，破坏 `maxCostUsd` 的失败关闭依据。
 3. **调价没有改变 detached clean、offline install、build、独立 verifier 和零凭证 dry-run。** `0cd7d13` 的 WSL2 无费用 Gate 已全部通过；其 formal 失败于模型返回多个提前 `*** End Patch` 的补丁结构，不是费用、turn、token 或 retry 上限导致。
-4. **formal 参数不能沿用 `3.05342019 -> 3.15342019`。** 对北京时间 2026-08-17 00:00 后的 `32` 个历史 provider-reported formal 按高峰价和输入全 miss 重算后，`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc`、`5200317` Windows/WSL2 与 `0cd7d13` Windows/WSL2 formal 均已入账；当前 observed 保守上界为 `$2.40913136`。`8a67630` Windows formal 在 Gateway readiness 前失败，model calls/费用=`0/$0`，不改变 observed；当前不安排下一 formal。
+4. **formal 参数不能沿用 `3.05342019 -> 3.15342019`。** 对北京时间 2026-08-17 00:00 后的 `32` 个历史 provider-reported formal 按高峰价和输入全 miss 重算后，`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc`、`5200317` Windows/WSL2 与 `0cd7d13` Windows/WSL2 formal 均已入账；当前 observed 保守上界为 `$2.40913136`。`8a67630` Windows formal 在 Gateway readiness 前失败，model calls/费用=`0/$0`，不改变 observed；`2e51cb9` 无费用 Gate 已全绿，下一步唯一 formal 尚未执行。
 5. **模型名不需要改。** 当前应继续显式使用 `deepseek-v4-flash`；它对应的模型版本是 `DeepSeek-V4-Flash-0731`。旧名 `deepseek-chat`、`deepseek-reasoner` 已过官方停止使用日期，不应作为当前别名回退。
 
 ## 2. DeepSeek 官方现行价格
@@ -60,7 +60,7 @@ DeepSeek 的上下文缓存默认开启。官方响应通过 `prompt_cache_hit_t
 | 合同 | 当前值 | 证据 |
 | --- | ---: | --- |
 | Stage 0D 累计 benchmark 池 | `$5.00` | `scripts/run-coding-agent-benchmark.mjs` 的 `STAGE_0D_BENCHMARK_USAGE_BUDGET_USD` |
-| 条件式下一单次 formal 窗口 | `$0.10` | `8a67630` infrastructure failure 未产生费用；未来新 source identity 通过全部无费用 Gate 后仍从 `prior=3.20913136` 到 `maxTotal=3.30913136`，当前未安排执行 |
+| 条件式下一单次 formal 窗口 | `$0.10` | `8a67630` infrastructure failure 未产生费用；`2e51cb9` 已通过全部无费用 Gate，下一步唯一 formal 仍从 `prior=3.20913136` 到 `maxTotal=3.30913136`，尚未执行 |
 | required-mutation token/turn | `24,000 tokens`、`12 turns` | `benchmarks/coding-agent/v3/task-manifest.json` |
 | Provider retry | `0` | 当前 Windows launcher 的 `BELLDANDY_OPENAI_MAX_RETRIES=0` |
 | 授权换算 | `50 CNY`，按 `8 CNY/USD` 并保留 `10 CNY` 缓冲 | runner 注释及 `benchmarks/coding-agent/README.md` |
@@ -143,17 +143,19 @@ BELLDANDY_MODEL_CACHE_READ_USD_PER_1M=0.0025
 | `0cd7d13` Windows formal | **已执行并冻结** | 使用新高峰价，provider-reported cost=`$0.00639158`；三文件 mutation、冻结 verifier 与 exact/non-truncated changes 全绿 |
 | `0cd7d13` WSL2 formal | **已执行并冻结** | 使用新高峰价，provider-reported cost=`$0.00244161`；失败于 `unexpected_end_marker`，与费用、turn/token 或 retry 上限无关 |
 | `8a67630` Windows formal | **已执行并冻结** | Gateway readiness 前因隔离 wrapper 产生 present-empty `BELLDANDY_LOG_DIR` 而 `mkdir ''/ENOENT`；artifact/fixture/model calls=`0/0/0`、费用=`$0`，禁止重跑 |
-| `2e51cb9` Windows 无费用 Gate | **除 env residue 外通过** | detached clean install/build/verifier 与零凭证 dry-run 通过，双 preflight=`passed`、usage=`not_reached`、模型费用=`$0`；新 runtime env 两路径已回写并等待 HITL 清理确认，未安排 formal |
-| `prior=3.05342019 -> max=3.15342019` | **已替换** | 未来新 source identity 通过全部无费用 Gate 后仍使用 `3.20913136 -> 3.30913136`，不得超过 `$5.00`；当前未安排执行 |
+| `2e51cb9` Windows 无费用 Gate | **全部通过** | detached clean install/build/verifier 与零凭证 dry-run 通过，双 preflight=`passed`、usage=`not_reached`、模型费用=`$0`；`2e51cb9` dry-run 与 `8a67630` formal 的四个 runtime env 已经授权精确回收，复核全绿，唯一 formal 尚未执行 |
+| `prior=3.05342019 -> max=3.15342019` | **已替换** | `2e51cb9` 已通过全部无费用 Gate，下一步唯一 formal 使用 `3.20913136 -> 3.30913136`，不得超过 `$5.00`；尚未执行 |
 | WSL2 | 无新增放宽 | `0cd7d13` 无费用 Gate 和唯一 formal 均已冻结；已执行版本不重跑 |
 | 完整矩阵、candidate v4、P2-C | 否 | 继续禁止启动 |
 
-`8a67630` formal 的 runtime `.env` 与 `.env.local` 当前按用户确认暂不处理，保留在：
+`8a67630` formal 与 `2e51cb9` dry-run 的 runtime `.env/.env.local` 原路径已保留在计划文档中。经用户后续明确授权，四个文件均已于 2026-08-18 送入 Windows 回收站：
 
 - `tmp/p0-required-mutation-canary-8a67630-ts-api-windows-formal-r1-runtime/gateway-state/.env`
 - `tmp/p0-required-mutation-canary-8a67630-ts-api-windows-formal-r1-runtime/gateway-state/.env.local`
+- `tmp/p0-required-mutation-canary-2e51cb9-ts-api-windows-dry-run-r1-runtime/gateway-state/.env`
+- `tmp/p0-required-mutation-canary-2e51cb9-ts-api-windows-dry-run-r1-runtime/gateway-state/.env.local`
 
-这两个文件不是项目根配置，也不改变本次 `$0` 费用结论；在后续清理完成前，env residue Gate 保持未闭合。
+cleanup log 分别为 `tmp/p0-required-mutation-canary-8a67630-sensitive-cleanup.log` 与 `tmp/p0-required-mutation-canary-2e51cb9-sensitive-cleanup.log`。清理后四个原路径、私有敏感实值命中、unreadable、端口 listener 与相关 Node 进程均为 `0`；两组 harness/fixture 保持 clean。该操作未修改项目根配置，不改变两次运行模型调用=`0`、新增费用=`$0` 的结论。
 
 账本复核建议按每个北京时间 2026-08-17 00:00 后的请求分别使用：
 
@@ -189,13 +191,13 @@ costUsdForGuard = costCny / 8
 | 条件式下一次 prior（含 `$0.80` 不可观测预留） | `$3.20913136` |
 | 条件式下一次 maxTotal | `$3.30913136` |
 
-当前加现有 reserved=`$0.94221000` 与 unobservable reserve=`$0.80000000` 的守卫为 `33.21073088 CNY < 50 CNY`；`8a67630` 未到达 Provider，不新增 observed 或不可观测费用。未来新 identity 若通过全部无费用 Gate，再预留完整 `$0.10` 后为 `34.01073088 CNY < 50 CNY`。`a72f127` 虽有完整 `run.usage` 事件，但 terminal/report 不可观测，仍按既有完整 `$0.10` 不可观测预留处理，没有用局部事件值抵扣。
+当前加现有 reserved=`$0.94221000` 与 unobservable reserve=`$0.80000000` 的守卫为 `33.21073088 CNY < 50 CNY`；`8a67630` 未到达 Provider，不新增 observed 或不可观测费用。`2e51cb9` 已通过全部无费用 Gate，唯一 formal 执行前预留完整 `$0.10` 后为 `34.01073088 CNY < 50 CNY`。`a72f127` 虽有完整 `run.usage` 事件，但 terminal/report 不可观测，仍按既有完整 `$0.10` 不可观测预留处理，没有用局部事件值抵扣。
 
 ## 7. 建议决策
 
 1. `0cd7d13` Windows/WSL2 formal 均已执行并冻结；Windows 全绿，WSL2 因异常 patch envelope 在写前失败，禁止重跑。
 2. 任何后续 formal 继续固定高峰价：`BELLDANDY_MODEL_INPUT_USD_PER_1M=0.375`、`BELLDANDY_MODEL_OUTPUT_USD_PER_1M=1.125`、`BELLDANDY_MODEL_CACHE_READ_USD_PER_1M=0.0125`，并让 formal preflight/artifact 记录该合同。
-3. `8a67630` Windows formal 已在 Gateway readiness 前 infrastructure failure 并冻结，禁止重跑；launcher provider env allowlist 已形成 `2e51cb9`，detached clean install/build/verifier 与零凭证 dry-run 均通过，待新生成 env residue 经确认回收且复核全绿后，才可评估使用 `prior=3.20913136`、`maxTotal=3.30913136` 的唯一 formal。
+3. `8a67630` Windows formal 已在 Gateway readiness 前 infrastructure failure 并冻结，禁止重跑；launcher provider env allowlist 已形成 `2e51cb9`，detached clean install/build/verifier、零凭证 dry-run、env 精确回收与清理后复核均已全绿，可按 `prior=3.20913136`、`maxTotal=3.30913136` 执行且只执行一次 Windows formal。
 4. 保持 `$5.00` 累计池、`$0.10` 单次窗口、`12 turns`、`24,000 tokens` 和 Provider retry=`0` 不变。
 5. DeepSeek 最终账单仍作为外部真源单独复核；仓库内重算结果只用于保守 Gate。
 

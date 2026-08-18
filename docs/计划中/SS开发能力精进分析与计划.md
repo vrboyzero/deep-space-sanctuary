@@ -2739,7 +2739,7 @@ Source / Workspace Revision
 3. **费用、workspace 与资源证据冻结**：
    - model calls=`0`、Provider usage=`not_reached`、新增费用=`$0`；无 benchmark artifact、event、trace 或 patch 可供产品评估；
    - harness=`8a67630` 与冻结 repository input=`b6c62820...` 均保持 clean；端口 listener/相关 Node 进程=`0/0`；
-   - runtime 自动生成文件暂按用户确认保留，当前路径为 `tmp/p0-required-mutation-canary-8a67630-ts-api-windows-formal-r1-runtime/gateway-state/.env` 与 `tmp/p0-required-mutation-canary-8a67630-ts-api-windows-formal-r1-runtime/gateway-state/.env.local`；本轮不处理这两个文件，在完成后续清理前不宣称 env residue Gate 通过。
+   - runtime 自动生成的 `tmp/p0-required-mutation-canary-8a67630-ts-api-windows-formal-r1-runtime/gateway-state/.env` 与 `.env.local` 当时按用户确认保留；后续获得明确授权后已于 2026-08-18 送入 Windows 回收站，记录追加到 `tmp/p0-required-mutation-canary-8a67630-sensitive-cleanup.log`，未重跑该 identity。
 
 4. **效果**：
    - 失败已排除 DeepSeek 调价、费用窗口、模型行为、任务合同和 envelope 规范化实现，定位到 formal 外层隔离 wrapper 的 Windows 空变量语义；
@@ -2811,11 +2811,12 @@ Source / Workspace Revision
    - report SHA-256=`04137163725e76d9ad59a83a889defed9d2788b4ba0324e7fa6f4890e6974f22`，production/repository snapshot preflight 均为 `passed`；
    - credentialsConfigured=`false`、usage=`not_reached`、event/trace/patch=`0/0/0`，任务按缺少 API key 预期失败关闭；fixture=`fd688326...` clean，source/harness dirty=`false/false`。
 
-4. **敏感值、资源与 env residue 证据**：
+4. **敏感值、资源与 env residue 闭合**：
    - artifact/fixture/runtime 共扫描 `12,816` 个常规文件；控制配置中的 `7` 个候选条目只命中提交内默认模板公开占位值，排除后 `3` 个非公开敏感实值精确命中=`0`、unreadable diagnostics=`0`；
    - Gateway stderr=`0 bytes`，端口 listener/相关 Node 进程=`0/0`；dry-run 未触达 Provider，新增费用=`$0`；
-   - 新 runtime 自动生成的 `tmp/p0-required-mutation-canary-2e51cb9-ts-api-windows-dry-run-r1-runtime/gateway-state/.env` 与 `tmp/p0-required-mutation-canary-2e51cb9-ts-api-windows-dry-run-r1-runtime/gateway-state/.env.local` 当前按 HITL 规则保留未处理，SHA-256=`4579e3b7580ea74e795d8b4711c833b51f928e0b0aa47d3bb9a25c716d967e0e` / `292c3ebd62d69a3540a84d6228cf900a583800710018f9ff95c009e789feea2b`；env residue Gate 尚未闭合；
-   - 用户要求暂不处理的 `8a67630` formal runtime 两个 env 文件仍保持原路径与存在状态，本轮未触碰。
+   - 经用户明确授权，`2e51cb9` dry-run 自动生成的 `tmp/p0-required-mutation-canary-2e51cb9-ts-api-windows-dry-run-r1-runtime/gateway-state/.env` 与 `.env.local` 已送入 Windows 回收站，清理前 SHA-256=`4579e3b7580ea74e795d8b4711c833b51f928e0b0aa47d3bb9a25c716d967e0e` / `292c3ebd62d69a3540a84d6228cf900a583800710018f9ff95c009e789feea2b`，cleanup log=`tmp/p0-required-mutation-canary-2e51cb9-sensitive-cleanup.log`；
+   - 同次授权下，`8a67630` formal runtime 的两个同哈希 env 文件也已精确送入回收站并追加原 cleanup log；四个原路径均不存在，未处理其他 runtime/artifact 文件；
+   - 清理后复扫两组共 `7` 个 artifact/fixture/runtime 根、`25,630` 个常规文件，`3` 个非公开敏感实值精确命中/unreadable=`0/0`；`8a67630`/`2e51cb9` harness 均 detached/clean 且 identity 匹配，两个 fixture 均为 `fd688326...` clean，端口 listener/相关 Node 进程=`0/0`。
 
 5. **效果**：
    - 新 launcher 已在真实 Windows Gateway/benchmark 子进程中越过 readiness，排除 `mkdir ''` present-empty 回归；
@@ -2826,13 +2827,13 @@ Source / Workspace Revision
 
 - TypeScript 编译无错误：detached harness workspace build 与独立 `verify:build` 通过；
 - source 提交前 `3` 个相邻测试文件 `60/60` 通过，其中 Windows launcher `16/16`；
-- 双 preflight、零凭证/零 usage、空 event/trace/patch、fixture/harness clean、真实敏感值与进程/端口 Gate 通过；仅 env residue Gate 待确认清理。
+- 双 preflight、零凭证/零 usage、空 event/trace/patch、fixture/harness clean、真实敏感值、env residue 与进程/端口 Gate 全部通过。
 
 ##### 后续计划
 
-- **下一步准备做什么**：等待用户确认后，仅将 `2e51cb9` dry-run 新生成的上述两个 env 文件送入 Windows 回收站并记录 cleanup log；不处理 `8a67630` formal runtime 的两个保留文件。
-- **为什么先做它**：Provider、workspace 与进程证据已闭合，当前唯一未闭合项是本轮新 runtime env residue；先精确回收可避免把旧 formal 保留证据混入清理范围。
-- **当前还缺的关键闭环**：新 dry-run env 文件归零、清理后私有敏感值/端口/进程/fixture/harness 复核；完成前不安排 `2e51cb9` formal，不进入 WSL2、完整矩阵、candidate v4 或 P2-C。
+- **下一步准备做什么**：按 `deepseek-v4-flash` 新高峰价、Provider retry=`0`、`12 turns/24,000 tokens` 与 `prior=3.20913136 -> maxTotal=3.30913136` 的既有合同，执行且只执行一次 `2e51cb9` Windows formal。
+- **为什么先做它**：detached clean install/build/verifier、双 preflight、冻结 repository input、零凭证失败关闭、敏感值、env residue 与资源清理 Gate 已全部闭合；现在应直接验证真实模型 mutation，而不是继续扩大确定性准备工作。
+- **当前还缺的关键闭环**：formal 必须完成冻结三文件 mutation、清除全部 `TraceValues`、通过 frozen verifier，并形成 available/exact/non-truncated changes 与完整 provider-reported usage/trace；无论成功或失败均永久冻结，Windows 未全绿不进入 WSL2，也不启动完整矩阵、candidate v4 或 P2-C。
 
 ### 6.6 费用与禁止范围
 
@@ -2843,7 +2844,7 @@ Source / Workspace Revision
 - unobservable reserve=`$0.80000000`；
 - 守卫上界=`33.21073088 RMB < 50 RMB`。
 
-`a72f127` 唯一 Windows formal 已执行、失败并冻结；产品 mutation 成功，但 terminal/report usage 因 CLI `read ENOTCONN` 不可观测，完整 `$0.10` 已计入预留。DeepSeek 新价格自 `2026-08-17 00:00` 生效，生效后 `32` 个历史可观测 formal 已统一按高峰价和输入全 miss 重算，差额 `$0.12570178` 已加入保守 observed 上界。`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc` Windows/WSL2、`5200317` Windows/WSL2 与 `0cd7d13` Windows/WSL2 formal 的 provider-reported cost=`$0.00358616/$0.00302790/$0.00235180/$0.00316938/$0.00334516/$0.00291315/$0.00278265/$0.00639158/$0.00244161` 均已加入 observed。`8a67630` Windows formal 在 Gateway readiness 前以 infrastructure failure 冻结，model calls=`0`、新增费用=`$0`，不改变 observed。Stage 0D 累计池仍为 `$5.00`，最坏累计池加 reserved 守卫=`47.53768 RMB < 50 RMB`；当前不安排下一 formal，项目记录不能替代 Provider 外部账单。
+`a72f127` 唯一 Windows formal 已执行、失败并冻结；产品 mutation 成功，但 terminal/report usage 因 CLI `read ENOTCONN` 不可观测，完整 `$0.10` 已计入预留。DeepSeek 新价格自 `2026-08-17 00:00` 生效，生效后 `32` 个历史可观测 formal 已统一按高峰价和输入全 miss 重算，差额 `$0.12570178` 已加入保守 observed 上界。`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc` Windows/WSL2、`5200317` Windows/WSL2 与 `0cd7d13` Windows/WSL2 formal 的 provider-reported cost=`$0.00358616/$0.00302790/$0.00235180/$0.00316938/$0.00334516/$0.00291315/$0.00278265/$0.00639158/$0.00244161` 均已加入 observed。`8a67630` Windows formal 在 Gateway readiness 前以 infrastructure failure 冻结，model calls=`0`、新增费用=`$0`，不改变 observed。Stage 0D 累计池仍为 `$5.00`，最坏累计池加 reserved 守卫=`47.53768 RMB < 50 RMB`；`2e51cb9` Windows 无费用 Gate 已全绿，下一步唯一 formal 尚未执行，项目记录不能替代 Provider 外部账单。
 
 当前明确禁止：
 
@@ -3020,15 +3021,15 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 ### 9.6 费用和发布边界
 
-DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算，`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc` Windows/WSL2、`5200317` Windows/WSL2 与 `0cd7d13` Windows/WSL2 formal 的 provider-reported `$0.00358616/$0.00302790/$0.00235180/$0.00316938/$0.00334516/$0.00291315/$0.00278265/$0.00639158/$0.00244161` 也已入账；当前费用守卫为 **33.21 元人民币**，低于 **50 元人民币**授权上限。`a72f127` terminal/report usage 不可观测，仍保守预留完整 `$0.10`；runner 累计池保持 `$5.00`，加现有 reserved 后的最坏守卫仍为 **47.54 元人民币**。`8a67630` Windows formal 未到达 Provider、费用=`$0`，未提高费用、turn/token 或 retry；当前不安排下一 formal，外部服务商账单仍需单独核对。
+DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算，`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc` Windows/WSL2、`5200317` Windows/WSL2 与 `0cd7d13` Windows/WSL2 formal 的 provider-reported `$0.00358616/$0.00302790/$0.00235180/$0.00316938/$0.00334516/$0.00291315/$0.00278265/$0.00639158/$0.00244161` 也已入账；当前费用守卫为 **33.21 元人民币**，低于 **50 元人民币**授权上限。`a72f127` terminal/report usage 不可观测，仍保守预留完整 `$0.10`；runner 累计池保持 `$5.00`，加现有 reserved 后的最坏守卫仍为 **47.54 元人民币**。`8a67630` Windows formal 未到达 Provider、费用=`$0`，未提高费用、turn/token 或 retry；`2e51cb9` Windows 无费用 Gate 已全绿，下一步唯一 formal 尚未执行，外部服务商账单仍需单独核对。
 
 当前不会重跑已冻结版本，不会提高模型预算，不会启动完整付费矩阵，不会 push、公开发布或执行生产操作。
 
 ### 9.7 后续计划
 
-- **下一步准备做什么**：等待用户确认后，只回收 `2e51cb9` dry-run 新生成且已记录路径/哈希的两个 env 文件；继续保留 `8a67630` formal runtime 的两个 env 文件。
-- **为什么先做它**：新 identity 的 install/build/verifier、双 preflight、零凭证 Provider 未触达、敏感值和进程/端口 Gate 已通过，唯一未闭合项是新 dry-run env residue。
-- **当前还缺的关键闭环**：新 env 精确回收与清理后零残留复核；完成前不执行 `2e51cb9` formal，不重跑 `8a67630`，不启动 WSL2、完整矩阵、candidate v4 或 P2-C。
+- **下一步准备做什么**：使用既有高峰价格、Provider retry=`0`、`12 turns/24,000 tokens` 和 `3.20913136 -> 3.30913136` 费用窗口，执行唯一一次 `2e51cb9` Windows formal。
+- **为什么先做它**：新 identity 的 install/build/verifier、双 preflight、零凭证 Provider 未触达、env 精确回收、敏感值和资源 Gate 已全部通过，下一项有效证据只能来自真实模型 mutation。
+- **当前还缺的关键闭环**：Windows formal 的冻结三文件任务、verifier、exact/non-truncated snapshot、完整 usage/trace 与零残留；禁止重跑 `8a67630`，Windows 未全绿不启动 WSL2、完整矩阵、candidate v4 或 P2-C。
 
 ## 10. 实施计划进度表
 
@@ -3036,7 +3037,7 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`2e51cb9` Windows 无费用 Gate 除新 env residue 外全绿；待 HITL 清理确认** | detached clean install=`493/492/0/493`，build/verifier、双 preflight、credentials/usage/event/trace/patch=`false/not_reached/0/0/0`，私有敏感值命中、进程、端口=`0/0/0`；新生成 env 两路径/哈希已记录并保留，`8a67630` formal env 未触碰 | env 精确回收与复核约 0.1 人日 | 经确认仅回收 `2e51cb9` dry-run 新 env 并复核零残留；完成前不执行 formal/WSL2，禁止重跑 `8a67630` |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **`2e51cb9` Windows 无费用 Gate 全绿；唯一 formal 待执行** | detached clean install=`493/492/0/493`，build/verifier、双 preflight、credentials/usage/event/trace/patch=`false/not_reached/0/0/0`；`8a67630`/`2e51cb9` 四个 runtime env 已精确回收并记录，清理后常规文件/私有敏感值命中/unreadable/进程/端口=`25,630/0/0/0/0`，双 harness/fixture clean | Windows formal、复核与回写约 0.2 人日 | 按既有高峰价、`$0.10`、`12/24,000`、retry=`0` 执行且只执行一次 `2e51cb9` Windows formal；Windows 未全绿不进入 WSL2，禁止重跑 `8a67630` |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | 2026-08-17：当前 HEAD `5b36691...` 的 P0-P2 源码/测试/artifact 已核查；SS 横向原始加权 `9.135`（发布分 `9.1`）；Grok Build `9.4`、Codex `9.7`、Claude Code `9.7`、OpenCode `9.3`、Hermes Agent `8.9`；竞品证据边界已记录 | - | 当前精简版与 archive-03 共同保留决策和完整历史；真实复杂任务成功率仍待新 formal 证据，不宣称达到 9.5 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
