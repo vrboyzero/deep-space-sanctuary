@@ -3118,6 +3118,51 @@ Source / Workspace Revision
 - **为什么先做它**：required-mutation 代表 Gate 已闭合，但 P2-C 还要求其余失败族的真实改善证据；先离线收缩样本可避免直接启动完整付费矩阵或重复修复已覆盖形状。
 - **当前还缺的关键闭环**：B 层剩余 `36` 项和 C 层剩余 `1` 项不能由单 canary 外推；至少还需为 length/schema 失败族形成可复现根因、确定性修复或 `record_only` 决策及后续真实代表证据，才可重新评估 candidate v4 / P2-C 进入条件。
 
+#### P0 剩余失败族离线归因实现结论：`length=5` / `schema=2` 确定性 Gate 闭环（2026-08-18）
+
+##### 已完成内容
+
+1. **`artifacts/p0-native-edd1c87/failure-analysis-v1/failure-analysis.json` 与冻结 run artifact 复核**：
+   - source identity=`edd1c8779d928879c1d3e0669f725c79fd0ebf97`，只读复核 `5` 个 `model_empty_content_at_length` 和 `2` 个 `output_schema_invalid`；未改写 artifact、未重跑冻结 run、未触达 Provider；
+   - 失败 task 仅包含 `real-web.ui-regression` 与 `system.parallel-read-isolation`，逐 run 归因如下：
+
+| 冻结 run | 平台 / attempt | 终态 | 冻结断言 |
+| --- | --- | --- | --- |
+| `real-web-ui-regression-windows-a1-1786792951019` | Windows / a1 | `run.failed`，reasoning-only `length(3913)` | mutation/tests=`true/true`，patch 未接受 |
+| `real-web-ui-regression-windows-a2-1786793854626` | Windows / a2 | `output_schema_invalid`，finalization JSON 在 `494` 字符处未闭合 | mutation/tests=`true/true`，terminal finalization 禁止再 repair |
+| `real-web-ui-regression-windows-a3-1786794797177` | Windows / a3 | `run.failed`，reasoning-only `length(3607)` | mutation/tests/patch=`true/true/true` |
+| `real-web-ui-regression-wsl2-linux-a1-1786796015069` | WSL2 / a1 | `run.failed`，reasoning-only `length(4197)` | mutation/tests=`true/true`，patch 未接受 |
+| `real-web-ui-regression-wsl2-linux-a2-1786797391295` | WSL2 / a2 | `run.failed`，reasoning-only `length(3963)` | mutation/tests/patch=`true/true/true` |
+| `real-web-ui-regression-wsl2-linux-a3-1786798980523` | WSL2 / a3 | `run.failed`，reasoning-only `length(4332)` | mutation/tests/patch=`false/false/false` |
+| `system-parallel-read-isolation-windows-a2-1786794107191` | Windows / a2 | `output_schema_invalid` at `/summary` | 完整 JSON 的 `summary` 超过 `maxLength: 1000`；唯一 repair 后仍不合规 |
+
+2. **`packages/belldandy-agent/src/tool-agent.ts` 与相邻确定性回归复核**：
+   - 基线后的 `46fbf69` 已把所有 `finalizationOnlyCall` 接入 DeepSeek thinking 禁用；required-mutation finalization 保持无工具、`max_tokens=1024`，覆盖 Web 的 reasoning 挤占正文与截断 JSON 形状；
+   - reasoning-only `finish_reason=length` 保持最多一次 buffered finalization；普通 schema 失败保持最多一次无工具 repair；bounded finalization 仍为终态，不串联第三次模型调用；
+   - `tool-agent-workspace-mutation.test.ts`、`tool-agent.streaming.test.ts`、`structured-output.test.ts`、`react-structured-output-repair.test.ts` 与 Core CLI output-schema 合同测试已覆盖上述请求、usage、工具和失败关闭边界。
+
+3. **技术债裁决与最小代表选择**：
+   - Web 的 `length=5` 与截断 schema 样本判定为“当前实现已覆盖、历史 artifact 保持冻结”，本环节不重复修改源码；后续真实代表仍选 `real-web.ui-regression`，但须等 `unknown=30` 离线归因完成后再判断是否具备最小付费 Gate；
+   - parallel-read 的单个 schema 样本判定为 `record_only`：同 task 其余样本已通过，Validator 正确拒绝超长 `/summary`，Agent 也已消费唯一 repair；不增加 Provider retry、model turn 或第二次 repair；
+   - 两类样本均不从历史 `37` 个失败中移除，不据此创建 candidate v4 或启动 P2-C。
+
+4. **效果**：
+   - `length=5`、`schema=2` 已形成 task/platform/终态/断言清单，并映射到当前确定性 Gate；
+   - 未发现需要新增运行时代码的当前缺口，避免了为历史模型不合规输出放宽单次恢复与费用合同；
+   - P0 下一阻塞点收敛为 `unknown=30` 的离线失败形状归因及后续最小真实代表证据。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build:incremental` 退出 `0`，`corepack pnpm verify:build` 确认全部 workspace package entrypoint 存在；
+- `9` 个定向测试全部通过（新增测试=`0`）：finalization thinking、required mutation thinking、reasoning-only length recovery、structured repair 成功/失败关闭、terminal finalization、bounded repair `2` 项及 Core CLI output-schema 合同；
+- Provider/model calls=`0`，冻结 run 重跑=`0`，费用变化=`$0`；历史 artifact 和既有预算、turn/token/retry 合同均未修改。
+
+##### 后续计划
+
+- **下一步准备做什么**：继续只读拆解纯 flash 基线的 `unknown=30`，按 task、平台、最后成功工具、mutation/tests/patch、终态正文和可用 patch 聚类，优先找出跨平台重复且可由当前离线 Gate 重放的最大失败形状。
+- **为什么先做它**：已知 `length/schema` 均已有当前保护或正确失败关闭；`unknown=30` 才是 B 层 `36` 个剩余失败中的主体，在未知根因前启动真实代表会重复付费且无法解释改善归属。
+- **当前还缺的关键闭环**：`unknown=30` 的稳定分类、至少一个当前源码缺口或 `record_only` 裁决、以及据此选择的最小双平台真实代表；这些证据形成前仍禁止完整矩阵、candidate v4 和 P2-C。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
@@ -3236,6 +3281,8 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 | 单个 mutation-only Tool call 包含多个完整 patch envelope | `fix_now` | 已仅对 `2-16` 个完整、纯净、required-path 范围内且各自可执行的 envelope 合并为一次原子 patch；畸形 marker、额外正文/参数、未知路径与超限输入继续拒绝。历史 formal 正文未保留，不外推为根因完全修复 |
 | Windows formal `.env.local` 隔离依赖临时 PowerShell wrapper | `fix_now` | launcher 已提供显式 provider env 文件 allowlist、child env 隔离与 present-empty 覆盖；`2977780` 双平台 dry-run/formal 已关闭真实进程、费用、敏感值与 env residue 证据 |
 | required-mutation 其余失败改善范围 | `split_task` | 代表 canary 双平台闭合后按失败形状逐类验证，不做单任务外推 |
+| Web finalization reasoning 挤占正文与截断 schema | `record_only` | `length=5` 与 Web schema 样本均来自冻结 `edd1c87`；基线后的 `46fbf69` 已对全部 finalization-only 请求禁用 DeepSeek thinking，专属 required-mutation、length recovery 和 structured-output 回归全绿；下一真实 identity 前不重复改合同 |
+| parallel-read 唯一 repair 后仍超长 | `record_only` | Windows a2 的完整 JSON `summary` 超过 `maxLength: 1000`，Validator 正确拒绝且唯一 repair 已消费；不增加模型 turn、Provider retry 或第二次 repair，同 task 其余冻结样本不据此改写 |
 | 连续候选 9.5 证据 | `split_task` | 独立进入 P2-C；费用可沿用 `< 50 RMB` 持续授权，但 P0 通过不自动等于阶段 Gate 通过 |
 | C# 选型和生产接入 | `defer` | 真实需求、许可、安全分发和 truth set 具备后再启动 |
 | Go 生产 rollout | `defer` | 保持 canary eligible，另行定义观察窗口和生产 Gate |
@@ -3307,7 +3354,7 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 - 主体框架不是当前瓶颈：P1-A1/A2、P1-B、P1-C、P2-A、P2-B 都能在当前源码中找到相应实现和测试。
 - 真正瓶颈是复杂多文件任务的稳定完成率。现有 `37` 个失败不能因为单个代表任务成功或新增保护 Gate 就从分母移除。
-- `a72f127`、`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc`、`5200317`、`0cd7d13` 和 `2e51cb9` 的失败证据均保持冻结；后继 `2977780` 已在 Windows 与 WSL2 完成同一三文件任务，冻结 evaluator、exact snapshot、唯一终态、完整 usage/cost、敏感值和资源 Gate 全绿，required-mutation 双平台代表 canary 已关闭。该单任务证据仍不从 `37` 个历史失败中移除样本，当前下一缺口是 `length=5`、`schema=2` 等其余失败族的可重复改善证据。
+- `a72f127`、`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc`、`5200317`、`0cd7d13` 和 `2e51cb9` 的失败证据均保持冻结；后继 `2977780` 已关闭 required-mutation 双平台代表 canary。`length=5`、`schema=2` 也已完成离线归因：Web 形状由当前 finalization thinking/length recovery Gate 覆盖，parallel-read 超长 summary 由唯一 repair 后正确失败关闭；这些证据仍不从 `37` 个历史失败中移除样本，当前下一缺口是 `unknown=30` 的稳定分类与真实代表证据。
 - P2-C 尚未启动。只有多个失败形状出现可重复改善，并且两个连续冻结候选通过全部硬 Gate，才能宣称达到 9.5。
 
 因此当前主要瓶颈是“真实效果证据还不够”，不是“再增加更多功能”。
@@ -3320,9 +3367,9 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 
 ### 9.7 后续计划
 
-- **下一步准备做什么**：具体状态以文末唯一进度表为准；当前先离线回读纯 flash 基线的 `length=5`、`schema=2` 失败 artifact，按 task、平台、终态和失败断言形成最小归因清单，全程不触达模型。
-- **为什么先做它**：required-mutation 双平台代表 Gate 已关闭，但其余失败族仍没有当前实现上的真实改善证据；先离线收缩能避免直接启动完整付费矩阵或误把单 canary 外推为整体 uplift。
-- **当前还缺的关键闭环**：length/schema 失败族的可复现根因、确定性修复或 `record_only` 决策，以及后续最小真实代表任务；这些证据形成前不进入完整矩阵、candidate v4 或 P2-C。
+- **下一步准备做什么**：具体状态以文末唯一进度表为准；当前继续只读拆解纯 flash 基线的 `unknown=30`，按 task、平台、最后成功工具、mutation/tests/patch 和终态信号聚类，全程不触达模型。
+- **为什么先做它**：required-mutation 代表和 `length/schema` 确定性 Gate 已闭合，但 `unknown=30` 仍占历史失败主体；先离线收缩能避免直接启动完整付费矩阵或把模型偶发不合规误判为产品改善。
+- **当前还缺的关键闭环**：`unknown=30` 的稳定分类、至少一个可复现的当前缺口或 `record_only` 决策，以及由此选择的最小双平台真实代表；这些证据形成前不进入完整矩阵、candidate v4 或 P2-C。
 
 ## 10. 实施计划进度表
 
@@ -3332,7 +3379,7 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 | --- | --- | --- | --- | ---: | --- |
 | P0 后续：required-mutation 双平台代表 canary | P0 | **已完成并冻结** | `2977780` Windows/WSL2 formal 均完成同一三文件任务；evaluator、唯一 `run.completed`、available/exact/non-truncated snapshot、`6/6` usage、真实 key 与零残留全绿；cost=`$0.00635007/$0.00606781`，WSL readiness 端口/认证=`10.100/10.108s` | - | 禁止重跑 `8a67630`/`2e51cb9`/`2977780` 已执行 run；该 canary 不外推为其余 `37` 个失败改善 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | 2026-08-17：当前 HEAD `5b36691...` 的 P0-P2 源码/测试/artifact 已核查；SS 横向原始加权 `9.135`（发布分 `9.1`）；Grok Build `9.4`、Codex `9.7`、Claude Code `9.7`、OpenCode `9.3`、Hermes Agent `8.9`；竞品证据边界已记录 | - | 当前精简版与 archive-03 共同保留决策和完整历史；真实复杂任务成功率仍待新 formal 证据，不宣称达到 9.5 |
-| P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级；进入剩余失败族离线归因** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0`；required-mutation 代表已双平台闭合 | 离线归因约 0.5-1 人日，后续代表验证另计 | 先分析 `length=5`、`schema=2` 冻结 artifact 并选择最小代表；不重写旧 artifact、不直接创建 candidate v4 |
+| P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级；`length/schema` 离线归因完成，进入 `unknown=30` 聚类** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0`；required-mutation 代表双平台闭合；`length/schema` 定向 Gate=`9/9`、Provider calls=`0` | `unknown` 离线归因约 0.5-1 人日，后续代表验证另计 | 先聚类 `unknown=30` 并选择跨平台重复的最小代表；不重写旧 artifact、不直接创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | 6-11 人日 | 生产化需独立 rollout、观察窗口和真实项目 Gate |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild、restore/联网和生命周期边界 |
@@ -3340,4 +3387,4 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `31` 文件 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | 10-15 人日 | 人工 provenance、`blocked/verifying` 和 verification 外键在 authoritative owner 出现前保持 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 各 `360/360`，合计 `720/720` lane；fault matrix 和零残留通过 | 12-20 人日 | 不自动 merge/release/deploy，不共享主工作区并行写 |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumers、failure conformance、Doctor、依赖零发现、Puppeteer 25、portable、Settings、Quality run `31805350871` 通过 | 8-14 人日 | Docker run `31805350776` 保留为不可读历史项；不公开发布或替换 sandbox |
-| P2-C：9.5 稳定化与最终复核 | P2 | **未启动** | 当前 B=`12/48`、C=`23/24`；required-mutation 代表已双平台闭合，但 length/schema 其余失败族真实改善证据仍缺 | 5-8 人日 + 观察窗口 | 两个连续候选原始加权 `>=9.500`、各维及全部硬 Gate 通过；费用可沿用 `< 50 RMB` 持续授权，但前序阶段 Gate 未通过前不得启动 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **未启动** | 当前 B=`12/48`、C=`23/24`；required-mutation 代表已双平台闭合，`length/schema` 离线 Gate 已闭合，但 `unknown=30` 与后续真实代表证据仍缺 | 5-8 人日 + 观察窗口 | 两个连续候选原始加权 `>=9.500`、各维及全部硬 Gate 通过；费用可沿用 `< 50 RMB` 持续授权，但前序阶段 Gate 未通过前不得启动 |
