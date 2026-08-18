@@ -3277,6 +3277,34 @@ Source / Workspace Revision
 - **为什么先做它**：Windows formal 已证明 finalization 终态修复有效，继续跑 WSL2 只会重复一个已知语义失败；objective-review 是当前本应发现或纠正过宽 patch、却被 reasoning 挤占正文的最后 mutation Gate。
 - **当前还缺的关键闭环**：objective-review 的确定性失败测试、最小实现、Agent/structured-output 回归与 clean build；只有新 identity 重新通过 Windows 零模型 Gate 后，才评估新的唯一代表 formal，仍不重跑 `d6d7367` 或直接进入 WSL2/完整矩阵/candidate v4/P2-C。
 
+#### P0 Web 代表修复实现结论：objective-review 禁用 DeepSeek thinking（2026-08-18）
+
+##### 已完成内容
+
+1. **`packages/belldandy-agent/src/tool-agent.ts` 修改**：
+   - 将 `workspaceMutationObjectiveReviewCall` 纳入 DeepSeek thinking disable 条件，与既有 `finalizationOnlyCall` 共用同一请求约束；
+   - objective-review 继续保持有界 mutation 工具选择、单次 correction 与后续完整复读，不增加模型调用上限、turn/token 或 Provider retry。
+
+2. **`packages/belldandy-agent/src/tool-agent-workspace-mutation.test.ts` 回归覆盖**：
+   - 新增 reasoning-only `finish_reason=length` 的失败/成功对照，验证 objective-review 在 thinking enabled 配置下实际发送 `thinking={type:"disabled"}` 并能返回 bounded correction patch；
+   - 更新既有 required-mutation finalization 测试，验证 objective-review 与最终无工具 finalization 均禁用 DeepSeek thinking，且工具调用、复读顺序和终态保持不变。
+
+3. **效果**：
+   - `d6d7367` 的真实失败形状已有确定性可复现 seam：DeepSeek reasoning 不再挤占 objective-review 的 correction 正文机会；
+   - 修复不改变预算合同，未重跑任何冻结 run、未触达 Provider，也未增加费用；新 source identity 仅在后续零模型 Gate 通过后才允许新的唯一 Windows formal。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build:incremental` 与独立 `corepack pnpm verify:build` 均退出 `0`；
+- `167` 个定向测试全部通过（新增测试=`1`）：workspace mutation `53`、ToolEnabledAgent `84`、streaming/structured-output/openai-tool-choice `30`；
+- Provider/model calls=`0`，费用变化=`$0`；提交=`d01030a`，用户已有的 D 盘文档改动未暂存、未修改。
+
+##### 后续计划
+
+- **下一步准备做什么**：以 `d01030a` 为新的 detached source identity 建立 clean harness，完成 offline install、build、独立 `verify:build`、Windows 零凭证 dry-run、Gateway readiness/auth、固定 route、费用窗口、敏感值扫描和 `.env` / `.env.local` 回收站清理；
+- **为什么先做它**：需要先证明修复后的 source 在真实 Web fixture、Gateway 和 Windows 资源边界上可审计，再消费唯一一次 `deepseek-v4-flash` formal；这样可把新证据归因到 objective-review 修复，不混入旧 identity 的冻结失败；
+- **当前还缺的关键闭环**：新 identity 的零模型准备 Gate 与随后唯一 Windows formal 的 mutation/tests/patch、valid schema terminal、完整 usage/cost 和零残留审计；Gate 未闭合前不启动 WSL2、完整矩阵、candidate v4 或 P2-C。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
@@ -3483,9 +3511,9 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 
 ### 9.7 后续计划
 
-- **下一步准备做什么**：具体状态以文末唯一进度表为准；当前先为 objective-review reasoning-only `length` 后失去 mutation 纠正机会补确定性失败测试，再做不扩大预算/重试的最小修复。
-- **为什么先做它**：`d6d7367` 已真实证明 bounded finalization 能输出合法终态，但任务被过宽 patch 击败；在 Windows 未成功时继续 WSL2 不能提供新的可归因证据。
-- **当前还缺的关键闭环**：objective-review 恢复逻辑、Agent/structured-output 回归、clean build 与新 identity 的零模型 Gate；这些证据形成前不再付费，不进入 WSL2、完整矩阵、candidate v4 或 P2-C。
+- **下一步准备做什么**：具体状态以文末唯一进度表为准；当前以提交 `d01030a` 建立新的 detached clean harness，先完成全部零模型准备 Gate，再评估唯一一次新的 Windows formal。
+- **为什么先做它**：objective-review 的确定性回归与最小修复已完成，新的 source identity 必须先通过真实 fixture、Gateway readiness/auth、敏感值和资源收敛检查，才能获得可归因的付费证据。
+- **当前还缺的关键闭环**：新 identity 的零模型准备证据，以及随后唯一 Windows formal 的 mutation/tests/patch、valid schema terminal、完整 usage/cost 与零残留审计；这些证据形成前不重跑 `d6d7367`、不启动其 WSL2、不进入完整矩阵、candidate v4 或 P2-C。
 
 ## 10. 实施计划进度表
 
@@ -3495,7 +3523,7 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 | --- | --- | --- | --- | ---: | --- |
 | P0 后续：required-mutation 双平台代表 canary | P0 | **已完成并冻结** | `2977780` Windows/WSL2 formal 均完成同一三文件任务；evaluator、唯一 `run.completed`、available/exact/non-truncated snapshot、`6/6` usage、真实 key 与零残留全绿；cost=`$0.00635007/$0.00606781`，WSL readiness 端口/认证=`10.100/10.108s` | - | 禁止重跑 `8a67630`/`2e51cb9`/`2977780` 已执行 run；该 canary 不外推为其余 `37` 个失败改善 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | 2026-08-17：当前 HEAD `5b36691...` 的 P0-P2 源码/测试/artifact 已核查；SS 横向原始加权 `9.135`（发布分 `9.1`）；Grok Build `9.4`、Codex `9.7`、Claude Code `9.7`、OpenCode `9.3`、Hermes Agent `8.9`；竞品证据边界已记录 | - | 当前精简版与 archive-03 共同保留决策和完整历史；真实复杂任务成功率仍待新 formal 证据，不宣称达到 9.5 |
-| P0：Benchmark v3 与外部有效性 | P0 | **Web finalization 代表已闭合，任务语义仍失败；未晋级** | `d6d7367` Windows formal：第 4 次 reasoning-only length 后第 5 次 bounded finalization 产出合法 JSON 与唯一 `run.completed`；`5/5` usage、cost=`$0.00690650`；测试通过但过宽 patch 被 evaluator 拒绝，敏感值/残留=`0/0` | objective-review 修复约 0.5-1 人日；后续代表另计 | 先补 objective-review 失败回归并形成新 identity；禁止重跑 `d6d7367` 或启动其 WSL2，不直接创建 candidate v4 |
+| P0：Benchmark v3 与外部有效性 | P0 | **objective-review 修复已完成；新 identity 零模型 Gate 准备中** | `d01030a`：objective-review 与 finalization 均禁用 DeepSeek thinking；定向测试 `167/167`、build/verify:build 通过、Provider calls=`0`；`d6d7367` formal 仍永久冻结，历史语义失败不改写 | 新 identity 准备约 0.5-1 人日；后续代表另计 | 先完成 detached clean harness、Windows 零凭证 readiness/auth 与敏感值/资源清理 Gate；通过后只执行一次新的 Windows formal，禁止重跑 `d6d7367` 或启动其 WSL2，不直接创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | 6-11 人日 | 生产化需独立 rollout、观察窗口和真实项目 Gate |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild、restore/联网和生命周期边界 |
