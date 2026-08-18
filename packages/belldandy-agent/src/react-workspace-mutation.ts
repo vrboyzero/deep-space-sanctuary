@@ -149,6 +149,7 @@ const MUTATION_OBJECTIVE_INPUT_CORRECTION_INSTRUCTION = [
   MUTATION_SUBSET_BEHAVIOR_PRESERVATION_INSTRUCTION,
   "Rebuild the patch from the task and source evidence. Do not copy the failed patch, emit an empty file section, or use error text as source evidence.",
   "The rebuilt correction must change task-relevant behavior. Do not add commentary as a substitute for the required source change, and do not remove and re-add an unchanged source line; keep unchanged lines as patch context.",
+  "Treat an over-specific or expanded current predicate as task-relevant behavior that still requires correction when the task asks for the smallest change. Derive the smallest sufficient condition proved by the task's positive and outside/negative witnesses, replace only that predicate, and keep the rest of the current source unchanged.",
   "Make the smallest patch relative to the current source. Preserve every already-correct adjacent expression and branch byte-for-byte as patch context. Do not refactor, expand, normalize, modernize, or make an equivalent rewrite of code that already satisfies the task.",
   MUTATION_PATCH_HUNK_INSTRUCTION,
   "Do not read files, run commands, steer, load deferred tools, or return a final answer in this phase.",

@@ -1605,6 +1605,148 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("rebuilds a redundant objective correction as the smallest semantic delta", async () => {
+    const requiredChangedPaths = ["src/diff/props.js"];
+    const originalCondition = "\t\t} else if (value != NULL && value !== false) {";
+    const expandedCondition = "\t\t} else if (value != NULL && (value !== false || name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-')) {";
+    const minimalCondition = "\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {";
+    const sourcePrefix = [
+      "\t\t// aria- and data- attributes have no boolean representation.",
+      "\t\t// A `false` value is different from the attribute not being present.",
+      "\t\tif (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+    ].join("\n");
+    let currentSource = `${sourcePrefix}\n${originalCondition}\n\t\t\tdom.setAttribute(name, value);`;
+    const initialExpandedPatch = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      `-${originalCondition}`,
+      `+${expandedCondition}`,
+      "*** End Patch",
+    ].join("\n");
+    const redundantCorrection = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      `-${expandedCondition}`,
+      `+${expandedCondition}`,
+      "*** End Patch",
+    ].join("\n");
+    const minimalCorrection = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      `-${expandedCondition}`,
+      `+${minimalCondition}`,
+      "*** End Patch",
+    ].join("\n");
+    const semanticDeltaInstruction = "Treat an over-specific or expanded current predicate as task-relevant";
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return response(modelToolCall("patch-expanded", "apply_patch", {
+          input: initialExpandedPatch,
+        }, 300, 60));
+      }
+      if (requests.length === 2 || requests.length === 5) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
+      if (requests.length === 3) {
+        return response(modelToolCall("redundant-objective-correction", "apply_patch", {
+          input: redundantCorrection,
+        }, 300, 60));
+      }
+      if (requests.length === 4) {
+        const instruction = String(requests[3]?.messages?.[0]?.content ?? "");
+        return response(modelToolCall("rebuilt-objective-correction", "apply_patch", {
+          input: instruction.includes(semanticDeltaInstruction)
+            ? minimalCorrection
+            : redundantCorrection,
+        }, 300, 60));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: "minimal correction verified" } }],
+        usage: { prompt_tokens: 500, completion_tokens: 40 },
+      });
+    });
+    const mutationInputs: string[] = [];
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: request.arguments?.path,
+            truncated: false,
+            content: currentSource,
+          }),
+          durationMs: 1,
+        };
+      }
+      const patchInput = String(request.arguments?.input ?? "");
+      mutationInputs.push(patchInput);
+      if (patchInput.includes(expandedCondition) && currentSource.includes(originalCondition)) {
+        currentSource = currentSource.replace(originalCondition, expandedCondition);
+      } else if (patchInput.includes(minimalCondition) && currentSource.includes(expandedCondition)) {
+        currentSource = currentSource.replace(expandedCondition, minimalCondition);
+      }
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 12,
+      thinking: { type: "enabled" },
+    });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-minimal-semantic-delta",
+      text: "Restore false aria-* attribute serialization with the smallest change in src/diff/props.js while preserving the public behavior of other attributes.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 12,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(6);
+    expect(requests[3]?.messages[1]?.content).toContain("with the smallest change");
+    expect(requests[3]?.messages[1]?.content).toContain(expandedCondition.trim());
+    expect(requests[3]?.messages[1]?.content).not.toContain(originalCondition.trim());
+    expect(requests[3]?.messages[0]?.content).toContain(semanticDeltaInstruction);
+    expect(requests[5]?.messages[1]?.content).toContain(minimalCondition.trim());
+    expect(requests[5]?.messages[1]?.content).not.toContain(expandedCondition.trim());
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "apply_patch",
+      "file_read",
+      "apply_patch",
+      "file_read",
+    ]);
+    expect(mutationInputs).toEqual([initialExpandedPatch, minimalCorrection]);
+    expect(items).toContainEqual({ type: "final", text: "minimal correction verified" });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("fails closed when the objective input retry also only repeats current source", async () => {
     const requiredChangedPaths = ["src/diff/props.js"];
     const currentSource = [
