@@ -3049,7 +3049,7 @@ Source / Workspace Revision
    - fixture 保持 clean `fd688326f1ac2be77f8f1c62c42cd2356acaf3af`，status/diff/untracked=`0/0/0`；Windows/WSL harness 与冻结目标仓均保持 clean；
    - 真实 Provider key 非正文扫描：Windows 四个证据根 `47,498` 个常规文件、WSL harness `34,697` 个常规文件，symlink/reparse=`1,318/1,267`，命中/unreadable=`0/0`；runtime 两个已单独标记的 env 文件从扫描中精确排除；
    - Windows/WSL `28931` listener=`0/0`，相关 Node=`0/0`，runtime 根级 PID/token=`0`；
-   - dry-run 新生成 `.env` / `.env.local`，SHA-256 仍为 `4579e3b7580ea74e795d8b4711c833b51f928e0b0aa47d3bb9a25c716d967e0e` / `292c3ebd62d69a3540a84d6228cf900a583800710018f9ff95c009e789feea2b`；它们是新的精确路径，当前未读取、回显、覆盖或删除，按 HITL 保留等待清理授权。
+   - dry-run 新生成 `.env` / `.env.local` 的 SHA-256 为 `4579e3b7580ea74e795d8b4711c833b51f928e0b0aa47d3bb9a25c716d967e0e` / `292c3ebd62d69a3540a84d6228cf900a583800710018f9ff95c009e789feea2b`；经绝对路径 containment、常规文件属性与 hash 校验后，已按用户持续授权精确送入 Windows 回收站，原路径不存在，cleanup log 记录 `AUTH=standing_user_authorization`，其他文件未处理。
 
 5. **唯一 WSL2 formal prepare-only 输入审计**：
    - 一次性 `tmp/` launcher 已收敛为安全默认 prepare-only；只有显式传入 `--prepare-only false` 才可能进入 Gateway spawn，脚本继续受 Git ignore 保护且不改变 `2977780` identity；
@@ -3060,7 +3060,7 @@ Source / Workspace Revision
 6. **效果**：
    - 同一冻结 identity 已通过 Windows 与 WSL2 的离线重建、双 preflight、Gateway 冷启动/readiness/auth 和零凭证失败关闭；
    - `2e51cb9` timeout 在后继 Windows dry-run/formal 与 WSL2 dry-run 均未复现，继续保持 `record_only`，无需提高 timeout、turn、token 或 retry；
-   - WSL2 无费用产品前置证据已形成，新增 Provider 费用=`$0`；清理新 env residue 后才关闭完整无费用 Gate，付费 formal 仍需另行授权。
+   - WSL2 无费用产品前置证据和 env 清理均已闭合，新增 Provider 费用=`$0`；用户已授权在费用最坏守卫达到 `50 RMB` 前继续执行计划内模型调用，无需逐次申请。
 
 ##### 验证结果
 
@@ -3068,13 +3068,13 @@ Source / Workspace Revision
 - 本环节新增/重跑测试=`0`；沿用 `2977780` identity 已通过的 readiness/launcher 定向测试 `20/20`、`verify:coding-ci` 与 `verify:coding-benchmark`；
 - 双 preflight、零凭证/零 usage、空 event/trace/patch、fixture/harness clean、真实 key 零命中和端口/进程零残留 Gate 通过；
 - formal prepare-only 正向输入与费用窗口失败关闭均通过，执行路径保持未触发；
-- dry-run 本身已冻结且禁止重跑；两个新 env 文件仍是唯一未闭合的无费用清理项。
+- dry-run 本身已冻结且禁止重跑；两个新 env 文件已按持续授权精确送入回收站，无费用 Gate 完整闭合。
 
 ##### 后续计划
 
-- **下一步准备做什么**：等待用户授权后，复核 WSL2 dry-run runtime 两个精确 env 文件的绝对路径、常规文件属性与上述 SHA-256，仅送入 Windows 回收站并追加 cleanup log；清理闭合后再单独申请唯一 WSL2 付费 formal 授权。
-- **为什么先做它**：build、双 preflight、readiness、零模型调用、真实 key 与资源收敛已经全绿；当前最小剩余项只是可恢复的敏感文件清理，完成后才能把无费用 Gate 表述为完整闭合。
-- **当前还缺的关键闭环**：dry-run env 精确清理，以及另行授权后的唯一 WSL2 formal 三文件 mutation、冻结 evaluator、available/exact/non-truncated changes、唯一终态、route/usage/cost、敏感值和跨系统零残留；完成前不启动完整矩阵、candidate v4 或 P2-C。
+- **下一步准备做什么**：沿用用户持续授权与已通过的 formal prepare-only 输入，固定 `deepseek-v4-flash`，执行且只执行一次 `2977780` WSL2 formal；无论成功或失败均立即冻结并完成三文件、evaluator、terminal、usage/cost、敏感值与资源审计。
+- **为什么先做它**：build、双 preflight、readiness、零模型调用、真实 key、资源收敛和 env 清理已经全绿，唯一 formal 是关闭同 identity 双平台代表证据的最小剩余项。
+- **当前还缺的关键闭环**：唯一 WSL2 formal 的三文件 mutation、冻结 evaluator、available/exact/non-truncated changes、唯一终态、route/usage/cost、敏感值和跨系统零残留；完成前不启动完整矩阵、candidate v4 或 P2-C。
 
 ### 6.6 费用与禁止范围
 
@@ -3084,6 +3084,13 @@ Source / Workspace Revision
 - reserved=`$0.94221000`；
 - unobservable reserve=`$0.80000000`；
 - 守卫上界=`33.26153144 RMB < 50 RMB`。
+
+持续授权边界（用户于 `2026-08-18` 明确确认）：
+
+- 本计划后续新生成的 `.env` / `.env.local`，在完成绝对路径 containment、常规文件属性与 SHA-256 校验后，可直接送入 Windows 回收站并记录 cleanup log，无需重复申请；不得读取或回显敏感正文，不得处理校验范围外文件；
+- 费用最坏守卫达到 `50 RMB` 前，计划内模型调用无需逐次申请费用授权；达到或可能突破该上限前必须停止并重新申请；Provider 外部账单仍需独立核对；
+- 模型固定为 `deepseek-v4-flash`；单 run `$0.10`、`12 turns / 24,000 tokens`、Provider retry=`0`、已执行 run 禁止重跑等既有合同保持不变；
+- 上述持续授权不扩展到完整矩阵、candidate v4、P2-C、push、公开发布或生产操作；这些动作仍受各自阶段 Gate 与既有禁止范围约束。
 
 `a72f127` 唯一 Windows formal 已执行、失败并冻结；产品 mutation 成功，但 terminal/report usage 因 CLI `read ENOTCONN` 不可观测，完整 `$0.10` 已计入预留。DeepSeek 新价格自 `2026-08-17 00:00` 生效，生效后 `32` 个历史可观测 formal 已统一按高峰价和输入全 miss 重算，差额 `$0.12570178` 已加入保守 observed 上界。`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc` Windows/WSL2、`5200317` Windows/WSL2、`0cd7d13` Windows/WSL2 与 `2977780` Windows formal 的 provider-reported cost=`$0.00358616/$0.00302790/$0.00235180/$0.00316938/$0.00334516/$0.00291315/$0.00278265/$0.00639158/$0.00244161/$0.00635007` 均已加入 observed。`8a67630` 与 `2e51cb9` Windows formal 均在 benchmark/model spawn 前以 infrastructure failure 冻结，model calls=`0`、仓库本地新增费用=`$0`，不改变 observed。Stage 0D 累计池仍为 `$5.00`，最坏累计池加 reserved 守卫=`47.53768 RMB < 50 RMB`；`2977780` Windows formal 已冻结，项目记录不能替代 Provider 外部账单。
 
@@ -3270,9 +3277,9 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 
 ### 9.7 后续计划
 
-- **下一步准备做什么**：具体状态以文末唯一进度表为准；当前先等待 `2977780` WSL2 dry-run runtime 两个精确 env 文件的回收站清理授权，闭合无费用 Gate 后再单独申请唯一 WSL2 formal 授权。
-- **为什么先做它**：Windows formal 与 WSL2 clean/build/dry-run 均已形成证据，当前只剩可恢复的敏感文件清理；先闭合它可避免带着已知 residue 进入付费 Provider 路径。
-- **当前还缺的关键闭环**：dry-run env 精确清理，以及单独授权后的唯一 WSL2 formal 三文件/evaluator/终态/route/usage/cost/敏感值/零残留；完成前不进入完整矩阵、candidate v4 或 P2-C。
+- **下一步准备做什么**：具体状态以文末唯一进度表为准；当前沿用用户持续授权，固定 `deepseek-v4-flash`，执行且只执行一次 `2977780` WSL2 formal，执行后立即冻结并审计。
+- **为什么先做它**：Windows formal 与 WSL2 clean/build/dry-run/env 清理均已形成证据，唯一 WSL2 formal 是关闭同 identity 双平台代表证据的最小剩余项。
+- **当前还缺的关键闭环**：唯一 WSL2 formal 的三文件/evaluator/终态/route/usage/cost/敏感值/零残留；完成前不进入完整矩阵、candidate v4 或 P2-C。
 
 ## 10. 实施计划进度表
 
@@ -3280,7 +3287,7 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`2977780` Windows formal 与 WSL2 无费用 build/dry-run 已通过并冻结；formal prepare-only 已通过，等待 dry-run env 清理授权** | Windows 三文件/evaluator/唯一 `run.completed` 全绿，cost=`$0.00635007`；WSL2 offline install=`494/493/0/494`，build/双 preflight 通过，usage=`not_reached`、费用=`$0`；readiness 端口/认证=`10.231/10.242s`，真实 key 命中、listener、相关 Node=`0/0/0`；formal 输入窗口=`3.21548143 -> 3.31548143`、spawn=`false/false`；dry-run env 两文件按 HITL 保留 | env 清理小于 0.1 人日；WSL2 formal 另需授权和费用 | 禁止重跑 `8a67630`/`2e51cb9`/`2977780` 已执行 run；获清理授权后闭合无费用 Gate，再单独申请唯一 WSL2 formal；未全绿不进入矩阵/candidate v4/P2-C |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **`2977780` Windows formal 与 WSL2 无费用 build/dry-run/env 清理已通过并冻结；formal prepare-only 与持续授权已通过，准备执行唯一 WSL2 formal** | Windows 三文件/evaluator/唯一 `run.completed` 全绿，cost=`$0.00635007`；WSL2 offline install=`494/493/0/494`，build/双 preflight 通过，usage=`not_reached`、费用=`$0`；readiness 端口/认证=`10.231/10.242s`，真实 key 命中、listener、相关 Node=`0/0/0`；dry-run env 已按 hash 精确回收；formal 固定 `deepseek-v4-flash`，输入窗口=`3.21548143 -> 3.31548143`、spawn=`false/false` | WSL2 formal 与审计约 0.3-0.6 人日 | 禁止重跑 `8a67630`/`2e51cb9`/`2977780` 已执行 run；沿用 `< 50 RMB` 持续授权执行唯一 WSL2 formal，无论结果均冻结；未全绿不进入矩阵/candidate v4/P2-C |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | 2026-08-17：当前 HEAD `5b36691...` 的 P0-P2 源码/测试/artifact 已核查；SS 横向原始加权 `9.135`（发布分 `9.1`）；Grok Build `9.4`、Codex `9.7`、Claude Code `9.7`、OpenCode `9.3`、Hermes Agent `8.9`；竞品证据边界已记录 | - | 当前精简版与 archive-03 共同保留决策和完整历史；真实复杂任务成功率仍待新 formal 证据，不宣称达到 9.5 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
@@ -3290,4 +3297,4 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `31` 文件 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | 10-15 人日 | 人工 provenance、`blocked/verifying` 和 verification 外键在 authoritative owner 出现前保持 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 各 `360/360`，合计 `720/720` lane；fault matrix 和零残留通过 | 12-20 人日 | 不自动 merge/release/deploy，不共享主工作区并行写 |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumers、failure conformance、Doctor、依赖零发现、Puppeteer 25、portable、Settings、Quality run `31805350871` 通过 | 8-14 人日 | Docker run `31805350776` 保留为不可读历史项；不公开发布或替换 sandbox |
-| P2-C：9.5 稳定化与最终复核 | P2 | **未启动** | 当前 B=`12/48`、C=`23/24`，required-mutation 仍未形成稳定双平台代表证据 | 5-8 人日 + 观察窗口 | 两个连续候选原始加权 `>=9.500`、各维及全部硬 Gate 通过；需单独费用授权 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **未启动** | 当前 B=`12/48`、C=`23/24`，required-mutation 仍未形成稳定双平台代表证据 | 5-8 人日 + 观察窗口 | 两个连续候选原始加权 `>=9.500`、各维及全部硬 Gate 通过；费用可沿用 `< 50 RMB` 持续授权，但前序阶段 Gate 未通过前不得启动 |
