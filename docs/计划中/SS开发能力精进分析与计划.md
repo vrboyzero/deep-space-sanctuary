@@ -2938,6 +2938,47 @@ Source / Workspace Revision
 - **为什么先做它**：当前五次无模型样本均在约 `10.5-15.7s` ready，继续修改启动代码或盲目延长 timeout 没有证据基础；新 formal 必须建立在可审查、可回滚的新 identity 上。
 - **当前还缺的关键闭环**：`2e51cb9` 异常的真实模型 formal 结果尚未有后继 identity 验证，且新付费 Provider 窗口需要显式授权；在此之前不重跑冻结 formal、不进入 WSL2/完整矩阵/candidate v4/P2-C。
 
+#### P0 后续阶段实现结论：`2977780` Windows detached clean 无费用 Gate（2026-08-18）
+
+##### 已完成内容
+
+1. **`29777806bdc6b40e615b47a05fd1fd1b5b8449e8` clean identity 建立**：
+   - readiness 诊断代码、测试、项目地图和本计划已提交为本地 `main` 新 identity；
+   - harness=`tmp/p0-required-mutation-canary-2977780-clean`，保持 detached/clean，source/harness content SHA-256 同为 `0cd91c171631a9313aca236e306d784ffcf591e2abc2ff2135ea5fe64c5e58d3`；
+   - 用户既有 `D盘容易增大问题与处理方法.md` 改动未进入提交或 harness，也未被覆盖。
+
+2. **frozen offline install、构建与独立 verifier 完成**：
+   - `corepack pnpm install --offline --frozen-lockfile` 为 resolved=`493`、reused=`492`、downloaded=`0`、added=`493`；
+   - workspace build 与独立 `verify:build` 均通过；构建后 harness 仍为 clean detached HEAD，`git diff --check` 无错误。
+
+3. **零凭证 Windows dry-run 与 formal 输入准备完成**：
+   - artifact=`artifacts/p0-required-mutation-canary-2977780-ts-api-windows-dry-run-r1`，run=`real-ts-api-migration-windows-a1-1787016477419`，report SHA-256=`f8d2a89e0dc69ed9e463308595dd0f41ee3a4a6b60ea551334375367e6869c66`；
+   - production/repository snapshot preflight 均为 `passed`，credentialsConfigured=`false`、usage=`not_reached`、event/trace/patch/changed paths=`0/0/0/0`；fixture 保持 clean `fd688326f1ac2be77f8f1c62c42cd2356acaf3af`；
+   - readiness report 为 `ready`：首 stdout=`2.038s`、端口=`11.847s`、认证=`11.855s`，cleanup 后 child/端口无残留；
+   - formal repository config 已绑定本次 dry-run receipt，SHA-256=`9d62111a85bf427c1040b90f8943fcaf647dfb298546c7669a0d26bdaa002133`，仅完成结构加载校验，未启动 formal。
+
+4. **运行态 env 边界保留**：
+   - dry-run runtime 自动生成 `.env` 与 `.env.local`，SHA-256 分别为 `4579e3b7580ea74e795d8b4711c833b51f928e0b0aa47d3bb9a25c716d967e0e` / `292c3ebd62d69a3540a84d6228cf900a583800710018f9ff95c009e789feea2b`；
+   - 本轮未读取、回显、覆盖或删除其内容；按 HITL 规则保留原位，等待用户对这两个精确路径授权送入回收站；
+   - 端口 `28953` listener 与 identity 相关 Node 进程均为 `0`，Provider/model calls=`0/0`，新增费用=`$0`。
+
+5. **效果**：
+   - 新 identity 已在真实 Windows launcher 中通过离线重建、构建、双 preflight、Gateway readiness/auth 和零凭证失败关闭；
+   - `2e51cb9` 的 readiness timeout 未在后继 clean identity 复现，继续保持 `record_only`，不修改 Gateway 启动顺序或 timeout；
+   - 付费 formal 尚未授权或执行，不外推为真实模型任务改善。
+
+##### 验证结果
+
+- TypeScript 编译无错误：detached harness `corepack pnpm build` 与独立 `corepack pnpm verify:build` 通过；
+- 本环节新增/重跑测试=`0`；提交前 readiness/launcher 定向测试 `20/20`、`verify:coding-ci`、`verify:coding-benchmark` 与 `git diff --check` 已通过；
+- 双 preflight、零凭证/零 usage、空 event/trace/patch、fixture/harness clean、Gateway cleanup 和端口/进程零残留 Gate 通过。
+
+##### 后续计划
+
+- **下一步准备做什么**：等待用户明确授权后，先将本次 dry-run runtime 的两个精确 env 文件送入 Windows 回收站并记录 cleanup log；随后按既有单次 `$0.10` 上限、Provider retry=`0`、`12 turns/24,000 tokens` 最多执行一次 `2977780` Windows formal。
+- **为什么先做它**：新 identity 的全部无费用前置 Gate 已闭合，继续增加诊断采样没有新的判别价值；真实模型三文件 mutation 是当前唯一剩余的 Windows 产品证据，但会触达 Provider 并产生费用。
+- **当前还缺的关键闭环**：精确 env 清理授权，以及唯一 formal 的三文件 mutation、冻结 evaluator、available/exact/non-truncated changes、唯一终态、provider-reported usage/cost、敏感值和资源零残留；Windows 未全绿不进入 WSL2、完整矩阵、candidate v4 或 P2-C。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
@@ -3131,9 +3172,9 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 
 ### 9.7 后续计划
 
-- **下一步准备做什么**：本环节回写后按用户要求暂停；恢复时先执行零模型 Gateway 冷启动/首日志/readiness 时序诊断，不重跑 `2e51cb9`。
-- **为什么先做它**：唯一 formal 已在 benchmark/model 前冻结，现有两个空日志不足以支持提高 timeout 或直接生成下一付费 identity；必须先获得可重复的启动阻塞证据。
-- **当前还缺的关键闭环**：冷启动卡点与 launcher 可观测性归因、必要的最小修复及新 source identity 全套无费用 Gate；完成前不启动新的 formal、WSL2、完整矩阵、candidate v4 或 P2-C。
+- **下一步准备做什么**：具体状态以文末唯一进度表为准；当前等待精确 runtime env 清理授权和最多一次新 identity Windows 付费 formal 授权。
+- **为什么先做它**：新 identity 的离线安装、构建、Gateway readiness/auth、双 preflight 和零凭证失败关闭已通过，继续重复无模型采样不会补足真实任务证据。
+- **当前还缺的关键闭环**：唯一 formal 的三文件完成、冻结 evaluator、终态、usage/cost、敏感值与资源零残留；Windows 未全绿不进入 WSL2、完整矩阵、candidate v4 或 P2-C。
 
 ## 10. 实施计划进度表
 
@@ -3141,7 +3182,7 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`2e51cb9` formal readiness timeout 已冻结；五次 formal-like 无模型采样全 ready；当前按 `record_only` 暂停付费 formal** | `gateway-readiness/v1` 已记录 child/输出/端口/认证/清理时序；五次端口 ready=`10.514-15.664s`，8 秒诊断保留 timeout 时 child 存活证据；model/provider calls=`0/0`，构建、合同 Gate、资源清理通过 | 新 detached identity 无费用 Gate 约 0.2-0.5 人日；formal 另需授权和费用 | 禁止重跑 `8a67630`/`2e51cb9`；获明确授权后先做新 identity 无费用 Gate，再最多一次 Windows formal；无新 identity/授权不进入 WSL2 |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **`2977780` detached clean 无费用 Gate 全绿；等待 env 清理与付费 formal 明确授权** | offline install=`493/492/0/493`，build/独立 verifier、双 preflight 通过；readiness 首 stdout/端口/认证=`2.038/11.847/11.855s`；credentials/usage/event/trace/patch/changed paths=`false/not_reached/0/0/0/0`，model/provider calls=`0/0`；两个 runtime env 文件按 HITL 保留原位 | 精确 env 清理约 0.1 人日；唯一 formal 另需授权和费用 | 禁止重跑 `8a67630`/`2e51cb9`；获授权后先将两个精确 env 文件送入回收站，再最多一次 `2977780` Windows formal；Windows 未全绿不进入 WSL2 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | 2026-08-17：当前 HEAD `5b36691...` 的 P0-P2 源码/测试/artifact 已核查；SS 横向原始加权 `9.135`（发布分 `9.1`）；Grok Build `9.4`、Codex `9.7`、Claude Code `9.7`、OpenCode `9.3`、Hermes Agent `8.9`；竞品证据边界已记录 | - | 当前精简版与 archive-03 共同保留决策和完整历史；真实复杂任务成功率仍待新 formal 证据，不宣称达到 9.5 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
