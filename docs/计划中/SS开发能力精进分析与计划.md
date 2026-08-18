@@ -3646,6 +3646,46 @@ Source / Workspace Revision
 - **为什么先做它**：确定性测试已关闭 stale evidence 与中段投影缺口，但真实模型调用前仍必须证明新提交在干净环境、固定 route 和费用/敏感值边界下可重复；
 - **当前还缺的关键闭环**：新 identity 的全部零模型 Gate 与其通过后唯一一次 Windows formal；在此之前不重跑 `09b5498`、不启动其 WSL2，也不进入完整矩阵、candidate v4 或 P2-C。
 
+#### P0 Web 代表准备实现结论：`cb01ccd` Windows 零模型 Gate（2026-08-19）
+
+##### 已完成内容
+
+1. **`tmp/p0-web-current-source-canary-cb01ccd-clean` detached clean harness 建立**：
+   - source/harness 固定为 `cb01ccd0f89ba399eaa974f0cf67eff2f8910157`，workspace dirty=`false/false`，lockfile/content SHA-256=`844c0021...` / `c9154a30...`；
+   - 首次 frozen offline install 在本地链接阶段触达 `300s` 工具上限，核查相关进程=`0`、Git clean 且依赖目录已建立后，同一命令幂等续跑退出 `0`，downloaded=`0`；
+   - 完整 `corepack pnpm build`、独立 `corepack pnpm verify:build` 均通过，正确 Vitest 入口下 launcher/fixture 定向测试=`28/28`。
+
+2. **Windows 零凭证 dry-run 完成**：
+   - artifact=`artifacts/p0-web-current-source-canary-cb01ccd-preact-windows-dry-run-r1`，run=`real-web-ui-regression-windows-a1-1787080932685`，report SHA-256=`fa383b1829ca9c4a92dd61d12b7a00683366ac2951dbafbfb175f9b54e9f8456`；
+   - benchmark/snapshot 双 preflight=`passed/passed`，source snapshot commit=`6bb8272...`，fixture HEAD=`0ccf7aa...` 且 dirty/untracked/diff=`0/0/0`；
+   - credentials/model calls/usage=`false/0/not_reached`，event/trace/patch/changed paths=`0/0/0/0`，固定模型仍为 `deepseek-v4-flash`。
+
+3. **readiness、敏感值与资源收敛完成**：
+   - Gateway 首 stdout/端口/认证=`8.590/17.675/17.683s`，stderr=`0 bytes`，stop 请求后 `13ms` 受控退出；
+   - artifact/fixture/runtime/repository input 扫描常规文件=`8,062`，unreadable/真实 Provider key 精确命中=`0/0`；
+   - 新生成 `.env` / `.env.local` 经 containment、普通文件、无 reparse point 与 SHA-256 校验后送入 Windows 回收站，cleanup log=`tmp/p0-web-current-source-canary-cb01ccd-preact-windows-dry-run-r1-sensitive-cleanup.log`；listener/相关 Node/剩余 env=`0/0/0`。
+
+4. **formal prepare-only 输入审计完成**：
+   - formal repository input SHA-256=`2ef316c1cb316832068a1080e80c172d6ca30b24cda0652fec500734acd21d68`，绑定 dry-run receipt SHA-256=`0e74aee3cc8cbff687f95b61aa9c5d0cbfcac79cbd50e049ec07831b0c7ebe6d`；
+   - 固定 `deepseek-v4-flash`、高峰价 cache/input/output=`0.0125/0.375/1.125 USD/1M`、Provider retry=`0` 与 `3.23762086 -> 3.33762086 USD` 累计窗口；
+   - Provider key 已配置且未进入参数，Gateway/benchmark spawned=`false/false`，三个预定 formal 输出根、端口、相关 Node 均为 `0`。
+
+5. **效果**：
+   - `cb01ccd` 已通过 detached offline build、fixture/evaluator 合同、双 preflight、真实 Windows Gateway readiness/auth、固定 route、零凭证失败关闭、敏感值与资源 Gate；
+   - 当前只开放一次新的 Windows formal，不重跑冻结 identity，不先启动 WSL2、完整矩阵、candidate v4 或 P2-C。
+
+##### 验证结果
+
+- TypeScript workspace 完整 build 与独立 `verify:build` 无错误；launcher/fixture `28` 个测试全部通过（本 Gate 新增测试=`0`）；
+- dry-run 双 preflight、readiness/auth、fixture/harness clean、零 usage、空 event/trace/patch、敏感值扫描、env 回收站清理、资源收敛和 formal prepare-only Gate 全绿；
+- 模型调用=`0`、新增费用=`$0`，费用守卫仍为 `33.43864688 RMB < 50 RMB`，最坏累计守卫仍为 `47.53768 RMB < 50 RMB`。
+
+##### 后续计划
+
+- **下一步准备做什么**：沿用已通过的 formal prepare-only 输入，固定 `deepseek-v4-flash`、高峰价、Provider retry=`0`、`12 turns / 24,000 tokens` 与累计费用窗口，执行且只执行一次 `cb01ccd` Windows formal；
+- **为什么先做它**：全部无费用 Gate 已闭合，真实 Web mutation、current-source objective correction、再次复读和 final review 是验证本次修复的最小剩余证据；
+- **当前还缺的关键闭环**：formal 的 mutation/tests/patch、合法唯一 terminal、完整 Provider usage/cost、真实敏感值与零残留审计；无论结果如何均永久冻结该 formal，Windows 未全绿不进入 WSL2，也不进入完整矩阵、candidate v4 或 P2-C。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
@@ -3771,8 +3811,8 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 | Web finalization reasoning 挤占正文与截断 schema | `record_only` | `d6d7367` 已真实证明 finalization-only 禁用 DeepSeek thinking 后可生成合法终态；`d01030a` 的 objective-review 也不再出现 reasoning-only length，历史终态修复保持闭合，不重复改合同 |
 | objective-review 返回空 correction patch | `fix_now` | `8cee589` 已仅为无 mutation 的可信 `apply_patch_input_invalid` 接入一次有界输入纠正；成功后完整复读/final review，二次失败立即关闭；`169/169` 定向测试、build 与 verify Gate 全绿，不接受空 patch 成功、不增加 maxTurns/maxTokens/retry |
 | objective correction 在 executor 前被本地 patch 校验拒绝 | `fix_now` | `09b5498` 已将首次 required-path/valid-section 本地拒绝接入既有一次 input correction；非法/越界 patch 始终不执行，`171/171` 定向测试、build 与 verify Gate 全绿；同 identity formal 已真实到达 executor 和 input retry，证明该恢复接线生效 |
-| objective input correction 连续使用 stale/incorrect context | `fix_now` | `cb01ccd` 已证明任务提示无需修改，并将 correction 证据收敛为每个 required path 最新完整复读；中段源码按 literal/wildcard/标识符优先投影，旧 read、失败 patch 正文、缺失/截断/未装入证据均不再进入请求；`232/232` 定向回归与本地构建 Gate 全绿，下一步只开放新 identity 零模型 Gate |
-| detached worktree 首次 pnpm offline 链接超时 | `record_only` | `09b5498` clean harness 首次安装在依赖已链接、无残留进程且 Git clean 后触达 `180s` 工具超时；同一命令幂等续跑 `608ms` 退出 `0`，随后 build、verify 与 `28/28` 测试全绿，暂无产品或锁文件失败证据 |
+| objective input correction 连续使用 stale/incorrect context | `fix_now` | `cb01ccd` 已证明任务提示无需修改，并将 correction 证据收敛为每个 required path 最新完整复读；中段源码按 literal/wildcard/标识符优先投影，旧 read、失败 patch 正文、缺失/截断/未装入证据均不再进入请求；`232/232` 定向回归与新 identity 零模型 Gate 全绿，下一步只开放唯一 Windows formal |
+| detached worktree 首次 pnpm offline 链接超时 | `record_only` | `09b5498` 与 `cb01ccd` clean harness 首次安装分别触达 `180s/300s` 工具上限；两次均在无残留进程、Git clean、依赖目录已建立后由同一 frozen offline 命令幂等续跑完成，downloaded=`0`，随后 build、verify 与 `28/28` 测试全绿；归类为 NTFS 本地链接耗时，不外推为产品或锁文件失败 |
 | parallel-read 唯一 repair 后仍超长 | `record_only` | Windows a2 的完整 JSON `summary` 超过 `maxLength: 1000`，Validator 正确拒绝且唯一 repair 已消费；不增加模型 turn、Provider retry 或第二次 repair，同 task 其余冻结样本不据此改写 |
 | 旧 failure analysis 的 `unknown=30` | `record_only` | 旧 artifact 保持冻结；当前 `56d8713` 分类器在新路径重算得到 `required_mutation_recovery_failed=30`、`unknown=0`，独立 verifier 通过，不回写历史 artifact 或升级 Schema 版本 |
 | 连续候选 9.5 证据 | `split_task` | 独立进入 P2-C；费用可沿用 `< 50 RMB` 持续授权，但 P0 通过不自动等于阶段 Gate 通过 |
@@ -3859,9 +3899,9 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 
 ### 9.7 后续计划
 
-- **下一步准备做什么**：具体状态以文末唯一进度表为准；以 `cb01ccd` 建立 detached clean harness 并完成新 identity 零模型 Gate。
-- **为什么先做它**：stale evidence 与中段源码投影已完成失败测试红转绿和本地构建验证；在消费新 formal 费用前，仍需确认干净环境、固定 route、readiness/auth、fixture、敏感值和资源边界全部可审计。
-- **当前还缺的关键闭环**：offline clean build、launcher/fixture、Windows 零凭证 dry-run、双 preflight、formal prepare-only 与其全部通过后的唯一 Windows formal；这些证据形成前不进入 WSL2、完整矩阵、candidate v4 或 P2-C。
+- **下一步准备做什么**：具体状态以文末唯一进度表为准；沿用已通过的 prepare-only 输入，执行且只执行一次 `cb01ccd` Windows formal。
+- **为什么先做它**：detached build、launcher/fixture、双 preflight、readiness/auth、固定 route、费用、敏感值与资源 Gate 已全部闭合，真实模型 mutation 是当前唯一剩余证据。
+- **当前还缺的关键闭环**：formal 的 patch/evaluator、合法唯一 terminal、完整 Provider usage/cost、真实敏感值与零残留审计；无论结果如何均冻结，Windows 未全绿不进入 WSL2、完整矩阵、candidate v4 或 P2-C。
 
 ## 10. 实施计划进度表
 
@@ -3871,7 +3911,7 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 | --- | --- | --- | --- | ---: | --- |
 | P0 后续：required-mutation 双平台代表 canary | P0 | **已完成并冻结** | `2977780` Windows/WSL2 formal 均完成同一三文件任务；evaluator、唯一 `run.completed`、available/exact/non-truncated snapshot、`6/6` usage、真实 key 与零残留全绿；cost=`$0.00635007/$0.00606781`，WSL readiness 端口/认证=`10.100/10.108s` | - | 禁止重跑 `8a67630`/`2e51cb9`/`2977780` 已执行 run；该 canary 不外推为其余 `37` 个失败改善 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | 2026-08-17：当前 HEAD `5b36691...` 的 P0-P2 源码/测试/artifact 已核查；SS 横向原始加权 `9.135`（发布分 `9.1`）；Grok Build `9.4`、Codex `9.7`、Claude Code `9.7`、OpenCode `9.3`、Hermes Agent `8.9`；竞品证据边界已记录 | - | 当前精简版与 archive-03 共同保留决策和完整历史；真实复杂任务成功率仍待新 formal 证据，不宣称达到 9.5 |
-| P0：Benchmark v3 与外部有效性 | P0 | **correction context 已修复；`cb01ccd` 零模型 Gate 待执行** | 冻结 formal 仍为 `09b5498` `run.failed`；`cb01ccd` 已区分提示、复读投影和 correction 构造，objective review/retry 只接收最新完整 required-path read，`232/232` 定向测试、build、benchmark/CI 合同与 diff Gate 全绿；模型调用/新增费用=`0/$0` | 新 identity Gate/formal 约 0.5 人日 | 以 `cb01ccd` 建立 detached clean harness；全部零模型 Gate 通过后仅执行一次 Windows formal。禁止重跑 `09b5498` 或启动其 WSL2，不增加 turn/token/retry，不直接创建 candidate v4 |
+| P0：Benchmark v3 与外部有效性 | P0 | **`cb01ccd` 零模型 Gate 已通过；唯一 Windows formal 待执行** | correction current-source evidence 修复已通过 `232/232` 定向测试；detached offline build、独立 verifier、launcher/fixture `28/28`、双 preflight、readiness/auth、零凭证、固定 route、费用、敏感值与资源 Gate 全绿，formal prepare-only spawned=`false/false`；模型调用/新增费用=`0/$0` | 唯一 formal 与审计约 0.5 人日 | 固定 `deepseek-v4-flash`、Provider retry=`0`、`12 turns / 24,000 tokens` 与 `3.23762086 -> 3.33762086 USD`，仅执行一次 Windows formal；禁止重跑 `09b5498` 或启动其 WSL2，不直接创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | 6-11 人日 | 生产化需独立 rollout、观察窗口和真实项目 Gate |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild、restore/联网和生命周期边界 |
