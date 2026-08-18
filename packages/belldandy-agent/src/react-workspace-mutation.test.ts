@@ -1470,6 +1470,15 @@ describe("ReAct workspace mutation recovery", () => {
     });
 
     expect(currentSource.length).toBeGreaterThan(4_096);
+    expect(request?.messages[0]?.content).toContain(
+      "Make the smallest patch relative to the current source",
+    );
+    expect(request?.messages[0]?.content).toContain(
+      "Preserve every already-correct adjacent expression and branch byte-for-byte as patch context",
+    );
+    expect(request?.messages[0]?.content).toContain(
+      "Do not refactor, expand, normalize, modernize, or make an equivalent rewrite",
+    );
     expect(request?.messages[1]?.content).toContain("} else if (value != NULL) {");
   });
 

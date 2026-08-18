@@ -1281,8 +1281,17 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(requests[2]?.messages[0]?.content).toContain(
       "A correction must change task-relevant behavior",
     );
+    expect(requests[2]?.messages[0]?.content).toContain(
+      "Make the smallest patch relative to the current source",
+    );
+    expect(requests[2]?.messages[0]?.content).toContain(
+      "Preserve every already-correct adjacent expression and branch byte-for-byte as patch context",
+    );
     expect(requests[3]?.messages[0]?.content).toContain(
       "Post-mutation objective correction input retry phase",
+    );
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "Do not refactor, expand, normalize, modernize, or make an equivalent rewrite",
     );
     expect(requests[3]?.messages[0]?.content).toContain(
       "do not remove and re-add an unchanged source line",
