@@ -4349,6 +4349,23 @@ export class ToolEnabledAgent implements BelldandyAgent {
               constrainedMutationToolCall,
               workspaceMutationCallRequiredPaths,
             )) {
+            const canCorrectObjectiveInputFailure = !workspaceMutationObjectiveInputCorrectionCall
+              && !workspaceMutationObjectiveInputCorrectionAttempted;
+            if (canCorrectObjectiveInputFailure) {
+              workspaceMutationObjectiveReviewPending = true;
+              workspaceMutationObjectiveInputCorrectionPending = true;
+              lastToolCallFingerprint = undefined;
+              lastToolCallName = undefined;
+              consecutiveDuplicateToolCalls = 0;
+              recentToolCallTraces.length = 0;
+              lastSuccessfulToolResult = undefined;
+              logWarn("[workspace-mutation] post-write correction failed local path validation; scheduling one input correction", {
+                requiredPathCount: workspaceMutationCallRequiredPaths.length,
+                conversationId: input.conversationId,
+                agentId: resolvedAgentId,
+              });
+              continue;
+            }
             yield* emitWorkspaceMutationFailure(
               "the post-write objective correction patch targeted an unlisted path or did not contain a valid required-path file section.",
             );
