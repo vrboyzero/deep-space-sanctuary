@@ -92,7 +92,7 @@ export type WorkspaceMutationRecoveryPlan = WorkspaceMutationRecoveryRequest & {
 };
 
 const MUTATION_PATCH_HUNK_INSTRUCTION = "Each *** Update File section/@@ hunk needs actual +/-; space-prefixed lines are context only. No context-only hunk. One final *** End Patch. Copy context/removal lines exactly from one taskRelevantContexts item or exact evidence, preserving source tabs/spaces after the one diff marker. Never join items/fragments or cross file headers. Preserve replacement surroundings.";
-const MUTATION_SUBSET_BEHAVIOR_PRESERVATION_INSTRUCTION = "When the task targets a named subset, special case, or exception, a passing example for that subset is not proof of completion. Verify that the current condition still distinguishes the requested subset and preserves behavior for inputs outside it. Do not broaden the requested behavior to all inputs or collapse a condition that excludes them.";
+const MUTATION_SUBSET_BEHAVIOR_PRESERVATION_INSTRUCTION = "When the task targets a named subset, special case, or exception, a passing example for that subset is not proof of completion. Verify both sides before accepting a correction: a concrete positive witness named by the task must still satisfy the requested behavior, and a concrete outside/negative witness must retain its prior behavior. Reverting to a pre-mutation condition is invalid when that condition failed the positive witness. Verify that the current condition still distinguishes the requested subset and preserves behavior for inputs outside it. Do not broaden the requested behavior to all inputs or collapse a condition that excludes them.";
 
 const MUTATION_RECOVERY_INSTRUCTION = [
   "Mutation-only recovery phase: the task requires a successful workspace mutation before completion.",
