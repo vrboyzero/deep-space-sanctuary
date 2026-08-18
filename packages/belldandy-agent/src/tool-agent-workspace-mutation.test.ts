@@ -1033,6 +1033,143 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("uses only current required-path source in post-write correction prompts", async () => {
+    const requiredChangedPaths = ["src/diff/props.js"];
+    const task = "Fix the frozen browser-facing regression and restore false aria-* attribute serialization with the smallest change in src/diff/props.js.";
+    const currentTarget = [
+      "\t\tif (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      "\t\t} else if (value != NULL && value !== false) {",
+      "\t\t\tdom.setAttribute(name, value);",
+      "\t\t} else {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t}",
+    ].join("\n");
+    const preWriteContent = [
+      "const STALE_PREWRITE_CONTEXT = true;",
+      "const before = true;\n".repeat(240),
+      "export const legacy = false;",
+    ].join("\n");
+    const postWriteContent = [
+      "const currentHeader = true;",
+      "const before = true;\n".repeat(180),
+      currentTarget,
+      "const after = true;\n".repeat(180),
+      "export const currentTail = true;",
+    ].join("\n");
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, any>);
+      if (requests.length === 1) {
+        return response(modelToolCall("read-before", "file_read", {
+          path: requiredChangedPaths[0],
+        }, 300, 60));
+      }
+      if (requests.length === 2) {
+        return response(modelToolCall("patch-initial", "apply_patch", {
+          input: "initial patch",
+        }, 300, 60));
+      }
+      if (requests.length === 3 || requests.length === 6) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
+      if (requests.length === 4) {
+        return response(modelToolCall("stale-correction", "apply_patch", {
+          input: "*** Begin Patch\n*** Update File: src/diff/props.js\n@@\n-STALE_FAILED_PATCH_CONTEXT\n+current\n*** End Patch",
+        }, 300, 60));
+      }
+      if (requests.length === 5) {
+        return response(modelToolCall("current-correction", "apply_patch", {
+          input: "*** Begin Patch\n*** Update File: src/diff/props.js\n@@\n-\t\t} else if (value != NULL && value !== false) {\n+\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {\n*** End Patch",
+        }, 300, 60));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: "corrected and verified" } }],
+        usage: { prompt_tokens: 500, completion_tokens: 40 },
+      });
+    });
+    let mutationAttempt = 0;
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: request.arguments?.path,
+            truncated: false,
+            content: mutationAttempt === 0 ? preWriteContent : postWriteContent,
+          }),
+          durationMs: 1,
+        };
+      }
+      mutationAttempt++;
+      if (mutationAttempt === 2) {
+        return {
+          id: request.id,
+          name: request.name,
+          success: false,
+          output: "",
+          error: "Failed to find expected lines: STALE_FAILED_PATCH_CONTEXT",
+          failureKind: "input_error" as const,
+          metadata: { repairAction: "apply_patch_input_invalid" },
+          durationMs: 1,
+        };
+      }
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 12,
+      thinking: { type: "enabled" },
+    });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-current-objective-context",
+      text: task,
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 12,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(7);
+    for (const requestIndex of [3, 4]) {
+      const prompt = requests[requestIndex]?.messages?.[1]?.content ?? "";
+      expect(prompt).toContain("value != NULL && value !== false");
+      expect(prompt).not.toContain("STALE_PREWRITE_CONTEXT");
+      expect(prompt).not.toContain("STALE_FAILED_PATCH_CONTEXT");
+    }
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "file_read",
+      "apply_patch",
+      "file_read",
+      "apply_patch",
+      "apply_patch",
+      "file_read",
+    ]);
+    expect(items).toContainEqual({ type: "final", text: "corrected and verified" });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("fails closed when the post-write objective input correction also fails", async () => {
     const requiredChangedPaths = ["src/api.ts"];
     const requests: Array<Record<string, any>> = [];

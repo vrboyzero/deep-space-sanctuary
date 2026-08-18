@@ -1170,6 +1170,7 @@ export function buildWorkspaceMutationObjectiveReviewRequest(input: {
       ? "Trusted required paths after post-write correction"
       : "Trusted required paths eligible for one post-write correction",
     allowNoTools: true,
+    latestRequiredFileReadEvidenceOnly: true,
   });
 }
 
@@ -1190,6 +1191,7 @@ export function buildWorkspaceMutationObjectiveInputCorrectionRequest(input: {
     instruction: MUTATION_OBJECTIVE_INPUT_CORRECTION_INSTRUCTION,
     missingRequiredChangedPaths: requiredCorrectionPaths,
     trustedPathsLabel: "Trusted required paths for the atomic post-write correction input retry",
+    latestRequiredFileReadEvidenceOnly: true,
   });
 }
 
@@ -1201,6 +1203,7 @@ function buildBoundedWorkspaceMutationRequest(input: {
   missingRequiredChangedPaths?: readonly string[];
   trustedPathsLabel?: string;
   allowNoTools?: boolean;
+  latestRequiredFileReadEvidenceOnly?: boolean;
   tokenEstimateContext?: TokenEstimateOptions;
 }): WorkspaceMutationRecoveryRequest | undefined {
   const maxInputTokens = normalizePositiveInt(input.maxInputTokens);
@@ -1248,13 +1251,22 @@ function buildBoundedWorkspaceMutationRequest(input: {
   }
 
   const toolNames = collectToolNames(input.messages);
-  const evidence = input.messages
+  const availableEvidence = input.messages
     .filter((message) => message.role === "tool" && typeof message.content === "string")
     .map((message) => ({
       toolName: toolNames.get(String(message.tool_call_id ?? "")) || "unknown",
       content: String(message.content),
-    }))
-    .slice(-MAX_EVIDENCE_ITEMS);
+    }));
+  const evidence = input.latestRequiredFileReadEvidenceOnly
+    ? selectLatestRequiredFileReadEvidence(
+        availableEvidence,
+        input.missingRequiredChangedPaths ?? [],
+      )
+    : availableEvidence.slice(-MAX_EVIDENCE_ITEMS);
+  if (input.latestRequiredFileReadEvidenceOnly
+    && evidence.length !== input.missingRequiredChangedPaths?.length) {
+    return undefined;
+  }
   let userText = `${taskPrefix}${boundedTask}`;
   const evidenceHeader = evidence.length > 0 ? "\n\nBounded tool evidence:\n" : "";
   let remainingTokens = Math.max(
@@ -1322,6 +1334,9 @@ function buildBoundedWorkspaceMutationRequest(input: {
     remainingTokens -= sectionTokens;
   }
 
+  if (input.latestRequiredFileReadEvidenceOnly && missingRequiredSourceEvidence.size > 0) {
+    return undefined;
+  }
   if (evidenceSections.length > 0) {
     userText = `${userText}${evidenceHeader}${evidenceSections.join("\n\n")}`;
   }
@@ -1560,8 +1575,13 @@ function collectTaskRelevantFileContexts(
     return [];
   }
   const identifiers = [...new Set(taskText.match(/[A-Za-z_$][A-Za-z0-9_$]{3,}/g) ?? [])]
-    .filter((identifier) => /[a-z][A-Z]|[_$]/.test(identifier))
-    .sort((left, right) => right.length - left.length || left.localeCompare(right));
+    .filter((identifier) => isTaskSourceIdentifier(identifier, taskText))
+    .sort((left, right) => (
+      taskSourceIdentifierPriority(right, taskText)
+        - taskSourceIdentifierPriority(left, taskText)
+      || right.length - left.length
+      || left.localeCompare(right)
+    ));
   const contexts: Array<{
     identifier: string;
     lines: string;
@@ -1617,6 +1637,57 @@ function collectTaskRelevantFileContexts(
     }
   }
   return contexts;
+}
+
+function isTaskSourceIdentifier(identifier: string, taskText: string): boolean {
+  return taskSourceIdentifierPriority(identifier, taskText) >= 0;
+}
+
+function taskSourceIdentifierPriority(identifier: string, taskText: string): number {
+  if (["false", "null", "true", "undefined"].includes(identifier)) {
+    return 4;
+  }
+  if (taskText.includes(`${identifier}-*`)) {
+    return 3;
+  }
+  if (/[a-z][A-Z]|[_$]/.test(identifier)) {
+    return 2;
+  }
+  if (taskText.includes(`/${identifier}`) || taskText.includes(`.${identifier}`)) {
+    return 1;
+  }
+  return taskText.includes(`${identifier}-`) ? 0 : -1;
+}
+
+function selectLatestRequiredFileReadEvidence(
+  evidence: Array<{ toolName: string; content: string }>,
+  requiredPaths: readonly string[],
+): Array<{ toolName: string; content: string }> {
+  const remainingPaths = new Map(
+    requiredPaths.map((requiredPath) => [normalizeSourcePath(requiredPath), requiredPath]),
+  );
+  const selected: Array<{ toolName: string; content: string }> = [];
+  for (let index = evidence.length - 1; index >= 0 && remainingPaths.size > 0; index--) {
+    const item = evidence[index];
+    if (item.toolName !== "file_read") {
+      continue;
+    }
+    const evidencePath = readMutationReadySourceEvidencePaths(item.toolName, item.content)[0];
+    if (!evidencePath) {
+      continue;
+    }
+    const normalizedEvidencePath = normalizeSourcePath(evidencePath);
+    const requiredIdentity = [...remainingPaths.keys()].find((candidate) => (
+      normalizedEvidencePath === candidate
+      || normalizedEvidencePath.endsWith(`/${candidate}`)
+    ));
+    if (!requiredIdentity) {
+      continue;
+    }
+    selected.unshift(item);
+    remainingPaths.delete(requiredIdentity);
+  }
+  return selected;
 }
 
 function sourceLineAtOffset(value: string, offset: number): number {

@@ -4,6 +4,7 @@ import {
   buildWorkspaceMutationContinuationPlan,
   buildWorkspaceMutationContinuationRequest,
   buildWorkspaceMutationNavigationRequest,
+  buildWorkspaceMutationObjectiveReviewRequest,
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationRecoveryRequest,
   buildWorkspaceMutationVerificationRequest,
@@ -1308,6 +1309,110 @@ describe("ReAct workspace mutation recovery", () => {
 
     expect(request?.missingRequiredSourceEvidencePaths).toEqual([]);
     expect(request?.messages[1]?.content).toContain("trace?: TraceValues;");
+  });
+
+  it("prioritizes source-shaped wildcard and literal terms over incidental hyphenated prose", () => {
+    const incidentalContexts = Array.from({ length: 6 }, (_, index) => [
+      "x".repeat(800),
+      `const browser = ${index};`,
+      "y".repeat(800),
+    ].join("\n")).join("\n");
+    const targetContext = "\t\t} else if (value != NULL && value !== false) {";
+    const request = buildWorkspaceMutationRecoveryRequest({
+      maxInputTokens: 900,
+      tools: [toolDefinition("apply_patch")],
+      missingRequiredChangedPaths: ["src/diff/props.js"],
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+      messages: [
+        {
+          role: "user",
+          content: "Fix the frozen browser-facing regression and restore false aria-* attribute serialization with the smallest change in src/diff/props.js.",
+        },
+        {
+          role: "assistant",
+          tool_calls: [{
+            id: "read-props",
+            function: { name: "file_read", arguments: "{}" },
+          }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "read-props",
+          content: JSON.stringify({
+            path: "src/diff/props.js",
+            truncated: false,
+            content: `${incidentalContexts}\n${targetContext}\n${"z".repeat(800)}`,
+          }),
+        },
+      ],
+    });
+
+    expect(request?.messages[1]?.content).toContain("value != NULL && value !== false");
+  });
+
+  it("fails closed when every required objective-review read cannot fit the request", () => {
+    const requiredChangedPaths = ["src/first.ts", "src/second.ts"];
+    const messages = [
+      { role: "user" as const, content: "Apply the required migration." },
+      {
+        role: "assistant" as const,
+        tool_calls: requiredChangedPaths.map((path, index) => ({
+          id: `read-${index}`,
+          function: { name: "file_read", arguments: JSON.stringify({ path }) },
+        })),
+      },
+      ...requiredChangedPaths.map((path, index) => ({
+        role: "tool" as const,
+        tool_call_id: `read-${index}`,
+        content: JSON.stringify({
+          path,
+          truncated: false,
+          content: `export const value = ${index};\n${"x".repeat(4_000)}`,
+        }),
+      })),
+    ];
+    const requests = Array.from({ length: 81 }, (_, index) => 400 + index * 10)
+      .map((maxInputTokens) => buildWorkspaceMutationObjectiveReviewRequest({
+        maxInputTokens,
+        tools: [toolDefinition("apply_patch")],
+        requiredChangedPaths,
+        tokenEstimateContext: { model: "deepseek-v4-flash" },
+        messages,
+      }))
+      .filter((request) => request !== undefined);
+
+    expect(requests.length).toBeGreaterThan(0);
+    expect(requests.every((request) => (
+      request.missingRequiredSourceEvidencePaths.length === 0
+    ))).toBe(true);
+  });
+
+  it("fails closed when the latest required objective-review read is truncated", () => {
+    expect(buildWorkspaceMutationObjectiveReviewRequest({
+      maxInputTokens: 900,
+      tools: [toolDefinition("apply_patch")],
+      requiredChangedPaths: ["src/api.ts"],
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+      messages: [
+        { role: "user", content: "Apply the required migration." },
+        {
+          role: "assistant",
+          tool_calls: [{
+            id: "read-api",
+            function: { name: "file_read", arguments: "{}" },
+          }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "read-api",
+          content: JSON.stringify({
+            path: "src/api.ts",
+            truncated: true,
+            content: "export const stale = true;",
+          }),
+        },
+      ],
+    })).toBeUndefined();
   });
 
   it("retains every task-relevant occurrence from a complete medium required file", () => {
