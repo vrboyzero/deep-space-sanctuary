@@ -3236,14 +3236,55 @@ Source / Workspace Revision
 - **为什么先做它**：零模型 Gate 已证明当前 identity、真实 Preact fixture、Gateway 与敏感值边界可执行；唯一 Windows formal 是验证 `46fbf69` finalization thinking 是否真实改善 Web `length/schema` 双失败形状的最小下一证据。
 - **当前还缺的关键闭环**：formal 的 mutation/tests/patch、valid schema terminal、完整 Provider usage/cost、真实敏感值和零残留审计；只有 Windows 成功后才评估 WSL2 同 identity，仍不得直接进入完整矩阵、candidate v4 或 P2-C。
 
+#### P0 Web 代表实现结论：`d6d7367` Windows formal finalization 改善与语义失败（2026-08-18）
+
+##### 已完成内容
+
+1. **唯一 Windows formal 启动并冻结**：
+   - formal repository input SHA-256=`5bc38b426f1826ef6efcbc502cd00a2a1534363899778372acf24e4b59c98ffc`，绑定本次 dry-run receipt SHA-256=`0e74aee3cc8cbff687f95b61aa9c5d0cbfcac79cbd50e049ec07831b0c7ebe6d`；prepare-only 确认 spawned=`false`、凭据已配置且未进入命令参数；
+   - 固定 `deepseek-v4-flash`、高峰价 `0.0125/0.375/1.125 USD/1M`、Provider retry=`0`、`12 turns / 24,000 tokens` 与 `3.22154924 -> 3.32154924 USD` 累计窗口，只启动一次 attempt；
+   - artifact=`artifacts/p0-web-finalization-canary-d6d7367-preact-windows-formal-r1`，run=`real-web-ui-regression-windows-a1-1787026396284`，report SHA-256=`fe38c5ad034462387a27d6cb7f83bab99d69e39a302302df968f32a6e3b64446`；run 已永久冻结，禁止重跑。
+
+2. **真实 finalization `length/schema` 代表证据闭合**：
+   - 前三次模型调用完成读取、mutation recovery 与 verification；第 `4` 次 objective-review 调用返回 reasoning-only `finish_reason=length`、reasoning length=`3,533`，触发现有唯一 bounded finalization；
+   - 第 `5` 次调用为无工具 finalization-only，reasoning length=`0`、正文=`524` 字符，生成仅含一个非空 `summary` 的合法 JSON；result SHA-256=`caa99114d0b51cb72c280ccedee05848c60f66dc76459aee3486f025c9ee1094`；
+   - CLI exit=`0`、唯一 terminal=`run.completed`，event/trace=`47/49` 行，model route、event/trace、usage 与 output-schema 合同均完整；冻结 Web 基线的 reasoning-only `length` 和截断 JSON 终态未复现。
+
+3. **产品语义失败精确归因**：
+   - 模型只修改允许路径 `src/diff/props.js`，冻结测试通过、regression=`0`，但 patch 将 `NULL` 与所有普通 `false` 属性也改为 `setAttribute`；patch SHA-256=`98c4f2aa9fbe19f5742639684b45de5850da904465eadaaccdca5b1615bcc634`；
+   - evaluator 要求保留 `value != NULL && (value !== false || name[4] == '-')`，只允许 `aria-*` / `data-*` 的 `false` 字符串化；当前宽化改动破坏 null 与普通 false 的既有删除语义，因此 `patchAccepted=false`、`taskCompleted=false`；
+   - failureCategory=`product_workflow`，不是 infrastructure、terminal schema 或 usage 失败；Windows 未成功，因此不启动 WSL2 同 identity。
+
+4. **usage、费用与资源收敛**：
+   - declared/resolved route=`deepseek-v4-flash -> deepseek-v4-flash [primary]`，model/provider-reported calls=`5/5`、每次 maxAttempts=`1`；input/output=`14,536/1,500`，cost=`$0.00690650`；
+   - observed conservative upper 更新为 `$2.42845574`，费用守卫=`33.36532592 RMB < 50 RMB`；单 run `$0.10`、Stage 0D `$5.00`、turn/token/retry 均未放宽；
+   - Gateway readiness 端口/认证=`10.303/10.311s`、stderr=`0 bytes`；formal env 已按持续授权经 containment/常规文件/hash 校验后送入 Windows 回收站；扫描 `8,375` 个常规文件，unreadable/真实敏感值/非空凭据命中=`0/0/0`，listener/相关 Node/剩余 env=`0/0/0`。
+
+5. **效果**：
+   - `46fbf69` 的 bounded finalization 已获得真实 Web post-fix 代表证据：原 `length/schema` 双终态形状被合法、完整、可计费的 `run.completed` 替代；
+   - 该证据不能表述为任务成功，也不改变历史 `107 passed + 37 failed` 分母；当前新瓶颈收敛为 mutation 语义过宽及 objective-review reasoning-only length 后失去纠正机会；
+   - 技术债裁决：objective-review 恢复路径=`fix_now`，先做零模型确定性回归与最小实现；供应测试未覆盖 null/普通 false 但 evaluator 正确失败关闭，暂记 `record_only`，不修改冻结 benchmark 后重跑同 identity。
+
+##### 验证结果
+
+- TypeScript 编译无错误：沿用同一 `d6d7367` clean harness 已通过的完整 `corepack pnpm build` 与独立 `verify:build`；
+- `28` 个定向测试全部通过（新增测试=`0`），唯一 formal 的冻结 Preact 测试也通过，但 machine evaluator 正确拒绝过宽 patch；
+- formal 唯一 `run.completed`、合法 result schema、完整 `5/5` usage 与真实 cost 均可观测；敏感值扫描、回收站清理和资源收敛全绿，未启动 WSL2、完整矩阵、candidate v4 或 P2-C。
+
+##### 后续计划
+
+- **下一步准备做什么**：只读定位 `workspaceMutationObjectiveReview` 在 reasoning-only `length` 后直接转无工具 finalization 的状态路径，先写失败回归，再在不增加模型调用上限、turn/token、Provider retry 的前提下实现最小修复并形成新 identity。
+- **为什么先做它**：Windows formal 已证明 finalization 终态修复有效，继续跑 WSL2 只会重复一个已知语义失败；objective-review 是当前本应发现或纠正过宽 patch、却被 reasoning 挤占正文的最后 mutation Gate。
+- **当前还缺的关键闭环**：objective-review 的确定性失败测试、最小实现、Agent/structured-output 回归与 clean build；只有新 identity 重新通过 Windows 零模型 Gate 后，才评估新的唯一代表 formal，仍不重跑 `d6d7367` 或直接进入 WSL2/完整矩阵/candidate v4/P2-C。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
 
-- observed conservative upper=`$2.42154924`；
+- observed conservative upper=`$2.42845574`；
 - reserved=`$0.94221000`；
 - unobservable reserve=`$0.80000000`；
-- 守卫上界=`33.31007392 RMB < 50 RMB`。
+- 守卫上界=`33.36532592 RMB < 50 RMB`。
 
 持续授权边界（用户于 `2026-08-18` 明确确认）：
 
@@ -3252,7 +3293,7 @@ Source / Workspace Revision
 - 模型固定为 `deepseek-v4-flash`；单 run `$0.10`、`12 turns / 24,000 tokens`、Provider retry=`0`、已执行 run 禁止重跑等既有合同保持不变；
 - 上述费用持续授权适用于后续计划内模型调用，包括未来在阶段 Gate 通过后执行的完整矩阵、candidate v4 或 P2-C，但不跳过任何阶段 Gate；push、公开发布和生产操作不在授权内。
 
-`a72f127` 唯一 Windows formal 已执行、失败并冻结；产品 mutation 成功，但 terminal/report usage 因 CLI `read ENOTCONN` 不可观测，完整 `$0.10` 已计入预留。DeepSeek 新价格自 `2026-08-17 00:00` 生效，生效后 `32` 个历史可观测 formal 已统一按高峰价和输入全 miss 重算，差额 `$0.12570178` 已加入保守 observed 上界。`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc` Windows/WSL2、`5200317` Windows/WSL2、`0cd7d13` Windows/WSL2 与 `2977780` Windows/WSL2 formal 的 provider-reported cost=`$0.00358616/$0.00302790/$0.00235180/$0.00316938/$0.00334516/$0.00291315/$0.00278265/$0.00639158/$0.00244161/$0.00635007/$0.00606781` 均已加入 observed。`8a67630` 与 `2e51cb9` Windows formal 均在 benchmark/model spawn 前以 infrastructure failure 冻结，model calls=`0`、仓库本地新增费用=`$0`，不改变 observed。Stage 0D 累计池仍为 `$5.00`，最坏累计池加 reserved 守卫=`47.53768 RMB < 50 RMB`；`2977780` Windows/WSL2 formal 均已冻结，项目记录不能替代 Provider 外部账单。
+`a72f127` 唯一 Windows formal 已执行、失败并冻结；产品 mutation 成功，但 terminal/report usage 因 CLI `read ENOTCONN` 不可观测，完整 `$0.10` 已计入预留。DeepSeek 新价格自 `2026-08-17 00:00` 生效，生效后 `32` 个历史可观测 formal 已统一按高峰价和输入全 miss 重算，差额 `$0.12570178` 已加入保守 observed 上界。`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc` Windows/WSL2、`5200317` Windows/WSL2、`0cd7d13` Windows/WSL2、`2977780` Windows/WSL2 与 `d6d7367` Windows formal 的 provider-reported cost=`$0.00358616/$0.00302790/$0.00235180/$0.00316938/$0.00334516/$0.00291315/$0.00278265/$0.00639158/$0.00244161/$0.00635007/$0.00606781/$0.00690650` 均已加入 observed。`8a67630` 与 `2e51cb9` Windows formal 均在 benchmark/model spawn 前以 infrastructure failure 冻结，model calls=`0`、仓库本地新增费用=`$0`，不改变 observed。Stage 0D 累计池仍为 `$5.00`，最坏累计池加 reserved 守卫=`47.53768 RMB < 50 RMB`；`2977780` 双平台与 `d6d7367` Windows formal 均已冻结，项目记录不能替代 Provider 外部账单。
 
 当前明确禁止：
 
@@ -3263,6 +3304,7 @@ Source / Workspace Revision
 - 重跑 `8a67630` 已执行的 Windows formal；
 - 重跑 `2e51cb9` 已执行的 Windows formal；
 - 重跑 `2977780` 已执行的 Windows/WSL2 dry-run 或 Windows/WSL2 formal；
+- 重跑 `d6d7367` 已执行的 Windows dry-run 或 Windows formal，或为该失败 identity 启动 WSL2；
 - 增加 `maxTurns`、`maxTokens` 或 Provider 重试；
 - 使用调价前 `0.0025/0.125/0.25 USD/1M` 旧单价启动任何新付费 formal；
 - 未经新证据启动完整矩阵或 candidate v4；
@@ -3428,22 +3470,22 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 - 主体框架不是当前瓶颈：P1-A1/A2、P1-B、P1-C、P2-A、P2-B 都能在当前源码中找到相应实现和测试。
 - 真正瓶颈是复杂多文件任务的稳定完成率。现有 `37` 个失败不能因为单个代表任务成功或新增保护 Gate 就从分母移除。
-- `a72f127`、`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc`、`5200317`、`0cd7d13` 和 `2e51cb9` 的失败证据均保持冻结；后继 `2977780` 已关闭 required-mutation 双平台代表 canary。当前离线重算已将全部 `37` 个失败稳定分类为 `30/5/2`，`unknown=0`；required-mutation 主 family 有当前双平台真实代表，parallel-read 保持正确失败关闭，下一缺口是 `real-web.ui-regression` 的 post-fix 真实代表证据。
+- `a72f127`、`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc`、`5200317`、`0cd7d13`、`2e51cb9` 和 `d6d7367` 的失败证据均保持冻结；后继 `2977780` 已关闭 required-mutation 双平台代表 canary。当前离线重算已将全部 `37` 个历史失败稳定分类为 `30/5/2`，`unknown=0`；`d6d7367` 又以真实 Web 代表确认 bounded finalization 能关闭 `length/schema` 终态，但任务因过宽 patch 被 evaluator 拒绝，下一缺口是 objective-review 的语义纠正机会。
 - P2-C 尚未启动。只有多个失败形状出现可重复改善，并且两个连续冻结候选通过全部硬 Gate，才能宣称达到 9.5。
 
 因此当前主要瓶颈是“真实效果证据还不够”，不是“再增加更多功能”。
 
 ### 9.6 费用和发布边界
 
-DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算，`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc` Windows/WSL2、`5200317` Windows/WSL2、`0cd7d13` Windows/WSL2 与 `2977780` Windows/WSL2 formal 的 provider-reported `$0.00358616/$0.00302790/$0.00235180/$0.00316938/$0.00334516/$0.00291315/$0.00278265/$0.00639158/$0.00244161/$0.00635007/$0.00606781` 也已入账；当前费用守卫为 **33.31 元人民币**，低于 **50 元人民币**授权上限。`a72f127` terminal/report usage 不可观测，仍保守预留完整 `$0.10`；runner 累计池保持 `$5.00`，加现有 reserved 后的最坏守卫仍为 **47.54 元人民币**。`8a67630` 与 `2e51cb9` Windows formal 均未启动 benchmark/model、仓库本地新增费用=`$0`；`2977780` Windows/WSL2 formal 已永久冻结，未提高费用、turn/token 或 retry，外部服务商账单仍需单独核对。
+DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算，`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc` Windows/WSL2、`5200317` Windows/WSL2、`0cd7d13` Windows/WSL2、`2977780` Windows/WSL2 与 `d6d7367` Windows formal 的 provider-reported `$0.00358616/$0.00302790/$0.00235180/$0.00316938/$0.00334516/$0.00291315/$0.00278265/$0.00639158/$0.00244161/$0.00635007/$0.00606781/$0.00690650` 也已入账；当前费用守卫为 **33.37 元人民币**，低于 **50 元人民币**授权上限。`a72f127` terminal/report usage 不可观测，仍保守预留完整 `$0.10`；runner 累计池保持 `$5.00`，加现有 reserved 后的最坏守卫仍为 **47.54 元人民币**。`8a67630` 与 `2e51cb9` Windows formal 均未启动 benchmark/model、仓库本地新增费用=`$0`；`2977780` 双平台与 `d6d7367` Windows formal 已永久冻结，未提高费用、turn/token 或 retry，外部服务商账单仍需单独核对。
 
 当前不会重跑已冻结版本，不会提高模型预算，不会启动完整付费矩阵，不会 push、公开发布或执行生产操作。
 
 ### 9.7 后续计划
 
-- **下一步准备做什么**：具体状态以文末唯一进度表为准；当前为 `real-web.ui-regression` 构造 formal prepare-only 输入，并在结构、费用与凭据 Gate 复核后执行唯一 Windows formal。
-- **为什么先做它**：`unknown=30` 已重分类为 required-mutation 主 family，且 `2977780` 已提供双平台真实代表；Web 是最小验证 finalization thinking 对 `length/schema` 双形状真实改善的剩余 task。
-- **当前还缺的关键闭环**：Web 唯一 Windows formal 的 valid schema terminal、mutation/tests/patch、usage/cost 和零残留；这些证据形成前不进入 WSL2 代表、完整矩阵、candidate v4 或 P2-C。
+- **下一步准备做什么**：具体状态以文末唯一进度表为准；当前先为 objective-review reasoning-only `length` 后失去 mutation 纠正机会补确定性失败测试，再做不扩大预算/重试的最小修复。
+- **为什么先做它**：`d6d7367` 已真实证明 bounded finalization 能输出合法终态，但任务被过宽 patch 击败；在 Windows 未成功时继续 WSL2 不能提供新的可归因证据。
+- **当前还缺的关键闭环**：objective-review 恢复逻辑、Agent/structured-output 回归、clean build 与新 identity 的零模型 Gate；这些证据形成前不再付费，不进入 WSL2、完整矩阵、candidate v4 或 P2-C。
 
 ## 10. 实施计划进度表
 
@@ -3453,7 +3495,7 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 | --- | --- | --- | --- | ---: | --- |
 | P0 后续：required-mutation 双平台代表 canary | P0 | **已完成并冻结** | `2977780` Windows/WSL2 formal 均完成同一三文件任务；evaluator、唯一 `run.completed`、available/exact/non-truncated snapshot、`6/6` usage、真实 key 与零残留全绿；cost=`$0.00635007/$0.00606781`，WSL readiness 端口/认证=`10.100/10.108s` | - | 禁止重跑 `8a67630`/`2e51cb9`/`2977780` 已执行 run；该 canary 不外推为其余 `37` 个失败改善 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | 2026-08-17：当前 HEAD `5b36691...` 的 P0-P2 源码/测试/artifact 已核查；SS 横向原始加权 `9.135`（发布分 `9.1`）；Grok Build `9.4`、Codex `9.7`、Claude Code `9.7`、OpenCode `9.3`、Hermes Agent `8.9`；竞品证据边界已记录 | - | 当前精简版与 archive-03 共同保留决策和完整历史；真实复杂任务成功率仍待新 formal 证据，不宣称达到 9.5 |
-| P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级；Web Windows 零模型 Gate 已通过** | 纯 flash `144/144`；`107 passed + 37 failed`；新离线 report=`30 required-mutation + 5 length + 2 schema + 0 unknown`；`d6d7367` Web dry-run 双 preflight/readiness/auth、fixture clean、`28/28` 定向测试、零调用/敏感值/残留全绿 | Windows formal 约 0.25 人日，后续平台代表另计 | 先完成 formal prepare-only 输入，再执行唯一 `d6d7367` Windows formal；成功前不进入 WSL2、完整矩阵或 candidate v4 |
+| P0：Benchmark v3 与外部有效性 | P0 | **Web finalization 代表已闭合，任务语义仍失败；未晋级** | `d6d7367` Windows formal：第 4 次 reasoning-only length 后第 5 次 bounded finalization 产出合法 JSON 与唯一 `run.completed`；`5/5` usage、cost=`$0.00690650`；测试通过但过宽 patch 被 evaluator 拒绝，敏感值/残留=`0/0` | objective-review 修复约 0.5-1 人日；后续代表另计 | 先补 objective-review 失败回归并形成新 identity；禁止重跑 `d6d7367` 或启动其 WSL2，不直接创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | 6-11 人日 | 生产化需独立 rollout、观察窗口和真实项目 Gate |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild、restore/联网和生命周期边界 |
