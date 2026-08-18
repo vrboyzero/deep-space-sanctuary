@@ -3051,7 +3051,13 @@ Source / Workspace Revision
    - Windows/WSL `28931` listener=`0/0`，相关 Node=`0/0`，runtime 根级 PID/token=`0`；
    - dry-run 新生成 `.env` / `.env.local`，SHA-256 仍为 `4579e3b7580ea74e795d8b4711c833b51f928e0b0aa47d3bb9a25c716d967e0e` / `292c3ebd62d69a3540a84d6228cf900a583800710018f9ff95c009e789feea2b`；它们是新的精确路径，当前未读取、回显、覆盖或删除，按 HITL 保留等待清理授权。
 
-5. **效果**：
+5. **唯一 WSL2 formal prepare-only 输入审计**：
+   - 一次性 `tmp/` launcher 已收敛为安全默认 prepare-only；只有显式传入 `--prepare-only false` 才可能进入 Gateway spawn，脚本继续受 Git ignore 保护且不改变 `2977780` identity；
+   - frozen harness/repository/config、Provider 配置存在性、新高峰价 `0.0125/0.375/1.125 USD/1M`、Provider retry=`0` 与费用窗口 `3.21548143 -> 3.31548143` 全部通过输入校验，remaining=`$0.10`；
+   - prepare-only 返回 gateway/benchmark spawned=`false/false`；预定 artifact/fixture/runtime 三个 formal 输出根均不存在，`28932` listener/相关 Node=`0/0`；
+   - 非 `$0.10` 的错误费用窗口以 exit=`1` 失败关闭；本环节未创建 runtime、未启动 Gateway/benchmark/模型，新增费用=`$0`。
+
+6. **效果**：
    - 同一冻结 identity 已通过 Windows 与 WSL2 的离线重建、双 preflight、Gateway 冷启动/readiness/auth 和零凭证失败关闭；
    - `2e51cb9` timeout 在后继 Windows dry-run/formal 与 WSL2 dry-run 均未复现，继续保持 `record_only`，无需提高 timeout、turn、token 或 retry；
    - WSL2 无费用产品前置证据已形成，新增 Provider 费用=`$0`；清理新 env residue 后才关闭完整无费用 Gate，付费 formal 仍需另行授权。
@@ -3061,6 +3067,7 @@ Source / Workspace Revision
 - TypeScript 编译无错误：WSL2 workspace build 与独立 `verify:build` 通过；
 - 本环节新增/重跑测试=`0`；沿用 `2977780` identity 已通过的 readiness/launcher 定向测试 `20/20`、`verify:coding-ci` 与 `verify:coding-benchmark`；
 - 双 preflight、零凭证/零 usage、空 event/trace/patch、fixture/harness clean、真实 key 零命中和端口/进程零残留 Gate 通过；
+- formal prepare-only 正向输入与费用窗口失败关闭均通过，执行路径保持未触发；
 - dry-run 本身已冻结且禁止重跑；两个新 env 文件仍是唯一未闭合的无费用清理项。
 
 ##### 后续计划
@@ -3273,7 +3280,7 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`2977780` Windows formal 与 WSL2 无费用 build/dry-run 已通过并冻结；等待 dry-run env 清理授权** | Windows 三文件/evaluator/唯一 `run.completed` 全绿，cost=`$0.00635007`；WSL2 offline install=`494/493/0/494`，build/双 preflight 通过，usage=`not_reached`、费用=`$0`；readiness 端口/认证=`10.231/10.242s`，真实 key 命中、listener、相关 Node=`0/0/0`；dry-run env 两文件按 HITL 保留 | env 清理小于 0.1 人日；WSL2 formal 另需授权和费用 | 禁止重跑 `8a67630`/`2e51cb9`/`2977780` 已执行 run；获清理授权后闭合无费用 Gate，再单独申请唯一 WSL2 formal；未全绿不进入矩阵/candidate v4/P2-C |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **`2977780` Windows formal 与 WSL2 无费用 build/dry-run 已通过并冻结；formal prepare-only 已通过，等待 dry-run env 清理授权** | Windows 三文件/evaluator/唯一 `run.completed` 全绿，cost=`$0.00635007`；WSL2 offline install=`494/493/0/494`，build/双 preflight 通过，usage=`not_reached`、费用=`$0`；readiness 端口/认证=`10.231/10.242s`，真实 key 命中、listener、相关 Node=`0/0/0`；formal 输入窗口=`3.21548143 -> 3.31548143`、spawn=`false/false`；dry-run env 两文件按 HITL 保留 | env 清理小于 0.1 人日；WSL2 formal 另需授权和费用 | 禁止重跑 `8a67630`/`2e51cb9`/`2977780` 已执行 run；获清理授权后闭合无费用 Gate，再单独申请唯一 WSL2 formal；未全绿不进入矩阵/candidate v4/P2-C |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | 2026-08-17：当前 HEAD `5b36691...` 的 P0-P2 源码/测试/artifact 已核查；SS 横向原始加权 `9.135`（发布分 `9.1`）；Grok Build `9.4`、Codex `9.7`、Claude Code `9.7`、OpenCode `9.3`、Hermes Agent `8.9`；竞品证据边界已记录 | - | 当前精简版与 archive-03 共同保留决策和完整历史；真实复杂任务成功率仍待新 formal 证据，不宣称达到 9.5 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
