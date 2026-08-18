@@ -645,6 +645,157 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("corrects a passing subset mutation that broadens behavior outside the requested case", async () => {
+    const requiredChangedPaths = ["src/diff/props.js"];
+    const broadSource = [
+      "\t\t// aria- and data- attributes have no boolean representation.",
+      "\t\t// A `false` value is different from the attribute not being present.",
+      "\t\tif (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      "\t\t} else if (value != NULL) {",
+      "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+      "\t\t} else {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t}",
+    ].join("\n");
+    const correctedSource = broadSource.replace(
+      "} else if (value != NULL) {",
+      "} else if (value != NULL && (value !== false || name[4] == '-')) {",
+    );
+    const correctionPatch = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-\t\t} else if (value != NULL) {",
+      "+\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {",
+      "*** End Patch",
+    ].join("\n");
+    const requests: Array<Record<string, any>> = [];
+    let mutationCount = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return response(modelToolCall("patch-broad", "apply_patch", {
+          input: [
+            "*** Begin Patch",
+            "*** Update File: src/diff/props.js",
+            "@@",
+            "-\t\t} else if (value != NULL && value !== false) {",
+            "+\t\t} else if (value != NULL) {",
+            "*** End Patch",
+          ].join("\n"),
+        }, 300, 60));
+      }
+      if (requests.length === 2 || requests.length === 4) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
+      const reviewInstruction = String(body.messages?.[0]?.content ?? "");
+      if (requests.length === 3) {
+        const preservesSubsetBehavior = reviewInstruction.includes(
+          "targets a named subset, special case, or exception",
+        ) && reviewInstruction.includes("preserves behavior for inputs outside it")
+          && reviewInstruction.includes("Do not broaden the requested behavior to all inputs");
+        if (preservesSubsetBehavior) {
+          return response(modelToolCall("correct-subset", "apply_patch", {
+            input: correctionPatch,
+          }, 300, 60));
+        }
+        return response({
+          choices: [{
+            finish_reason: "stop",
+            message: { content: "aria false passes; claimed complete" },
+          }],
+          usage: { prompt_tokens: 300, completion_tokens: 30 },
+        });
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: "corrected and verified" } }],
+        usage: { prompt_tokens: 300, completion_tokens: 30 },
+      });
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "apply_patch") {
+        mutationCount++;
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: "Patch applied successfully",
+          metadata: {
+            workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+          },
+          durationMs: 1,
+        };
+      }
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: JSON.stringify({
+          path: request.arguments?.path,
+          truncated: false,
+          content: mutationCount > 1 ? correctedSource : broadSource,
+        }),
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 12,
+      thinking: { type: "enabled" },
+      mutationToolNames: ["apply_patch"],
+      readToolNames: ["file_read"],
+    });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-subset-behavior-review",
+      text: "Restore false aria-* attribute serialization with the smallest change while preserving the public behavior of other attributes.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 12,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(5);
+    expect(requests[2]?.messages[0]?.content).toContain(
+      "targets a named subset, special case, or exception",
+    );
+    expect(requests[2]?.messages[0]?.content).toContain(
+      "Do not broaden the requested behavior to all inputs",
+    );
+    expect(requests[2]?.messages[1]?.content).toContain("} else if (value != NULL) {");
+    expect(requests[2]?.messages[1]?.content).toContain(
+      "name == 'popover' && value == true ? '' : value",
+    );
+    expect(requests[4]?.messages[0]?.content).toContain(
+      "preserves behavior for inputs outside it",
+    );
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "apply_patch",
+      "file_read",
+      "apply_patch",
+      "file_read",
+    ]);
+    expect(execute.mock.calls[2]?.[0]?.arguments).toEqual({ input: correctionPatch });
+    expect(correctedSource).toContain("value !== false || name[4] == '-'");
+    expect(correctedSource).toContain(
+      "dom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+    );
+    expect(mutationCount).toBe(2);
+    expect(items).toContainEqual({ type: "final", text: "corrected and verified" });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("retains the three-file canary residual in the bounded post-write review", async () => {
     const requiredChangedPaths = [
       "jsonrpc/src/common/api.ts",
@@ -1289,6 +1440,9 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     );
     expect(requests[3]?.messages[0]?.content).toContain(
       "Post-mutation objective correction input retry phase",
+    );
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "preserves behavior for inputs outside it",
     );
     expect(requests[3]?.messages[0]?.content).toContain(
       "Do not refactor, expand, normalize, modernize, or make an equivalent rewrite",
