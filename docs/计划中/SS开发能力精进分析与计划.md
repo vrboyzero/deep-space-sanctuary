@@ -275,6 +275,30 @@ Source / Workspace Revision
 - `5` 个工具调用、`6/6` model calls、usage/cost、失败终态、workspace snapshot 和 evaluator 已审计；
 - 扫描 `43,171` 个常规文件，Provider key/repository input/unreadable=`0/0/0`；env 已按授权回收，listener/相关 Node/剩余 env=`0/0/0`。
 
+#### P0 Web 修复实现结论：post-mutation structured repair thinking-disable（2026-08-19）
+
+##### 已完成内容
+
+1. **`packages/belldandy-agent/src/tool-agent.ts` 修改**：
+   - 仅当 run 已发生可信 workspace mutation 且当前调用为 structured-output repair 时，复用现有 DeepSeek thinking-disable；
+   - 普通 structured-output repair、evaluator、状态机、tool choice、模型调用次数、turn/token、Provider retry 和费用上限均未修改。
+
+2. **`tool-agent-workspace-mutation-structured-output.test.ts` 新建**：
+   - 通过公开 `ToolEnabledAgent.run` seam 复现 mutation、完整复读、objective review 返回非 JSON、bounded repair 的 `18feb22` 同形链路；
+   - 修复前稳定得到 `1 failed`，第 4 次请求为无工具 bounded repair，但 `thinking=enabled`；最小接线后同一测试转为 `1 passed`，repair 返回合法 JSON 且 run 以 `done` 结束；
+   - 测试只 mock 外部 HTTP Provider，不依赖私有 helper 或实现调用次数之外的内部状态。
+
+3. **效果**：
+   - post-mutation bounded repair 不再因 DeepSeek reasoning 挤占正文而产生 reasoning-only length；
+   - thinking-disable 只作用于已验证 mutation 后的 structured repair，不扩大到普通结构化输出恢复；
+   - 本地已关闭 `18feb22` 的直接终态根因，但 semantic-delta correction 仍需新 identity 的真实模型证据。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build:incremental` 与 `corepack pnpm verify:build` 均通过；
+- 相邻 owner/structured-output 测试 `4` 个文件 `143/143` 通过（含 `1` 个新增回归）；Agent 全量 `58` 个文件、`673/673` 通过，另有 `1` 个真实 Provider probe 按既有条件跳过；
+- `corepack pnpm verify:coding-benchmark`、`corepack pnpm verify:coding-ci` 与 `git diff --check` 均通过；本实现环节模型调用=`0`、新增 Provider 费用=`$0`。
+
 ### 5.2 当前问题分层判断
 
 | 待区分问题 | `18feb22` 及前序证据 | 判断 |
@@ -282,13 +306,13 @@ Source / Workspace Revision
 | 提示材料是否缺失 | task 的 smallest change、subset-preservation、正反 witness 已进入输入 | 不是当前直接根因 |
 | post-write 复读证据是否 stale/投影错误 | required path 最新完整源码已复读；`cb01ccd`、`c124741`、`fe49d51` 重放均确认当前条件可达 | 已排除 stale/incorrect context 与首次复读投影缺失 |
 | correction 输入构造是否错误 | 本地 semantic-delta retry `123/123` owner、`672/672` Agent 全绿；但 `18feb22` objective review 未生成 correction | 本地闭合、外部未覆盖，不能用本次 formal 宣称成功或失败 |
-| structured repair 是否继承 thinking-disable | 第 6 次调用明确出现 reasoning-only length；源码只覆盖 finalization/objective review | 当前可复现的最小直接缺口，决策=`fix_now` |
+| structured repair 是否继承 thinking-disable | 第 6 次调用明确出现 reasoning-only length；公开 seam 红灯复现 repair 仍为 `thinking=enabled` | 最小接线和本地 Gate 已闭合；外部 formal 尚未验证 |
 
 ### 5.3 后续计划
 
-- **下一步准备做什么**：先在公开 `ToolEnabledAgent.run` seam 写失败测试，复现 objective review 返回非 JSON 后 structured repair 在 thinking enabled 时耗尽正文；再只让已验证 mutation 后的 structured repair 复用现有 DeepSeek thinking-disable。
-- **为什么先做它**：Gateway 逐调用日志已把终态失败定位到 `callModel` 的 thinking 参数；该改动比修改 evaluator、费用预算或通用重试更窄。
-- **当前还缺的关键闭环**：red/green、owner/Agent 回归、build/合同 Gate，新 clean identity 的全部零模型 Gate，以及唯一 Windows formal 真实到达 correction 并同时通过 evaluator、合法终态、usage/cost、敏感值和零残留。
+- **下一步准备做什么**：提交本轮源码、测试和计划进度形成新 identity；随后建立 detached clean harness，完成 frozen offline install、workspace build、独立 `verify:build`、launcher/fixture/contract、Windows 零凭证 dry-run、敏感值/资源收敛和 formal prepare-only。
+- **为什么先做它**：red/green、本地全量与合同 Gate 已闭合；clean identity 的无费用前置验证是再次开放唯一付费 formal 的最后安全边界。
+- **当前还缺的关键闭环**：新 identity 的双 preflight、readiness/auth、fixture/receipt、零凭证与零残留，以及唯一 Windows formal 真实到达 correction 并同时通过最小 patch、evaluator、合法终态、usage/cost 和敏感值 Gate。
 
 ## 6. 验证、证据、费用与禁止范围
 
@@ -370,7 +394,7 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 | 技术债 | 决策 | 当前处理 |
 | --- | --- | --- |
-| post-mutation structured repair 未禁用 DeepSeek thinking | `fix_now` | 下一步测试先行做最小接线，不增加 retry 或预算 |
+| post-mutation structured repair 未禁用 DeepSeek thinking | `fix_now` | 公开 seam 已 red/green，最小接线和 Agent 全量 Gate 通过；本地闭合、外部未覆盖，不增加 retry 或预算 |
 | broad mutation 后 objective review 误判完成 | `fix_now` | subset-preservation 已本地回归；需要新 identity 的真实 correction/evaluator 证据 |
 | semantic-delta retry 外部有效性 | `fix_now` | owner `123/123`、Agent `672/672`；`18feb22` 未到达该 retry，继续保持“本地闭合、外部未覆盖” |
 | required-mutation 其余失败改善范围 | `split_task` | 按失败形状验证，不把 `2977780` 代表外推为全部改善 |
@@ -385,18 +409,18 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 ### 8.1 估算结论
 
-在当前证据不出现新失败族的前提下，达到 9.5 预计还需 **6-10 人日工程工作 + 两个连续候选的观察窗口**。若新 formal 或首个候选继续暴露独立失败族，合理预期上调为 **10-15 人日 + 观察窗口**。
+在当前证据不出现新失败族的前提下，达到 9.5 预计还需 **5.5-9 人日工程工作 + 两个连续候选的观察窗口**。若新 formal 或首个候选继续暴露独立失败族，合理预期仍为 **10-15 人日 + 观察窗口**。
 
 该估算不是把分数从 9.1 线性“补 0.4”；主要工作是用真实矩阵证明编辑/测试稳定性提升，并完成两个连续候选。拆分如下：
 
 | 工作包 | 乐观工作量 | 完成条件 |
 | --- | ---: | --- |
-| structured repair TDD 与本地 Gate | `0.5-1 人日` | red/green、owner/Agent、build、benchmark/CI 合同全绿 |
+| structured repair TDD 与本地 Gate | **已完成** | red/green、owner/Agent、build、benchmark/CI 合同全绿 |
 | 新 identity Web 代表外部闭环 | `0.5-1.5 人日` | 零模型 Gate + 唯一 Windows formal 同时通过最小 patch、evaluator、终态、usage/cost、敏感值和零残留 |
 | 其余失败形状的代表性改善证据 | `1-2 人日` | 至少覆盖 length/schema 与 Web correction，不以单样本外推 B/C 层 |
 | 首个完整候选、归因和必要小修 | `2-3 人日` | 单一 HEAD 完整矩阵可复算，达到目标向量和全部硬 Gate |
 | 第二个连续候选与最终复核 | `2-2.5 人日` | 连续候选原始加权均 `>=9.500`，账单/资源/文档闭环 |
-| **合计** | **约 `6-10 人日`** | 不含观察等待和新增失败族返工 |
+| **剩余合计** | **约 `5.5-9 人日`** | 不含观察等待和新增失败族返工 |
 
 ### 8.2 估算边界与关键不确定性
 
@@ -417,7 +441,7 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | SS 横向原始加权 `9.135`、发布分 `9.1`；竞品和证据边界已记录 | - | 真实复杂任务成功率仍需新 formal 和连续候选，不宣称达到 9.5 |
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
-| P0：Web mutation/correction 稳定化 | P0 | **`18feb22` 失败并冻结，待 TDD** | broad patch 被 evaluator 拒绝；objective review 未生成 correction；structured repair reasoning-only length | `1-2.5 人日` | 先修 structured repair 接线，再以新 identity 完成唯一 Windows formal；未全绿不进 WSL2/完整矩阵 |
+| P0：Web mutation/correction 稳定化 | P0 | **structured repair TDD 与本地 Gate 已完成，待新 identity** | 公开 seam red/green；owner `143/143`、Agent `673/673`、build、benchmark/CI 合同全绿；`18feb22` 继续冻结 | `0.5-1.5 人日` | 建立 clean identity 并完成 Windows 零模型 Gate；全绿后才开放唯一 formal，未全绿不进 WSL2/完整矩阵 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`productionEligible=false` | - | 生产化另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |

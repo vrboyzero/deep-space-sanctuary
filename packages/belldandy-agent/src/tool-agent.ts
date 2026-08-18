@@ -3762,7 +3762,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
             || workspaceMutationObjectiveInputCorrectionCall
             ? "required"
             : undefined,
-          finalizationOnlyCall || workspaceMutationObjectiveReviewCall,
+          finalizationOnlyCall
+            || workspaceMutationObjectiveReviewCall
+            || (structuredOutputRepairCall && workspaceMutationObserved),
         );
         if (boundedStructuredOutputRepairRequest) {
           pendingBoundedStructuredOutputRepairRequest = undefined;
