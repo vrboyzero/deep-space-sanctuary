@@ -3615,6 +3615,37 @@ Source / Workspace Revision
 - **为什么先做它**：本地拒绝恢复和可信 executor input retry 已经真实生效，当前最小失败点是 retry 仍无法定位现有源码；继续增加重试或重跑冻结 identity 只会重复费用，不能产生新证据；
 - **当前还缺的关键闭环**：失败测试红转绿、Agent/structured-output 回归、clean build、新 source identity 零模型 Gate，以及其全部通过后才允许的一次新 Windows formal；在此之前不启动 WSL2、完整矩阵、candidate v4 或 P2-C。
 
+#### P0 Web 代表实现结论：correction current-source evidence 修复（2026-08-19）
+
+##### 已完成内容
+
+1. **`react-workspace-mutation.ts` 修改**：
+   - post-write objective review 与唯一 objective input correction 只接收每个 required path 最新一次完整 `file_read`，不再把 mutation 前旧复读、mutation 结果或失败 patch 错误正文作为 correction 源码证据；
+   - `false` / `null` / `true` / `undefined`、`aria-*` 一类 wildcard 词、camelCase 与路径词按源码相关性排序，避免普通 `browser-facing` 文案抢占有限的中段投影槽位；
+   - 任一 required path 缺失完整复读、最新复读截断，或证据因 token 预算未实际装入请求时立即失败关闭。
+
+2. **`tool-agent-workspace-mutation.test.ts` 与 `react-workspace-mutation.test.ts` 扩展**：
+   - 新增与 `09b5498` formal 同形的公开 Agent 回归，覆盖 mutation 前旧 read、post-write 完整 read、stale correction 失败和唯一 input retry；
+   - 明确断言 objective review 与 retry 都包含当前 `value != NULL && value !== false` 源码，且不含旧 read 或失败 patch 上下文；
+   - 新增 wildcard/literal 优先级、多 required path 证据预算和截断复读三条 owner 边界测试。
+
+3. **效果**：
+   - 冻结任务提示本身无需修改；根因已收敛为完整复读的中段投影未命中，以及 correction 请求混入旧工具证据；
+   - correction 现在以 mutation 后当前源码为唯一可信构造材料，同时保留既有一次 correction、一次 input retry、`12 turns / 24,000 tokens` 与 Provider retry=`0` 合同；
+   - source identity=`cb01ccd0f89ba399eaa974f0cf67eff2f8910157`，模型调用=`0`、新增费用=`$0`；用户已有 D 盘文档改动未暂存、未修改。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build:incremental` 与 `corepack pnpm verify:build` 均通过；
+- `7` 个 Agent/structured-output 相关测试文件共 `232` 个测试全部通过（含 `4` 个新增 current-source evidence 测试）；
+- `corepack pnpm verify:coding-benchmark`、`corepack pnpm verify:coding-ci` 与 `git diff --check` 均通过；边界 review 未发现新的接口破坏或额外 retry/费用扩张。
+
+##### 后续计划
+
+- **下一步准备做什么**：以 `cb01ccd` 建立新的 detached clean harness，执行 offline frozen install、完整 build、独立 `verify:build`、launcher/fixture tests、Windows 零凭证 dry-run、双 preflight、readiness/auth、敏感值与资源收敛，以及 formal prepare-only；
+- **为什么先做它**：确定性测试已关闭 stale evidence 与中段投影缺口，但真实模型调用前仍必须证明新提交在干净环境、固定 route 和费用/敏感值边界下可重复；
+- **当前还缺的关键闭环**：新 identity 的全部零模型 Gate 与其通过后唯一一次 Windows formal；在此之前不重跑 `09b5498`、不启动其 WSL2，也不进入完整矩阵、candidate v4 或 P2-C。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
@@ -3740,7 +3771,7 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 | Web finalization reasoning 挤占正文与截断 schema | `record_only` | `d6d7367` 已真实证明 finalization-only 禁用 DeepSeek thinking 后可生成合法终态；`d01030a` 的 objective-review 也不再出现 reasoning-only length，历史终态修复保持闭合，不重复改合同 |
 | objective-review 返回空 correction patch | `fix_now` | `8cee589` 已仅为无 mutation 的可信 `apply_patch_input_invalid` 接入一次有界输入纠正；成功后完整复读/final review，二次失败立即关闭；`169/169` 定向测试、build 与 verify Gate 全绿，不接受空 patch 成功、不增加 maxTurns/maxTokens/retry |
 | objective correction 在 executor 前被本地 patch 校验拒绝 | `fix_now` | `09b5498` 已将首次 required-path/valid-section 本地拒绝接入既有一次 input correction；非法/越界 patch 始终不执行，`171/171` 定向测试、build 与 verify Gate 全绿；同 identity formal 已真实到达 executor 和 input retry，证明该恢复接线生效 |
-| objective input correction 连续使用 stale/incorrect context | `fix_now` | `09b5498` formal 的首次 correction 与唯一 retry 均因当前 workspace 中找不到目标上下文而可信失败；先以确定性测试区分提示材料、复读投影和 correction 输入构造，再做最小修复；不增加 turn/token/Provider retry，不重跑冻结 identity |
+| objective input correction 连续使用 stale/incorrect context | `fix_now` | `cb01ccd` 已证明任务提示无需修改，并将 correction 证据收敛为每个 required path 最新完整复读；中段源码按 literal/wildcard/标识符优先投影，旧 read、失败 patch 正文、缺失/截断/未装入证据均不再进入请求；`232/232` 定向回归与本地构建 Gate 全绿，下一步只开放新 identity 零模型 Gate |
 | detached worktree 首次 pnpm offline 链接超时 | `record_only` | `09b5498` clean harness 首次安装在依赖已链接、无残留进程且 Git clean 后触达 `180s` 工具超时；同一命令幂等续跑 `608ms` 退出 `0`，随后 build、verify 与 `28/28` 测试全绿，暂无产品或锁文件失败证据 |
 | parallel-read 唯一 repair 后仍超长 | `record_only` | Windows a2 的完整 JSON `summary` 超过 `maxLength: 1000`，Validator 正确拒绝且唯一 repair 已消费；不增加模型 turn、Provider retry 或第二次 repair，同 task 其余冻结样本不据此改写 |
 | 旧 failure analysis 的 `unknown=30` | `record_only` | 旧 artifact 保持冻结；当前 `56d8713` 分类器在新路径重算得到 `required_mutation_recovery_failed=30`、`unknown=0`，独立 verifier 通过，不回写历史 artifact 或升级 Schema 版本 |
@@ -3815,7 +3846,7 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 - 主体框架不是当前瓶颈：P1-A1/A2、P1-B、P1-C、P2-A、P2-B 都能在当前源码中找到相应实现和测试。
 - 真正瓶颈是复杂多文件任务的稳定完成率。现有 `37` 个失败不能因为单个代表任务成功或新增保护 Gate 就从分母移除。
-- `a72f127`、`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc`、`5200317`、`0cd7d13`、`2e51cb9`、`d6d7367`、`d01030a`、`8cee589` 和 `09b5498` 的失败证据均保持冻结；后继 `2977780` 已关闭 required-mutation 双平台代表 canary。当前离线重算已将全部 `37` 个历史失败稳定分类为 `30/5/2`，`unknown=0`；`d6d7367` 证明 bounded finalization 能关闭 `length/schema` 终态，`d01030a` 证明 objective-review thinking 截断已消失，`09b5498` 证明 executor 前恢复与唯一 input retry 已生效，并把当前缺口进一步收敛为 correction 连续使用 stale/incorrect context。
+- `a72f127`、`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc`、`5200317`、`0cd7d13`、`2e51cb9`、`d6d7367`、`d01030a`、`8cee589` 和 `09b5498` 的失败证据均保持冻结；后继 `2977780` 已关闭 required-mutation 双平台代表 canary。当前离线重算已将全部 `37` 个历史失败稳定分类为 `30/5/2`，`unknown=0`；`d6d7367` 证明 bounded finalization 能关闭 `length/schema` 终态，`d01030a` 证明 objective-review thinking 截断已消失，`09b5498` 证明 executor 前恢复与唯一 input retry 已生效，`cb01ccd` 已以确定性测试关闭其暴露的 stale/incorrect correction evidence 构造缺口，真实外部有效性仍待新 identity formal。
 - P2-C 尚未启动。只有多个失败形状出现可重复改善，并且两个连续冻结候选通过全部硬 Gate，才能宣称达到 9.5。
 
 因此当前主要瓶颈是“真实效果证据还不够”，不是“再增加更多功能”。
@@ -3828,9 +3859,9 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 
 ### 9.7 后续计划
 
-- **下一步准备做什么**：具体状态以文末唯一进度表为准；暂停后先以确定性测试复现 objective input correction 连续使用 stale/incorrect context，再做最小修复。
-- **为什么先做它**：`09b5498` 已证明本地拒绝恢复和唯一 input retry 确实到达 executor，当前最小失败点已变为 correction 无法命中当前 workspace；重跑同 identity 或增加 retry 不会关闭该缺口。
-- **当前还缺的关键闭环**：失败测试红转绿、Agent/structured-output 回归、clean build、新 identity 零模型 Gate 与其后唯一 Windows formal；这些证据形成前不进入 WSL2、完整矩阵、candidate v4 或 P2-C。
+- **下一步准备做什么**：具体状态以文末唯一进度表为准；以 `cb01ccd` 建立 detached clean harness 并完成新 identity 零模型 Gate。
+- **为什么先做它**：stale evidence 与中段源码投影已完成失败测试红转绿和本地构建验证；在消费新 formal 费用前，仍需确认干净环境、固定 route、readiness/auth、fixture、敏感值和资源边界全部可审计。
+- **当前还缺的关键闭环**：offline clean build、launcher/fixture、Windows 零凭证 dry-run、双 preflight、formal prepare-only 与其全部通过后的唯一 Windows formal；这些证据形成前不进入 WSL2、完整矩阵、candidate v4 或 P2-C。
 
 ## 10. 实施计划进度表
 
@@ -3840,7 +3871,7 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 | --- | --- | --- | --- | ---: | --- |
 | P0 后续：required-mutation 双平台代表 canary | P0 | **已完成并冻结** | `2977780` Windows/WSL2 formal 均完成同一三文件任务；evaluator、唯一 `run.completed`、available/exact/non-truncated snapshot、`6/6` usage、真实 key 与零残留全绿；cost=`$0.00635007/$0.00606781`，WSL readiness 端口/认证=`10.100/10.108s` | - | 禁止重跑 `8a67630`/`2e51cb9`/`2977780` 已执行 run；该 canary 不外推为其余 `37` 个失败改善 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | 2026-08-17：当前 HEAD `5b36691...` 的 P0-P2 源码/测试/artifact 已核查；SS 横向原始加权 `9.135`（发布分 `9.1`）；Grok Build `9.4`、Codex `9.7`、Claude Code `9.7`、OpenCode `9.3`、Hermes Agent `8.9`；竞品证据边界已记录 | - | 当前精简版与 archive-03 共同保留决策和完整历史；真实复杂任务成功率仍待新 formal 证据，不宣称达到 9.5 |
-| P0：Benchmark v3 与外部有效性 | P0 | **`09b5498` Windows formal 已失败并冻结；correction context 待修复** | formal 唯一终态=`run.failed`，usage=`5/5`、tokens=`10,577/850`、cost=`$0.00353063`；tests=`true`、regression=`0`，但 patchAccepted/taskCompleted=`false/false`；首次 correction 到达 executor 并触发唯一 input retry，第二次仍因上下文不匹配失败；敏感值/env/资源=`0/0/0` | 确定性诊断与最小修复约 0.5-1 人日；新 Gate/formal 另约 0.5 人日 | 暂停后先测试先行修复 stale/incorrect correction context，再以新 identity 完成零模型 Gate；禁止重跑 `09b5498` 或启动其 WSL2，不增加 turn/token/retry，不直接创建 candidate v4 |
+| P0：Benchmark v3 与外部有效性 | P0 | **correction context 已修复；`cb01ccd` 零模型 Gate 待执行** | 冻结 formal 仍为 `09b5498` `run.failed`；`cb01ccd` 已区分提示、复读投影和 correction 构造，objective review/retry 只接收最新完整 required-path read，`232/232` 定向测试、build、benchmark/CI 合同与 diff Gate 全绿；模型调用/新增费用=`0/$0` | 新 identity Gate/formal 约 0.5 人日 | 以 `cb01ccd` 建立 detached clean harness；全部零模型 Gate 通过后仅执行一次 Windows formal。禁止重跑 `09b5498` 或启动其 WSL2，不增加 turn/token/retry，不直接创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | 6-11 人日 | 生产化需独立 rollout、观察窗口和真实项目 Gate |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild、restore/联网和生命周期边界 |
