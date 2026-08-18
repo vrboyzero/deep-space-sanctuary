@@ -3418,6 +3418,47 @@ Source / Workspace Revision
 - **为什么先做它**：需要先证明新状态机在 clean source、真实 Gateway readiness/auth、fixture、敏感值与资源边界上可审计，再消费新的 `deepseek-v4-flash` formal；
 - **当前还缺的关键闭环**：detached build、双 preflight、fixture/evaluator、readiness/auth、固定 route、费用窗口、敏感值扫描、env 回收站清理、资源收敛和 formal prepare-only receipt；全部零模型 Gate 通过后才允许一次新 Windows formal，仍禁止重跑 `d01030a`/`d6d7367` 或先进入 WSL2。
 
+#### P0 Web 代表准备实现结论：`8cee589` Windows 零模型 Gate（2026-08-18）
+
+##### 已完成内容
+
+1. **`tmp/p0-web-objective-input-retry-canary-8cee589-clean` detached clean harness 建立**：
+   - source/harness 固定为 `8cee5890b8bd3127f31fad8e12d97759b873ba68`，主工作区用户现有 D 盘文档改动未进入 harness；
+   - `corepack pnpm install --offline --frozen-lockfile` 完成 `493` 个包安装，downloaded=`0`；完整 workspace build、独立 `verify:build` 与构建后 Git clean 均通过；
+   - launcher/fixture 定向测试 `28/28` 通过，canonical lockfile/content SHA-256=`844c0021...` / `5bd509f0...`。
+
+2. **Windows 零凭证 dry-run 完成**：
+   - artifact=`artifacts/p0-web-objective-input-retry-canary-8cee589-preact-windows-dry-run-r1`，run=`real-web-ui-regression-windows-a1-1787030100998`，report SHA-256=`99c37d4bb4aed32926702b402ed2d55a4a62a2e854aefa053f27933011ba58e7`；
+   - production/repository snapshot preflight 均为 `passed`，fixture baseline=`0ccf7aad13048e577f4411f2108878baef53bc45` 且 clean；model=`deepseek-v4-flash`、credentialsConfigured=`false`、usage=`not_reached`、cost=`null`；
+   - event/trace/patch/changed paths=`0/0/0/0`，Provider/model calls=`0/0`，零凭证失败关闭没有进入任务执行或 machine evaluator。
+
+3. **readiness、敏感值与资源收敛完成**：
+   - Gateway readiness report SHA-256=`80436bd39212582a81a05d6fcd46ee1974eab919b2510f09509ea54b7fdc8703`，首 stdout/端口/认证=`2.026/10.600/10.608s`，stderr=`0 bytes`，stop 请求后 `14ms` 受控退出，`exitedBeforeStop=false`；
+   - artifact/fixture/runtime 共扫描 `8,061` 个常规文件，另扫描 `1` 个 repository input，unreadable/真实 Provider key 精确命中=`0/0`；
+   - 新生成 `.env` / `.env.local` 经绝对路径 containment、普通文件、无 reparse point 与 SHA-256 校验后，已按持续授权送入 Windows 回收站；原路径不存在，cleanup log=`tmp/p0-web-objective-input-retry-canary-8cee589-preact-windows-dry-run-r1-sensitive-cleanup.log`；listener/相关 Node/剩余 env=`0/0/0`。
+
+4. **formal prepare-only 输入审计完成**：
+   - formal repository input SHA-256=`05640715d57101631ba632f21bfee70548814a4624c0d591cfafc5832c6aa74a`，绑定本次 dry-run receipt SHA-256=`0e74aee3cc8cbff687f95b61aa9c5d0cbfcac79cbd50e049ec07831b0c7ebe6d`；
+   - repository/receipt binding 通过，Provider env 只允许 API key/base URL/wire API，凭据可用但不进入命令参数；
+   - 固定 `deepseek-v4-flash`、高峰价 cache/input/output=`0.0125/0.375/1.125 USD/1M`、Provider retry=`0` 与 `3.23137967 -> 3.33137967 USD` 累计窗口；Gateway/benchmark spawned=`false/false`，三个预定 formal 输出根均不存在。
+
+5. **效果**：
+   - `8cee589` 已通过 detached offline build、fixture/evaluator、双 preflight、真实 Windows Gateway readiness/auth、固定 route、零凭证失败关闭、敏感值和资源收敛 Gate；
+   - 全部准备证据绑定同一 clean source identity，本轮 Provider/model calls=`0/0`、新增费用=`$0`；
+   - 当前只开放一次新的 Windows formal，不重跑冻结 identity，不先启动 WSL2、完整矩阵、candidate v4 或 P2-C。
+
+##### 验证结果
+
+- TypeScript 编译无错误：detached harness `corepack pnpm build` 与独立 `corepack pnpm verify:build` 均退出 `0`；
+- `28` 个定向测试全部通过（新增测试=`0`）：Windows launcher `17`、v3 fixture/evaluator `11`；
+- dry-run 双 preflight、readiness/auth、fixture/harness clean、零 usage、空 event/trace/patch、敏感值扫描、env 回收站清理、资源收敛和 formal prepare-only Gate 全绿。
+
+##### 后续计划
+
+- **下一步准备做什么**：沿用已通过的 formal prepare-only 输入，固定 `deepseek-v4-flash`、高峰价、Provider retry=`0`、`12 turns / 24,000 tokens` 与累计费用窗口，执行且只执行一次 `8cee589` Windows formal；
+- **为什么先做它**：全部无费用 Gate 已闭合，真实 Web mutation、objective-review 空 correction 输入纠正、再次复读和 final review 是验证本次修复的最小剩余证据；
+- **当前还缺的关键闭环**：formal 的 mutation/tests/patch、合法唯一 terminal、完整 Provider usage/cost、真实敏感值与零残留审计；无论结果如何均永久冻结该 formal，Windows 未全绿不进入 WSL2，也不进入完整矩阵、candidate v4 或 P2-C。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
@@ -3626,9 +3667,9 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 
 ### 9.7 后续计划
 
-- **下一步准备做什么**：具体状态以文末唯一进度表为准；当前以 `8cee589` 建立 detached clean harness，完成 offline build、独立 build verification、fixture/launcher 和 Windows 零凭证 dry-run。
-- **为什么先做它**：objective input correction 的确定性代码 Gate 已闭合，下一风险是新 source identity 在真实 Gateway、fixture、敏感值和资源边界上的可审计性；先关闭无费用 Gate 才能把后续 formal 结果归因到本次修复。
-- **当前还缺的关键闭环**：双 preflight、readiness/auth、固定 `deepseek-v4-flash` route、费用窗口、敏感值扫描、`.env` / `.env.local` 回收站清理、资源收敛与 prepare-only receipt；全绿后才允许一次新 Windows formal，不重跑 `d01030a`/`d6d7367`，不先进入 WSL2、完整矩阵、candidate v4 或 P2-C。
+- **下一步准备做什么**：具体状态以文末唯一进度表为准；当前沿用已通过的 prepare-only 输入，执行且只执行一次 `8cee589` Windows formal。
+- **为什么先做它**：detached build、fixture/evaluator、双 preflight、Gateway readiness/auth、固定 route、费用、敏感值和资源 Gate 已全部闭合，真实模型执行是验证原子输入纠正是否改善 Web 代表任务的唯一剩余证据。
+- **当前还缺的关键闭环**：formal 的 mutation/tests/patch、合法唯一 terminal、完整 Provider usage/cost、真实敏感值扫描、env 回收站清理和资源收敛；formal 后永久冻结，Windows 未全绿不进入 WSL2、完整矩阵、candidate v4 或 P2-C。
 
 ## 10. 实施计划进度表
 
@@ -3638,7 +3679,7 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 | --- | --- | --- | --- | ---: | --- |
 | P0 后续：required-mutation 双平台代表 canary | P0 | **已完成并冻结** | `2977780` Windows/WSL2 formal 均完成同一三文件任务；evaluator、唯一 `run.completed`、available/exact/non-truncated snapshot、`6/6` usage、真实 key 与零残留全绿；cost=`$0.00635007/$0.00606781`，WSL readiness 端口/认证=`10.100/10.108s` | - | 禁止重跑 `8a67630`/`2e51cb9`/`2977780` 已执行 run；该 canary 不外推为其余 `37` 个失败改善 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | 2026-08-17：当前 HEAD `5b36691...` 的 P0-P2 源码/测试/artifact 已核查；SS 横向原始加权 `9.135`（发布分 `9.1`）；Grok Build `9.4`、Codex `9.7`、Claude Code `9.7`、OpenCode `9.3`、Hermes Agent `8.9`；竞品证据边界已记录 | - | 当前精简版与 archive-03 共同保留决策和完整历史；真实复杂任务成功率仍待新 formal 证据，不宣称达到 9.5 |
-| P0：Benchmark v3 与外部有效性 | P0 | **`8cee589` 原子输入纠正已提交；Windows 零模型 Gate 待执行** | 仅可信 `apply_patch_input_invalid` 可获得一次有界纠正，成功后完整复读/final review，二次失败立即关闭；定向测试 `169/169`、incremental build、独立 `verify:build` 与 diff check 全绿；模型调用/费用=`0/$0` | 零模型准备约 0.5 人日；后续代表另计 | 以 `8cee589` 建 detached clean harness，完成 offline build、fixture/launcher、双 preflight、readiness/auth、敏感值与资源 Gate；全绿后才允许一次新 Windows formal，禁止重跑 `d01030a`/`d6d7367` 或先启动 WSL2 |
+| P0：Benchmark v3 与外部有效性 | P0 | **`8cee589` Windows 零模型 Gate 已闭合；唯一 formal 待执行** | clean source `8cee589...`；offline build/verify、launcher/fixture `28/28`、双 preflight、readiness/auth、敏感值/env/资源与 prepare-only 全绿；dry-run model calls/费用=`0/$0`，formal 窗口=`3.23137967 -> 3.33137967 USD` | 唯一 formal + 审计约 0.25 人日 | 固定 `deepseek-v4-flash`、高峰价、retry=`0` 执行一次 Windows formal 并永久冻结；禁止重跑 `d01030a`/`d6d7367` 或先启动 WSL2，不直接创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | 6-11 人日 | 生产化需独立 rollout、观察窗口和真实项目 Gate |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild、restore/联网和生命周期边界 |
