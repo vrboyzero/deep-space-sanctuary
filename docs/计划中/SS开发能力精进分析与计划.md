@@ -3305,6 +3305,42 @@ Source / Workspace Revision
 - **为什么先做它**：需要先证明修复后的 source 在真实 Web fixture、Gateway 和 Windows 资源边界上可审计，再消费唯一一次 `deepseek-v4-flash` formal；这样可把新证据归因到 objective-review 修复，不混入旧 identity 的冻结失败；
 - **当前还缺的关键闭环**：新 identity 的零模型准备 Gate 与随后唯一 Windows formal 的 mutation/tests/patch、valid schema terminal、完整 usage/cost 和零残留审计；Gate 未闭合前不启动 WSL2、完整矩阵、candidate v4 或 P2-C。
 
+#### P0 Web 代表准备实现结论：`d01030a` Windows 零模型 Gate（2026-08-18）
+
+##### 已完成内容
+
+1. **`tmp/p0-web-objective-review-canary-d01030a-clean` detached clean harness 建立**：
+   - source/harness 固定为 `d01030abd7046ad7af2e3c8c597c1375731de968`，主工作区用户现有 D 盘文档改动未进入 harness；
+   - `corepack pnpm install --offline --frozen-lockfile` 完成 `493` 个包安装，downloaded=`0`；完整 workspace build、独立 `verify:build` 与构建后 Git clean 均通过；
+   - launcher/fixture 定向测试 `28/28` 通过，canonical lockfile/content SHA-256=`844c0021...` / `f2714512...`。
+
+2. **Windows 零凭证 dry-run 与参数失败隔离**：
+   - r1 错误携带仅 formal 可用的 Stage 0D 累计费用参数，在 benchmark/model spawn 前以 `prior observed cost requires credentialsConfigured=true` 失败关闭；Gateway readiness/auth=`10.714/10.722s`、Provider/model calls=`0/0`，r1 证据保留且不复用目录；
+   - r2 去掉这两个 formal-only 参数后正常完成，artifact=`artifacts/p0-web-objective-review-canary-d01030a-preact-windows-dry-run-r2`，run=`real-web-ui-regression-windows-a1-1787028092536`，report SHA-256=`e01c2a990e8c39c768cf3dfdbe629357663be1e1f293a3f7370e96793dadd732`；
+   - production/repository snapshot preflight 均为 `passed`，fixture baseline=`0ccf7aad13048e577f4411f2108878baef53bc45` 且 clean；model=`deepseek-v4-flash`、credentialsConfigured=`false`、usage=`not_reached`、cost=`null`，event/trace/patch/changed paths=`0/0/0/0`。
+
+3. **readiness、敏感值与 formal 输入准备完成**：
+   - r2 Gateway 首 stdout/端口/认证=`2.029/11.506/11.514s`，stderr=`0 bytes`，stop 后 child、端口与 identity 相关 Node 进程无残留；
+   - r2 artifact/fixture/runtime/input 共扫描 `8,062` 个常规文件，unreadable/真实 Provider key 精确命中=`0/0`；r1/r2 新生成的 `.env` / `.env.local` 均经 containment、普通文件、无 reparse point 与 SHA-256 校验后按持续授权送入 Windows 回收站，原路径不存在并分别保留 cleanup log；
+   - formal repository input SHA-256=`59d4f8b2141cd16c06a17091d029c8afacecd810c0787602479c342eb80e04fa`，绑定 r2 receipt SHA-256=`0e74aee3cc8cbff687f95b61aa9c5d0cbfcac79cbd50e049ec07831b0c7ebe6d`；结构加载、repository/receipt binding 与 provider env allowlist 已在 `spawned=false` 下通过，未回显值。
+
+4. **效果**：
+   - `d01030a` 已通过 detached offline build、双 preflight、真实 Windows Gateway readiness/auth、固定 route、零凭证失败关闭、敏感值和资源收敛 Gate；
+   - r1 参数错误未重试原目录，r2 只修正确定性 CLI 合同输入；两次均未触达 Provider、未产生费用，也未重跑任何冻结 identity；
+   - 当前只开放一次新的 Windows formal，不启动 WSL2、完整矩阵、candidate v4 或 P2-C。
+
+##### 验证结果
+
+- TypeScript 编译无错误：detached harness `corepack pnpm build` 与独立 `corepack pnpm verify:build` 均退出 `0`；
+- `28` 个定向测试全部通过（新增测试=`0`）：Windows launcher `17`、v3 fixture/evaluator `11`；
+- r2 双 preflight、readiness/auth、fixture/harness clean、零 usage、空 event/trace/patch、敏感值扫描、env 回收站清理和资源收敛 Gate 全绿；Provider/model calls=`0/0`，费用变化=`$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：固定 `deepseek-v4-flash`、高峰价 cache/input/output=`0.0125/0.375/1.125 USD/1M`、Provider retry=`0`、`12 turns / 24,000 tokens` 与 `3.22845574 -> 3.32845574 USD` 累计窗口，执行且只执行一次 `d01030a` Windows formal；
+- **为什么先做它**：新 source identity 的全部无费用 Gate 已闭合，真实 Web mutation 与 objective-review correction 是验证本次 thinking 修复是否改善语义 patch 的最小剩余证据；
+- **当前还缺的关键闭环**：formal 的 mutation/tests/patch、合法唯一 terminal、完整 Provider usage/cost、真实敏感值和零残留审计；Windows 未全绿不进入 WSL2，且无论结果如何均永久冻结本次 formal，不进入完整矩阵、candidate v4 或 P2-C。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
@@ -3511,9 +3547,9 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 
 ### 9.7 后续计划
 
-- **下一步准备做什么**：具体状态以文末唯一进度表为准；当前以提交 `d01030a` 建立新的 detached clean harness，先完成全部零模型准备 Gate，再评估唯一一次新的 Windows formal。
-- **为什么先做它**：objective-review 的确定性回归与最小修复已完成，新的 source identity 必须先通过真实 fixture、Gateway readiness/auth、敏感值和资源收敛检查，才能获得可归因的付费证据。
-- **当前还缺的关键闭环**：新 identity 的零模型准备证据，以及随后唯一 Windows formal 的 mutation/tests/patch、valid schema terminal、完整 usage/cost 与零残留审计；这些证据形成前不重跑 `d6d7367`、不启动其 WSL2、不进入完整矩阵、candidate v4 或 P2-C。
+- **下一步准备做什么**：具体状态以文末唯一进度表为准；`d01030a` 零模型 Gate 已闭合，当前只执行一次固定 `deepseek-v4-flash` 的新 Windows formal。
+- **为什么先做它**：objective-review 修复、detached build、双 preflight、Gateway readiness/auth、敏感值和资源收敛已形成可归因前置证据，真实 Web mutation 是当前唯一剩余产品 Gate。
+- **当前还缺的关键闭环**：formal 的 mutation/tests/patch、valid schema terminal、完整 usage/cost 与零残留审计；Windows 未全绿不进入 WSL2，无论结果如何均冻结本次 formal，不重跑 `d6d7367`、不进入完整矩阵、candidate v4 或 P2-C。
 
 ## 10. 实施计划进度表
 
@@ -3523,7 +3559,7 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 | --- | --- | --- | --- | ---: | --- |
 | P0 后续：required-mutation 双平台代表 canary | P0 | **已完成并冻结** | `2977780` Windows/WSL2 formal 均完成同一三文件任务；evaluator、唯一 `run.completed`、available/exact/non-truncated snapshot、`6/6` usage、真实 key 与零残留全绿；cost=`$0.00635007/$0.00606781`，WSL readiness 端口/认证=`10.100/10.108s` | - | 禁止重跑 `8a67630`/`2e51cb9`/`2977780` 已执行 run；该 canary 不外推为其余 `37` 个失败改善 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | 2026-08-17：当前 HEAD `5b36691...` 的 P0-P2 源码/测试/artifact 已核查；SS 横向原始加权 `9.135`（发布分 `9.1`）；Grok Build `9.4`、Codex `9.7`、Claude Code `9.7`、OpenCode `9.3`、Hermes Agent `8.9`；竞品证据边界已记录 | - | 当前精简版与 archive-03 共同保留决策和完整历史；真实复杂任务成功率仍待新 formal 证据，不宣称达到 9.5 |
-| P0：Benchmark v3 与外部有效性 | P0 | **objective-review 修复已完成；新 identity 零模型 Gate 准备中** | `d01030a`：objective-review 与 finalization 均禁用 DeepSeek thinking；定向测试 `167/167`、build/verify:build 通过、Provider calls=`0`；`d6d7367` formal 仍永久冻结，历史语义失败不改写 | 新 identity 准备约 0.5-1 人日；后续代表另计 | 先完成 detached clean harness、Windows 零凭证 readiness/auth 与敏感值/资源清理 Gate；通过后只执行一次新的 Windows formal，禁止重跑 `d6d7367` 或启动其 WSL2，不直接创建 candidate v4 |
+| P0：Benchmark v3 与外部有效性 | P0 | **`d01030a` 零模型 Gate 已通过；唯一 Windows formal 已开放** | detached offline install/build/verify、launcher/fixture `28/28`、r2 双 preflight、readiness/auth=`11.506/11.514s`、零 usage/敏感值/残留全绿；formal input/receipt binding 已在 spawned=`false` 下通过 | formal 与审计约 0.5 人日；后续代表另计 | 只执行一次固定 `deepseek-v4-flash` Windows formal；结果永久冻结，Windows 未全绿不进入 WSL2，禁止重跑 `d6d7367` 或直接创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | 6-11 人日 | 生产化需独立 rollout、观察窗口和真实项目 Gate |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild、restore/联网和生命周期边界 |
