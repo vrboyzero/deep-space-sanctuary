@@ -1170,6 +1170,237 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("retries a post-write correction that only re-adds an existing line with comments", async () => {
+    const requiredChangedPaths = ["src/diff/props.js"];
+    const currentSource = [
+      "\t\t// aria- and data- attributes have no boolean representation.",
+      "\t\t// A `false` value is different from the attribute not being present.",
+      "\t\tif (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      "\t\t} else if (value != NULL) {",
+      "\t\t\tdom.setAttribute(name, value);",
+      "\t\t} else {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t}",
+    ].join("\n");
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return response(modelToolCall("patch-broad", "apply_patch", {
+          input: "initial broad patch",
+        }, 300, 60));
+      }
+      if (requests.length === 2 || requests.length === 5) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
+      if (requests.length === 3) {
+        return response(modelToolCall("comment-only-correction", "apply_patch", {
+          input: [
+            "*** Begin Patch",
+            "*** Update File: src/diff/props.js",
+            "@@",
+            "+\t\t// aria- and data- attributes have no boolean representation.",
+            "+\t\t// A `false` value is different from the attribute not being present.",
+            "-\t\tif (typeof value == 'function') {",
+            "+\t\tif (typeof value == 'function') {",
+            "*** End Patch",
+          ].join("\n"),
+        }, 300, 60));
+      }
+      if (requests.length === 4) {
+        return response(modelToolCall("semantic-correction", "apply_patch", {
+          input: [
+            "*** Begin Patch",
+            "*** Update File: src/diff/props.js",
+            "@@",
+            "-\t\t} else if (value != NULL) {",
+            "+\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {",
+            "*** End Patch",
+          ].join("\n"),
+        }, 300, 60));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: "corrected and verified" } }],
+        usage: { prompt_tokens: 500, completion_tokens: 40 },
+      });
+    });
+    let mutationCount = 0;
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: request.arguments?.path,
+            truncated: false,
+            content: currentSource,
+          }),
+          durationMs: 1,
+        };
+      }
+      mutationCount++;
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 12,
+      thinking: { type: "enabled" },
+    });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-semantic-correction-input-retry",
+      text: "Restore false aria-* serialization without changing data-* or other false attribute behavior.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 12,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(6);
+    expect(requests[2]?.messages[0]?.content).toContain(
+      "A correction must change task-relevant behavior",
+    );
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "Post-mutation objective correction input retry phase",
+    );
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "do not remove and re-add an unchanged source line",
+    );
+    expect(requests[3]?.messages[1]?.content).toContain("value != NULL");
+    expect(requests[3]?.tool_choice).toBe("required");
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "apply_patch",
+      "file_read",
+      "apply_patch",
+      "file_read",
+    ]);
+    expect(mutationCount).toBe(2);
+    expect(items).toContainEqual({ type: "final", text: "corrected and verified" });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("fails closed when the objective input retry also only repeats current source", async () => {
+    const requiredChangedPaths = ["src/diff/props.js"];
+    const currentSource = [
+      "\t\t// aria- and data- attributes have no boolean representation.",
+      "\t\t// A `false` value is different from the attribute not being present.",
+      "\t\tif (typeof value == 'function') {",
+      "\t\t} else if (value != NULL) {",
+    ].join("\n");
+    const redundantCorrection = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "+\t\t// aria- and data- attributes have no boolean representation.",
+      "+\t\t// A `false` value is different from the attribute not being present.",
+      "-\t\tif (typeof value == 'function') {",
+      "+\t\tif (typeof value == 'function') {",
+      "*** End Patch",
+    ].join("\n");
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return response(modelToolCall("patch-broad", "apply_patch", {
+          input: "initial broad patch",
+        }, 300, 60));
+      }
+      if (requests.length === 2) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
+      return response(modelToolCall(`redundant-${requests.length}`, "apply_patch", {
+        input: redundantCorrection,
+      }, 300, 60));
+    });
+    let mutationCount = 0;
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: request.arguments?.path,
+            truncated: false,
+            content: currentSource,
+          }),
+          durationMs: 1,
+        };
+      }
+      mutationCount++;
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 12,
+      thinking: { type: "enabled" },
+    });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-redundant-input-correction-failed",
+      text: "Restore false aria-* serialization without changing other false attribute behavior.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 12,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(4);
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "Post-mutation objective correction input retry phase",
+    );
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "apply_patch",
+      "file_read",
+    ]);
+    expect(mutationCount).toBe(1);
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "final",
+      text: expect.stringContaining("only repeated a current-source block"),
+    }));
+    expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
+  });
+
   it("fails closed when the post-write objective input correction also fails", async () => {
     const requiredChangedPaths = ["src/api.ts"];
     const requests: Array<Record<string, any>> = [];

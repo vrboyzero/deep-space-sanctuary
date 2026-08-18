@@ -2,7 +2,7 @@
 
 > 当前计划版（精简维护版）
 >
-> 评估日期：2026-08-17；最新进度复核：2026-08-18
+> 评估日期：2026-08-17；最新进度复核：2026-08-19
 >
 > 评估对象：Star Sanctuary（下文简称 SS）、Grok Build、OpenAI Codex、Claude Code、OpenCode `1.18.13`、Hermes Agent `0.20.2`
 >
@@ -45,13 +45,15 @@ SS 的主要优势是 fail-closed 安全、durable side-effect reconciliation、
 
 最新冻结 identity `2977780` 已在 Windows 与 WSL2 的唯一 formal 中完成同一 required-mutation 三文件任务，冻结 evaluator、available/exact/non-truncated snapshot、唯一终态、完整 usage/cost、敏感值和资源 Gate 均全绿。该代表 canary 已关闭，但单个任务不能外推为其余 `37` 个历史失败改善，也不改变当前评分或直接开放 P2-C。
 
+后继 `cb01ccd` Web Windows 唯一 formal 已执行、失败并冻结：Agent/CLI 为 `exit 0 / run.completed`，但冻结 evaluator 正确给出 `failed/product_workflow`、tests/regression=`true/0`、patchAccepted/taskCompleted=`false/false`。确定性重放确认首次 objective review 与 input retry 均拿到 mutation 后当前条件；真实缺口是 correction 只重复已有注释和未变化源码行仍可进入 executor，并在下游复核中被错误宣称完成。最小执行前 Gate 已完成，待新 identity 零模型验证与唯一 Windows formal。
+
 ### 1.2 当前决策
 
 当前不继续扩功能面，也不复制竞品 Dashboard、Agent Teams 或自动远端写入。优先级为：
 
 1. 保留已关闭的 required-mutation 双平台代表证据，不重跑冻结 run，也不外推为整组失败改善。
-2. 先用冻结 artifact 对其余 `length` / `schema` 失败族做不触达模型的离线归因，再选择最小真实代表任务。
-3. 证明剩余真实仓失败族有可重复改善后，才评估 P2-C 候选。
+2. 永久冻结 `cb01ccd` 已执行 dry-run/formal；提交冗余 correction 执行前 Gate 后，以新 identity 完成零模型 Gate。
+3. 新 identity 的全部前置 Gate 通过后，只执行一次 Windows Web formal；出现真实通过前不进入 WSL2、完整矩阵或 candidate v4。
 4. 在两个连续冻结候选版本达到全部 9.5 Gate 前，不宣称完成 9.5。
 
 当前开发已按第 6 节顺序恢复；精确状态和下一关闭边界以文末进度表为准。
@@ -3686,14 +3688,55 @@ Source / Workspace Revision
 - **为什么先做它**：全部无费用 Gate 已闭合，真实 Web mutation、current-source objective correction、再次复读和 final review 是验证本次修复的最小剩余证据；
 - **当前还缺的关键闭环**：formal 的 mutation/tests/patch、合法唯一 terminal、完整 Provider usage/cost、真实敏感值与零残留审计；无论结果如何均永久冻结该 formal，Windows 未全绿不进入 WSL2，也不进入完整矩阵、candidate v4 或 P2-C。
 
+#### P0 Web 代表实现结论：冗余 objective correction 执行前 Gate（2026-08-19）
+
+##### 已完成内容
+
+1. **`artifacts/p0-web-current-source-canary-cb01ccd-preact-windows-formal-r1` 冻结与分层归因**：
+   - run=`real-web-ui-regression-windows-a1-1787081387015`，report SHA-256=`2f6c7b84d0bcd4c5c09e146ae1c3099dd90b9760cf89c554f31394335c101348`；Agent/CLI 为 `exit 0 / run.completed`，benchmark 为 `failed/product_workflow`，两类终态保持分离；
+   - tests/regression=`true/0`，patchAccepted/taskCompleted=`false/false`；Provider usage=`7/7`、input/output=`14670/707`、cost=`$0.00369824`，模型固定为 `deepseek-v4-flash`；
+   - 初始 mutation 将条件放宽为 `value != NULL`，objective correction 又重复已有 aria/data 注释并删除后原样加回 `if` 行；最终 patch/events/trace SHA-256=`f96558d8...` / `258873b5...` / `3a7bfb2b...`，冻结 evaluator 正确拒绝。
+
+2. **提示材料、复读投影与 correction 构造分层复核**：
+   - `prompt.md` 已明确“最小恢复 false aria-* 序列化、保留公开行为、只改目标源码”，提示材料无需扩大；
+   - mutation 后完整 `file_read` 已成功，按 formal 实际源码和 `1637/1380` token 预算精确重放 objective review/input retry，两者都包含当前 `} else if (value != NULL) {`，因此不存在 stale read 或首次 correction 投影漏掉关键条件；
+   - prompt snapshot SHA-256=`be6f0387...` 证明冗余注释执行后的最终复核片段不再包含该条件；这是无效 correction 已落盘造成的下游投影退化，不是首次 correction 输入根因。根因收敛为模型构造了重复当前源码的 correction，而产品缺少执行前拒绝。
+
+3. **`react-workspace-mutation.ts` 与 `tool-agent.ts` 修改**：
+   - objective review/retry 指令明确 correction 必须改变任务相关行为，注释不能替代源码修正，未变化源码行必须作为 context；
+   - 新增基于每个 required path 最新完整 `file_read` 的冗余 hunk 判定，仅识别“删除行全部原样加回，且完整新增块已连续存在于当前源码”的窄形状；真实替换、纯增删和当前源码尚不存在的插入不受影响；
+   - 首次命中复用既有唯一 objective input correction，retry 再次命中则在 executor 前失败关闭；不增加模型调用、turn/token、Provider retry 或费用上限。
+
+4. **`react-workspace-mutation.test.ts` 与 `tool-agent-workspace-mutation.test.ts` 扩展**：
+   - 覆盖 formal 同形冗余 correction、真实条件替换、最新绝对路径复读覆盖旧证据及 Preact 大文件投影；
+   - Agent 回归证明 executor 只接收初始 mutation 与真实语义 correction，第一次冗余输入进入唯一 retry，第二次冗余输入立即失败关闭。
+
+5. **效果**：
+   - 与 `cb01ccd` 同形的注释重复/未变化行 correction 不再污染 workspace，也不会进入证据退化后的错误完成路径；
+   - current-source 选择与投影修复保持不变，失败边界收敛到 objective correction 的执行前语义门禁；
+   - 技术债裁决：重复当前源码的 objective correction=`fix_now`；冗余 correction 落盘后的 final-review 投影退化=`record_only`，因为新 Gate 已在其上游阻断该状态，不为单一失败扩大投影算法。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build:incremental` 与 `corepack pnpm verify:build` 均通过；
+- 同口径 `7` 个 Agent/structured-output 测试文件共 `236/236` 通过（含本轮 `4` 个新增回归）；两个 owner 测试文件 `120/120` 通过，额外更宽集合 `237/237` 通过；
+- `corepack pnpm verify:coding-benchmark`、`corepack pnpm verify:coding-ci` 与 `git diff --check` 均通过；
+- artifact/fixture/runtime/formal input 共扫描 `8374` 个常规文件，unreadable/真实 Provider key 精确命中=`0/0`；formal `.env/.env.local` 已按授权送入 Windows 回收站，cleanup log 已记录，listener/相关 Node/剩余 env=`0/0/0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：提交当前最小修复形成新 source identity，再建立 detached clean harness，完成 offline frozen install、完整 build、独立 verifier、launcher/fixture tests、Windows 零凭证 dry-run、双 preflight、readiness/auth、敏感值与资源收敛及 formal prepare-only；
+- **为什么先做它**：`cb01ccd` 已永久冻结，确定性 Gate 只能证明本地门禁行为；只有新 identity 的干净零模型链通过后，才可安全验证真实 `deepseek-v4-flash` 是否生成语义 correction 或被正确失败关闭；
+- **当前还缺的关键闭环**：新 identity 的全部零模型 Gate，以及其通过后唯一 Windows formal 的 patch/evaluator、合法终态、usage/cost、敏感值与零残留；在此之前不启动 WSL2、完整矩阵、candidate v4 或 P2-C。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
 
-- observed conservative upper=`$2.43762086`；
+- observed conservative upper=`$2.44131910`；
 - reserved=`$0.94221000`；
 - unobservable reserve=`$0.80000000`；
-- 守卫上界=`33.43864688 RMB < 50 RMB`。
+- 守卫上界=`33.46823280 RMB < 50 RMB`。
 
 持续授权边界（用户于 `2026-08-18` 明确确认）：
 
@@ -3702,7 +3745,7 @@ Source / Workspace Revision
 - 模型固定为 `deepseek-v4-flash`；单 run `$0.10`、`12 turns / 24,000 tokens`、Provider retry=`0`、已执行 run 禁止重跑等既有合同保持不变；
 - 上述费用持续授权适用于后续计划内模型调用，包括未来在阶段 Gate 通过后执行的完整矩阵、candidate v4 或 P2-C，但不跳过任何阶段 Gate；push、公开发布和生产操作不在授权内。
 
-`a72f127` 唯一 Windows formal 已执行、失败并冻结；产品 mutation 成功，但 terminal/report usage 因 CLI `read ENOTCONN` 不可观测，完整 `$0.10` 已计入预留。DeepSeek 新价格自 `2026-08-17 00:00` 生效，生效后 `32` 个历史可观测 formal 已统一按高峰价和输入全 miss 重算，差额 `$0.12570178` 已加入保守 observed 上界。`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc` Windows/WSL2、`5200317` Windows/WSL2、`0cd7d13` Windows/WSL2、`2977780` Windows/WSL2、`d6d7367`、`d01030a`、`8cee589` 与 `09b5498` Windows formal 的 provider-reported cost=`$0.00358616/$0.00302790/$0.00235180/$0.00316938/$0.00334516/$0.00291315/$0.00278265/$0.00639158/$0.00244161/$0.00635007/$0.00606781/$0.00690650/$0.00292393/$0.00271056/$0.00353063` 均已加入 observed。`8a67630` 与 `2e51cb9` Windows formal 均在 benchmark/model spawn 前以 infrastructure failure 冻结，model calls=`0`、仓库本地新增费用=`$0`，不改变 observed。Stage 0D 累计池仍为 `$5.00`，最坏累计池加 reserved 守卫=`47.53768 RMB < 50 RMB`；`2977780` 双平台以及 `d6d7367`、`d01030a`、`8cee589`、`09b5498` Windows formal 均已冻结，项目记录不能替代 Provider 外部账单。
+`a72f127` 唯一 Windows formal 已执行、失败并冻结；产品 mutation 成功，但 terminal/report usage 因 CLI `read ENOTCONN` 不可观测，完整 `$0.10` 已计入预留。DeepSeek 新价格自 `2026-08-17 00:00` 生效，生效后 `32` 个历史可观测 formal 已统一按高峰价和输入全 miss 重算，差额 `$0.12570178` 已加入保守 observed 上界。`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc` Windows/WSL2、`5200317` Windows/WSL2、`0cd7d13` Windows/WSL2、`2977780` Windows/WSL2、`d6d7367`、`d01030a`、`8cee589`、`09b5498` 与 `cb01ccd` Windows formal 的 provider-reported cost=`$0.00358616/$0.00302790/$0.00235180/$0.00316938/$0.00334516/$0.00291315/$0.00278265/$0.00639158/$0.00244161/$0.00635007/$0.00606781/$0.00690650/$0.00292393/$0.00271056/$0.00353063/$0.00369824` 均已加入 observed。`8a67630` 与 `2e51cb9` Windows formal 均在 benchmark/model spawn 前以 infrastructure failure 冻结，model calls=`0`、仓库本地新增费用=`$0`，不改变 observed。Stage 0D 累计池仍为 `$5.00`，最坏累计池加 reserved 守卫=`47.56726592 RMB < 50 RMB`；`2977780` 双平台以及 `d6d7367`、`d01030a`、`8cee589`、`09b5498`、`cb01ccd` Windows formal 均已冻结，项目记录不能替代 Provider 外部账单。
 
 当前明确禁止：
 
@@ -3717,6 +3760,7 @@ Source / Workspace Revision
 - 重跑 `d01030a` 已执行的 Windows dry-run/formal，或为该失败 identity 启动 WSL2；
 - 重跑 `8cee589` 已执行的 Windows dry-run/formal，或为该失败 identity 启动 WSL2；
 - 重跑 `09b5498` 已执行的 Windows dry-run/formal，或为该失败 identity 启动 WSL2；
+- 重跑 `cb01ccd` 已执行的 Windows dry-run/formal，或为该失败 identity 启动 WSL2；
 - 增加 `maxTurns`、`maxTokens` 或 Provider 重试；
 - 使用调价前 `0.0025/0.125/0.25 USD/1M` 旧单价启动任何新付费 formal；
 - 未经新证据启动完整矩阵或 candidate v4；
@@ -3811,7 +3855,9 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 | Web finalization reasoning 挤占正文与截断 schema | `record_only` | `d6d7367` 已真实证明 finalization-only 禁用 DeepSeek thinking 后可生成合法终态；`d01030a` 的 objective-review 也不再出现 reasoning-only length，历史终态修复保持闭合，不重复改合同 |
 | objective-review 返回空 correction patch | `fix_now` | `8cee589` 已仅为无 mutation 的可信 `apply_patch_input_invalid` 接入一次有界输入纠正；成功后完整复读/final review，二次失败立即关闭；`169/169` 定向测试、build 与 verify Gate 全绿，不接受空 patch 成功、不增加 maxTurns/maxTokens/retry |
 | objective correction 在 executor 前被本地 patch 校验拒绝 | `fix_now` | `09b5498` 已将首次 required-path/valid-section 本地拒绝接入既有一次 input correction；非法/越界 patch 始终不执行，`171/171` 定向测试、build 与 verify Gate 全绿；同 identity formal 已真实到达 executor 和 input retry，证明该恢复接线生效 |
-| objective input correction 连续使用 stale/incorrect context | `fix_now` | `cb01ccd` 已证明任务提示无需修改，并将 correction 证据收敛为每个 required path 最新完整复读；中段源码按 literal/wildcard/标识符优先投影，旧 read、失败 patch 正文、缺失/截断/未装入证据均不再进入请求；`232/232` 定向回归与新 identity 零模型 Gate 全绿，下一步只开放唯一 Windows formal |
+| objective input correction 连续使用 stale/incorrect context | `fix_now` | `cb01ccd` 已将 correction 证据收敛为每个 required path 最新完整复读；formal 精确重放进一步证明首次 review 与 retry 均包含 mutation 后当前条件，排除提示陈旧、旧 read 混入和首次投影漏条件，既有 current-source 修复保持闭合 |
+| objective correction 只重复当前源码并误判完成 | `fix_now` | formal 捕获“重复已有注释 + 删除后原样加回未变化行”仍进入 executor；现以最新完整 required-path 源码做窄形状执行前判定，首次命中复用唯一 input retry、第二次立即失败关闭，`236/236` 同口径回归与 build/合同 Gate 全绿，待新 identity formal |
+| 冗余 correction 后 final-review 投影遗漏关键条件 | `record_only` | prompt snapshot 证明重复注释落盘后条件被挤出最终 taskRelevantContexts；该状态已由上游执行前 Gate 阻断，本轮不为单一 downstream 症状扩大通用投影算法；若未来非冗余 correction 再现则独立拆分 |
 | detached worktree 首次 pnpm offline 链接超时 | `record_only` | `09b5498` 与 `cb01ccd` clean harness 首次安装分别触达 `180s/300s` 工具上限；两次均在无残留进程、Git clean、依赖目录已建立后由同一 frozen offline 命令幂等续跑完成，downloaded=`0`，随后 build、verify 与 `28/28` 测试全绿；归类为 NTFS 本地链接耗时，不外推为产品或锁文件失败 |
 | parallel-read 唯一 repair 后仍超长 | `record_only` | Windows a2 的完整 JSON `summary` 超过 `maxLength: 1000`，Validator 正确拒绝且唯一 repair 已消费；不增加模型 turn、Provider retry 或第二次 repair，同 task 其余冻结样本不据此改写 |
 | 旧 failure analysis 的 `unknown=30` | `record_only` | 旧 artifact 保持冻结；当前 `56d8713` 分类器在新路径重算得到 `required_mutation_recovery_failed=30`、`unknown=0`，独立 verifier 通过，不回写历史 artifact 或升级 Schema 版本 |
@@ -3886,22 +3932,22 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 - 主体框架不是当前瓶颈：P1-A1/A2、P1-B、P1-C、P2-A、P2-B 都能在当前源码中找到相应实现和测试。
 - 真正瓶颈是复杂多文件任务的稳定完成率。现有 `37` 个失败不能因为单个代表任务成功或新增保护 Gate 就从分母移除。
-- `a72f127`、`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc`、`5200317`、`0cd7d13`、`2e51cb9`、`d6d7367`、`d01030a`、`8cee589` 和 `09b5498` 的失败证据均保持冻结；后继 `2977780` 已关闭 required-mutation 双平台代表 canary。当前离线重算已将全部 `37` 个历史失败稳定分类为 `30/5/2`，`unknown=0`；`d6d7367` 证明 bounded finalization 能关闭 `length/schema` 终态，`d01030a` 证明 objective-review thinking 截断已消失，`09b5498` 证明 executor 前恢复与唯一 input retry 已生效，`cb01ccd` 已以确定性测试关闭其暴露的 stale/incorrect correction evidence 构造缺口，真实外部有效性仍待新 identity formal。
+- `a72f127`、`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc`、`5200317`、`0cd7d13`、`2e51cb9`、`d6d7367`、`d01030a`、`8cee589`、`09b5498` 和 `cb01ccd` 的失败证据均保持冻结；后继 `2977780` 已关闭 required-mutation 双平台代表 canary。当前离线重算已将全部 `37` 个历史失败稳定分类为 `30/5/2`，`unknown=0`；`cb01ccd` 排除了 stale read 与首次投影问题，并暴露冗余 correction 执行前验收缺口；最小 Gate 已通过确定性验证，真实外部有效性仍待新 identity formal。
 - P2-C 尚未启动。只有多个失败形状出现可重复改善，并且两个连续冻结候选通过全部硬 Gate，才能宣称达到 9.5。
 
 因此当前主要瓶颈是“真实效果证据还不够”，不是“再增加更多功能”。
 
 ### 9.6 费用和发布边界
 
-DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算，`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc` Windows/WSL2、`5200317` Windows/WSL2、`0cd7d13` Windows/WSL2、`2977780` Windows/WSL2、`d6d7367`、`d01030a`、`8cee589` 与 `09b5498` Windows formal 的 provider-reported `$0.00358616/$0.00302790/$0.00235180/$0.00316938/$0.00334516/$0.00291315/$0.00278265/$0.00639158/$0.00244161/$0.00635007/$0.00606781/$0.00690650/$0.00292393/$0.00271056/$0.00353063` 也已入账；当前费用守卫为 **33.44 元人民币**，低于 **50 元人民币**授权上限。`a72f127` terminal/report usage 不可观测，仍保守预留完整 `$0.10`；runner 累计池保持 `$5.00`，加现有 reserved 后的最坏守卫仍为 **47.54 元人民币**。`8a67630` 与 `2e51cb9` Windows formal 均未启动 benchmark/model、仓库本地新增费用=`$0`；`2977780` 双平台以及 `d6d7367`、`d01030a`、`8cee589`、`09b5498` Windows formal 已永久冻结，未提高费用、turn/token 或 retry，外部服务商账单仍需单独核对。
+DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算，`f0615b8`、`9a7c3b3`、`887bcd7`、`de931cc` Windows/WSL2、`5200317` Windows/WSL2、`0cd7d13` Windows/WSL2、`2977780` Windows/WSL2、`d6d7367`、`d01030a`、`8cee589`、`09b5498` 与 `cb01ccd` Windows formal 的 provider-reported cost 均已入账；observed conservative upper=`$2.44131910`，当前费用守卫为 **33.46823280 元人民币**，低于 **50 元人民币**授权上限。`a72f127` terminal/report usage 不可观测，仍保守预留完整 `$0.10`；runner 累计池保持 `$5.00`，加现有 reserved 后的最坏守卫为 **47.56726592 元人民币**。`8a67630` 与 `2e51cb9` Windows formal 均未启动 benchmark/model、仓库本地新增费用=`$0`；上述已执行 formal 均永久冻结，未提高费用、turn/token 或 retry，外部服务商账单仍需单独核对。
 
 当前不会重跑已冻结版本，不会提高模型预算，不会启动完整付费矩阵，不会 push、公开发布或执行生产操作。
 
 ### 9.7 后续计划
 
-- **下一步准备做什么**：具体状态以文末唯一进度表为准；沿用已通过的 prepare-only 输入，执行且只执行一次 `cb01ccd` Windows formal。
-- **为什么先做它**：detached build、launcher/fixture、双 preflight、readiness/auth、固定 route、费用、敏感值与资源 Gate 已全部闭合，真实模型 mutation 是当前唯一剩余证据。
-- **当前还缺的关键闭环**：formal 的 patch/evaluator、合法唯一 terminal、完整 Provider usage/cost、真实敏感值与零残留审计；无论结果如何均冻结，Windows 未全绿不进入 WSL2、完整矩阵、candidate v4 或 P2-C。
+- **下一步准备做什么**：具体状态以文末唯一进度表为准；提交冗余 correction Gate 形成新 identity，完成 detached Windows 零模型 Gate，全部通过后只执行一次新 identity formal。
+- **为什么先做它**：`cb01ccd` 已真实证明 current-source 输入正确但执行前验收不足；新修复必须先在干净 source/harness、固定 route、费用和敏感值边界下复验，不能重跑冻结 identity。
+- **当前还缺的关键闭环**：新 identity 的 build/fixture/dry-run/双 preflight/readiness/auth/prepare-only，以及其后唯一 formal 的 patch/evaluator、合法终态、usage/cost、敏感值与零残留；未全绿不进入 WSL2、完整矩阵、candidate v4 或 P2-C。
 
 ## 10. 实施计划进度表
 
@@ -3911,7 +3957,7 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 | --- | --- | --- | --- | ---: | --- |
 | P0 后续：required-mutation 双平台代表 canary | P0 | **已完成并冻结** | `2977780` Windows/WSL2 formal 均完成同一三文件任务；evaluator、唯一 `run.completed`、available/exact/non-truncated snapshot、`6/6` usage、真实 key 与零残留全绿；cost=`$0.00635007/$0.00606781`，WSL readiness 端口/认证=`10.100/10.108s` | - | 禁止重跑 `8a67630`/`2e51cb9`/`2977780` 已执行 run；该 canary 不外推为其余 `37` 个失败改善 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | 2026-08-17：当前 HEAD `5b36691...` 的 P0-P2 源码/测试/artifact 已核查；SS 横向原始加权 `9.135`（发布分 `9.1`）；Grok Build `9.4`、Codex `9.7`、Claude Code `9.7`、OpenCode `9.3`、Hermes Agent `8.9`；竞品证据边界已记录 | - | 当前精简版与 archive-03 共同保留决策和完整历史；真实复杂任务成功率仍待新 formal 证据，不宣称达到 9.5 |
-| P0：Benchmark v3 与外部有效性 | P0 | **`cb01ccd` 零模型 Gate 已通过；唯一 Windows formal 待执行** | correction current-source evidence 修复已通过 `232/232` 定向测试；detached offline build、独立 verifier、launcher/fixture `28/28`、双 preflight、readiness/auth、零凭证、固定 route、费用、敏感值与资源 Gate 全绿，formal prepare-only spawned=`false/false`；模型调用/新增费用=`0/$0` | 唯一 formal 与审计约 0.5 人日 | 固定 `deepseek-v4-flash`、Provider retry=`0`、`12 turns / 24,000 tokens` 与 `3.23762086 -> 3.33762086 USD`，仅执行一次 Windows formal；禁止重跑 `09b5498` 或启动其 WSL2，不直接创建 candidate v4 |
+| P0：Benchmark v3 与外部有效性 | P0 | **`cb01ccd` formal 失败冻结；冗余 correction Gate 待新 identity** | `cb01ccd` formal 为 CLI `run.completed` 但 evaluator `failed/product_workflow`，cost=`$0.00369824`；精确重放排除提示、stale read 与首次投影问题；执行前冗余 hunk Gate 已通过同口径 `236/236`、build、benchmark/CI 合同和敏感清理验证 | 新 identity 零模型 Gate + 唯一 formal 约 0.5 人日 | 提交新 identity 后完成 detached Windows 全部零模型 Gate；通过后固定 `deepseek-v4-flash`、Provider retry=`0`、`12 turns / 24,000 tokens` 只执行一次 formal；禁止重跑 `cb01ccd` 或启动其 WSL2 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | 6-11 人日 | 生产化需独立 rollout、观察窗口和真实项目 Gate |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild、restore/联网和生命周期边界 |

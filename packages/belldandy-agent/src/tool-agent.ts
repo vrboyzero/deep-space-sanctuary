@@ -146,6 +146,7 @@ import {
   formatWorkspaceMutationPatchHunkDiagnostics,
   formatWorkspaceMutationUnexpectedEndMarkerDiagnostics,
   hasOnlyWorkspaceMutationPatchPaths,
+  hasRedundantWorkspaceMutationPatchHunks,
   inspectContextOnlyWorkspaceMutationPatchPreservation,
   inspectWorkspaceMutationPatchHunks,
   isCompleteWorkspaceMutationVerificationReadResult,
@@ -4368,6 +4369,34 @@ export class ToolEnabledAgent implements BelldandyAgent {
             }
             yield* emitWorkspaceMutationFailure(
               "the post-write objective correction patch targeted an unlisted path or did not contain a valid required-path file section.",
+            );
+            return;
+          }
+          if (workspaceMutationObjectiveReviewCall
+            && hasRedundantWorkspaceMutationPatchHunks(
+              constrainedMutationToolCall,
+              mutationRecoverySourceMessages,
+              workspaceMutationCallRequiredPaths,
+            )) {
+            const canCorrectObjectiveInputFailure = !workspaceMutationObjectiveInputCorrectionCall
+              && !workspaceMutationObjectiveInputCorrectionAttempted;
+            if (canCorrectObjectiveInputFailure) {
+              workspaceMutationObjectiveReviewPending = true;
+              workspaceMutationObjectiveInputCorrectionPending = true;
+              lastToolCallFingerprint = undefined;
+              lastToolCallName = undefined;
+              consecutiveDuplicateToolCalls = 0;
+              recentToolCallTraces.length = 0;
+              lastSuccessfulToolResult = undefined;
+              logWarn("[workspace-mutation] post-write correction only repeated current source; scheduling one input correction", {
+                requiredPathCount: workspaceMutationCallRequiredPaths.length,
+                conversationId: input.conversationId,
+                agentId: resolvedAgentId,
+              });
+              continue;
+            }
+            yield* emitWorkspaceMutationFailure(
+              "the post-write objective correction only repeated a current-source block around unchanged lines instead of changing task-relevant behavior.",
             );
             return;
           }

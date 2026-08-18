@@ -11,6 +11,7 @@ import {
   canPreserveContextOnlyWorkspaceMutationPatchHunks,
   coalesceWorkspaceMutationApplyPatchEnvelopes,
   coalesceWorkspaceMutationApplyPatchToolCalls,
+  hasRedundantWorkspaceMutationPatchHunks,
   inspectContextOnlyWorkspaceMutationPatchPreservation,
   inspectWorkspaceMutationPatchHunks,
   normalizeWorkspaceMutationRecoveryToolCall,
@@ -712,6 +713,78 @@ describe("ReAct workspace mutation recovery", () => {
     });
   });
 
+  it("detects a correction hunk that only re-adds an existing line alongside comments", () => {
+    const requiredPaths = ["src/diff/props.js"];
+    const messages = [
+      { role: "user" as const, content: "Restore false aria-* serialization without changing other false attributes." },
+      {
+        role: "assistant" as const,
+        tool_calls: [{
+          id: "read-props",
+          function: { name: "file_read", arguments: JSON.stringify({ path: requiredPaths[0] }) },
+        }],
+      },
+      {
+        role: "tool" as const,
+        tool_call_id: "read-props",
+        content: JSON.stringify({
+          path: requiredPaths[0],
+          truncated: false,
+          content: [
+            "\t\t// aria- and data- attributes have no boolean representation.",
+            "\t\t// A `false` value is different from the attribute not being present.",
+            "\t\tif (typeof value == 'function') {",
+          ].join("\n"),
+        }),
+      },
+    ];
+    const correction = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "+\t\t// aria- and data- attributes have no boolean representation.",
+      "+\t\t// A `false` value is different from the attribute not being present.",
+      "-\t\tif (typeof value == 'function') {",
+      "+\t\tif (typeof value == 'function') {",
+      "*** End Patch",
+    ]);
+
+    expect(hasRedundantWorkspaceMutationPatchHunks(correction, messages, requiredPaths)).toBe(true);
+    expect(hasRedundantWorkspaceMutationPatchHunks(applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-\t\t} else if (value != NULL && value !== false) {",
+      "+\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {",
+      "*** End Patch",
+    ]), messages, requiredPaths)).toBe(false);
+
+    const latestSourceWithoutCommentBlock = [
+      ...messages,
+      {
+        role: "assistant" as const,
+        tool_calls: [{
+          id: "read-props-latest",
+          function: { name: "file_read", arguments: JSON.stringify({ path: requiredPaths[0] }) },
+        }],
+      },
+      {
+        role: "tool" as const,
+        tool_call_id: "read-props-latest",
+        content: JSON.stringify({
+          path: "E:\\fixture\\src\\diff\\props.js",
+          truncated: false,
+          content: "\t\tif (typeof value == 'function') {",
+        }),
+      },
+    ];
+    expect(hasRedundantWorkspaceMutationPatchHunks(
+      correction,
+      latestSourceWithoutCommentBlock,
+      requiredPaths,
+    )).toBe(false);
+  });
+
   it("bounds context-only hunk diagnostics to safe relative paths", () => {
     const call = {
       function: {
@@ -1348,6 +1421,56 @@ describe("ReAct workspace mutation recovery", () => {
     });
 
     expect(request?.messages[1]?.content).toContain("value != NULL && value !== false");
+  });
+
+  it("retains the current Preact value branch after task-relevant false comments", () => {
+    const currentSource = [
+      ...Array.from({ length: 220 }, (_, index) => `const before${index} = 1;`),
+      "\t\t// aria- and data- attributes have no boolean representation.",
+      "\t\t// A `false` value is different from the attribute not being",
+      "\t\t// present, so we can't remove it. For non-boolean aria",
+      "\t\t// attributes we could treat false as a removal, but the",
+      "\t\t// amount of exceptions would cost too many bytes. On top of",
+      "\t\t// that other frameworks generally stringify `false`.",
+      "",
+      "\t\tif (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      "\t\t} else if (value != NULL) {",
+      "\t\t\tdom.setAttribute(name, value);",
+      "\t\t}",
+      ...Array.from({ length: 80 }, (_, index) => `const after${index} = 1;`),
+    ].join("\n");
+    const request = buildWorkspaceMutationObjectiveReviewRequest({
+      maxInputTokens: 1_637,
+      tools: [toolDefinition("apply_patch")],
+      requiredChangedPaths: ["src/diff/props.js"],
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+      messages: [
+        {
+          role: "user",
+          content: "Fix the frozen browser-facing regression and restore false aria-* attribute serialization with the smallest change in src/diff/props.js.",
+        },
+        {
+          role: "assistant",
+          tool_calls: [{
+            id: "read-props-current",
+            function: { name: "file_read", arguments: "{}" },
+          }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "read-props-current",
+          content: JSON.stringify({
+            path: "src/diff/props.js",
+            truncated: false,
+            content: currentSource,
+          }),
+        },
+      ],
+    });
+
+    expect(currentSource.length).toBeGreaterThan(4_096);
+    expect(request?.messages[1]?.content).toContain("} else if (value != NULL) {");
   });
 
   it("fails closed when every required objective-review read cannot fit the request", () => {
