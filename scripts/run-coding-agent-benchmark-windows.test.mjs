@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildWindowsChildEnvironment,
   buildWindowsBenchmarkInvocation,
+  classifyGatewayReadinessFailure,
   loadWindowsProviderEnvironment,
   resolveWindowsBenchmarkSourceEnvironment,
   stopWindowsBenchmarkGateway,
@@ -14,6 +15,17 @@ import {
 const workspaceRoot = "E:/project/star-sanctuary/.tmp/clean-harness";
 
 describe("coding agent benchmark Windows launcher", () => {
+  it("classifies readiness failures without retaining error content", () => {
+    expect(classifyGatewayReadinessFailure(new Error("Windows benchmark Gateway readiness timed out.")))
+      .toBe("gateway_readiness_timeout");
+    expect(classifyGatewayReadinessFailure(new Error("Windows benchmark Gateway exited before readiness.")))
+      .toBe("gateway_exited_before_readiness");
+    expect(classifyGatewayReadinessFailure(new Error("Windows benchmark Gateway authentication probe timed out.")))
+      .toBe("gateway_auth_probe_timeout");
+    expect(classifyGatewayReadinessFailure(new Error("secret=must-not-persist")))
+      .toBe("gateway_startup_failed");
+  });
+
   it("reads only allowlisted OpenAI settings from an explicit provider env file", async () => {
     const readFile = vi.fn(async () => [
       "BELLDANDY_OPENAI_API_KEY=provider-key",

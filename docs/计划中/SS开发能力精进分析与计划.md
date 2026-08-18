@@ -2,7 +2,7 @@
 
 > 当前计划版（精简维护版）
 >
-> 评估日期：2026-08-17；最新进度复核：2026-08-17
+> 评估日期：2026-08-17；最新进度复核：2026-08-18
 >
 > 评估对象：Star Sanctuary（下文简称 SS）、Grok Build、OpenAI Codex、Claude Code、OpenCode `1.18.13`、Hermes Agent `0.20.2`
 >
@@ -2872,6 +2872,72 @@ Source / Workspace Revision
 - **为什么先做它**：当前只有 `0-byte` 双日志与 readiness timeout，直接改 timeout 或创建新付费 identity 缺少根因证据；先补无费用诊断才能区分一次性环境阻塞、启动前 import 卡顿和 launcher 可观测性缺口。
 - **当前还缺的关键闭环**：需要得到可重复的无模型启动时序/阻塞点证据，并据此决定 `fix_now` 或 `record_only`；在新 source identity 重新完成全部无费用 Gate 前，不执行新的 formal、WSL2、完整矩阵、candidate v4 或 P2-C。
 
+#### P0 后续阶段实现结论：Gateway 冷启动与 readiness 可观测性诊断（2026-08-18）
+
+##### 已完成内容
+
+1. **`scripts/gateway-readiness-diagnostic.mjs` 新建**：
+   - 新增 `coding-agent-gateway-readiness/v1` 无正文诊断 owner；
+   - 记录相对阶段时序、child spawn/error/exit、stdout/stderr 字节数、端口/认证阶段和稳定 failure code；
+   - 以 `wx` 写入 `gateway-readiness.json`，不保存环境值、日志正文、Provider 凭据或错误正文。
+
+2. **`scripts/run-coding-agent-benchmark-windows.mjs` 接入**：
+   - 在 Gateway spawn、readiness 轮询、认证探针和清理边界接入诊断事件；
+   - 失败时保留 `gateway_readiness_timeout` 等稳定分类，不调整原有 60 秒 timeout、turn/token、Provider retry 或命令参数；
+   - 增加周期性日志文件字节采样，并区分 timeout 时 child 仍存活与清理阶段 SIGTERM 的退出。
+
+3. **测试与导航更新**：
+   - 新增 `scripts/gateway-readiness-diagnostic.test.mjs`；
+   - 扩展 `scripts/run-coding-agent-benchmark-windows.test.mjs` 的 readiness failure 分类回归；
+   - 在 `docs/project-map.md` 登记诊断 owner。
+
+4. **效果**：
+   - 原始无模型反馈环已复现：spawn 正常但首日志/端口可能延迟，旧 launcher 只能得到通用 timeout；
+   - `NODE_DEBUG=esm` 8 秒产生约 `7.9 MB` loader 证据，尾部仍在加载 `typescript`、`better-sqlite3`、`discord.js` 等依赖，支持冷启动模块加载过慢假设；
+   - 新 launcher 8 秒零模型诊断报告记录 `spawnObserved=true`、首 stdout 约 `2.0s`、端口未连接、`exitedBeforeStop=false`；默认 60 秒零模型 dry-run 在约 `11.9s` 完成端口、约 `12.0s` 完成认证，报告为 `ready`。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build`、`verify:build` 通过；
+- `20` 个定向测试全部通过（含 `3` 个新增 readiness 诊断测试和 `1` 个 launcher failure 分类测试）；
+- `verify:coding-ci`、`verify:coding-benchmark` 与 `git diff --check` 通过；
+- 两次真实 Windows 无模型 launcher 诊断均为 `modelCalls=0`、`providerRequests=0`，进程和端口在清理后收敛。
+
+##### 后续计划
+
+- **下一步准备做什么**：继续用 `gateway-readiness/v1` 在 formal-like、零凭据环境执行至少三次有界冷启动采样，比较首 stdout、端口和认证时序，并保留每次独立 runtime 报告。
+- **为什么先做它**：当前已证明启动并非必然死锁，但时延在 `12-34s` 间波动，尚不足以解释 `2e51cb9` 的约 `64s` readiness timeout；需要先区分一次性冷读、模块加载抖动和 launcher/宿主阻塞。
+- **当前还缺的关键闭环**：重复采样、启动阶段归因和必要的最小修复/`record_only` 决策；完成前禁止重跑 `2e51cb9`、创建新付费 formal、进入 WSL2、完整矩阵、candidate v4 或 P2-C。
+
+#### P0 后续阶段实现结论：formal-like 零模型冷启动采样与 record-only 决策（2026-08-18）
+
+##### 已完成内容
+
+1. **五次独立 runtime 采样**：
+   - `r11`/`r12`/`r13` 使用 clean harness、零凭据和 `BELLDANDY_DEV_RUNTIME_DIST_GUARD=off`，端口 readiness 分别为 `15.664s`、`12.230s`、`11.443s`；
+   - `r14`/`r15` 使用 formal-like pricing、model route 与本地不可达占位 endpoint，端口 readiness 分别为 `12.965s`、`10.514s`；
+   - 每次独立端口/runtime，均产生 `gateway-readiness/v1` 报告，清理后 child/port 无残留。
+
+2. **无费用边界复核**：
+   - 五次采样均关闭 primary warmup 和后台 Provider 入口，模型调用=`0`、Provider 请求=`0`；
+   - formal-like 采样的占位 endpoint 未产生网络请求，未读取或输出真实凭据。
+
+3. **决策**：
+   - 当前冷启动异常在受控环境下不可稳定复现，不修改 Gateway 启动顺序、不提高 readiness timeout、不增加 turn/token/retry；
+   - 对 `2e51cb9` 的约 `64s`、`0-byte` formal 结果保留为宿主/一次性启动异常，采用 `record_only`，后续继续依赖 readiness artifact 取证。
+
+##### 验证结果
+
+- 五份独立 readiness report 均通过 Schema 结构读取，`status=ready`，端口/认证/清理阶段完整；
+- 五次采样均无模型/Provider 调用，所有相关 Node child 与端口在 launcher cleanup 后收敛；
+- 本轮代码的 `corepack pnpm build`、`verify:build`、定向 `20/20` 测试、`verify:coding-ci`、`verify:coding-benchmark` 与 `git diff --check` 已通过。
+
+##### 后续计划
+
+- **下一步准备做什么**：保留当前 source identity 的诊断改动，等待明确的新付费 formal 授权；获授权后先在新 detached clean identity 重跑无费用 Gate，再最多执行一次 Windows formal，使用 readiness report 作为必需证据。
+- **为什么先做它**：当前五次无模型样本均在约 `10.5-15.7s` ready，继续修改启动代码或盲目延长 timeout 没有证据基础；新 formal 必须建立在可审查、可回滚的新 identity 上。
+- **当前还缺的关键闭环**：`2e51cb9` 异常的真实模型 formal 结果尚未有后继 identity 验证，且新付费 Provider 窗口需要显式授权；在此之前不重跑冻结 formal、不进入 WSL2/完整矩阵/candidate v4/P2-C。
+
 ### 6.6 费用与禁止范围
 
 当前授权窗口：
@@ -3075,7 +3141,7 @@ DeepSeek 调价后，生效后 `32` 个历史 formal 已按高峰价保守重算
 
 | 项目 | 优先级 | 状态 | 关键证据 | 粗略工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
-| P0 后续：required-mutation 双平台代表 canary | P0 | **`2e51cb9` 唯一 Windows formal readiness timeout 并冻结；按用户要求暂停** | 无费用 Gate 全绿；formal 约 `64s` 后失败，双日志=`0/0 bytes`，artifact/fixture/env/model calls=`0/0/0/0`，私有敏感值命中/unreadable/进程/端口=`0/0/0/0`，harness/repository clean；本地新增费用=`$0` | 恢复后无模型诊断约 0.2-0.5 人日；修复待证据 | 禁止重跑 `8a67630`/`2e51cb9`；恢复时先定位冷启动/首日志/readiness 阻塞，再决定最小修复和新 identity，无新 Gate 前不进入 WSL2 |
+| P0 后续：required-mutation 双平台代表 canary | P0 | **`2e51cb9` formal readiness timeout 已冻结；五次 formal-like 无模型采样全 ready；当前按 `record_only` 暂停付费 formal** | `gateway-readiness/v1` 已记录 child/输出/端口/认证/清理时序；五次端口 ready=`10.514-15.664s`，8 秒诊断保留 timeout 时 child 存活证据；model/provider calls=`0/0`，构建、合同 Gate、资源清理通过 | 新 detached identity 无费用 Gate 约 0.2-0.5 人日；formal 另需授权和费用 | 禁止重跑 `8a67630`/`2e51cb9`；获明确授权后先做新 identity 无费用 Gate，再最多一次 Windows formal；无新 identity/授权不进入 WSL2 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | 2026-08-17：当前 HEAD `5b36691...` 的 P0-P2 源码/测试/artifact 已核查；SS 横向原始加权 `9.135`（发布分 `9.1`）；Grok Build `9.4`、Codex `9.7`、Claude Code `9.7`、OpenCode `9.3`、Hermes Agent `8.9`；竞品证据边界已记录 | - | 当前精简版与 archive-03 共同保留决策和完整历史；真实复杂任务成功率仍待新 formal 证据，不宣称达到 9.5 |
 | P0：Benchmark v3 与外部有效性 | P0 | **基线复核已完成，未晋级** | 纯 flash `144/144`；`107 passed + 37 failed`；A=`72/72`、B=`12/48`、C=`23/24`；infrastructure=`0`；canonical failure=`30/5/2/0` | 14-22 人日 | 保留旧 artifact；代表 canary 不能外推为全部失败改善，不创建 candidate v4 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | 8-12 人日 | 真实仓绝对 uplift 继续由 P0/P2-C 证明；不引入 SCIP store |

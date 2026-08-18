@@ -12,6 +12,10 @@ import {
   resolveBenchmarkMaximumCostUsd,
   resolvePriorObservedCostUsd,
 } from "./run-coding-agent-benchmark.mjs";
+import {
+  GatewayReadinessDiagnostic,
+  writeGatewayReadinessDiagnostic,
+} from "./gateway-readiness-diagnostic.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultWorkspaceRoot = path.resolve(path.dirname(scriptPath), "..");
@@ -425,23 +429,46 @@ export async function runWindowsBenchmark(input, dependencies = {}) {
     ...dependencies,
     baseEnv,
   });
+  const diagnostic = new GatewayReadinessDiagnostic({
+    host: invocation.endpoint.host,
+    port: invocation.endpoint.port,
+  });
+  diagnostic.event("invocation_ready");
   const spawnProcess = dependencies.spawn ?? spawn;
   await assertPortClosed(invocation.endpoint.host, invocation.endpoint.port);
   await fs.mkdir(invocation.paths.gatewayStateRoot, { recursive: true });
   let stdout;
   let stderr;
   let gateway;
+  let gatewayReady = false;
+  let readinessFailureCode;
+  const stdoutPath = path.join(invocation.paths.gatewayStateRoot, "gateway.stdout.log");
+  const stderrPath = path.join(invocation.paths.gatewayStateRoot, "gateway.stderr.log");
+  const diagnosticPath = path.join(invocation.paths.gatewayStateRoot, "gateway-readiness.json");
   try {
-    stdout = await fs.open(path.join(invocation.paths.gatewayStateRoot, "gateway.stdout.log"), "wx");
-    stderr = await fs.open(path.join(invocation.paths.gatewayStateRoot, "gateway.stderr.log"), "wx");
+    stdout = await fs.open(stdoutPath, "wx");
+    stderr = await fs.open(stderrPath, "wx");
+    diagnostic.event("output_files_opened");
+    diagnostic.event("gateway_spawn_requested");
     gateway = spawnProcess(invocation.gateway.command, invocation.gateway.args, {
       cwd: invocation.gateway.cwd,
       env: invocation.gateway.env,
       windowsHide: true,
       stdio: ["ignore", stdout.fd, stderr.fd],
     });
-    await waitForGatewayPort(gateway, invocation.endpoint, dependencies.gatewayReadyTimeoutMs);
+    gateway.once("spawn", () => diagnostic.childSpawned(gateway.pid));
+    gateway.once("error", (error) => diagnostic.childError(error?.code));
+    gateway.once("exit", (code, signal) => diagnostic.childExited(code, signal));
+    diagnostic.event("port_probe_started");
+    await waitForGatewayPort(gateway, invocation.endpoint, dependencies.gatewayReadyTimeoutMs, {
+      onPoll: () => observeGatewayOutput(diagnostic, stdoutPath, stderrPath),
+    });
+    diagnostic.portConnected();
+    diagnostic.authProbeStarted();
     await (dependencies.verifyGateway ?? verifyWindowsBenchmarkGateway)(invocation.endpoint);
+    diagnostic.authReady();
+    diagnostic.ready();
+    gatewayReady = true;
     const benchmark = spawnProcess(invocation.benchmark.command, invocation.benchmark.args, {
       cwd: invocation.benchmark.cwd,
       env: invocation.benchmark.env,
@@ -449,19 +476,38 @@ export async function runWindowsBenchmark(input, dependencies = {}) {
       stdio: "inherit",
     });
     return await waitForChildExit(benchmark, "Windows benchmark runner");
+  } catch (error) {
+    if (!gatewayReady) {
+      readinessFailureCode = classifyGatewayReadinessFailure(error);
+      diagnostic.fail(readinessFailureCode);
+    }
+    throw error;
   } finally {
     try {
+      diagnostic.stopRequested();
       await stopWindowsBenchmarkGateway(gateway, dependencies);
+      diagnostic.stopCompleted();
     } finally {
+      await observeGatewayOutput(diagnostic, stdoutPath, stderrPath);
       await Promise.allSettled([stdout?.close(), stderr?.close()].filter(Boolean));
+      if (!gatewayReady && !readinessFailureCode && diagnostic.status === "starting") {
+        diagnostic.fail("gateway_startup_failed");
+      }
+      await writeGatewayReadinessDiagnostic(diagnosticPath, diagnostic).catch(() => {});
       await waitForPortClosed(invocation.endpoint.host, invocation.endpoint.port);
     }
   }
 }
 
-async function waitForGatewayPort(child, endpoint, timeoutMs = DEFAULT_GATEWAY_READY_TIMEOUT_MS) {
+async function waitForGatewayPort(child, endpoint, timeoutMs = DEFAULT_GATEWAY_READY_TIMEOUT_MS, options = {}) {
   const deadline = Date.now() + timeoutMs;
+  let lastOutputObservationAtMs = 0;
   while (Date.now() < deadline) {
+    const now = Date.now();
+    if (options.onPoll && now - lastOutputObservationAtMs >= 500) {
+      await options.onPoll();
+      lastOutputObservationAtMs = now;
+    }
     if (hasExited(child)) {
       throw new Error("Windows benchmark Gateway exited before readiness.");
     }
@@ -469,6 +515,35 @@ async function waitForGatewayPort(child, endpoint, timeoutMs = DEFAULT_GATEWAY_R
     await delay(100);
   }
   throw new Error("Windows benchmark Gateway readiness timed out.");
+}
+
+async function observeGatewayOutput(diagnostic, stdoutPath, stderrPath) {
+  const [stdoutBytes, stderrBytes] = await Promise.all([
+    readFileSize(stdoutPath),
+    readFileSize(stderrPath),
+  ]);
+  diagnostic.output("stdout", stdoutBytes);
+  diagnostic.output("stderr", stderrBytes);
+}
+
+async function readFileSize(filePath) {
+  try {
+    const stat = await fs.stat(filePath);
+    return Number.isSafeInteger(stat.size) ? stat.size : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function classifyGatewayReadinessFailure(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/readiness timed out/i.test(message)) return "gateway_readiness_timeout";
+  if (/exited before readiness/i.test(message)) return "gateway_exited_before_readiness";
+  if (/authentication probe timed out/i.test(message)) return "gateway_auth_probe_timeout";
+  if (/closed before authentication/i.test(message)) return "gateway_auth_probe_closed";
+  if (/rejected the authentication probe/i.test(message)) return "gateway_auth_probe_rejected";
+  if (/rejected the websocket upgrade/i.test(message)) return "gateway_auth_upgrade_rejected";
+  return "gateway_startup_failed";
 }
 
 async function assertPortClosed(host, port) {
