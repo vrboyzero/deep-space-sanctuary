@@ -1228,6 +1228,47 @@ function excludesFalseWitnessInElseIf(line: string): boolean {
     || /\bfalse\s*!==?\s*[A-Za-z_$][A-Za-z0-9_$.[\]]*\b/.test(line);
 }
 
+function consumesFalseWitnessInElseIf(line: string): boolean {
+  if (!/}\s*else\s+if\s*\(/.test(line)) return false;
+  const reference = String.raw`[A-Za-z_$][A-Za-z0-9_$.[\]]*`;
+  return new RegExp(
+    String.raw`\|\|\s*(?:${reference}\s*===?\s*false|false\s*===?\s*${reference})\s*\)\s*\{\s*$`,
+  ).test(line);
+}
+
+function leavesPriorFalseRemovalBeforeCorrectionTarget(
+  prior: { added: readonly string[] },
+  correction: { added: readonly string[]; removed: readonly string[] },
+): boolean {
+  if (!correction.added.some((line) => /}\s*else\s+if\s*\(/.test(line))) {
+    return false;
+  }
+  for (const removedLine of correction.removed) {
+    const targetIndex = prior.added.indexOf(removedLine);
+    if (targetIndex < 1 || !/}\s*else\s+if\s*\(/.test(removedLine)) continue;
+    for (let index = 0; index < targetIndex; index += 1) {
+      const earlierLine = prior.added[index] ?? "";
+      if (!consumesFalseWitnessInElseIf(earlierLine)
+        || correction.removed.includes(earlierLine)) {
+        continue;
+      }
+      const directStatement = prior.added.slice(index + 1, targetIndex).find((line) => (
+        line.trim() && !/^\s*(?:\/\/|\/\*|\*|\*\/)/.test(line)
+      ));
+      const branchIndent = /^\s*/.exec(earlierLine)?.[0].length ?? 0;
+      const statementIndent = /^\s*/.exec(directStatement ?? "")?.[0].length ?? 0;
+      if (directStatement
+        && statementIndent > branchIndent
+        && /^[A-Za-z_$][A-Za-z0-9_$.[\]]*\.removeAttribute\s*\(/.test(
+          directStatement.trim(),
+        )) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 export function hasExcludedFalseWitnessSmallestChangeCorrectionHunks(
   toolCall: WorkspaceMutationNavigationToolCall,
   priorSuccessfulPatchInputs: readonly string[],
@@ -1249,14 +1290,16 @@ export function hasExcludedFalseWitnessSmallestChangeCorrectionHunks(
       path: change.path,
       ...collectEffectiveWorkspaceMutationPatchLines(change),
     }));
-  return correctionChanges.some((correction) => priorChanges.some((prior) => (
-    prior.path === correction.path
-      && prior.removed.some(isUnconditionalElseLine)
+  return correctionChanges.some((correction) => priorChanges.some((prior) => {
+    if (prior.path !== correction.path) return false;
+    const excludesFalseInCorrectedBranch = prior.removed.some(isUnconditionalElseLine)
       && correction.removed.some((line) => (
         prior.added.includes(line) && excludesFalseWitnessInElseIf(line)
       ))
-      && correction.added.some(excludesFalseWitnessInElseIf)
-  )));
+      && correction.added.some(excludesFalseWitnessInElseIf);
+    return excludesFalseInCorrectedBranch
+      || leavesPriorFalseRemovalBeforeCorrectionTarget(prior, correction);
+  }));
 }
 
 function readSmallestChangeCorrectionPatchInput(

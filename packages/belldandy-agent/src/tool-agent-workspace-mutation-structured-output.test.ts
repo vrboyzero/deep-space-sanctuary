@@ -449,6 +449,161 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
     expect(items).toContainEqual({ type: "final", text: '{"summary":"corrected and verified"}' });
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
+
+  it("retries a structured correction whose false witness remains shadowed", async () => {
+    const requiredPath = "src/diff/props.js";
+    const earlyFalseRemoval = "\t\t} else if (value == NULL || value === false) {";
+    const reachableEarlyRemoval = "\t\t} else if (value == NULL || (value === false && name[4] != '-')) {";
+    const falseAriaBranch = "\t\t} else if (name[0] == 'a' && name[1] == 'r' && value === false) {";
+    const widenedAriaBranch = "\t\t} else if (name[0] == 'a' && name[1] == 'r') {";
+    const setAttributeLine = "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);";
+    const removeAttributeLine = "\t\t\tdom.removeAttribute(name);";
+    const initialPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-\t\t} else if (value != NULL && value !== false) {",
+      `+${earlyFalseRemoval}`,
+      `+${removeAttributeLine}`,
+      `+${falseAriaBranch}`,
+      "+\t\t\tdom.setAttribute(name, 'false');",
+      "+\t\t} else {",
+      ` ${setAttributeLine}`,
+      "-\t\t} else {",
+      "*** End Patch",
+    ].join("\n");
+    const shadowedCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${falseAriaBranch}`,
+      `+${widenedAriaBranch}`,
+      "*** End Patch",
+    ].join("\n");
+    const reachableCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${earlyFalseRemoval}`,
+      `+${reachableEarlyRemoval}`,
+      "@@",
+      ` ${setAttributeLine}`,
+      `-${removeAttributeLine}`,
+      "*** End Patch",
+    ].join("\n");
+    const postInitialSource = [
+      earlyFalseRemoval,
+      removeAttributeLine,
+      falseAriaBranch,
+      "\t\t\tdom.setAttribute(name, 'false');",
+      "\t\t} else {",
+      setAttributeLine,
+      removeAttributeLine,
+      "\t\t}",
+    ].join("\n");
+    const postCorrectionSource = postInitialSource
+      .replace(earlyFalseRemoval, reachableEarlyRemoval)
+      .replace(`${setAttributeLine}\n${removeAttributeLine}`, setAttributeLine);
+    const requests: Array<Record<string, any>> = [];
+    const executedPatches: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const instruction = String(body.messages?.[0]?.content ?? "");
+      if (instruction.includes("Post-mutation verification phase")) {
+        return jsonResponse(modelToolCall("read-current-source", "file_read", {
+          path: requiredPath,
+          limit: 1_048_576,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation objective correction input retry phase")) {
+        return jsonResponse(modelToolCall("correct-reachable-false", "apply_patch", {
+          input: reachableCorrection,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation final objective review phase")) {
+        return jsonResponse({
+          choices: [{
+            finish_reason: "stop",
+            message: { content: '{"summary":"corrected and verified"}' },
+          }],
+          usage: { prompt_tokens: 300, completion_tokens: 30 },
+        });
+      }
+      if (instruction.includes("Post-mutation objective review phase")) {
+        return jsonResponse(modelToolCall("correct-shadowed-false", "apply_patch", {
+          input: shadowedCorrection,
+        }, 300, 60));
+      }
+      return jsonResponse(modelToolCall("patch-shadowed-false", "apply_patch", {
+        input: initialPatch,
+      }, 300, 60));
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "apply_patch") {
+        executedPatches.push(String(request.arguments?.input ?? ""));
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: "Patch applied successfully",
+          metadata: {
+            workspaceMutation: { schemaVersion: 1, changedPaths: [requiredPath] },
+          },
+          durationMs: 1,
+        };
+      }
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: JSON.stringify({
+          path: request.arguments?.path,
+          truncated: false,
+          content: executedPatches.includes(reachableCorrection)
+            ? postCorrectionSource
+            : postInitialSource,
+        }),
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent(execute);
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-shadowed-false-witness",
+      text: "Restore false aria-* attribute serialization with the smallest change while preserving the public behavior of other attributes.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths: [requiredPath],
+          toolLoopIterationBudget: 6,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === '{"summary":"corrected and verified"}'
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(requests).toHaveLength(6);
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "Post-mutation objective correction input retry phase",
+    );
+    expect(executedPatches).toEqual([initialPatch, reachableCorrection]);
+    expect(executedPatches).not.toContain(shadowedCorrection);
+    expect(items).toContainEqual({
+      type: "final",
+      text: '{"summary":"corrected and verified"}',
+    });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
 });
 
 function createAgent(execute: ReturnType<typeof vi.fn>): ToolEnabledAgent {

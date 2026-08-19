@@ -524,6 +524,87 @@ describe("ReAct workspace mutation recovery", () => {
     )).toBe(false);
   });
 
+  it("detects a false witness shadowed by an earlier branch left unchanged by correction", () => {
+    const formalPriorPatch = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-		} else if (value != NULL && value !== false) {",
+      "+		} else if (value == NULL || value === false) {",
+      "+			dom.removeAttribute(name);",
+      "+		} else if (name[0] == 'a' && name[1] == 'r' && value === false) {",
+      "+			dom.setAttribute(name, 'false');",
+      "+		} else {",
+      " 			dom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+      "-		} else {",
+      "*** End Patch",
+    ].join("\n");
+    const shadowedCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-		} else if (name[0] == 'a' && name[1] == 'r' && value === false) {",
+      "+		} else if (name[0] == 'a' && name[1] == 'r') {",
+      "*** End Patch",
+    ]);
+    const reachableCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-		} else if (value == NULL || value === false) {",
+      "+		} else if (value == NULL || (value === false && name[4] != '-')) {",
+      "@@",
+      " 			dom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+      "-			dom.removeAttribute(name);",
+      "*** End Patch",
+    ]);
+    const independentCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-			const next = oldValue;",
+      "+			const next = value;",
+      "*** End Patch",
+    ]);
+    const internallyHandledPriorPatch = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-		} else if (value != NULL && value !== false) {",
+      "+		} else if (value == NULL || value === false) {",
+      "+			if (name.indexOf('aria-') === 0 && value === false) {",
+      "+				dom.setAttribute(name, 'false');",
+      "+			} else {",
+      "+				dom.removeAttribute(name);",
+      "+			}",
+      "+		} else if (name[0] == 'a' && name[1] == 'r' && value === false) {",
+      "+			dom.setAttribute(name, 'false');",
+      "*** End Patch",
+    ].join("\n");
+    const task = "Restore false aria-* attribute serialization with the smallest change while preserving other attributes.";
+
+    expect(hasExcludedFalseWitnessSmallestChangeCorrectionHunks(
+      shadowedCorrection,
+      [formalPriorPatch],
+      task,
+    )).toBe(true);
+    expect(hasExcludedFalseWitnessSmallestChangeCorrectionHunks(
+      reachableCorrection,
+      [formalPriorPatch],
+      task,
+    )).toBe(false);
+    expect(hasExcludedFalseWitnessSmallestChangeCorrectionHunks(
+      independentCorrection,
+      [formalPriorPatch],
+      task,
+    )).toBe(false);
+    expect(hasExcludedFalseWitnessSmallestChangeCorrectionHunks(
+      shadowedCorrection,
+      [internallyHandledPriorPatch],
+      task,
+    )).toBe(false);
+  });
+
   it("normalizes only colonless Update File headers inside a recovery patch envelope", () => {
     const call = {
       function: {
