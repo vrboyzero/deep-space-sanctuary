@@ -138,6 +138,7 @@ import {
   buildWorkspaceMutationInputCorrectionPlan,
   buildWorkspaceMutationNavigationRequest,
   buildWorkspaceMutationObjectiveInputCorrectionRequest,
+  buildWorkspaceMutationObjectiveOutputRepairRequest,
   buildWorkspaceMutationObjectiveReviewRequest,
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationVerificationRequest,
@@ -2438,6 +2439,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let workspaceMutationObjectiveCorrectionAttempted = false;
     let workspaceMutationObjectiveInputCorrectionPending = false;
     let workspaceMutationObjectiveInputCorrectionAttempted = false;
+    let workspaceMutationObjectiveOutputRepairPending = false;
+    let workspaceMutationObjectiveOutputRepairAttempted = false;
+    let workspaceMutationObjectiveOutputRepairValidationMessage: string | undefined;
     let workspaceMutationFinalizationPending = false;
     let pendingBoundedStructuredOutputRepairRequest: BoundedStructuredOutputRepairRequest | undefined;
     let lastProviderRawUsage: AgentUsage["providerRawUsage"] | undefined;
@@ -2902,6 +2906,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
         let workspaceMutationVerificationRequest: WorkspaceMutationVerificationRequest | undefined;
         let workspaceMutationObjectiveReviewCall = false;
         let workspaceMutationObjectiveInputCorrectionCall = false;
+        let workspaceMutationObjectiveOutputRepairCall = false;
         let workspaceMutationObjectiveReviewRequest: WorkspaceMutationRecoveryRequest | undefined;
         let workspaceMutationFinalizationCall = false;
         let finalizationOnlyCall = false;
@@ -3183,12 +3188,23 @@ export class ToolEnabledAgent implements BelldandyAgent {
             ) / REACT_FINALIZATION_INPUT_SAFETY_FACTOR),
           );
           workspaceMutationObjectiveInputCorrectionCall = workspaceMutationObjectiveInputCorrectionPending;
+          workspaceMutationObjectiveOutputRepairCall = workspaceMutationObjectiveOutputRepairPending;
           const candidate = workspaceMutationObjectiveInputCorrectionCall
             ? buildWorkspaceMutationObjectiveInputCorrectionRequest({
                 messages: mutationRecoverySourceMessages,
                 tools: mutationTools,
                 maxInputTokens: remainingReviewInputTokens,
                 requiredChangedPaths,
+                tokenEstimateContext: dispatchTokenEstimateContext,
+              })
+            : workspaceMutationObjectiveOutputRepairCall
+            ? buildWorkspaceMutationObjectiveOutputRepairRequest({
+                messages: mutationRecoverySourceMessages,
+                tools: mutationTools,
+                maxInputTokens: remainingReviewInputTokens,
+                requiredChangedPaths,
+                structuredOutputSchema: input.structuredOutput?.schema,
+                validationMessage: workspaceMutationObjectiveOutputRepairValidationMessage ?? "Final output is invalid.",
                 tokenEstimateContext: dispatchTokenEstimateContext,
               })
             : buildWorkspaceMutationObjectiveReviewRequest({
@@ -3238,6 +3254,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
             workspaceMutationObjectiveInputCorrectionPending = false;
             workspaceMutationObjectiveInputCorrectionAttempted = true;
           }
+          if (workspaceMutationObjectiveOutputRepairCall) {
+            workspaceMutationObjectiveOutputRepairPending = false;
+            workspaceMutationObjectiveOutputRepairAttempted = true;
+            workspaceMutationObjectiveOutputRepairValidationMessage = undefined;
+          }
           workspaceMutationObjectiveReviewAttempts++;
           workspaceMutationObjectiveReviewRequest = candidate;
           workspaceMutationCallRequiredPaths = [...requiredChangedPaths];
@@ -3249,6 +3270,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             reviewAttempt: workspaceMutationObjectiveReviewAttempts,
             correctionAttempted: workspaceMutationObjectiveCorrectionAttempted,
             inputCorrection: workspaceMutationObjectiveInputCorrectionCall,
+            outputRepair: workspaceMutationObjectiveOutputRepairCall,
             requiredPathCount: requiredChangedPaths.length,
             evidenceCount: candidate.evidenceCount,
             truncatedEvidenceCount: candidate.truncatedEvidenceCount,
@@ -4087,8 +4109,40 @@ export class ToolEnabledAgent implements BelldandyAgent {
             });
             continue;
           }
+          let workspaceMutationObjectiveOutputText: string | undefined;
+          if (workspaceMutationObjectiveReviewCall && input.structuredOutput) {
+            const objectiveValidation = input.structuredOutput.validateOutput(contentForDisplay);
+            if (!objectiveValidation.ok) {
+              const canRepairObjectiveOutput = !workspaceMutationObjectiveOutputRepairCall
+                && !workspaceMutationObjectiveOutputRepairAttempted
+                && !workspaceMutationObjectiveCorrectionAttempted;
+              if (canRepairObjectiveOutput) {
+                workspaceMutationObjectiveReviewPending = true;
+                workspaceMutationObjectiveOutputRepairPending = true;
+                workspaceMutationObjectiveOutputRepairValidationMessage = objectiveValidation.message;
+                lastToolCallFingerprint = undefined;
+                lastToolCallName = undefined;
+                consecutiveDuplicateToolCalls = 0;
+                recentToolCallTraces.length = 0;
+                lastSuccessfulToolResult = undefined;
+                logWarn("[workspace-mutation] objective review returned invalid final output; scheduling one phase-aware output repair", {
+                  requiredPathCount: requiredChangedPaths.length,
+                  conversationId: input.conversationId,
+                  agentId: resolvedAgentId,
+                });
+                continue;
+              }
+              yield* emitWorkspaceMutationFailure(
+                "the post-write objective review returned neither valid final JSON nor an allowed correction after its one phase-aware output repair.",
+              );
+              return;
+            }
+            workspaceMutationObjectiveOutputText = objectiveValidation.outputText;
+          }
           if (structuredOutputSession) {
-            const review = structuredOutputSession.reviewFinal(contentForDisplay);
+            const review = workspaceMutationObjectiveOutputText === undefined
+              ? structuredOutputSession.reviewFinal(contentForDisplay)
+              : { action: "accept" as const, outputText: workspaceMutationObjectiveOutputText };
             if (review.action === "repair") {
               if (finalizationOnlyCall) {
                 const rejection = structuredOutputSession.rejectRepair(
