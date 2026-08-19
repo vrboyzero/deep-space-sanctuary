@@ -982,6 +982,112 @@ export function hasRedundantWorkspaceMutationPatchHunks(
   return redundantHunkFound;
 }
 
+export function hasDisjointSmallestChangeCorrectionHunks(
+  toolCall: WorkspaceMutationNavigationToolCall,
+  priorSuccessfulPatchInputs: readonly string[],
+  taskText: string,
+): boolean {
+  if (!/(?:\bsmallest\b|\bminimal\b).{0,32}\b(?:change|patch|diff|edit|modification)s?\b/i.test(taskText)
+    || toolCall.function.name !== "apply_patch"
+    || priorSuccessfulPatchInputs.length === 0) {
+    return false;
+  }
+  let parsedArguments: unknown;
+  try {
+    parsedArguments = JSON.parse(toolCall.function.arguments);
+  } catch {
+    return false;
+  }
+  if (!parsedArguments || typeof parsedArguments !== "object" || Array.isArray(parsedArguments)) {
+    return false;
+  }
+  const correctionInput = (parsedArguments as Record<string, unknown>).input;
+  if (typeof correctionInput !== "string") {
+    return false;
+  }
+
+  const priorAddedLinesByPath = new Map<string, Set<string>>();
+  for (const patchInput of priorSuccessfulPatchInputs) {
+    const changes = collectWorkspaceMutationPatchLineChanges(patchInput);
+    if (!changes) continue;
+    for (const change of changes) {
+      const addedLines = priorAddedLinesByPath.get(change.path) ?? new Set<string>();
+      for (const line of change.added) addedLines.add(line);
+      priorAddedLinesByPath.set(change.path, addedLines);
+    }
+  }
+  if (priorAddedLinesByPath.size === 0) {
+    return false;
+  }
+
+  const correctionChanges = collectWorkspaceMutationPatchLineChanges(correctionInput);
+  if (!correctionChanges || correctionChanges.length === 0) {
+    return false;
+  }
+  let comparableRemovalFound = false;
+  for (const change of correctionChanges) {
+    const priorAddedLines = priorAddedLinesByPath.get(change.path);
+    if (!priorAddedLines || priorAddedLines.size === 0 || change.removed.length === 0) {
+      continue;
+    }
+    comparableRemovalFound = true;
+    if (change.removed.some((line) => priorAddedLines.has(line))) {
+      return false;
+    }
+  }
+  return comparableRemovalFound;
+}
+
+function collectWorkspaceMutationPatchLineChanges(
+  patchInput: string,
+): Array<{ path: string; added: string[]; removed: string[] }> | undefined {
+  const lines = patchInput.trim().split(/\r?\n/);
+  if (lines[0] !== "*** Begin Patch"
+    || lines.at(-1) !== "*** End Patch"
+    || lines.indexOf("*** End Patch") !== lines.length - 1) {
+    return undefined;
+  }
+  const changes: Array<{ path: string; added: string[]; removed: string[] }> = [];
+  let currentPath: string | undefined;
+  let currentChange: { path: string; added: string[]; removed: string[] } | undefined;
+  const finishChange = () => {
+    if (currentChange && (currentChange.added.length > 0 || currentChange.removed.length > 0)) {
+      changes.push(currentChange);
+    }
+    currentChange = undefined;
+  };
+  for (const line of lines.slice(1, -1)) {
+    const updateHeader = /^\*\*\* Update File:?\s+(.+)$/.exec(line);
+    if (updateHeader) {
+      finishChange();
+      currentPath = normalizeSourcePath(
+        normalizeWorkspaceMutationDiagnosticPath(updateHeader[1] ?? ""),
+      );
+      continue;
+    }
+    if (line.startsWith("*** ")) {
+      finishChange();
+      currentPath = undefined;
+      continue;
+    }
+    if (line.startsWith("@@")) {
+      finishChange();
+      currentChange = currentPath
+        ? { path: currentPath, added: [], removed: [] }
+        : undefined;
+      continue;
+    }
+    if (!currentChange) continue;
+    if (line.startsWith("+")) {
+      currentChange.added.push(line.slice(1));
+    } else if (line.startsWith("-")) {
+      currentChange.removed.push(line.slice(1));
+    }
+  }
+  finishChange();
+  return changes;
+}
+
 function readLatestRequiredFileReadSourceContents(
   messages: WorkspaceMutationSourceMessage[],
   requiredPaths: readonly string[],

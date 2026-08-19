@@ -796,6 +796,135 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("retries a smallest-change correction that rewrites only adjacent baseline code", async () => {
+    const requiredChangedPaths = ["src/diff/props.js"];
+    const originalCondition = "\t\t} else if (value != NULL && value !== false) {";
+    const broadCondition = "\t\t} else if (value != NULL) {";
+    const correctedCondition = "\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {";
+    const originalAttribute = "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);";
+    const rewrittenAttribute = "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value == false ? false : value);";
+    const broadSource = [broadCondition, originalAttribute].join("\n");
+    const rewrittenSource = [broadCondition, rewrittenAttribute].join("\n");
+    const correctedSource = [correctedCondition, originalAttribute].join("\n");
+    const broadPatch = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      `-${originalCondition}`,
+      `+${broadCondition}`,
+      "*** End Patch",
+    ].join("\n");
+    const adjacentRewritePatch = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      `-${originalAttribute}`,
+      `+${rewrittenAttribute}`,
+      "*** End Patch",
+    ].join("\n");
+    const correctedPatch = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      `-${broadCondition}`,
+      `+${correctedCondition}`,
+      "*** End Patch",
+    ].join("\n");
+    const requests: Array<Record<string, any>> = [];
+    const executedPatches: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const instruction = String(body.messages?.[0]?.content ?? "");
+      if (instruction.includes("Post-mutation verification phase")) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
+      if (instruction.includes("Post-mutation objective correction input retry phase")) {
+        return response(modelToolCall("correct-prior-delta", "apply_patch", {
+          input: correctedPatch,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation final objective review phase")) {
+        return response({
+          choices: [{ finish_reason: "stop", message: { content: "corrected and verified" } }],
+          usage: { prompt_tokens: 300, completion_tokens: 30 },
+        });
+      }
+      if (instruction.includes("Post-mutation objective review phase")) {
+        return response(modelToolCall("rewrite-adjacent", "apply_patch", {
+          input: adjacentRewritePatch,
+        }, 300, 60));
+      }
+      return response(modelToolCall("patch-broad", "apply_patch", {
+        input: broadPatch,
+      }, 300, 60));
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "apply_patch") {
+        executedPatches.push(String(request.arguments?.input ?? ""));
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: "Patch applied successfully",
+          metadata: {
+            workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+          },
+          durationMs: 1,
+        };
+      }
+      const content = executedPatches.includes(correctedPatch)
+        ? correctedSource
+        : executedPatches.includes(adjacentRewritePatch)
+          ? rewrittenSource
+          : broadSource;
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: JSON.stringify({
+          path: request.arguments?.path,
+          truncated: false,
+          content,
+        }),
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 12,
+      thinking: { type: "enabled" },
+      mutationToolNames: ["apply_patch"],
+      readToolNames: ["file_read"],
+    });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-adjacent-rewrite-correction",
+      text: "Restore false aria-* attribute serialization with the smallest change while preserving the public behavior of other attributes.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 12,
+        },
+      },
+    }));
+
+    expect(requests.some((request) => String(request.messages?.[0]?.content ?? "").includes(
+      "Post-mutation objective correction input retry phase",
+    ))).toBe(true);
+    expect(executedPatches).toEqual([broadPatch, correctedPatch]);
+    expect(executedPatches).not.toContain(adjacentRewritePatch);
+    expect(items).toContainEqual({ type: "final", text: "corrected and verified" });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("does not correct a broadened mutation by reverting the requested positive case", async () => {
     const requiredChangedPaths = ["src/diff/props.js"];
     const broadSource = [

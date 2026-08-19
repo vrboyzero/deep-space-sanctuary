@@ -11,6 +11,7 @@ import {
   canPreserveContextOnlyWorkspaceMutationPatchHunks,
   coalesceWorkspaceMutationApplyPatchEnvelopes,
   coalesceWorkspaceMutationApplyPatchToolCalls,
+  hasDisjointSmallestChangeCorrectionHunks,
   hasRedundantWorkspaceMutationPatchHunks,
   inspectContextOnlyWorkspaceMutationPatchPreservation,
   inspectWorkspaceMutationPatchHunks,
@@ -26,6 +27,114 @@ import {
 } from "./react-workspace-mutation.js";
 
 describe("ReAct workspace mutation recovery", () => {
+  it("detects a smallest-change correction that leaves the prior patch delta intact", () => {
+    const priorPatch = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-} else if (value != NULL && value !== false) {",
+      "+} else if (value != NULL) {",
+      "*** End Patch",
+    ].join("\n");
+    const disjointCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-dom.setAttribute(name, value);",
+      "+dom.setAttribute(name, value == false ? false : value);",
+      "*** End Patch",
+    ]);
+    const refiningCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-} else if (value != NULL) {",
+      "+} else if (value != NULL && (value !== false || name[4] == '-')) {",
+      "*** End Patch",
+    ]);
+
+    expect(hasDisjointSmallestChangeCorrectionHunks(
+      disjointCorrection,
+      [priorPatch],
+      "Restore the behavior with the smallest change.",
+    )).toBe(true);
+    expect(hasDisjointSmallestChangeCorrectionHunks(
+      refiningCorrection,
+      [priorPatch],
+      "Restore the behavior with the smallest change.",
+    )).toBe(false);
+    expect(hasDisjointSmallestChangeCorrectionHunks(
+      disjointCorrection,
+      [priorPatch],
+      "Restore the behavior.",
+    )).toBe(false);
+  });
+
+  it("keeps the smallest-change correction guard conservative across patch shapes", () => {
+    const priorPatch = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-old condition",
+      "+broad condition",
+      "*** End Patch",
+    ].join("\n");
+    const multiHunkRefinement = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-broad condition",
+      "+narrow condition",
+      "@@",
+      "-old adjacent line",
+      "+new adjacent line",
+      "*** End Patch",
+    ]);
+    const differentPathCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/helpers.js",
+      "@@",
+      "-old helper",
+      "+new helper",
+      "*** End Patch",
+    ]);
+    const deletionOnlyCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-unrelated fallback",
+      "*** End Patch",
+    ]);
+    const deletionOnlyPriorPatch = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-legacy condition",
+      "*** End Patch",
+    ].join("\n");
+
+    expect(hasDisjointSmallestChangeCorrectionHunks(
+      multiHunkRefinement,
+      [priorPatch],
+      "Use the minimal patch.",
+    )).toBe(false);
+    expect(hasDisjointSmallestChangeCorrectionHunks(
+      differentPathCorrection,
+      [priorPatch],
+      "Use the minimal patch.",
+    )).toBe(false);
+    expect(hasDisjointSmallestChangeCorrectionHunks(
+      deletionOnlyCorrection,
+      [priorPatch],
+      "Use the minimal patch.",
+    )).toBe(true);
+    expect(hasDisjointSmallestChangeCorrectionHunks(
+      deletionOnlyCorrection,
+      [deletionOnlyPriorPatch],
+      "Use the minimal patch.",
+    )).toBe(false);
+  });
+
   it("normalizes only colonless Update File headers inside a recovery patch envelope", () => {
     const call = {
       function: {

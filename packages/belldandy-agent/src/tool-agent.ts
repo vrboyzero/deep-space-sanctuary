@@ -146,6 +146,7 @@ import {
   coalesceWorkspaceMutationApplyPatchToolCalls,
   formatWorkspaceMutationPatchHunkDiagnostics,
   formatWorkspaceMutationUnexpectedEndMarkerDiagnostics,
+  hasDisjointSmallestChangeCorrectionHunks,
   hasOnlyWorkspaceMutationPatchPaths,
   hasRedundantWorkspaceMutationPatchHunks,
   inspectContextOnlyWorkspaceMutationPatchPreservation,
@@ -2443,6 +2444,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let workspaceMutationObjectiveOutputRepairAttempted = false;
     let workspaceMutationObjectiveOutputRepairValidationMessage: string | undefined;
     let workspaceMutationFinalizationPending = false;
+    const successfulWorkspaceMutationPatchInputs: string[] = [];
     let pendingBoundedStructuredOutputRepairRequest: BoundedStructuredOutputRepairRequest | undefined;
     let lastProviderRawUsage: AgentUsage["providerRawUsage"] | undefined;
     let lastRequestShape: AgentUsage["requestShape"] | undefined;
@@ -4456,6 +4458,34 @@ export class ToolEnabledAgent implements BelldandyAgent {
             );
             return;
           }
+          if (workspaceMutationObjectiveReviewCall
+            && hasDisjointSmallestChangeCorrectionHunks(
+              constrainedMutationToolCall,
+              successfulWorkspaceMutationPatchInputs,
+              input.text,
+            )) {
+            const canCorrectObjectiveInputFailure = !workspaceMutationObjectiveInputCorrectionCall
+              && !workspaceMutationObjectiveInputCorrectionAttempted;
+            if (canCorrectObjectiveInputFailure) {
+              workspaceMutationObjectiveReviewPending = true;
+              workspaceMutationObjectiveInputCorrectionPending = true;
+              lastToolCallFingerprint = undefined;
+              lastToolCallName = undefined;
+              consecutiveDuplicateToolCalls = 0;
+              recentToolCallTraces.length = 0;
+              lastSuccessfulToolResult = undefined;
+              logWarn("[workspace-mutation] smallest-change correction left the prior mutation intact; scheduling one input correction", {
+                requiredPathCount: workspaceMutationCallRequiredPaths.length,
+                conversationId: input.conversationId,
+                agentId: resolvedAgentId,
+              });
+              continue;
+            }
+            yield* emitWorkspaceMutationFailure(
+              "the post-write objective correction left the prior mutation intact and rewrote only adjacent baseline code despite the smallest-change requirement.",
+            );
+            return;
+          }
           if (patchDiagnostics
             && patchDiagnostics.contextOnlyHunkCount > 0
             && patchPreservationDiagnostics?.canPreserve === false
@@ -5383,6 +5413,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
             return;
           }
           if (successfulWorkspaceMutation) {
+            if (!workspaceMutationObjectiveReviewCall
+              && request.name === "apply_patch"
+              && typeof request.arguments?.input === "string"
+              && successfulWorkspaceMutationPatchInputs.length < 16) {
+              successfulWorkspaceMutationPatchInputs.push(request.arguments.input);
+            }
             workspaceMutationObserved = workspaceMutationObserved
               || workspaceMutationPathCoverage.observeSuccessfulMutation(result.metadata);
             if (workspaceMutationObjectiveReviewCall
