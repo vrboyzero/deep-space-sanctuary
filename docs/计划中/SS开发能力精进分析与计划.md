@@ -623,6 +623,7 @@ Source / Workspace Revision
    - 初始 patch 把 `value != NULL && value !== false` 收窄为 aria 正例可通过的条件；bounded correction 删除 aria 约束并恢复为 `value != NULL`，因此放宽了普通 `false` 行为。该变化不是字面 exact reversal，旧 guard 未命中，evaluator 正确拒绝。
 
 2. **broadened correction 本地修复**：
+   - commit=`fcd7a32ac69cfa70850f47f5dc765beedb7c4562`，作为下一次 detached clean Gate 的 source identity；
    - 新增 `hasBroadenedSmallestChangeCorrectionHunks`，在 correction 删除 prior mutation 新增约束、引入更少条件运算且扩大原受限行为时，于 executor 前失败关闭；只作用于 smallest/minimal-change 的 `apply_patch` correction；
    - owner `133/133`、Agent `685 passed / 1 skipped`，并覆盖 broadened condition 拦截、合法 refinement 放行、多 prior/hunk/path 及不增加预算边界；不改变普通 structured repair、非 minimal 任务、非 `apply_patch`、evaluator、状态机或费用上限。
 
@@ -856,7 +857,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | SS 横向原始加权 `9.135`、发布分 `9.1`；竞品和证据边界已记录 | - | 真实复杂任务成功率仍需新 formal 和连续候选，不宣称达到 9.5 |
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
-| P0：Web mutation/correction 稳定化 | P0 | **`d9f021c`、`0213d01`、`ec3f72a` formal 均已冻结；broadened guard 本地完成** | `d9f021c` 归因并由 `0213d01` 修复有效 delta threshold；`0213d01` exact reversal、`ec3f72a` broadened correction 均被 evaluator 拒绝；当前 broadened guard owner `133/133`、Agent `685 passed / 1 skipped`、build/合同全绿；ec3 formal cost=`$0.00474987` | `0.5-1.5 人日` | 提交新 identity 后执行 clean/零凭证/资源 Gate；全绿才开放唯一 Windows formal，须正确 patch 保留、expanded/exact-reversal/broadened correction 不执行、tests/evaluator/final review 一致；未闭合不进 WSL2/完整矩阵 |
+| P0：Web mutation/correction 稳定化 | P0 | **`d9f021c`、`0213d01`、`ec3f72a` formal 均已冻结；broadened guard 本地完成** | `d9f021c` 归因并由 `0213d01` 修复有效 delta threshold；`0213d01` exact reversal、`ec3f72a` broadened correction 均被 evaluator 拒绝；`fcd7a32` broadened guard owner `133/133`、Agent `685 passed / 1 skipped`、build/合同全绿；ec3 formal cost=`$0.00474987` | `0.5-1.5 人日` | 以 `fcd7a32` 执行 clean/零凭证/资源 Gate；全绿才开放唯一 Windows formal，须正确 patch 保留、expanded/exact-reversal/broadened correction 不执行、tests/evaluator/final review 一致；未闭合不进 WSL2/完整矩阵 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |
