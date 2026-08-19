@@ -566,6 +566,12 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
     expect(requests[2]?.messages[0]?.content).toContain(
       "restore the missing guard first using the removed line as authoritative source evidence",
     );
+    expect(requests[2]?.messages[0]?.content).toContain(
+      "In the same correction, restore the missing guard and add the smallest task-specific subset predicate",
+    );
+    expect(requests[2]?.messages[0]?.content).toContain(
+      "Restoring only the original combined guard is an exact reversal and remains invalid",
+    );
     expect(requests[3]?.messages[0]?.content).toContain(
       "Post-mutation objective correction input retry phase",
     );
@@ -574,6 +580,12 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
     );
     expect(requests[3]?.messages[0]?.content).toContain(
       "restore the missing guard first using the removed line as authoritative source evidence",
+    );
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "In the same correction, restore the missing guard and add the smallest task-specific subset predicate",
+    );
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "Restoring only the original combined guard is an exact reversal and remains invalid",
     );
     expect(executedPatches).toEqual([initialPatch, correctionPatch]);
     expect(items).toContainEqual({ type: "final", text: '{"summary":"corrected"}' });
