@@ -742,6 +742,42 @@ Source / Workspace Revision
 - **为什么先做它**：本地 seam 已关闭直接根因，但固定 identity 的 clean Gate 才能排除主工作区用户改动、旧构建产物、fixture 或环境漂移，并在不调用模型的前提下冻结 formal 输入。
 - **当前还缺的关键闭环**：新 identity 的 clean/零凭证/prepare-only Gate，以及唯一 formal 的 tests/evaluator/final review 一致、usage/cost completeness、敏感值与零残留；未闭合前不启动 WSL2、完整矩阵、candidate v4 或 P2-C。
 
+#### P0 Web Gate 实现结论：`82d25a7` detached clean、零凭证与 formal prepare-only（2026-08-20）
+
+##### 已完成内容
+
+1. **detached clean harness 与完整回归**：
+   - source identity=`82d25a71b6fdd56ae474bb0d72492932d8d70416`，harness=`tmp/p0-web-false-witness-canary-82d25a7-clean`，worktree content SHA-256=`a85d201768b3fe77c99c857872758f9835aa69a75df2ed126badbfee8b5a1581`，canonical lockfile SHA-256=`844c0021f1c9135214c913636fd6ed6f9232593883bd5b6289f7ade51d2b7d2b`；
+   - frozen offline install resolved/reused/downloaded/added=`493/492/0/493`；完整 build、独立 workspace verifier、v3 launcher/fixture/contract=`36/36`、verifier contract=`9/9`、benchmark contract=`13/13`、system smoke=`5/5`、owner=`137/137`、Agent=`689 passed / 1 skipped`、`verify:coding-benchmark` 与 `verify:coding-ci` 全绿；
+   - 构建后仍为 detached/clean，commit、worktree content 与 lockfile identity 未漂移。
+
+2. **Windows 零凭证 dry-run 与环境清理**：
+   - r1 将零凭证与费用参数同时传给内部 runner，r2 又绕过 launcher 导致 `ECONNREFUSED`；两者均在模型前失败、模型调用=`0`、费用=`$0`，只保留为命令路由错误，不计作产品成功或失败 Gate；
+   - 有效 r3 artifact=`artifacts/p0-web-false-witness-canary-82d25a7-preact-windows-dry-run-r3`，run=`real-web-ui-regression-windows-a1-1787167520219`，report SHA-256=`cc07a92b714c7c464c3f9a75f1a7724a28f37d53afa7222d8d2d95d07d56d0c9`；双 preflight=`passed/passed`，credentials/model calls/usage=`false/0/not_reached`，events/trace/patch=`0/0/0 bytes`；
+   - Gateway readiness/auth=`11,026/11,036ms`、stop=`17ms`、stderr=`0 bytes`、listener/相关 Node=`0/0`；扫描 regular/links/enumeration errors/repository-input hits=`42,862/1,265/0/0`；
+   - 两个 runtime env 经 containment、常规文件、非 reparse point 与 SHA-256 校验后送 Windows 回收站，剩余=`0`，cleanup log SHA-256=`790f30df2b5389eb9ee6357ee5fd94e57d9d2963a6e50f05a20e8e8f603dca68`。
+
+3. **formal repository-input 与 prepare-only**：
+   - repository-input=`tmp/p0-web-false-witness-canary-82d25a7-preact-windows-formal-r1-input/repository-inputs.json`，SHA-256=`72c7b8ac1152941c5ba1bef108943b4e342fe0fd28604b05f7839be14e0886e4`；绑定 r3 receipt SHA-256=`0e74aee3cc8cbff687f95b61aa9c5d0cbfcac79cbd50e049ec07831b0c7ebe6d`、Preact commit=`6bb827251ac7111234b293cac013a0a67c2ca8b2` 与冻结依赖缓存；
+   - prepare-only 确认 Provider key configured/in args=`true/false`、provider-env path in args=`false`、Gateway/benchmark spawned=`false/false`；模型=`deepseek-v4-flash`，Provider retry=`0`，`12 turns / 24,000 tokens`，高峰价 cache-read/input/output=`$0.0125/$0.375/$1.125 per 1M tokens`；
+   - formal fixture/artifact/runtime 在 prepare 前后均不存在；费用窗口=`$3.29402418 -> $3.39402418`，完整 `$0.10` 后 Stage 0D 最坏守卫=`48.77693619 RMB < 50 RMB`。
+
+4. **效果**：
+   - 固定 source、repository snapshot、依赖缓存、模型、预算、价格和全新输出目标已经形成单次 formal 输入；
+   - 前置 Gate 新增 Provider 调用=`0`、费用=`$0`，只开放 `82d25a7` 唯一一次 Windows formal。
+
+##### 验证结果
+
+- TypeScript workspace 完整 build、独立 verifier、合同组合、owner 与 Agent 全量均通过；本 Gate 新增测试=`0`；
+- r3 零凭证 dry-run、双 preflight、敏感扫描、env 回收、资源收敛和 formal prepare-only 全绿；
+- prepare-only 检查脚本前三次仅因本地参数/manifest 读取方式错误退出，均未启动 Gateway、benchmark 或模型且未创建 formal 目标；第四次以仓库真实 budget resolver 通过。
+
+##### 后续计划
+
+- **下一步准备做什么**：按已冻结输入执行 `82d25a7` 唯一一次 Windows formal；完成后无论成败永久冻结并审计 evaluator、usage/cost、敏感值、env 和资源收敛。
+- **为什么先做它**：所有零模型 Gate 已通过，只有真实 Provider 路径能验证正例可达性 guard 是否让系统重建可达的 false aria 最小 patch，并让 tests、final review 与 evaluator 一致。
+- **当前还缺的关键闭环**：唯一 formal 的合法终态、测试与 evaluator 接受，以及完整 usage/cost、敏感值和零残留证据；失败时不启动 WSL2、完整矩阵、candidate v4 或 P2-C。
+
 ### 5.2 当前问题分层判断
 
 | 待区分问题 | 前序 Web formal 与 `3c9b86e` 证据 | 判断 |
@@ -755,8 +791,8 @@ Source / Workspace Revision
 
 ### 5.3 后续计划
 
-- **下一步准备做什么**：以 `82d25a7` 完成 detached clean、零凭证 dry-run、敏感值/资源与 formal prepare-only Gate；全绿后只执行一次 Windows formal。
-- **为什么先做它**：正例可达性 red/green、owner/Agent/build/合同 Gate 已全绿，当前只剩固定 source identity 的干净环境与真实 Provider 有效性未验证。
+- **下一步准备做什么**：按已冻结 source、repository-input、费用和全新输出目标，执行 `82d25a7` 唯一一次 Windows formal。
+- **为什么先做它**：detached clean、零凭证、敏感值/资源和 prepare-only Gate 已全绿，当前只剩真实 Provider 有效性未验证。
 - **当前还缺的关键闭环**：新 identity 在 `deepseek-v4-flash` 下真实产生可达的 false aria 最小 patch，tests/evaluator/final review 一致，并闭合 usage/cost、敏感值和零残留；未闭合前不启动 WSL2、完整矩阵、candidate v4 或 P2-C。
 
 ## 6. 验证、证据、费用与禁止范围
@@ -798,6 +834,7 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 - `artifacts/p0-web-expanded-correction-canary-ec3f72a-preact-windows-formal-r1/`
 - `artifacts/p0-web-broadened-correction-canary-fcd7a32-preact-windows-dry-run-r1/`
 - `artifacts/p0-web-broadened-correction-canary-fcd7a32-preact-windows-formal-r1/`
+- `artifacts/p0-web-false-witness-canary-82d25a7-preact-windows-dry-run-r3/`
 - `artifacts/p1-a1-code-intel-truth-set-20260809-r1/`
 - `artifacts/p1-a1-code-intel-resource-soak-20260809-r2/`
 - `tmp/p2a-supervisor-soak-20260814-windows-r3/report.json`
@@ -937,7 +974,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - `2977780` 已经证明一个 required-mutation 代表任务可以在 Windows/WSL2 双平台完成，但不能推断其余失败都已改善。
 - 最新冻结的 Web formal `fcd7a32` 中，构建、费用、敏感值和资源清理均正常；第二次修改也确实把 broad 分支收窄到 aria，但代码所在位置已经只会接收到 `false` 或空值，分支自身却仍要求“不等于 false”，所以目标行为永远走不到。最终说明错误地声称测试通过，检查程序正确拒绝。
 - 现有执行前保护已经能拦截完全绕开、扩大重写、精确反转、删除 prior 约束放宽行为，以及当前有证据的 false 正例不可达 correction；正确的显式 false 分支、aria 析取旁路、小范围收缩、多个既有小改动的联合修正和其他文件独立补漏仍放行。
-- 在这个闭环完成前，不启动完整付费矩阵、candidate v4 或 P2-C，也不宣称达到 9.5。
+- `82d25a7` 的 detached clean、零凭证、敏感值/资源和 formal prepare-only Gate 已全绿，但这仍不是模型任务成功证据；在唯一 Windows formal 闭环前，不启动完整付费矩阵、candidate v4 或 P2-C，也不宣称达到 9.5。
 
 ### 9.6 费用与发布边界
 
@@ -947,7 +984,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 
 ### 9.7 下一步
 
-`fcd7a32` 唯一 Windows 真实验证已经失败并永久冻结，不启动 WSL2。`82d25a7` 已用零费用测试关闭“父级分支已经只剩 false/nullish，但 correction 仍要求 `value !== false`”的窄执行前缺口；下一步完成 detached clean、零凭证、敏感值/资源与 prepare-only Gate，全绿后才允许该新 identity 唯一 Windows formal。只有新的代表任务真实通过并覆盖主要失败形状后，才进入完整矩阵，再用两个连续冻结候选复核 9.5。
+`fcd7a32` 唯一 Windows 真实验证已经失败并永久冻结，不启动 WSL2。`82d25a7` 已用零费用测试关闭“父级分支已经只剩 false/nullish，但 correction 仍要求 `value !== false`”的窄执行前缺口，detached clean、零凭证、敏感值/资源和 prepare-only Gate 也已全绿；下一步按冻结输入执行且只执行一次 Windows formal。只有新的代表任务真实通过并覆盖主要失败形状后，才进入完整矩阵，再用两个连续冻结候选复核 9.5。
 
 ## 10. 实施计划进度表
 
@@ -959,7 +996,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | SS 横向原始加权 `9.135`、发布分 `9.1`；竞品和证据边界已记录 | - | 真实复杂任务成功率仍需新 formal 和连续候选，不宣称达到 9.5 |
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
-| P0：Web mutation/correction 稳定化 | P0 | **`82d25a7` 正例可达性 guard 本地全绿；clean Gate 待执行** | `fcd7a32` formal 正例不可达失败并冻结；新 guard owner `137/137`、Agent `689 passed / 1 skipped`、build、`36/36 + 9/9 + 13/13 + 5/5` 合同全绿，不可达 correction 不进入 executor，合法显式 false/析取 aria 放行 | `0.5-1 人日` | 以固定新 identity 完成 clean/零凭证/prepare-only Gate；全绿才开放唯一 Windows formal，失败 identity 不重跑、不进 WSL2/完整矩阵 |
+| P0：Web mutation/correction 稳定化 | P0 | **`82d25a7` clean/零凭证/prepare-only Gate 全绿；唯一 Windows formal 待执行** | detached clean identity 与 frozen install/build/contracts/owner/Agent 全绿；r3 双 preflight、敏感扫描、env 回收、资源收敛通过；formal repository-input、`deepseek-v4-flash`、retry=`0`、`12/24,000`、`$0.10` 与全新目标已冻结 | `0.5 人日` | 执行且只执行一次 Windows formal；无论成败冻结并完成 tests/evaluator、usage/cost、敏感值和零残留审计，失败不进 WSL2/完整矩阵 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |
