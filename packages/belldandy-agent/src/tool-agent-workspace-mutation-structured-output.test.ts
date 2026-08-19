@@ -13,6 +13,107 @@ afterEach(() => {
 });
 
 describe("ToolEnabledAgent post-mutation structured output", () => {
+  it("requests JSON mode before failing closed on two full-length prose reviews", async () => {
+    const requiredPath = "src/diff/props.js";
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return jsonResponse(modelToolCall("patch-broad", "apply_patch", {
+          input: [
+            "*** Begin Patch",
+            `*** Update File: ${requiredPath}`,
+            "@@",
+            "-\t\t} else if (value != NULL && value !== false) {",
+            "+\t\t} else if (value != NULL) {",
+            "*** End Patch",
+          ].join("\n"),
+        }, 500, 100));
+      }
+      if (requests.length === 2) {
+        return jsonResponse(modelToolCall("read-broad", "file_read", {
+          path: requiredPath,
+          limit: 1_048_576,
+        }, 500, 100));
+      }
+      return jsonResponse({
+        choices: [{
+          finish_reason: "length",
+          message: {
+            content: "The post-write evidence requires further review. ".repeat(96),
+          },
+        }],
+        usage: { prompt_tokens: 1_700, completion_tokens: 1_024 },
+      });
+    });
+
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+    }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: request.name === "file_read"
+        ? JSON.stringify({
+            path: requiredPath,
+            truncated: false,
+            content: "\t\t} else if (value != NULL) {",
+          })
+        : "Patch applied successfully",
+      ...(request.name === "apply_patch" ? {
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: [requiredPath] },
+        },
+      } : {}),
+      durationMs: 1,
+    }));
+    const agent = createAgent(execute);
+
+    const items = await collect(agent.run({
+      conversationId: "conv-post-mutation-objective-full-length-prose",
+      text: "Restore false aria-* attribute serialization with the smallest change while preserving ordinary false attribute behavior.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths: [requiredPath],
+          toolLoopIterationBudget: 6,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === '{"summary":"corrected and verified"}'
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(requests).toHaveLength(4);
+    expect(requests[2]?.response_format).toEqual({ type: "json_object" });
+    expect(requests[3]?.response_format).toEqual({ type: "json_object" });
+    expect(requests[2]?.messages[0]?.content).toContain(
+      "Return exactly one complete raw JSON value",
+    );
+    expect(requests[2]?.messages[0]?.content).toContain('"required":["summary"]');
+    expect(requests[2]?.tools?.map((tool: any) => tool.function.name)).toEqual(["apply_patch"]);
+    expect(requests[3]?.tools?.map((tool: any) => tool.function.name)).toEqual(["apply_patch"]);
+    expect(requests[2]?.max_tokens).toBe(1_024);
+    expect(requests[3]?.max_tokens).toBe(1_024);
+    expect(requests[2]?.thinking).toEqual({ type: "disabled" });
+    expect(requests[3]?.thinking).toEqual({ type: "disabled" });
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "apply_patch",
+      "file_read",
+    ]);
+    expect(items.at(-2)).toEqual({
+      type: "final",
+      text: "required workspace mutation was not completed: the post-write objective review returned neither valid final JSON nor an allowed correction after its one phase-aware output repair.",
+    });
+    expect(items.at(-1)).toEqual({ type: "status", status: "error" });
+  });
+
   it("keeps malformed successful objective review repair inside the objective-review phase", async () => {
     const requiredPath = "src/dom.ts";
     const requests: Array<Record<string, any>> = [];

@@ -3219,6 +3219,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 maxInputTokens: remainingReviewInputTokens,
                 requiredChangedPaths,
                 correctionAllowed: !workspaceMutationObjectiveCorrectionAttempted,
+                structuredOutputRequired: input.structuredOutput !== undefined,
+                structuredOutputSchema: input.structuredOutput?.schema,
                 tokenEstimateContext: dispatchTokenEstimateContext,
               });
           if (!candidate) {
@@ -3793,6 +3795,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           finalizationOnlyCall
             || workspaceMutationObjectiveReviewCall
             || (structuredOutputRepairCall && workspaceMutationObserved),
+          workspaceMutationObjectiveReviewRequest?.jsonObjectOutputRequired,
         );
         if (boundedStructuredOutputRepairRequest) {
           pendingBoundedStructuredOutputRepairRequest = undefined;
@@ -5683,6 +5686,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     maxOutputTokensOverride?: number,
     toolChoiceOverride?: "auto" | "required",
     disableDeepSeekThinkingOverride = false,
+    jsonObjectOutputRequired = false,
   ): Promise<{
     ok: true;
     content: string;
@@ -5799,6 +5803,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
           if (disableDeepSeekThinkingOverride) {
             disableDeepSeekThinking({ payload, profile });
           }
+          if (jsonObjectOutputRequired) {
+            payload.text = { format: { type: "json_object" } };
+          }
           if (tools && tools.length > 0) {
             const responseTools = this.opts.sanitizeResponsesToolSchema
               ? sanitizeResponsesToolDefinitions(tools)
@@ -5838,6 +5845,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
         applyOpenAICompatibleReasoningConfig(payload, profile);
         if (disableDeepSeekThinkingOverride) {
           disableDeepSeekThinking({ payload, profile });
+        }
+        if (jsonObjectOutputRequired) {
+          payload.response_format = { type: "json_object" };
         }
         if (tools && tools.length > 0) {
           payload.tools = tools;

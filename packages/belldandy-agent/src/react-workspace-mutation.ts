@@ -29,6 +29,7 @@ export type WorkspaceMutationSourceMessage = {
 export type WorkspaceMutationRecoveryRequest = {
   messages: Array<{ role: "system" | "user"; content: string }>;
   tools: WorkspaceMutationToolDefinition[];
+  jsonObjectOutputRequired?: boolean;
   estimatedInputTokens: number;
   evidenceCount: number;
   sourceEvidenceItemCount: number;
@@ -1658,6 +1659,8 @@ export function buildWorkspaceMutationObjectiveReviewRequest(input: {
   maxInputTokens: number;
   requiredChangedPaths: readonly string[];
   correctionAllowed?: boolean;
+  structuredOutputRequired?: boolean;
+  structuredOutputSchema?: unknown;
   tokenEstimateContext?: TokenEstimateOptions;
 }): WorkspaceMutationRecoveryRequest | undefined {
   const requiredReviewPaths = [...input.requiredChangedPaths];
@@ -1665,11 +1668,22 @@ export function buildWorkspaceMutationObjectiveReviewRequest(input: {
     || new Set(requiredReviewPaths.map(normalizeSourcePath)).size !== requiredReviewPaths.length) {
     return undefined;
   }
-  return buildBoundedWorkspaceMutationRequest({
+  let instruction = input.correctionAllowed === false
+    ? MUTATION_FINAL_OBJECTIVE_REVIEW_INSTRUCTION
+    : MUTATION_OBJECTIVE_REVIEW_INSTRUCTION;
+  if (input.structuredOutputRequired) {
+    let finalOutputContract: string;
+    try {
+      finalOutputContract = JSON.stringify({ schema: input.structuredOutputSchema });
+    } catch {
+      return undefined;
+    }
+    if (!finalOutputContract) return undefined;
+    instruction = `${instruction}\nReturn exactly one complete raw JSON value matching the final-output contract when no correction is required; do not return analysis or Markdown.\nFinal-output contract data:\n${finalOutputContract}`;
+  }
+  const request = buildBoundedWorkspaceMutationRequest({
     ...input,
-    instruction: input.correctionAllowed === false
-      ? MUTATION_FINAL_OBJECTIVE_REVIEW_INSTRUCTION
-      : MUTATION_OBJECTIVE_REVIEW_INSTRUCTION,
+    instruction,
     missingRequiredChangedPaths: requiredReviewPaths,
     trustedPathsLabel: input.correctionAllowed === false
       ? "Trusted required paths after post-write correction"
@@ -1677,6 +1691,9 @@ export function buildWorkspaceMutationObjectiveReviewRequest(input: {
     allowNoTools: true,
     latestRequiredFileReadEvidenceOnly: true,
   });
+  return request && input.structuredOutputRequired
+    ? { ...request, jsonObjectOutputRequired: true }
+    : request;
 }
 
 export function buildWorkspaceMutationObjectiveInputCorrectionRequest(input: {
@@ -1724,7 +1741,7 @@ export function buildWorkspaceMutationObjectiveOutputRepairRequest(input: {
     return undefined;
   }
   if (!finalOutputContract) return undefined;
-  return buildBoundedWorkspaceMutationRequest({
+  const request = buildBoundedWorkspaceMutationRequest({
     ...input,
     instruction: `${MUTATION_OBJECTIVE_OUTPUT_REPAIR_INSTRUCTION}\nFinal-output contract data:\n${finalOutputContract}`,
     missingRequiredChangedPaths: requiredCorrectionPaths,
@@ -1732,6 +1749,9 @@ export function buildWorkspaceMutationObjectiveOutputRepairRequest(input: {
     allowNoTools: true,
     latestRequiredFileReadEvidenceOnly: true,
   });
+  return request
+    ? { ...request, jsonObjectOutputRequired: true }
+    : undefined;
 }
 
 function buildBoundedWorkspaceMutationRequest(input: {
