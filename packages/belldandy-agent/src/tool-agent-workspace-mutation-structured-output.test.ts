@@ -563,11 +563,17 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
     expect(requests[2]?.messages[0]?.content).toContain(
       "Preserve existing outer guards for null or missing values byte-for-byte",
     );
+    expect(requests[2]?.messages[0]?.content).toContain(
+      "restore the missing guard first using the removed line as authoritative source evidence",
+    );
     expect(requests[3]?.messages[0]?.content).toContain(
       "Post-mutation objective correction input retry phase",
     );
     expect(requests[3]?.messages[0]?.content).toContain(
       "Preserve existing outer guards for null or missing values byte-for-byte",
+    );
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "restore the missing guard first using the removed line as authoritative source evidence",
     );
     expect(executedPatches).toEqual([initialPatch, correctionPatch]);
     expect(items).toContainEqual({ type: "final", text: '{"summary":"corrected"}' });
