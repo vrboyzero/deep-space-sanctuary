@@ -153,6 +153,7 @@ import {
   hasOnlyWorkspaceMutationPatchPaths,
   hasRedundantWorkspaceMutationPatchHunks,
   hasRevertedSmallestChangeCorrectionHunks,
+  hasUnpreservedSerializedFalseWitnessCurrentSource,
   inspectContextOnlyWorkspaceMutationPatchPreservation,
   inspectWorkspaceMutationPatchHunks,
   isCompleteWorkspaceMutationVerificationReadResult,
@@ -4147,6 +4148,37 @@ export class ToolEnabledAgent implements BelldandyAgent {
               return;
             }
             workspaceMutationObjectiveOutputText = objectiveValidation.outputText;
+          }
+          const objectiveReviewReturnedFinalOutput = workspaceMutationObjectiveReviewCall
+            && (!input.structuredOutput || workspaceMutationObjectiveOutputText !== undefined);
+          if (objectiveReviewReturnedFinalOutput
+            && !workspaceMutationObjectiveInputCorrectionCall
+            && hasUnpreservedSerializedFalseWitnessCurrentSource(
+              mutationRecoverySourceMessages,
+              input.text,
+              successfulWorkspaceMutationPatchInputs,
+            )) {
+            const canCorrectObjectiveInput = !workspaceMutationObjectiveInputCorrectionAttempted;
+            if (canCorrectObjectiveInput) {
+              workspaceMutationObjectiveReviewPending = true;
+              workspaceMutationObjectiveInputCorrectionPending = true;
+              workspaceMutationObjectiveOutputRepairPending = false;
+              lastToolCallFingerprint = undefined;
+              lastToolCallName = undefined;
+              consecutiveDuplicateToolCalls = 0;
+              recentToolCallTraces.length = 0;
+              lastSuccessfulToolResult = undefined;
+              logWarn("[workspace-mutation] objective review accepted a false-subset predicate without the prior null/false guard; scheduling one input correction", {
+                requiredPathCount: requiredChangedPaths.length,
+                conversationId: input.conversationId,
+                agentId: resolvedAgentId,
+              });
+              continue;
+            }
+            yield* emitWorkspaceMutationFailure(
+              "the post-write objective review accepted a false-subset predicate that does not preserve the prior null/false guard.",
+            );
+            return;
           }
           if (structuredOutputSession) {
             const review = workspaceMutationObjectiveOutputText === undefined

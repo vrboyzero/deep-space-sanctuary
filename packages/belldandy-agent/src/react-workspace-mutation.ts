@@ -93,7 +93,7 @@ export type WorkspaceMutationRecoveryPlan = WorkspaceMutationRecoveryRequest & {
 };
 
 const MUTATION_PATCH_HUNK_INSTRUCTION = "Each *** Update File section/@@ hunk needs actual +/-; space-prefixed lines are context only. No context-only hunk. One final *** End Patch. Copy context/removal lines exactly from one taskRelevantContexts item or exact evidence, preserving source tabs/spaces after the one diff marker. Never join items/fragments or cross file headers. Preserve replacement surroundings.";
-const MUTATION_SUBSET_BEHAVIOR_PRESERVATION_INSTRUCTION = "When the task targets a named subset, special case, or exception, a passing example for that subset is not proof of completion. Verify both sides before accepting a correction: a concrete positive witness named by the task must still satisfy the requested behavior, and a concrete outside/negative witness must retain its prior behavior. Reverting to a pre-mutation condition is invalid when that condition failed the positive witness. Verify that the current condition still distinguishes the requested subset and preserves behavior for inputs outside it. Do not broaden the requested behavior to all inputs or collapse a condition that excludes them.";
+const MUTATION_SUBSET_BEHAVIOR_PRESERVATION_INSTRUCTION = "When the task targets a named subset, special case, or exception, a passing example for that subset is not proof of completion. Verify both sides before accepting a correction: a concrete positive witness named by the task must still satisfy the requested behavior, and a concrete outside/negative witness must retain its prior behavior. Reverting to a pre-mutation condition is invalid when that condition failed the positive witness. Verify that the current condition still distinguishes the requested subset and preserves behavior for inputs outside it. Do not broaden the requested behavior to all inputs or collapse a condition that excludes them. Preserve existing outer guards for null or missing values byte-for-byte; add only the smallest subset predicate inside the existing guard. When source or test evidence establishes an exact local predicate, copy that expression byte-for-byte; do not substitute an equivalent indexOf/includes/regex or another helper.";
 
 const MUTATION_RECOVERY_INSTRUCTION = [
   "Mutation-only recovery phase: the task requires a successful workspace mutation before completion.",
@@ -1216,6 +1216,65 @@ export function hasBroadenedSmallestChangeCorrectionHunks(
 function taskRequiresSerializedFalseWitness(taskText: string): boolean {
   return /\b(?:restore|preserve|support|allow|keep)\b.{0,48}\bfalse\b.{0,48}\b(?:serializ\w*|attribute\w*|value\w*|behavior)\b/i
     .test(taskText);
+}
+
+function readLatestWorkspaceMutationSourceEvidence(
+  messages: readonly WorkspaceMutationSourceMessage[],
+  requiredPaths: readonly string[],
+): string[] {
+  const remainingPaths = new Set(requiredPaths.map(normalizeSourcePath));
+  const sources: string[] = [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "tool" || typeof message.content !== "string") continue;
+    try {
+      const parsed = JSON.parse(message.content) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+      const record = parsed as Record<string, unknown>;
+      if (record.truncated === false
+        && typeof record.path === "string"
+        && typeof record.content === "string"
+        && remainingPaths.has(normalizeSourcePath(record.path))) {
+        sources.push(record.content);
+        remainingPaths.delete(normalizeSourcePath(record.path));
+        if (remainingPaths.size === 0) break;
+      }
+    } catch {
+      // Tool output is untrusted; a non-JSON result is not source evidence.
+    }
+  }
+  return sources;
+}
+
+export function hasUnpreservedSerializedFalseWitnessCurrentSource(
+  messages: readonly WorkspaceMutationSourceMessage[],
+  taskText: string,
+  priorSuccessfulPatchInputs: readonly string[],
+): boolean {
+  if (!taskRequiresSerializedFalseWitness(taskText)) return false;
+  const priorGuardPaths = new Set<string>();
+  const priorHadNullAndFalseGuard = priorSuccessfulPatchInputs.some((patchInput) => (
+    (collectWorkspaceMutationPatchLineChanges(patchInput) ?? []).some((change) => (
+      change.removed.some((line) => {
+        const matchesGuard = /\bvalue\s*!=\s*NULL\b/.test(line)
+          && /\bvalue\s*!==?\s*false\b/.test(line);
+        if (matchesGuard) priorGuardPaths.add(normalizeSourcePath(change.path));
+        return matchesGuard;
+      })
+    )
+  )));
+  if (!priorHadNullAndFalseGuard) return false;
+  return readLatestWorkspaceMutationSourceEvidence(messages, [...priorGuardPaths]).some((source) => {
+    const lines = source.split(/\r?\n/);
+    return lines.some((line, index) => {
+      if (!/}\s*else\s+if\s*\(/.test(line)) return false;
+      const hasNullGuard = /\bvalue\s*!=\s*NULL\b/.test(line);
+      const hasFalseGuard = /\bvalue\s*!==?\s*false\b/.test(line);
+      if (hasNullGuard === hasFalseGuard) return false;
+      const branchWindow = lines.slice(index, index + 4).join("\n");
+      return /\.setAttribute\s*\(/.test(branchWindow);
+    });
+  });
 }
 
 function isUnconditionalElseLine(line: string): boolean {

@@ -450,6 +450,130 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("rejects a valid summary for the f92f880 missing null guard", async () => {
+    const requiredPath = "src/diff/props.js";
+    const initialCondition = "\t\t} else if (value !== false || name[4] == '-') {";
+    const correctedCondition = "\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {";
+    const initialPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-\t\t} else if (value != NULL && value !== false) {",
+      `+${initialCondition}`,
+      "*** End Patch",
+    ].join("\n");
+    const correctionPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${initialCondition}`,
+      `+${correctedCondition}`,
+      "*** End Patch",
+    ].join("\n");
+    const requests: Array<Record<string, any>> = [];
+    const executedPatches: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const instruction = String(body.messages?.[0]?.content ?? "");
+      if (requests.length === 1) {
+        return jsonResponse(modelToolCall("patch-missing-null-guard", "apply_patch", {
+          input: initialPatch,
+        }, 300, 60));
+      }
+      if (requests.length === 2 || requests.length === 5) {
+        return jsonResponse(modelToolCall(`read-${requests.length}`, "file_read", {
+          path: requiredPath,
+          limit: 1_048_576,
+        }, 300, 60));
+      }
+      if (requests.length === 3) {
+        return jsonResponse({
+          choices: [{
+            finish_reason: "stop",
+            message: { content: '{"summary":"looks complete"}' },
+          }],
+          usage: { prompt_tokens: 300, completion_tokens: 30 },
+        });
+      }
+      if (instruction.includes("Post-mutation objective correction input retry phase")) {
+        return jsonResponse(modelToolCall("restore-null-guard", "apply_patch", {
+          input: correctionPatch,
+        }, 300, 60));
+      }
+      return jsonResponse({
+        choices: [{
+          finish_reason: "stop",
+          message: { content: '{"summary":"corrected"}' },
+        }],
+        usage: { prompt_tokens: 300, completion_tokens: 30 },
+      });
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "apply_patch") {
+        executedPatches.push(String(request.arguments?.input ?? ""));
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: "Patch applied successfully",
+          metadata: {
+            workspaceMutation: { schemaVersion: 1, changedPaths: [requiredPath] },
+          },
+          durationMs: 1,
+        };
+      }
+      const content = executedPatches.includes(correctionPatch)
+        ? `${correctedCondition}\n\t\t\tdom.setAttribute(name, value);`
+        : `${initialCondition}\n\t\t\tdom.setAttribute(name, value);`;
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: JSON.stringify({ path: requiredPath, truncated: false, content }),
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent(execute);
+
+    const items = await collect(agent.run({
+      conversationId: "conv-post-mutation-missing-null-guard",
+      text: "Restore false aria-* attribute serialization with the smallest change while preserving ordinary false attribute behavior.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths: [requiredPath],
+          toolLoopIterationBudget: 6,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => /^\{"summary":"(?:looks complete|corrected)"\}$/.test(text)
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(requests).toHaveLength(6);
+    expect(requests[2]?.messages[0]?.content).toContain(
+      "Preserve existing outer guards for null or missing values byte-for-byte",
+    );
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "Post-mutation objective correction input retry phase",
+    );
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "Preserve existing outer guards for null or missing values byte-for-byte",
+    );
+    expect(executedPatches).toEqual([initialPatch, correctionPatch]);
+    expect(items).toContainEqual({ type: "final", text: '{"summary":"corrected"}' });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("retries a structured correction whose false witness remains shadowed", async () => {
     const requiredPath = "src/diff/props.js";
     const earlyFalseRemoval = "\t\t} else if (value == NULL || value === false) {";
