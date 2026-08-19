@@ -1057,6 +1057,136 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("keeps a valid prior mutation when the bounded input correction exactly reverses it", async () => {
+    const requiredChangedPaths = ["src/diff/props.js"];
+    const originalCondition = "\t\t} else if (value != NULL && value !== false) {";
+    const correctedCondition = "\t\t} else if (value != NULL && (value !== false || name.indexOf('aria-') === 0)) {";
+    const attributeLine = "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);";
+    const correctedSource = [correctedCondition, attributeLine].join("\n");
+    const initialPatch = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      `-${originalCondition}`,
+      `+${correctedCondition}`,
+      "*** End Patch",
+    ].join("\n");
+    const redundantCorrection = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      `-${correctedCondition}`,
+      `+${correctedCondition}`,
+      "*** End Patch",
+    ].join("\n");
+    const revertingCorrection = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      `-${correctedCondition}`,
+      `+${originalCondition}`,
+      ` ${attributeLine}`,
+      "*** End Patch",
+    ].join("\n");
+    const requests: Array<Record<string, any>> = [];
+    const executedPatches: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return response(modelToolCall("patch-valid-subset", "apply_patch", {
+          input: initialPatch,
+        }, 300, 60));
+      }
+      if (requests.length === 2) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
+      if (requests.length === 3) {
+        return response(modelToolCall("repeat-current-source", "apply_patch", {
+          input: redundantCorrection,
+        }, 300, 60));
+      }
+      if (requests.length === 4) {
+        return response(modelToolCall("revert-positive-witness", "apply_patch", {
+          input: revertingCorrection,
+        }, 300, 60));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: '{"summary":"fixed"}' } }],
+        usage: { prompt_tokens: 300, completion_tokens: 30 },
+      });
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "apply_patch") {
+        executedPatches.push(String(request.arguments?.input ?? ""));
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: "Patch applied successfully",
+          metadata: {
+            workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+          },
+          durationMs: 1,
+        };
+      }
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: JSON.stringify({
+          path: request.arguments?.path,
+          truncated: false,
+          content: correctedSource,
+        }),
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 12,
+      thinking: { type: "enabled" },
+      mutationToolNames: ["apply_patch"],
+      readToolNames: ["file_read"],
+    });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-reverted-input-correction",
+      text: "Restore false aria-* attribute serialization with the smallest change while preserving the public behavior of other attributes.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 12,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === '{"summary":"fixed"}'
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(requests).toHaveLength(5);
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "Post-mutation objective correction input retry phase",
+    );
+    expect(requests[4]).not.toHaveProperty("tools");
+    expect(requests[4]?.messages[0]?.content).toContain(
+      "Post-mutation final objective review phase",
+    );
+    expect(executedPatches).toEqual([initialPatch]);
+    expect(items).toContainEqual({ type: "final", text: '{"summary":"fixed"}' });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("does not correct a broadened mutation by reverting the requested positive case", async () => {
     const requiredChangedPaths = ["src/diff/props.js"];
     const broadSource = [

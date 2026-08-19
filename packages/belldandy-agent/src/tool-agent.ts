@@ -150,6 +150,7 @@ import {
   hasExpandedSmallestChangeCorrectionHunks,
   hasOnlyWorkspaceMutationPatchPaths,
   hasRedundantWorkspaceMutationPatchHunks,
+  hasRevertedSmallestChangeCorrectionHunks,
   inspectContextOnlyWorkspaceMutationPatchPreservation,
   inspectWorkspaceMutationPatchHunks,
   isCompleteWorkspaceMutationVerificationReadResult,
@@ -4459,6 +4460,27 @@ export class ToolEnabledAgent implements BelldandyAgent {
             );
             return;
           }
+          const revertedSmallestChangeCorrection = workspaceMutationObjectiveReviewCall
+            && hasRevertedSmallestChangeCorrectionHunks(
+              constrainedMutationToolCall,
+              successfulWorkspaceMutationPatchInputs,
+              input.text,
+            );
+          if (revertedSmallestChangeCorrection && workspaceMutationObjectiveInputCorrectionCall) {
+            workspaceMutationObjectiveCorrectionAttempted = true;
+            workspaceMutationObjectiveReviewPending = true;
+            lastToolCallFingerprint = undefined;
+            lastToolCallName = undefined;
+            consecutiveDuplicateToolCalls = 0;
+            recentToolCallTraces.length = 0;
+            lastSuccessfulToolResult = undefined;
+            logWarn("[workspace-mutation] bounded input correction exactly reversed the prior mutation; retaining current source for tool-free review", {
+              requiredPathCount: workspaceMutationCallRequiredPaths.length,
+              conversationId: input.conversationId,
+              agentId: resolvedAgentId,
+            });
+            continue;
+          }
           if (workspaceMutationObjectiveReviewCall
             && (hasDisjointSmallestChangeCorrectionHunks(
                 constrainedMutationToolCall,
@@ -4469,7 +4491,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 constrainedMutationToolCall,
                 successfulWorkspaceMutationPatchInputs,
                 input.text,
-              ))) {
+              )
+              || revertedSmallestChangeCorrection)) {
             const canCorrectObjectiveInputFailure = !workspaceMutationObjectiveInputCorrectionCall
               && !workspaceMutationObjectiveInputCorrectionAttempted;
             if (canCorrectObjectiveInputFailure) {

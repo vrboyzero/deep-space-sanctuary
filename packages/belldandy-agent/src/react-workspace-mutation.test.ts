@@ -13,6 +13,7 @@ import {
   coalesceWorkspaceMutationApplyPatchToolCalls,
   hasDisjointSmallestChangeCorrectionHunks,
   hasExpandedSmallestChangeCorrectionHunks,
+  hasRevertedSmallestChangeCorrectionHunks,
   hasRedundantWorkspaceMutationPatchHunks,
   inspectContextOnlyWorkspaceMutationPatchPreservation,
   inspectWorkspaceMutationPatchHunks,
@@ -331,6 +332,114 @@ describe("ReAct workspace mutation recovery", () => {
       [formalPriorPatch],
       "Restore the behavior with the smallest change.",
     )).toBe(true);
+  });
+
+  it("detects a smallest-change correction that exactly reverses a prior mutation", () => {
+    const priorPatch = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-\t\t} else if (value != NULL && value !== false) {",
+      "+\t\t} else if (value != NULL && (value !== false || name.indexOf('aria-') === 0)) {",
+      "*** End Patch",
+    ].join("\n");
+    const revertingCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-\t\t} else if (value != NULL && (value !== false || name.indexOf('aria-') === 0)) {",
+      "+\t\t} else if (value != NULL && value !== false) {",
+      " \t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+      "*** End Patch",
+    ]);
+    const refiningCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-\t\t} else if (value != NULL && (value !== false || name.indexOf('aria-') === 0)) {",
+      "+\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {",
+      "*** End Patch",
+    ]);
+    const revertingWithIndependentChange = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-\t\t} else if (value != NULL && (value !== false || name.indexOf('aria-') === 0)) {",
+      "+\t\t} else if (value != NULL && value !== false) {",
+      "@@",
+      "-old helper",
+      "+new helper",
+      "*** End Patch",
+    ]);
+    const secondPriorPatch = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/helpers.js",
+      "@@",
+      "-old helper",
+      "+new helper",
+      "*** End Patch",
+    ].join("\n");
+    const revertingAcrossPriorPaths = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-\t\t} else if (value != NULL && (value !== false || name.indexOf('aria-') === 0)) {",
+      "+\t\t} else if (value != NULL && value !== false) {",
+      "*** Update File: src/diff/helpers.js",
+      "@@",
+      "-new helper",
+      "+old helper",
+      "*** End Patch",
+    ]);
+    const multiLinePriorPatch = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-old first",
+      "-old second",
+      "+new first",
+      "+new second",
+      "*** End Patch",
+    ].join("\n");
+    const partialReversion = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-new first",
+      "+old first",
+      "*** End Patch",
+    ]);
+
+    expect(hasRevertedSmallestChangeCorrectionHunks(
+      revertingCorrection,
+      [priorPatch],
+      "Restore the behavior with the smallest change.",
+    )).toBe(true);
+    expect(hasRevertedSmallestChangeCorrectionHunks(
+      refiningCorrection,
+      [priorPatch],
+      "Restore the behavior with the smallest change.",
+    )).toBe(false);
+    expect(hasRevertedSmallestChangeCorrectionHunks(
+      revertingWithIndependentChange,
+      [priorPatch],
+      "Restore the behavior with the smallest change.",
+    )).toBe(false);
+    expect(hasRevertedSmallestChangeCorrectionHunks(
+      revertingAcrossPriorPaths,
+      [priorPatch, secondPriorPatch],
+      "Restore the behavior with the smallest change.",
+    )).toBe(true);
+    expect(hasRevertedSmallestChangeCorrectionHunks(
+      partialReversion,
+      [multiLinePriorPatch],
+      "Restore the behavior with the smallest change.",
+    )).toBe(false);
+    expect(hasRevertedSmallestChangeCorrectionHunks(
+      revertingCorrection,
+      [priorPatch],
+      "Restore the behavior.",
+    )).toBe(false);
   });
 
   it("normalizes only colonless Update File headers inside a recovery patch envelope", () => {

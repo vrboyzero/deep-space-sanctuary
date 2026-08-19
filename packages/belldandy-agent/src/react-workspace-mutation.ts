@@ -1028,31 +1028,66 @@ export function hasDisjointSmallestChangeCorrectionHunks(
   return comparableRemovalFound;
 }
 
+function collectEffectiveWorkspaceMutationPatchLines(
+  change: { added: readonly string[]; removed: readonly string[] },
+): { added: string[]; removed: string[] } {
+  const unmatchedRemovedCounts = new Map<string, number>();
+  for (const line of change.removed) {
+    unmatchedRemovedCounts.set(line, (unmatchedRemovedCounts.get(line) ?? 0) + 1);
+  }
+  const effectiveAdded: string[] = [];
+  for (const line of change.added) {
+    const removedCount = unmatchedRemovedCounts.get(line) ?? 0;
+    if (removedCount > 0) {
+      if (removedCount === 1) {
+        unmatchedRemovedCounts.delete(line);
+      } else {
+        unmatchedRemovedCounts.set(line, removedCount - 1);
+      }
+    } else {
+      effectiveAdded.push(line);
+    }
+  }
+  const effectiveRemoved: string[] = [];
+  for (const line of change.removed) {
+    const remainingCount = unmatchedRemovedCounts.get(line) ?? 0;
+    if (remainingCount === 0) continue;
+    effectiveRemoved.push(line);
+    if (remainingCount === 1) {
+      unmatchedRemovedCounts.delete(line);
+    } else {
+      unmatchedRemovedCounts.set(line, remainingCount - 1);
+    }
+  }
+  return { added: effectiveAdded, removed: effectiveRemoved };
+}
+
 function countEffectiveWorkspaceMutationPatchLines(
   change: { added: readonly string[]; removed: readonly string[] },
 ): number {
-  const unmatchedAdded = new Map<string, number>();
-  for (const line of change.added) {
-    unmatchedAdded.set(line, (unmatchedAdded.get(line) ?? 0) + 1);
+  const effective = collectEffectiveWorkspaceMutationPatchLines(change);
+  return effective.added.length + effective.removed.length;
+}
+
+function hasSameWorkspaceMutationPatchLines(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  if (left.length !== right.length) return false;
+  const remaining = new Map<string, number>();
+  for (const line of left) {
+    remaining.set(line, (remaining.get(line) ?? 0) + 1);
   }
-  let unmatchedRemoved = 0;
-  for (const line of change.removed) {
-    const addedCount = unmatchedAdded.get(line) ?? 0;
-    if (addedCount > 0) {
-      if (addedCount === 1) {
-        unmatchedAdded.delete(line);
-      } else {
-        unmatchedAdded.set(line, addedCount - 1);
-      }
+  for (const line of right) {
+    const count = remaining.get(line) ?? 0;
+    if (count === 0) return false;
+    if (count === 1) {
+      remaining.delete(line);
     } else {
-      unmatchedRemoved += 1;
+      remaining.set(line, count - 1);
     }
   }
-  let unmatchedAddedCount = 0;
-  for (const count of unmatchedAdded.values()) {
-    unmatchedAddedCount += count;
-  }
-  return unmatchedAddedCount + unmatchedRemoved;
+  return remaining.size === 0;
 }
 
 export function hasExpandedSmallestChangeCorrectionHunks(
@@ -1100,6 +1135,41 @@ export function hasExpandedSmallestChangeCorrectionHunks(
     }
   }
   return false;
+}
+
+export function hasRevertedSmallestChangeCorrectionHunks(
+  toolCall: WorkspaceMutationNavigationToolCall,
+  priorSuccessfulPatchInputs: readonly string[],
+  taskText: string,
+): boolean {
+  const correctionInput = readSmallestChangeCorrectionPatchInput(
+    toolCall,
+    priorSuccessfulPatchInputs,
+    taskText,
+  );
+  if (correctionInput === undefined) {
+    return false;
+  }
+  const priorChanges = priorSuccessfulPatchInputs.flatMap((patchInput) => (
+    collectWorkspaceMutationPatchLineChanges(patchInput) ?? []
+  )).map((change) => ({
+    path: change.path,
+    ...collectEffectiveWorkspaceMutationPatchLines(change),
+  }));
+  const correctionChanges = (collectWorkspaceMutationPatchLineChanges(correctionInput) ?? [])
+    .map((change) => ({
+      path: change.path,
+      ...collectEffectiveWorkspaceMutationPatchLines(change),
+    }))
+    .filter((change) => change.added.length > 0 || change.removed.length > 0);
+  if (priorChanges.length === 0 || correctionChanges.length === 0) {
+    return false;
+  }
+  return correctionChanges.every((correction) => priorChanges.some((prior) => (
+    prior.path === correction.path
+      && hasSameWorkspaceMutationPatchLines(correction.added, prior.removed)
+      && hasSameWorkspaceMutationPatchLines(correction.removed, prior.added)
+  )));
 }
 
 function readSmallestChangeCorrectionPatchInput(
