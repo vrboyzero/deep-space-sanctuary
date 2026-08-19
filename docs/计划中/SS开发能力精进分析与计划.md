@@ -97,7 +97,7 @@ Git/交付    9.4
 1. 不继续扩功能面，优先提升复杂真实任务的编辑/测试稳定性。
 2. `2977780` required-mutation 双平台代表已关闭，但不从历史分母移除失败，也不外推为 `37` 项整体改善。
 3. `18feb22`、`1f06c48`、`ac21fd6`、`f2f7a15`、`3c9b86e`、`d9f021c`、`0213d01` 与 `ec3f72a` Windows formal 均永久冻结；不重跑，也不为失败 identity 启动 WSL2。
-4. `d9f021c` 暴露 prior patch 原样重复行抬高 expanded threshold，已由 `0213d01` 按有效增删量修复；`0213d01` 随后产生正确初始 patch，却被唯一 bounded input-correction 精确反转为基线。`ec3f72a` 又证明 correction 可以删除 prior aria 约束并放宽普通 `false` 行为；exact-reversal guard 对该非字面反转不够，broadened-correction guard 已完成零费用 TDD，下一步为新 identity 做 clean Gate 与唯一 Windows formal。
+4. `d9f021c` 暴露 prior patch 原样重复行抬高 expanded threshold，已由 `0213d01` 按有效增删量修复；`0213d01` 随后产生正确初始 patch，却被唯一 bounded input-correction 精确反转为基线。`ec3f72a` 又证明 correction 可以删除 prior aria 约束并放宽普通 `false` 行为；exact-reversal guard 对该非字面反转不够，`fcd7a32` broadened-correction guard 已完成零费用 TDD 与 clean Gate，下一步仅执行该 identity 唯一 Windows formal。
 5. 正式批准 Go 受控 canary 满足 9.5 第二后端 Gate；Go production rollout 独立延期，不改变目标向量、当前评分或历史矩阵。
 6. P0 Web 外部 correction 未闭合前，不启动 WSL2、完整矩阵、candidate v4 或 P2-C。
 
@@ -643,6 +643,39 @@ Source / Workspace Revision
 - **为什么先做它**：`ec3f72a` 证明 exact-reversal 之外仍存在“删除 prior 约束并扩大普通行为”的同族风险，必须先以本地 guard 和真实新 identity 验证失败关闭不会误伤合法 refinement。
 - **当前还缺的关键闭环**：新 identity 在 `deepseek-v4-flash` 下保留正确最小 patch、阻止 broadened correction、完成复读/evaluator/合法终态并闭合 usage/cost、敏感值和零残留；未全绿前不启动 WSL2、完整矩阵、candidate v4 或 P2-C。
 
+#### P0 Web Gate 实现结论：`fcd7a32` detached clean 与零凭证 Gate（2026-08-20）
+
+##### 已完成内容
+
+1. **detached clean harness 与完整构建**：
+   - source identity=`fcd7a32ac69cfa70850f47f5dc765beedb7c4562`，harness=`tmp/p0-web-broadened-correction-canary-fcd7a32-clean`，worktree content SHA-256=`fb634aed0f6224c8cb5340cddc18ef25783c0eaa2880fb1c37a97d9b05280e93`，tracked workspace clean；
+   - frozen offline install resolved/reused/downloaded/added=`493/492/0/493`；完整 `corepack pnpm build` 和独立 workspace verifier 通过。
+
+2. **合同、owner 与 Agent 回归**：
+   - v3 Windows launcher/fixture/contract=`36/36`，benchmark/CI verifier contract=`9/9`，benchmark contract=`13/13`，system smoke=`5/5`；
+   - broadened correction owner=`133/133`，Agent 全量=`685 passed / 1 skipped`，`verify:coding-benchmark` 与 `verify:coding-ci` 通过。
+
+3. **Windows 零凭证 dry-run 与清理**：
+   - artifact=`artifacts/p0-web-broadened-correction-canary-fcd7a32-preact-windows-dry-run-r1`，run=`real-web-ui-regression-windows-a1-1787165400734`，report SHA-256=`c4b0697168a04973358d5636dc12d3cf92f06d6107b5167facd2f0d72a9d8cb2`；
+   - 双 preflight=`passed/passed`，credentials/model calls/usage=`false/0/not_reached`，events/trace/patch=`0/0/0 bytes`；readiness/auth=`13,835/13,843ms`，Gateway stop=`15ms`，listener=`0`；
+   - clean harness、artifact、fixture、runtime 扫描 regular/links/unreadable/Provider key/repository-input=`42,888/1,265/0/0/0`；两个 runtime env 经 containment、常规文件、非 reparse 与 SHA-256 校验后送 Windows 回收站，剩余=`0`，cleanup log SHA-256=`b88cd33bfc0db03aa25840dd99a1d377e7cb2e1b14db17dc30c9599b281a3fb2`。
+
+4. **formal prepare-only 与费用 Gate**：
+   - Gateway/benchmark spawned=`false/false`，Provider key configured/in args=`true/false`；模型=`deepseek-v4-flash`，Provider retry=`0`，`12 turns / 24,000 tokens`；
+   - 高峰价 cache-read/input/output=`$0.0125/$0.375/$1.125 per 1M tokens`，费用窗口=`$3.29077073 -> $3.39077073`，单 run 剩余=`$0.10`，预留后 Stage 0D 最坏守卫=`48.75090859 RMB < 50 RMB`。
+
+##### 验证结果
+
+- TypeScript workspace 完整 build、独立 verifier、合同组合、owner 与 Agent 全量均通过；本 Gate 新增测试=`0`；
+- 零凭证 dry-run、双 preflight、敏感扫描、env 回收、资源收敛和 formal prepare-only 全绿；
+- 本环节模型调用=`0`、新增 Provider 费用=`$0`，只开放 `fcd7a32` 唯一一次 Windows formal。
+
+##### 后续计划
+
+- **下一步准备做什么**：按已冻结输入执行 `fcd7a32` 唯一 Windows formal；完成后无论成败永久冻结并审计 evaluator、usage/cost、敏感值、env 和资源收敛。
+- **为什么先做它**：所有零模型 Gate 已通过，只有真实 Provider 路径才能验证 broadened guard 会保留正确最小 patch、阻止放宽 correction，并让代码、测试、final review 与 evaluator 一致。
+- **当前还缺的关键闭环**：唯一 formal 的合法终态和 evaluator 接受；未通过时不启动 WSL2，未形成代表性 uplift 前不启动完整矩阵、candidate v4 或 P2-C。
+
 ### 5.2 当前问题分层判断
 
 | 待区分问题 | 前序 Web formal 与 `3c9b86e` 证据 | 判断 |
@@ -656,9 +689,9 @@ Source / Workspace Revision
 
 ### 5.3 后续计划
 
-- **下一步准备做什么**：提交 broadened correction guard 与同步文档形成新 identity；依次执行 frozen offline install、build/独立 verifier、合同组合、Windows 零凭证 dry-run、敏感值/资源 Gate 与 formal prepare-only，全部通过后只执行一次 Windows formal。
-- **为什么先做它**：`ec3f72a` 已把直接根因扩展为“correction 删除 prior 约束并放宽普通 `false`”；新 identity 的零费用 Gate 是确认三类 correction 保护与预算不漂移的必要边界。
-- **当前还缺的关键闭环**：新 identity 在 `deepseek-v4-flash` 下真实保留最小 patch、阻止 expanded/exact-reversal/broadened correction、再次完整复读、evaluator 接受并形成合法 `run.completed`；未闭合前不启动 WSL2、完整矩阵、candidate v4 或 P2-C。
+- **下一步准备做什么**：按已冻结输入仅执行 `fcd7a32` 唯一 Windows formal，完成后立即审计并永久冻结。
+- **为什么先做它**：`fcd7a32` 的 offline install、build、合同、owner/Agent、零凭证 dry-run、敏感值/资源与 prepare-only Gate 已全部通过，真实 Provider 路径是当前唯一未验证边界。
+- **当前还缺的关键闭环**：`fcd7a32` 在 `deepseek-v4-flash` 下真实保留最小 patch、阻止 expanded/exact-reversal/broadened correction、再次完整复读、evaluator 接受并形成合法 `run.completed`；未闭合前不启动 WSL2、完整矩阵、candidate v4 或 P2-C。
 
 ## 6. 验证、证据、费用与禁止范围
 
@@ -697,6 +730,7 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 - `artifacts/p0-web-expanded-correction-canary-d9f021c-preact-windows-formal-r1/`
 - `artifacts/p0-web-expanded-correction-canary-0213d01-preact-windows-formal-r1/`
 - `artifacts/p0-web-expanded-correction-canary-ec3f72a-preact-windows-formal-r1/`
+- `artifacts/p0-web-broadened-correction-canary-fcd7a32-preact-windows-dry-run-r1/`
 - `artifacts/p1-a1-code-intel-truth-set-20260809-r1/`
 - `artifacts/p1-a1-code-intel-resource-soak-20260809-r2/`
 - `tmp/p2a-supervisor-soak-20260814-windows-r3/report.json`
@@ -845,7 +879,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 
 ### 9.7 下一步
 
-先把“第二次修改既要触及前一处改动、不能扩大成整块重写、不能精确撤销已验证正向修改、不能删除 prior 约束放宽普通行为”的保护固化为新版本，完成零费用 clean Gate 后只运行一次 Windows 真实验证。目标是确认正确 patch 得以保留、无效 correction 不进入执行器，最终说明、实际代码、测试和检查程序一致。只有新的代表任务真实通过并覆盖主要失败形状后，才进入完整矩阵，再用两个连续冻结候选复核 9.5。
+“第二次修改既要触及前一处改动、不能扩大成整块重写、不能精确撤销已验证正向修改、不能删除 prior 约束放宽普通行为”的保护已固化为 `fcd7a32`，零费用 clean Gate 也已通过。下一步只运行该 identity 唯一一次 Windows 真实验证，确认正确 patch 得以保留、无效 correction 不进入执行器，最终说明、实际代码、测试和检查程序一致。只有新的代表任务真实通过并覆盖主要失败形状后，才进入完整矩阵，再用两个连续冻结候选复核 9.5。
 
 ## 10. 实施计划进度表
 
@@ -857,7 +891,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | SS 横向原始加权 `9.135`、发布分 `9.1`；竞品和证据边界已记录 | - | 真实复杂任务成功率仍需新 formal 和连续候选，不宣称达到 9.5 |
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
-| P0：Web mutation/correction 稳定化 | P0 | **`d9f021c`、`0213d01`、`ec3f72a` formal 均已冻结；broadened guard 本地完成** | `d9f021c` 归因并由 `0213d01` 修复有效 delta threshold；`0213d01` exact reversal、`ec3f72a` broadened correction 均被 evaluator 拒绝；`fcd7a32` broadened guard owner `133/133`、Agent `685 passed / 1 skipped`、build/合同全绿；ec3 formal cost=`$0.00474987` | `0.5-1.5 人日` | 以 `fcd7a32` 执行 clean/零凭证/资源 Gate；全绿才开放唯一 Windows formal，须正确 patch 保留、expanded/exact-reversal/broadened correction 不执行、tests/evaluator/final review 一致；未闭合不进 WSL2/完整矩阵 |
+| P0：Web mutation/correction 稳定化 | P0 | **`fcd7a32` clean/零凭证/prepare-only Gate 全绿；唯一 Windows formal 待执行** | `0213d01` exact reversal、`ec3f72a` broadened correction 均被 evaluator 拒绝；`fcd7a32` owner `133/133`、Agent `685 passed / 1 skipped`、build、`36/36 + 9/9 + 13/13 + 5/5` 合同全绿；dry-run credentials/usage=`false/not_reached`、敏感/残留=`0/0` | `0.5-1 人日` | 仅执行 `fcd7a32` 唯一 Windows formal；须正确 patch 保留、broadened correction 不执行、tests/evaluator/final review 一致；无论成败冻结，失败不进 WSL2/完整矩阵 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |
