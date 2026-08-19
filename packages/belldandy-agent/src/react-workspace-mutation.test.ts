@@ -53,6 +53,20 @@ describe("ReAct workspace mutation recovery", () => {
       "+} else if (value != NULL && (value !== false || name[4] == '-')) {",
       "*** End Patch",
     ]);
+    const retainedCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-if (typeof value == 'function') {",
+      "-  // never serialize functions as attribute values",
+      "-} else if (value != NULL) {",
+      "+if (typeof value == 'function') {",
+      "+  // never serialize functions as attribute values",
+      "+} else if (name[0] == 'a' && value === false) {",
+      "+  // false aria-* values should be removed",
+      "+} else if (value != NULL) {",
+      "*** End Patch",
+    ]);
     expect(hasDisjointSmallestChangeCorrectionHunks(
       disjointCorrection,
       [priorPatch],
@@ -68,6 +82,16 @@ describe("ReAct workspace mutation recovery", () => {
       [priorPatch],
       "Restore the behavior.",
     )).toBe(false);
+    expect(hasDisjointSmallestChangeCorrectionHunks(
+      retainedCorrection,
+      [priorPatch],
+      "Restore the behavior with the smallest change.",
+    )).toBe(false);
+    expect(hasExpandedSmallestChangeCorrectionHunks(
+      retainedCorrection,
+      [priorPatch],
+      "Restore the behavior with the smallest change.",
+    )).toBe(true);
   });
 
   it("keeps the smallest-change correction guard conservative across patch shapes", () => {
@@ -274,6 +298,39 @@ describe("ReAct workspace mutation recovery", () => {
       [priorPatch],
       "Restore the behavior with the smallest change.",
     )).toBe(false);
+  });
+
+  it("counts only effective prior changes when a hunk repeats an unchanged line", () => {
+    const formalPriorPatch = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-\t\t} else if (value != NULL && value !== false) {",
+      "+\t\t} else if (value != NULL) {",
+      "-\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+      "+\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+      "*** End Patch",
+    ].join("\n");
+    const formalCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-\t\tif (typeof value == 'function') {",
+      "-\t\t\t// never serialize functions as attribute values",
+      "-\t\t} else if (value != NULL) {",
+      "+\t\tif (typeof value == 'function') {",
+      "+\t\t\t// never serialize functions as attribute values",
+      "+\t\t} else if (name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-' && value === false) {",
+      "+\t\t\t// false aria-* values should be removed",
+      "+\t\t} else if (value != NULL) {",
+      "*** End Patch",
+    ]);
+
+    expect(hasExpandedSmallestChangeCorrectionHunks(
+      formalCorrection,
+      [formalPriorPatch],
+      "Restore the behavior with the smallest change.",
+    )).toBe(true);
   });
 
   it("normalizes only colonless Update File headers inside a recovery patch envelope", () => {

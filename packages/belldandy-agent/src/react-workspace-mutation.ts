@@ -1028,6 +1028,33 @@ export function hasDisjointSmallestChangeCorrectionHunks(
   return comparableRemovalFound;
 }
 
+function countEffectiveWorkspaceMutationPatchLines(
+  change: { added: readonly string[]; removed: readonly string[] },
+): number {
+  const unmatchedAdded = new Map<string, number>();
+  for (const line of change.added) {
+    unmatchedAdded.set(line, (unmatchedAdded.get(line) ?? 0) + 1);
+  }
+  let unmatchedRemoved = 0;
+  for (const line of change.removed) {
+    const addedCount = unmatchedAdded.get(line) ?? 0;
+    if (addedCount > 0) {
+      if (addedCount === 1) {
+        unmatchedAdded.delete(line);
+      } else {
+        unmatchedAdded.set(line, addedCount - 1);
+      }
+    } else {
+      unmatchedRemoved += 1;
+    }
+  }
+  let unmatchedAddedCount = 0;
+  for (const count of unmatchedAdded.values()) {
+    unmatchedAddedCount += count;
+  }
+  return unmatchedAddedCount + unmatchedRemoved;
+}
+
 export function hasExpandedSmallestChangeCorrectionHunks(
   toolCall: WorkspaceMutationNavigationToolCall,
   priorSuccessfulPatchInputs: readonly string[],
@@ -1061,7 +1088,7 @@ export function hasExpandedSmallestChangeCorrectionHunks(
     const touchedPriorChangeSizes = priorChanges
       .filter((change) => change.path === path
         && change.added.some((line) => correction.removed.includes(line)))
-      .map((change) => change.added.length + change.removed.length);
+      .map((change) => countEffectiveWorkspaceMutationPatchLines(change));
     if (touchedPriorChangeSizes.length === 0) continue;
     const touchedPriorChangedLineCount = touchedPriorChangeSizes.reduce(
       (total, changedLineCount) => total + changedLineCount,
