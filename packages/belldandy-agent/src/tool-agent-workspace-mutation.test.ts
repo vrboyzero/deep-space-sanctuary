@@ -1605,6 +1605,150 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("retries a context-only post-write correction rejected before execution", async () => {
+    const requiredChangedPaths = ["src/diff/props.js"];
+    const currentCondition = "\t\t} else if (value != NULL && value !== false) {";
+    const correctedCondition = "\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {";
+    const contextOnlyCorrection = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      ` ${currentCondition}`,
+      "*** End Patch",
+    ].join("\n");
+    const validCorrection = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      `-${currentCondition}`,
+      `+${correctedCondition}`,
+      "*** End Patch",
+    ].join("\n");
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return response(modelToolCall("list-workspace", "list_files", { path: "." }, 300, 60));
+      }
+      if (requests.length === 2) {
+        return response(modelToolCall("read-test", "file_read", {
+          path: "test/browser/props.test.js",
+        }, 300, 60));
+      }
+      if (requests.length === 3) {
+        return response(modelToolCall("read-source", "file_read", {
+          path: requiredChangedPaths[0],
+        }, 300, 60));
+      }
+      if (requests.length === 4) {
+        return response(modelToolCall("patch-broad", "apply_patch", {
+          input: "initial broad patch",
+        }, 300, 60));
+      }
+      if (requests.length === 5 || requests.length === 8) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
+      if (requests.length === 6) {
+        return response(modelToolCall("context-only-correction", "apply_patch", {
+          input: contextOnlyCorrection,
+        }, 300, 60));
+      }
+      if (requests.length === 7) {
+        return response(modelToolCall("valid-input-correction", "apply_patch", {
+          input: validCorrection,
+        }, 300, 60));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: "corrected and verified" } }],
+        usage: { prompt_tokens: 500, completion_tokens: 40 },
+      });
+    });
+    let mutationCount = 0;
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "list_files") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({ path: ".", entries: ["src", "test"] }),
+          durationMs: 1,
+        };
+      }
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: request.arguments?.path,
+            truncated: false,
+            content: request.arguments?.path === requiredChangedPaths[0]
+              ? currentCondition
+              : "test source",
+          }),
+          durationMs: 1,
+        };
+      }
+      mutationCount++;
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 6,
+      thinking: { type: "enabled" },
+      readToolNames: ["file_read", "list_files"],
+    });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-context-only-objective-input-correction",
+      text: "Restore false aria-* serialization with the smallest change.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 6,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(9);
+    expect(requests[6]?.messages[0]?.content).toContain(
+      "Post-mutation objective correction input retry phase",
+    );
+    expect(requests[6]?.thinking).toEqual({ type: "disabled" });
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "list_files",
+      "file_read",
+      "file_read",
+      "apply_patch",
+      "file_read",
+      "apply_patch",
+      "file_read",
+    ]);
+    expect(execute.mock.calls.map(([request]) => request.arguments?.input)).not.toContain(
+      contextOnlyCorrection,
+    );
+    expect(mutationCount).toBe(2);
+    expect(items).toContainEqual({ type: "final", text: "corrected and verified" });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("rebuilds a redundant objective correction as the smallest semantic delta", async () => {
     const requiredChangedPaths = ["src/diff/props.js"];
     const originalCondition = "\t\t} else if (value != NULL && value !== false) {";

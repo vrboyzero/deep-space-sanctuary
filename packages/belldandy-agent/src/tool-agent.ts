@@ -4460,6 +4460,24 @@ export class ToolEnabledAgent implements BelldandyAgent {
             && patchDiagnostics.contextOnlyHunkCount > 0
             && patchPreservationDiagnostics?.canPreserve === false
             && !actionableMutationToolCall) {
+            const canCorrectObjectiveInputFailure = workspaceMutationObjectiveReviewCall
+              && !workspaceMutationObjectiveInputCorrectionCall
+              && !workspaceMutationObjectiveInputCorrectionAttempted;
+            if (canCorrectObjectiveInputFailure) {
+              workspaceMutationObjectiveReviewPending = true;
+              workspaceMutationObjectiveInputCorrectionPending = true;
+              lastToolCallFingerprint = undefined;
+              lastToolCallName = undefined;
+              consecutiveDuplicateToolCalls = 0;
+              recentToolCallTraces.length = 0;
+              lastSuccessfulToolResult = undefined;
+              logWarn("[workspace-mutation] post-write correction contained an unsafe context-only hunk; scheduling one input correction", {
+                requiredPathCount: workspaceMutationCallRequiredPaths.length,
+                conversationId: input.conversationId,
+                agentId: resolvedAgentId,
+              });
+              continue;
+            }
             yield* emitWorkspaceMutationFailure(
               `the mutation-only apply_patch call contained a context-only hunk that could not be preserved safely; use unique safe Update File sections, valid hunk structure, and at least one real added or removed line per file. ${formatWorkspaceMutationPatchHunkDiagnostics(patchDiagnostics, patchPreservationDiagnostics)}`,
             );
