@@ -1090,6 +1090,10 @@ function hasSameWorkspaceMutationPatchLines(
   return remaining.size === 0;
 }
 
+function countWorkspaceMutationConditionOperators(line: string): number {
+  return line.match(/&&|\|\||!==|===|!=|==|<=|>=/g)?.length ?? 0;
+}
+
 export function hasExpandedSmallestChangeCorrectionHunks(
   toolCall: WorkspaceMutationNavigationToolCall,
   priorSuccessfulPatchInputs: readonly string[],
@@ -1170,6 +1174,42 @@ export function hasRevertedSmallestChangeCorrectionHunks(
       && hasSameWorkspaceMutationPatchLines(correction.added, prior.removed)
       && hasSameWorkspaceMutationPatchLines(correction.removed, prior.added)
   )));
+}
+
+export function hasBroadenedSmallestChangeCorrectionHunks(
+  toolCall: WorkspaceMutationNavigationToolCall,
+  priorSuccessfulPatchInputs: readonly string[],
+  taskText: string,
+): boolean {
+  const correctionInput = readSmallestChangeCorrectionPatchInput(
+    toolCall,
+    priorSuccessfulPatchInputs,
+    taskText,
+  );
+  if (correctionInput === undefined) return false;
+  const priorChanges = priorSuccessfulPatchInputs.flatMap((patchInput) => (
+    collectWorkspaceMutationPatchLineChanges(patchInput) ?? []
+  )).map((change) => ({
+    path: change.path,
+    ...collectEffectiveWorkspaceMutationPatchLines(change),
+  }));
+  const correctionChanges = (collectWorkspaceMutationPatchLineChanges(correctionInput) ?? [])
+    .map((change) => ({
+      path: change.path,
+      ...collectEffectiveWorkspaceMutationPatchLines(change),
+    }))
+    .filter((change) => change.added.length > 0 || change.removed.length > 0);
+  return correctionChanges.some((correction) => priorChanges.some((prior) => {
+    if (prior.path !== correction.path) return false;
+    if (!correction.removed.some((line) => prior.added.includes(line))) return false;
+    const priorRemoved = prior.removed.filter((line) => !correction.added.includes(line));
+    if (priorRemoved.length === 0) return false;
+    return correction.added.some((line) => (
+      !prior.removed.includes(line)
+        && countWorkspaceMutationConditionOperators(line)
+          < Math.min(...priorRemoved.map(countWorkspaceMutationConditionOperators))
+    ));
+  }));
 }
 
 function readSmallestChangeCorrectionPatchInput(

@@ -148,6 +148,7 @@ import {
   formatWorkspaceMutationUnexpectedEndMarkerDiagnostics,
   hasDisjointSmallestChangeCorrectionHunks,
   hasExpandedSmallestChangeCorrectionHunks,
+  hasBroadenedSmallestChangeCorrectionHunks,
   hasOnlyWorkspaceMutationPatchPaths,
   hasRedundantWorkspaceMutationPatchHunks,
   hasRevertedSmallestChangeCorrectionHunks,
@@ -4466,6 +4467,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
               successfulWorkspaceMutationPatchInputs,
               input.text,
             );
+          const broadenedSmallestChangeCorrection = workspaceMutationObjectiveReviewCall
+            && hasBroadenedSmallestChangeCorrectionHunks(
+              constrainedMutationToolCall,
+              successfulWorkspaceMutationPatchInputs,
+              input.text,
+            );
           if (revertedSmallestChangeCorrection && workspaceMutationObjectiveInputCorrectionCall) {
             workspaceMutationObjectiveCorrectionAttempted = true;
             workspaceMutationObjectiveReviewPending = true;
@@ -4492,6 +4499,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 successfulWorkspaceMutationPatchInputs,
                 input.text,
               )
+              || broadenedSmallestChangeCorrection
               || revertedSmallestChangeCorrection)) {
             const canCorrectObjectiveInputFailure = !workspaceMutationObjectiveInputCorrectionCall
               && !workspaceMutationObjectiveInputCorrectionAttempted;

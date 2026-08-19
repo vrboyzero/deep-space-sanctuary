@@ -1329,6 +1329,124 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("rejects a bounded correction that removes the prior guard and broadens false behavior", async () => {
+    const requiredChangedPaths = ["src/diff/props.js"];
+    const originalCondition = "\t\t} else if (value != NULL && value !== false) {";
+    const narrowedCondition = "\t\t} else if (value != NULL && (value !== false || name.indexOf('aria-') === 0)) {";
+    const broadCondition = "\t\t} else if (value != NULL) {";
+    const refinedCondition = "\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {";
+    const initialPatch = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      `-${originalCondition}`,
+      `+${narrowedCondition}`,
+      "*** End Patch",
+    ].join("\n");
+    const broadCorrection = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      `-${narrowedCondition}`,
+      `+${broadCondition}`,
+      "*** End Patch",
+    ].join("\n");
+    const refinedCorrection = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      `-${narrowedCondition}`,
+      `+${refinedCondition}`,
+      "*** End Patch",
+    ].join("\n");
+    const requests: Array<Record<string, any>> = [];
+    const executedPatches: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return response(modelToolCall("patch-valid-subset", "apply_patch", { input: initialPatch }, 300, 60));
+      }
+      if (requests.length === 2 || requests.length === 5) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
+      if (requests.length === 3) {
+        return response(modelToolCall("patch-broad-correction", "apply_patch", { input: broadCorrection }, 300, 60));
+      }
+      if (requests.length === 4) {
+        return response(modelToolCall("patch-refined-correction", "apply_patch", { input: refinedCorrection }, 300, 60));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: '{"summary":"fixed"}' } }],
+        usage: { prompt_tokens: 300, completion_tokens: 30 },
+      });
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "apply_patch") {
+        executedPatches.push(String(request.arguments?.input ?? ""));
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: "Patch applied successfully",
+          metadata: {
+            workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+          },
+          durationMs: 1,
+        };
+      }
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: JSON.stringify({
+          path: request.arguments?.path,
+          truncated: false,
+          content: refinedCondition,
+        }),
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 12,
+      thinking: { type: "enabled" },
+      mutationToolNames: ["apply_patch"],
+      readToolNames: ["file_read"],
+    });
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-broadened-correction",
+      text: "Restore false aria-* attribute serialization with the smallest change while preserving the public behavior of other attributes.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 12,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === '{"summary":"fixed"}'
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(requests).toHaveLength(6);
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "Post-mutation objective correction input retry phase",
+    );
+    expect(executedPatches).toEqual([initialPatch, refinedCorrection]);
+    expect(items).toContainEqual({ type: "final", text: '{"summary":"fixed"}' });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("retains the three-file canary residual in the bounded post-write review", async () => {
     const requiredChangedPaths = [
       "jsonrpc/src/common/api.ts",

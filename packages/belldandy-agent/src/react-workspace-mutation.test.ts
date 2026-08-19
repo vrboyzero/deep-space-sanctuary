@@ -13,6 +13,7 @@ import {
   coalesceWorkspaceMutationApplyPatchToolCalls,
   hasDisjointSmallestChangeCorrectionHunks,
   hasExpandedSmallestChangeCorrectionHunks,
+  hasBroadenedSmallestChangeCorrectionHunks,
   hasRevertedSmallestChangeCorrectionHunks,
   hasRedundantWorkspaceMutationPatchHunks,
   inspectContextOnlyWorkspaceMutationPatchPreservation,
@@ -196,6 +197,14 @@ describe("ReAct workspace mutation recovery", () => {
       "+} else if (value != NULL && (value !== false || name[4] == '-')) {",
       "*** End Patch",
     ]);
+    const broadeningCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-\t\t} else if (value != NULL && (value !== false || name.indexOf('aria-') === 0)) {",
+      "+\t\t} else if (value != NULL) {",
+      "*** End Patch",
+    ]);
     const boundedBlockCorrection = applyPatchToolCall([
       "*** Begin Patch",
       "*** Update File: src/diff/props.js",
@@ -360,6 +369,14 @@ describe("ReAct workspace mutation recovery", () => {
       "+\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {",
       "*** End Patch",
     ]);
+    const broadeningCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-\t\t} else if (value != NULL && (value !== false || name.indexOf('aria-') === 0)) {",
+      "+\t\t} else if (value != NULL) {",
+      "*** End Patch",
+    ]);
     const revertingWithIndependentChange = applyPatchToolCall([
       "*** Begin Patch",
       "*** Update File: src/diff/props.js",
@@ -420,6 +437,11 @@ describe("ReAct workspace mutation recovery", () => {
       [priorPatch],
       "Restore the behavior with the smallest change.",
     )).toBe(false);
+    expect(hasBroadenedSmallestChangeCorrectionHunks(
+      broadeningCorrection,
+      [priorPatch],
+      "Restore the behavior with the smallest change.",
+    )).toBe(true);
     expect(hasRevertedSmallestChangeCorrectionHunks(
       revertingWithIndependentChange,
       [priorPatch],
