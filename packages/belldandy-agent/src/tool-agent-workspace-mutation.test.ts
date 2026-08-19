@@ -1447,6 +1447,258 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it.each([
+    [
+      "an explicit false branch",
+      "value === false && name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-'",
+    ],
+    [
+      "a disjunctive aria branch",
+      "value !== false || name.indexOf('aria-') === 0",
+    ],
+  ])("rejects an unreachable false correction before executing %s", async (
+    _caseName,
+    reachableCondition,
+  ) => {
+    const requiredChangedPaths = ["src/diff/props.js"];
+    const originalCondition = "\t\t} else {";
+    const excludedCondition = "\t\t} else if (value !== false) {";
+    const unreachableCondition = "\t\t} else if (value !== false && name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') {";
+    const reachableConditionLine = `\t\t} else if (${reachableCondition}) {`;
+    const attributeLine = "\t\t\tdom.setAttribute(name, String(value));";
+    const initialPatch = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      `-${originalCondition}`,
+      `+${excludedCondition}`,
+      `+${attributeLine}`,
+      `+${originalCondition}`,
+      "*** End Patch",
+    ].join("\n");
+    const unreachableCorrection = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      `-${excludedCondition}`,
+      `+${unreachableCondition}`,
+      "*** End Patch",
+    ].join("\n");
+    const reachableCorrection = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      `-${excludedCondition}`,
+      `+${reachableConditionLine}`,
+      "*** End Patch",
+    ].join("\n");
+    const requests: Array<Record<string, any>> = [];
+    const executedPatches: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const instruction = String(body.messages?.[0]?.content ?? "");
+      if (instruction.includes("Post-mutation verification phase")) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
+      if (instruction.includes("Post-mutation objective correction input retry phase")) {
+        return response(modelToolCall("correct-reachable-false", "apply_patch", {
+          input: reachableCorrection,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation final objective review phase")) {
+        return response({
+          choices: [{ finish_reason: "stop", message: { content: "corrected and verified" } }],
+          usage: { prompt_tokens: 300, completion_tokens: 30 },
+        });
+      }
+      if (instruction.includes("Post-mutation objective review phase")) {
+        return response(modelToolCall("correct-unreachable-false", "apply_patch", {
+          input: unreachableCorrection,
+        }, 300, 60));
+      }
+      return response(modelToolCall("patch-excluded-false", "apply_patch", {
+        input: initialPatch,
+      }, 300, 60));
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "apply_patch") {
+        executedPatches.push(String(request.arguments?.input ?? ""));
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: "Patch applied successfully",
+          metadata: {
+            workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+          },
+          durationMs: 1,
+        };
+      }
+      const condition = executedPatches.includes(reachableCorrection)
+        ? reachableConditionLine
+        : excludedCondition;
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: JSON.stringify({
+          path: request.arguments?.path,
+          truncated: false,
+          content: [condition, attributeLine, originalCondition].join("\n"),
+        }),
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 12,
+      thinking: { type: "enabled" },
+      mutationToolNames: ["apply_patch"],
+      readToolNames: ["file_read"],
+    });
+
+    const items = await collect(agent.run({
+      conversationId: `conv-required-mutation-unreachable-false-${_caseName}`,
+      text: "Restore false aria-* attribute serialization with the smallest change while preserving the public behavior of other attributes.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 12,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(6);
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "Post-mutation objective correction input retry phase",
+    );
+    expect(executedPatches).toEqual([initialPatch, reachableCorrection]);
+    expect(executedPatches).not.toContain(unreachableCorrection);
+    expect(items).toContainEqual({ type: "final", text: "corrected and verified" });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("fails closed when the bounded false-witness correction remains unreachable", async () => {
+    const requiredChangedPaths = ["src/diff/props.js"];
+    const originalCondition = "\t\t} else {";
+    const excludedCondition = "\t\t} else if (value !== false) {";
+    const attributeLine = "\t\t\tdom.setAttribute(name, String(value));";
+    const initialPatch = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      `-${originalCondition}`,
+      `+${excludedCondition}`,
+      `+${attributeLine}`,
+      `+${originalCondition}`,
+      "*** End Patch",
+    ].join("\n");
+    const unreachableCorrections = [
+      "value !== false && name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-'",
+      "value != false && name.indexOf('aria-') === 0",
+    ].map((condition) => [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      `-${excludedCondition}`,
+      `+\t\t} else if (${condition}) {`,
+      "*** End Patch",
+    ].join("\n"));
+    const requests: Array<Record<string, any>> = [];
+    const executedPatches: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const instruction = String(body.messages?.[0]?.content ?? "");
+      if (instruction.includes("Post-mutation verification phase")) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
+      if (instruction.includes("Post-mutation objective correction input retry phase")) {
+        return response(modelToolCall("retry-unreachable-false", "apply_patch", {
+          input: unreachableCorrections[1],
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation objective review phase")) {
+        return response(modelToolCall("correct-unreachable-false", "apply_patch", {
+          input: unreachableCorrections[0],
+        }, 300, 60));
+      }
+      return response(modelToolCall("patch-excluded-false", "apply_patch", {
+        input: initialPatch,
+      }, 300, 60));
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "apply_patch") {
+        executedPatches.push(String(request.arguments?.input ?? ""));
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: "Patch applied successfully",
+          metadata: {
+            workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+          },
+          durationMs: 1,
+        };
+      }
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: JSON.stringify({
+          path: request.arguments?.path,
+          truncated: false,
+          content: [excludedCondition, attributeLine, originalCondition].join("\n"),
+        }),
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 12,
+      thinking: { type: "enabled" },
+      mutationToolNames: ["apply_patch"],
+      readToolNames: ["file_read"],
+    });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-unreachable-false-failed",
+      text: "Restore false aria-* attribute serialization with the smallest change while preserving the public behavior of other attributes.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 12,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(4);
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "Post-mutation objective correction input retry phase",
+    );
+    expect(executedPatches).toEqual([initialPatch]);
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "final",
+      text: expect.stringContaining("did not narrowly refine"),
+    }));
+    expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
+  });
+
   it("retains the three-file canary residual in the bounded post-write review", async () => {
     const requiredChangedPaths = [
       "jsonrpc/src/common/api.ts",

@@ -12,6 +12,7 @@ import {
   coalesceWorkspaceMutationApplyPatchEnvelopes,
   coalesceWorkspaceMutationApplyPatchToolCalls,
   hasDisjointSmallestChangeCorrectionHunks,
+  hasExcludedFalseWitnessSmallestChangeCorrectionHunks,
   hasExpandedSmallestChangeCorrectionHunks,
   hasBroadenedSmallestChangeCorrectionHunks,
   hasRevertedSmallestChangeCorrectionHunks,
@@ -461,6 +462,65 @@ describe("ReAct workspace mutation recovery", () => {
       revertingCorrection,
       [priorPatch],
       "Restore the behavior.",
+    )).toBe(false);
+  });
+
+  it("detects a smallest-change correction that makes the requested false witness unreachable", () => {
+    const formalPriorPatch = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-\t\t} else {",
+      "+\t\t} else if (value !== false) {",
+      "+\t\t\tdom.setAttribute(name, String(value));",
+      "+\t\t} else {",
+      "*** End Patch",
+    ].join("\n");
+    const unreachableCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-\t\t} else if (value !== false) {",
+      "+\t\t} else if (value !== false && name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') {",
+      "*** End Patch",
+    ]);
+    const reachableCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-\t\t} else if (value !== false) {",
+      "+\t\t} else if (value === false && name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') {",
+      "*** End Patch",
+    ]);
+    const disjunctiveCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-\t\t} else if (value !== false) {",
+      "+\t\t} else if (value !== false || name.indexOf('aria-') === 0) {",
+      "*** End Patch",
+    ]);
+    const task = "Restore false aria-* attribute serialization with the smallest change.";
+
+    expect(hasExcludedFalseWitnessSmallestChangeCorrectionHunks(
+      unreachableCorrection,
+      [formalPriorPatch],
+      task,
+    )).toBe(true);
+    expect(hasExcludedFalseWitnessSmallestChangeCorrectionHunks(
+      reachableCorrection,
+      [formalPriorPatch],
+      task,
+    )).toBe(false);
+    expect(hasExcludedFalseWitnessSmallestChangeCorrectionHunks(
+      disjunctiveCorrection,
+      [formalPriorPatch],
+      task,
+    )).toBe(false);
+    expect(hasExcludedFalseWitnessSmallestChangeCorrectionHunks(
+      unreachableCorrection,
+      [formalPriorPatch],
+      "Narrow the branch with the smallest change.",
     )).toBe(false);
   });
 

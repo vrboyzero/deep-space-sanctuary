@@ -1212,6 +1212,52 @@ export function hasBroadenedSmallestChangeCorrectionHunks(
   }));
 }
 
+function taskRequiresSerializedFalseWitness(taskText: string): boolean {
+  return /\b(?:restore|preserve|support|allow|keep)\b.{0,48}\bfalse\b.{0,48}\b(?:serializ\w*|attribute\w*|value\w*|behavior)\b/i
+    .test(taskText);
+}
+
+function isUnconditionalElseLine(line: string): boolean {
+  return /^\s*}\s*else\s*{\s*$/.test(line);
+}
+
+function excludesFalseWitnessInElseIf(line: string): boolean {
+  if (!/}\s*else\s+if\s*\(/.test(line) || line.includes("||")) return false;
+  return /\b[A-Za-z_$][A-Za-z0-9_$.[\]]*\s*!==?\s*false\b/.test(line)
+    || /\bfalse\s*!==?\s*[A-Za-z_$][A-Za-z0-9_$.[\]]*\b/.test(line);
+}
+
+export function hasExcludedFalseWitnessSmallestChangeCorrectionHunks(
+  toolCall: WorkspaceMutationNavigationToolCall,
+  priorSuccessfulPatchInputs: readonly string[],
+  taskText: string,
+): boolean {
+  const correctionInput = readSmallestChangeCorrectionPatchInput(
+    toolCall,
+    priorSuccessfulPatchInputs,
+    taskText,
+  );
+  if (correctionInput === undefined || !taskRequiresSerializedFalseWitness(taskText)) {
+    return false;
+  }
+  const priorChanges = priorSuccessfulPatchInputs.flatMap((patchInput) => (
+    collectWorkspaceMutationPatchLineChanges(patchInput) ?? []
+  ));
+  const correctionChanges = (collectWorkspaceMutationPatchLineChanges(correctionInput) ?? [])
+    .map((change) => ({
+      path: change.path,
+      ...collectEffectiveWorkspaceMutationPatchLines(change),
+    }));
+  return correctionChanges.some((correction) => priorChanges.some((prior) => (
+    prior.path === correction.path
+      && prior.removed.some(isUnconditionalElseLine)
+      && correction.removed.some((line) => (
+        prior.added.includes(line) && excludesFalseWitnessInElseIf(line)
+      ))
+      && correction.added.some(excludesFalseWitnessInElseIf)
+  )));
+}
+
 function readSmallestChangeCorrectionPatchInput(
   toolCall: WorkspaceMutationNavigationToolCall,
   priorSuccessfulPatchInputs: readonly string[],
