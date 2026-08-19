@@ -987,22 +987,12 @@ export function hasDisjointSmallestChangeCorrectionHunks(
   priorSuccessfulPatchInputs: readonly string[],
   taskText: string,
 ): boolean {
-  if (!/(?:\bsmallest\b|\bminimal\b).{0,32}\b(?:change|patch|diff|edit|modification)s?\b/i.test(taskText)
-    || toolCall.function.name !== "apply_patch"
-    || priorSuccessfulPatchInputs.length === 0) {
-    return false;
-  }
-  let parsedArguments: unknown;
-  try {
-    parsedArguments = JSON.parse(toolCall.function.arguments);
-  } catch {
-    return false;
-  }
-  if (!parsedArguments || typeof parsedArguments !== "object" || Array.isArray(parsedArguments)) {
-    return false;
-  }
-  const correctionInput = (parsedArguments as Record<string, unknown>).input;
-  if (typeof correctionInput !== "string") {
+  const correctionInput = readSmallestChangeCorrectionPatchInput(
+    toolCall,
+    priorSuccessfulPatchInputs,
+    taskText,
+  );
+  if (correctionInput === undefined) {
     return false;
   }
 
@@ -1036,6 +1026,76 @@ export function hasDisjointSmallestChangeCorrectionHunks(
     }
   }
   return comparableRemovalFound;
+}
+
+export function hasExpandedSmallestChangeCorrectionHunks(
+  toolCall: WorkspaceMutationNavigationToolCall,
+  priorSuccessfulPatchInputs: readonly string[],
+  taskText: string,
+): boolean {
+  const correctionInput = readSmallestChangeCorrectionPatchInput(
+    toolCall,
+    priorSuccessfulPatchInputs,
+    taskText,
+  );
+  if (correctionInput === undefined) {
+    return false;
+  }
+  const priorChanges = priorSuccessfulPatchInputs.flatMap((patchInput) => (
+    collectWorkspaceMutationPatchLineChanges(patchInput) ?? []
+  ));
+  const correctionChanges = collectWorkspaceMutationPatchLineChanges(correctionInput);
+  if (priorChanges.length === 0 || !correctionChanges || correctionChanges.length === 0) {
+    return false;
+  }
+
+  const correctionChangesByPath = new Map<string, { changedLineCount: number; removed: string[] }>();
+  for (const change of correctionChanges) {
+    const aggregate = correctionChangesByPath.get(change.path)
+      ?? { changedLineCount: 0, removed: [] };
+    aggregate.changedLineCount += change.added.length + change.removed.length;
+    aggregate.removed.push(...change.removed);
+    correctionChangesByPath.set(change.path, aggregate);
+  }
+  for (const [path, correction] of correctionChangesByPath) {
+    const touchedPriorChangeSizes = priorChanges
+      .filter((change) => change.path === path
+        && change.added.some((line) => correction.removed.includes(line)))
+      .map((change) => change.added.length + change.removed.length);
+    if (touchedPriorChangeSizes.length === 0) continue;
+    const touchedPriorChangedLineCount = touchedPriorChangeSizes.reduce(
+      (total, changedLineCount) => total + changedLineCount,
+      0,
+    );
+    const allowedChangedLineCount = Math.max(6, touchedPriorChangedLineCount * 3);
+    if (correction.changedLineCount > allowedChangedLineCount) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function readSmallestChangeCorrectionPatchInput(
+  toolCall: WorkspaceMutationNavigationToolCall,
+  priorSuccessfulPatchInputs: readonly string[],
+  taskText: string,
+): string | undefined {
+  if (!/(?:\bsmallest\b|\bminimal\b).{0,32}\b(?:change|patch|diff|edit|modification)s?\b/i.test(taskText)
+    || toolCall.function.name !== "apply_patch"
+    || priorSuccessfulPatchInputs.length === 0) {
+    return undefined;
+  }
+  let parsedArguments: unknown;
+  try {
+    parsedArguments = JSON.parse(toolCall.function.arguments);
+  } catch {
+    return undefined;
+  }
+  if (!parsedArguments || typeof parsedArguments !== "object" || Array.isArray(parsedArguments)) {
+    return undefined;
+  }
+  const correctionInput = (parsedArguments as Record<string, unknown>).input;
+  return typeof correctionInput === "string" ? correctionInput : undefined;
 }
 
 function collectWorkspaceMutationPatchLineChanges(

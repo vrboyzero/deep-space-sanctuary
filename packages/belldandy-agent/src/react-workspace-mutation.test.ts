@@ -12,6 +12,7 @@ import {
   coalesceWorkspaceMutationApplyPatchEnvelopes,
   coalesceWorkspaceMutationApplyPatchToolCalls,
   hasDisjointSmallestChangeCorrectionHunks,
+  hasExpandedSmallestChangeCorrectionHunks,
   hasRedundantWorkspaceMutationPatchHunks,
   inspectContextOnlyWorkspaceMutationPatchPreservation,
   inspectWorkspaceMutationPatchHunks,
@@ -52,7 +53,6 @@ describe("ReAct workspace mutation recovery", () => {
       "+} else if (value != NULL && (value !== false || name[4] == '-')) {",
       "*** End Patch",
     ]);
-
     expect(hasDisjointSmallestChangeCorrectionHunks(
       disjointCorrection,
       [priorPatch],
@@ -132,6 +132,147 @@ describe("ReAct workspace mutation recovery", () => {
       deletionOnlyCorrection,
       [deletionOnlyPriorPatch],
       "Use the minimal patch.",
+    )).toBe(false);
+  });
+
+  it("detects a smallest-change correction that expands a prior one-line mutation into a block rewrite", () => {
+    const priorPatch = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-} else if (value != NULL && value !== false) {",
+      "+} else if (value != NULL) {",
+      "*** End Patch",
+    ].join("\n");
+    const expandedCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-if (typeof value == 'function') {",
+      "-  // never serialize functions as attribute values",
+      "-} else if (value != NULL) {",
+      "-  dom.setAttribute(name, value);",
+      "-} else {",
+      "-  dom.removeAttribute(name);",
+      "+if (value == NULL) {",
+      "+  dom.removeAttribute(name);",
+      "+} else if (typeof value == 'function') {",
+      "+  // never serialize functions as attribute values",
+      "+} else {",
+      "+  dom.setAttribute(name, value);",
+      "+}",
+      "*** End Patch",
+    ]);
+    const refiningCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-} else if (value != NULL) {",
+      "+} else if (value != NULL && (value !== false || name[4] == '-')) {",
+      "*** End Patch",
+    ]);
+    const boundedBlockCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-if (ready) {",
+      "-} else if (value != NULL) {",
+      "-  set(value);",
+      "+if (ready && value != NULL) {",
+      "+} else if (value !== false) {",
+      "+  set(value);",
+      "*** End Patch",
+    ]);
+    const differentPathExpansion = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/helpers.js",
+      "@@",
+      "-old one",
+      "-old two",
+      "-old three",
+      "-old four",
+      "+new one",
+      "+new two",
+      "+new three",
+      "+new four",
+      "*** End Patch",
+    ]);
+    const secondPriorPatch = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-old fallback",
+      "+broad fallback",
+      "*** End Patch",
+    ].join("\n");
+    const multiPriorRefinement = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-} else if (value != NULL) {",
+      "-  old adjacent condition",
+      "+} else if (value !== false) {",
+      "+  new adjacent condition",
+      "@@",
+      "-broad fallback",
+      "-  old adjacent fallback",
+      "+narrow fallback",
+      "+  new adjacent fallback",
+      "*** End Patch",
+    ]);
+    const mixedPathRefinement = applyPatchToolCall([
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-} else if (value != NULL) {",
+      "+} else if (value !== false) {",
+      "*** Update File: src/diff/helpers.js",
+      "@@",
+      "-old one",
+      "-old two",
+      "-old three",
+      "-old four",
+      "+new one",
+      "+new two",
+      "+new three",
+      "+new four",
+      "*** End Patch",
+    ]);
+
+    expect(hasExpandedSmallestChangeCorrectionHunks(
+      expandedCorrection,
+      [priorPatch],
+      "Restore the behavior with the smallest change.",
+    )).toBe(true);
+    expect(hasExpandedSmallestChangeCorrectionHunks(
+      refiningCorrection,
+      [priorPatch],
+      "Restore the behavior with the smallest change.",
+    )).toBe(false);
+    expect(hasExpandedSmallestChangeCorrectionHunks(
+      expandedCorrection,
+      [priorPatch],
+      "Restore the behavior.",
+    )).toBe(false);
+    expect(hasExpandedSmallestChangeCorrectionHunks(
+      boundedBlockCorrection,
+      [priorPatch],
+      "Restore the behavior with the smallest change.",
+    )).toBe(false);
+    expect(hasExpandedSmallestChangeCorrectionHunks(
+      differentPathExpansion,
+      [priorPatch],
+      "Restore the behavior with the smallest change.",
+    )).toBe(false);
+    expect(hasExpandedSmallestChangeCorrectionHunks(
+      multiPriorRefinement,
+      [priorPatch, secondPriorPatch],
+      "Restore the behavior with the smallest change.",
+    )).toBe(false);
+    expect(hasExpandedSmallestChangeCorrectionHunks(
+      mixedPathRefinement,
+      [priorPatch],
+      "Restore the behavior with the smallest change.",
     )).toBe(false);
   });
 

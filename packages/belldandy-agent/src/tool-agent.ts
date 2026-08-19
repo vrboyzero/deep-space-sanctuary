@@ -147,6 +147,7 @@ import {
   formatWorkspaceMutationPatchHunkDiagnostics,
   formatWorkspaceMutationUnexpectedEndMarkerDiagnostics,
   hasDisjointSmallestChangeCorrectionHunks,
+  hasExpandedSmallestChangeCorrectionHunks,
   hasOnlyWorkspaceMutationPatchPaths,
   hasRedundantWorkspaceMutationPatchHunks,
   inspectContextOnlyWorkspaceMutationPatchPreservation,
@@ -4459,11 +4460,16 @@ export class ToolEnabledAgent implements BelldandyAgent {
             return;
           }
           if (workspaceMutationObjectiveReviewCall
-            && hasDisjointSmallestChangeCorrectionHunks(
-              constrainedMutationToolCall,
-              successfulWorkspaceMutationPatchInputs,
-              input.text,
-            )) {
+            && (hasDisjointSmallestChangeCorrectionHunks(
+                constrainedMutationToolCall,
+                successfulWorkspaceMutationPatchInputs,
+                input.text,
+              )
+              || hasExpandedSmallestChangeCorrectionHunks(
+                constrainedMutationToolCall,
+                successfulWorkspaceMutationPatchInputs,
+                input.text,
+              ))) {
             const canCorrectObjectiveInputFailure = !workspaceMutationObjectiveInputCorrectionCall
               && !workspaceMutationObjectiveInputCorrectionAttempted;
             if (canCorrectObjectiveInputFailure) {
@@ -4474,7 +4480,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
               consecutiveDuplicateToolCalls = 0;
               recentToolCallTraces.length = 0;
               lastSuccessfulToolResult = undefined;
-              logWarn("[workspace-mutation] smallest-change correction left the prior mutation intact; scheduling one input correction", {
+              logWarn("[workspace-mutation] smallest-change correction did not narrowly refine the prior mutation; scheduling one input correction", {
                 requiredPathCount: workspaceMutationCallRequiredPaths.length,
                 conversationId: input.conversationId,
                 agentId: resolvedAgentId,
@@ -4482,7 +4488,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
               continue;
             }
             yield* emitWorkspaceMutationFailure(
-              "the post-write objective correction left the prior mutation intact and rewrote only adjacent baseline code despite the smallest-change requirement.",
+              "the post-write objective correction did not narrowly refine the prior mutation despite the smallest-change requirement.",
             );
             return;
           }

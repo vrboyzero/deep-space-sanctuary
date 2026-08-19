@@ -796,15 +796,13 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
-  it("retries a smallest-change correction that rewrites only adjacent baseline code", async () => {
+  it("retries a smallest-change correction that expands the prior mutation into a block rewrite", async () => {
     const requiredChangedPaths = ["src/diff/props.js"];
     const originalCondition = "\t\t} else if (value != NULL && value !== false) {";
     const broadCondition = "\t\t} else if (value != NULL) {";
     const correctedCondition = "\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {";
     const originalAttribute = "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);";
-    const rewrittenAttribute = "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value == false ? false : value);";
     const broadSource = [broadCondition, originalAttribute].join("\n");
-    const rewrittenSource = [broadCondition, rewrittenAttribute].join("\n");
     const correctedSource = [correctedCondition, originalAttribute].join("\n");
     const broadPatch = [
       "*** Begin Patch",
@@ -814,12 +812,23 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       `+${broadCondition}`,
       "*** End Patch",
     ].join("\n");
-    const adjacentRewritePatch = [
+    const expandedRewritePatch = [
       "*** Begin Patch",
       "*** Update File: src/diff/props.js",
       "@@",
+      "-\t\tif (typeof value == 'function') {",
+      "-\t\t\t// never serialize functions as attribute values",
+      `-${broadCondition}`,
       `-${originalAttribute}`,
-      `+${rewrittenAttribute}`,
+      "-\t\t} else {",
+      "-\t\t\tdom.removeAttribute(name);",
+      "+\t\tif (value == NULL) {",
+      "+\t\t\tdom.removeAttribute(name);",
+      "+\t\t} else if (typeof value == 'function') {",
+      "+\t\t\t// never serialize functions as attribute values",
+      "+\t\t} else {",
+      `+${originalAttribute}`,
+      "+\t\t}",
       "*** End Patch",
     ].join("\n");
     const correctedPatch = [
@@ -851,8 +860,8 @@ describe("ToolEnabledAgent required workspace mutation", () => {
         });
       }
       if (instruction.includes("Post-mutation objective review phase")) {
-        return response(modelToolCall("rewrite-adjacent", "apply_patch", {
-          input: adjacentRewritePatch,
+        return response(modelToolCall("rewrite-expanded-block", "apply_patch", {
+          input: expandedRewritePatch,
         }, 300, 60));
       }
       return response(modelToolCall("patch-broad", "apply_patch", {
@@ -879,9 +888,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       }
       const content = executedPatches.includes(correctedPatch)
         ? correctedSource
-        : executedPatches.includes(adjacentRewritePatch)
-          ? rewrittenSource
-          : broadSource;
+        : broadSource;
       return {
         id: request.id,
         name: request.name,
@@ -920,7 +927,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       "Post-mutation objective correction input retry phase",
     ))).toBe(true);
     expect(executedPatches).toEqual([broadPatch, correctedPatch]);
-    expect(executedPatches).not.toContain(adjacentRewritePatch);
+    expect(executedPatches).not.toContain(expandedRewritePatch);
     expect(items).toContainEqual({ type: "final", text: "corrected and verified" });
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
