@@ -158,8 +158,10 @@ const MUTATION_OBJECTIVE_OUTPUT_REPAIR_INSTRUCTION = [
 
 const MUTATION_OBJECTIVE_INPUT_CORRECTION_INSTRUCTION = [
   "Post-mutation objective correction input retry phase: the preceding allowed apply_patch failed with input_error before it produced any correction mutation.",
+  "This is a tool-only recovery call. The task's final JSON output instruction is suspended for this call. Do not return JSON, a summary, prose, Markdown, or analysis; the only valid response is exactly one apply_patch tool call.",
   "Compare every task requirement against the bounded complete post-write source evidence again, then make exactly one valid apply_patch call to correct only the trusted required paths.",
   MUTATION_SUBSET_BEHAVIOR_PRESERVATION_INSTRUCTION,
+  "When restoring a removed outer guard, the replacement must keep that guard and add a distinct task-specific predicate proven by the positive and outside/negative witnesses. A replacement equal to the prior removed line is not a correction and must not be emitted.",
   "Rebuild the patch from the task and source evidence. Do not copy the failed patch, emit an empty file section, or use error text as source evidence.",
   "The rebuilt correction must change task-relevant behavior. Do not add commentary as a substitute for the required source change, and do not remove and re-add an unchanged source line; keep unchanged lines as patch context.",
   "Treat an over-specific or expanded current predicate as task-relevant behavior that still requires correction when the task asks for the smallest change. Derive the smallest sufficient condition proved by the task's positive and outside/negative witnesses, replace only that predicate, and keep the rest of the current source unchanged.",

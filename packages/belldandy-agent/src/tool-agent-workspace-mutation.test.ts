@@ -1178,6 +1178,12 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(requests[3]?.messages[0]?.content).toContain(
       "Post-mutation objective correction input retry phase",
     );
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "The task's final JSON output instruction is suspended for this call",
+    );
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "the only valid response is exactly one apply_patch tool call",
+    );
     expect(requests[4]).not.toHaveProperty("tools");
     expect(requests[4]?.messages[0]?.content).toContain(
       "Post-mutation final objective review phase",
@@ -2856,6 +2862,106 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items).toContainEqual(expect.objectContaining({
       type: "final",
       text: expect.stringContaining("Corrected patch context still did not match"),
+    }));
+    expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
+  });
+
+  it("fails closed when the post-write input correction returns JSON without a mutation tool", async () => {
+    const requiredChangedPaths = ["src/diff/props.js"];
+    const broadPatch = [
+      "*** Begin Patch",
+      "*** Update File: src/diff/props.js",
+      "@@",
+      "-\t\t} else if (value != NULL && value !== false) {",
+      "+\t\t} else if (value != NULL) {",
+      "*** End Patch",
+    ].join("\n");
+    const currentSource = [
+      "\t\t} else if (value != NULL) {",
+      "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+    ].join("\n");
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return response(modelToolCall("patch-broad", "apply_patch", { input: broadPatch }, 300, 60));
+      }
+      if (requests.length === 2) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: '{"summary":"done"}' } }],
+        usage: { prompt_tokens: 300, completion_tokens: 30 },
+      });
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: request.name === "file_read"
+        ? JSON.stringify({
+            path: request.arguments?.path,
+            truncated: false,
+            content: currentSource,
+          })
+        : "Patch applied successfully",
+      ...(request.name === "apply_patch" ? {
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+        },
+      } : {}),
+      durationMs: 1,
+    }));
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 6,
+      thinking: { type: "enabled" },
+    });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-no-tool-input-correction",
+      text: "Restore false aria-* attribute serialization with the smallest change while preserving ordinary false attribute behavior.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 6,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === '{"summary":"done"}'
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(requests).toHaveLength(4);
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "Post-mutation objective correction input retry phase",
+    );
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "The task's final JSON output instruction is suspended for this call",
+    );
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "the only valid response is exactly one apply_patch tool call",
+    );
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "apply_patch",
+      "file_read",
+    ]);
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "final",
+      text: expect.stringContaining(
+        "did not request exactly one allowed workspace mutation tool",
+      ),
     }));
     expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
   });

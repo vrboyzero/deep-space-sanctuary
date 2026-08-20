@@ -4099,6 +4099,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
             );
             return;
           }
+          if (workspaceMutationObjectiveInputCorrectionCall) {
+            yield* emitWorkspaceMutationFailure(
+              "the post-write objective correction input retry did not request exactly one allowed workspace mutation tool.",
+            );
+            return;
+          }
           if (workspaceMutationRequired && !workspaceMutationObserved) {
             if (workspaceMutationNavigationCall) {
               yield* emitWorkspaceMutationFailure(
