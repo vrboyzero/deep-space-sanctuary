@@ -10,6 +10,7 @@
 4. 空闲状态连续采样约 10 秒时，VHDX 文件大小保持不变，因此未发现当前存在无休止的后台增长；增长主要发生在具体 WSL 开发和测试任务执行期间。
 5. 本轮仅完成诊断。按当前开发安排，暂不删除目录、不清理缓存、不关闭 WSL、不压缩 VHDX，待本阶段开发完成后再统一处理。
 6. 2026-08-13 复核显示，VHDX 已增长到约 `30.05 GiB`，Ubuntu-22.04 根文件系统实际使用约 `28 GiB`，D 盘仅剩约 `14.53 GiB`。本次复核把旧临时目录、历史 evidence、共享缓存和仍有未提交改动的 WSL 项目副本分开，形成了下方的候选清单；清单本身不等于删除授权。
+7. 2026-08-16 在 VHDX 增长到 `36.712 GiB`、D 盘仅剩 `7.878 GiB` 后完成 A1 精确清理与停机压缩：53 个 P0.31-P0.35/required-mutation 顶层目录经双重备份、54 个 Git 仓库 clean、零进程和零 worktree 引用核对后移除，ext4 实际释放 `8.310 GiB`；最终 VHDX 为 `29.088 GiB`，D 盘可用回升到 `15.502 GiB`。
 
 技术债处理决策：`split_task`。容量根因和候选清单已闭合；实际处理拆为“低风险缓存”“历史 staging/evidence”“worktree/runtime”“VHDX 停机压缩”四个独立批次。原因是部分 WSL 目录仍承载 benchmark 证据、测试工作区、离线工具链或 Git worktree，不能用一次批量删除替代逐批授权和验证。
 
@@ -17,17 +18,17 @@
 
 ### 2.1 Windows 与 VHDX 状态
 
-下表为 2026-08-13 最新只读复核值；2026-08-04 的数值保留在 Git 历史中作为历史基线，不再作为当前容量判断依据。
+下表为 2026-08-16 A1 清理与 VHDX 压缩前后实测值；2026-08-04/08-13 的数值保留在上方历史结论和 Git 历史中。
 
-| 项目 | 诊断值 |
-| --- | ---: |
-| `D:\WSL\Ubuntu-22.04\ext4.vhdx` 大小 | `32,268,877,824 bytes`（约 `30.05 GiB`） |
-| WSL 根文件系统实际使用量 | 约 `28 GiB`（`df -h /`） |
-| D 盘总容量 | 约 `320.71 GiB` |
-| D 盘已使用 | `306.18 GiB` |
-| D 盘剩余 | `14.53 GiB` |
+| 项目 | 处理前 | 处理后 |
+| --- | ---: | ---: |
+| `D:\WSL\Ubuntu-22.04\ext4.vhdx` 大小 | `39,419,117,568 bytes`（`36.712 GiB`） | `31,232,884,736 bytes`（`29.088 GiB`） |
+| WSL 根文件系统实际使用量 | `37,716,484,096 bytes`（`35.126 GiB`） | `28,793,384,960 bytes`（`26.816 GiB`） |
+| D 盘总容量 | `344,361,906,176 bytes`（约 `320.71 GiB`） | 同左 |
+| D 盘已使用 | `335,903,342,592 bytes` | `327,717,113,856 bytes` |
+| D 盘剩余 | `8,458,563,584 bytes`（`7.878 GiB`） | `16,644,792,320 bytes`（`15.502 GiB`） |
 
-D 盘剩余空间已经较低。在正式清理前应避免无必要地重复运行全量 WSL benchmark，并在继续重型测试前确认剩余容量是否仍可承载新 artifact。
+本批已解除当前容量告急，但仍应避免无必要地重复运行全量 WSL benchmark。备份同步排除策略和一次受控 WSL 测试增量验证尚未闭合，继续重型测试前仍需确认剩余容量。
 
 ### 2.2 项目相关主要占用（2026-08-13）
 
@@ -153,6 +154,8 @@ P0A 矩阵工作区和 `/var/tmp/star-sanctuary-*` staging 是当前最大的增
 | A0 | `/var/tmp/star-sanctuary-stage0d-0107c0b`、`stage0d-78d9ded`、`stage1-206883b`、`post-fd70990` | 约 `1.9 GiB` | 四个 source staging 各约 36k-41k 文件、`680-706 MiB`；仅确认 E 盘有同阶段 artifact 结构，未完成 source/evidence 全量 hash 闭合 | `review` | 逐阶段确认 source identity、未提交状态和唯一 evidence；在完成前保持 `hold` |
 | A0 | `/var/tmp/star-sanctuary-p1a2-go1.24.2-linux-20260811-a/` | `673 MiB` | P1-A2 计划明确引用，Go `1.24.2` 离线输入 | `hold` | 至少保留一份可复算 Go 工具链，或将同 digest/版本的归档复制到受控位置并复核 SHA-256 |
 | A0 | `/var/tmp/star-sanctuary-p1a2-gopls-v0.21.0-linux-20260811-a/` | `409 MiB` | P1-A2 计划明确引用，gopls `v0.21.0` 离线输入 | `hold` | 至少保留一份可复算 gopls 工具链并复核版本与 SHA-256 |
+| A1 | `/var/tmp/star-sanctuary-coding-agent-v3/p0.31-*` 至 `p0.35-*` 的 36 个精确顶层目录 | 删除前 `5,002,723,328 bytes` | 37 个内含 Git 仓库均 clean；对应 identity 除 `98d1e02` 外均有 E 盘正式 artifact，全部路径另由完整 VHDX 和隔离 tar 保存 | `completed` | 已完成零进程、零主仓 worktree 引用、真实目录、精确路径和归档集合核对；未使用父目录 glob |
+| A1 | `/var/tmp/star-sanctuary-coding-agent-v3/required-mutation-canary-*` 的 17 个精确顶层目录 | 删除前 `4,310,216,704 bytes` | 17 个内含 Git 仓库均 clean；各 identity 均有 E 盘正式 artifact，全部路径另由完整 VHDX 和隔离 tar 保存 | `completed` | 已完成零进程、零主仓 worktree 引用、真实目录、精确路径和归档集合核对；未使用父目录 glob |
 | B0 | `/home/vrboyzero/.cache/star-sanctuary-linux-ci-*` | 删除前 `906,412 KiB` | 未发现当前计划精确引用；属于可再生成 CI snapshot | `completed` | 已删除唯一匹配目录；删除后允许按需重新生成 |
 | B0 | `/home/vrboyzero/.cache/go-build` | 删除前 `629,476 KiB` | Go 编译缓存，可再生成 | `completed` | 已删除；pinned Go/gopls 工具链本体保持存在 |
 | B0 | `/home/vrboyzero/.local/share/pnpm` | `约 362-667 MiB` | 共享缓存，可能服务其他项目 | `review` | 先确认其他项目无依赖；优先使用 pnpm 自带 prune/verify，不直接递归删除整个 store |
@@ -182,7 +185,7 @@ B0 删除前目录合计 `1,535,888 KiB`（约 `1.465 GiB`）；删除后 ext4 �
 4. 先 dry-run 输出精确目标，再执行明确路径删除；禁止对 `/home/vrboyzero/*`、`/var/tmp/*` 或 `ss-p0a-matrix-*` 使用无界 glob 递归删除；
 5. 每批完成后立即用 `du`、`df`、进程检查和最小文件存在性检查复核；发现 evidence 缺失即停止后续批次。
 
-删除目录本身不可通过 Git 回滚；对仍有价值的 evidence，回滚方式是从 E 盘 artifact/归档副本恢复，或从事先导出的压缩归档恢复。因此本轮只回写清单，未获得明确授权前不得删除。
+删除目录本身不可通过 Git 回滚；对仍有价值的 evidence，回滚方式是从 E 盘 artifact/归档副本恢复，或从事先导出的压缩归档恢复。2026-08-16 A1 批次已获得单独授权，并在完整 VHDX 与精确目录 tar 均通过 SHA-256/目录集合校验后执行；其他 `hold/review` 路径仍未获得删除授权。
 
 ### 4.6 工作量预估
 
@@ -380,23 +383,92 @@ B0 删除前目录合计 `1,535,888 KiB`（约 `1.465 GiB`）；删除后 ext4 �
 - 测试数量为 `0`：未运行与容量盘点无关的项目测试。
 - 已通过明确路径 `du`、`find` inode/link 统计、进程检查和六组 package/lockfile SHA-256 核对；未执行删除、worktree prune、WSL shutdown 或 VHDX 压缩。
 
+#### A1/VHDX 实现结论：P0.31-P0.35 与 required-mutation 精确清理（2026-08-16）
+
+##### 已完成内容
+
+1. **`E:\WSL-backups\Ubuntu-22.04\20260816-r1\` 新建回滚资产**：
+   - 停止全部 WSL 后创建 `ext4.vhdx` 完整副本，长度为 `39,415,971,840 bytes`。
+   - 源 VHDX 与备份 SHA-256 均为 `DF7D5B4CEF45202EB1D9E3D9FD0FB3A58982116D5C388D2274651AF490C892C3`。
+   - 创建 `cleanup-r1-candidates.tar` 精确目录归档，长度为 `9,392,906,240 bytes`、SHA-256 为 `136FE88FA58C70B863055493B99A0ADE979886B1C72E015BC0BD31596560BA92`；live/归档顶层目录均为 `53` 个，差异为 `0`。
+
+2. **`/var/tmp/star-sanctuary-coding-agent-v3/` A1 精确清理**：
+   - 冻结 P0.31-P0.35 的 `36` 个顶层目录和 required-mutation 的 `17` 个顶层目录，逻辑占用合计 `9,312,940,032 bytes`。
+   - 核对内含 `54` 个 Git 仓库全部 clean、相关进程为 `0`、主仓 worktree 引用为 `0`；只向删除命令传入 `53` 个完整绝对路径，并限制为单文件系统。
+   - 删除后目标剩余数为 `0`；P0.20/P0.23/P0.26、pinned Go/gopls、P0A r13、P1-A1 r4/r12/gateway-r1 和旧 clone artifact 等 `10` 个关键保留路径全部存在。
+
+3. **VHDX 停机压缩与文档更新**：
+   - ext4 已用量从 `37,716,484,096` 降至 `28,793,319,424 bytes`，实际释放 `8,923,164,672 bytes`（`8.310 GiB`）；`/var/tmp` 降至 `7,038,124,032 bytes`（`6.555 GiB`）。
+   - `fstrim -v /` 成功后，在两个 WSL 发行版均停止且 VHDX 可独占打开时执行 `Optimize-VHD -Mode Full`。
+   - 最终 VHDX 为 `31,232,884,736 bytes`（`29.088 GiB`），D 盘可用为 `16,644,792,320 bytes`（`15.502 GiB`）。
+
+4. **效果**：
+   - D 盘实际回收约 `7.624 GiB`，当前容量告急得到缓解。
+   - 新增 benchmark harness/prepared/staging 已从 live ext4 移除，同时保留整盘与精确目录两级恢复入口。
+   - 旧 A0/C0 `hold/review` 路径、Git worktree 和共享缓存未被本批扩大处理。
+
+##### 验证结果
+
+- TypeScript 编译不适用：本批未修改源码或接口。
+- 测试数量为 `0`：未运行会重新生成大体量 artifact/cache 的项目测试。
+- Ubuntu-22.04 压缩后启动正常，`dmesg` 未匹配到 ext4/I/O/corruption 错误；Git 仓库可读，Node=`v22.22.2`、pnpm=`10.23.0`、Go=`1.24.2 linux/amd64`、gopls=`v0.21.0` 均通过最小 smoke；验证后 Ubuntu 已恢复为 `Stopped`。
+
 ## 7. 后续计划
 
-下一步准备在获得单独授权后，针对六个精确 `node_modules` 路径执行 dry-run 复核并分批删除；本轮 hardlink/实际块基线已完成，未执行删除。同时继续确认 A0 fixture 可复算性和 evidence-only 敏感 state。为什么先做 `node_modules`：r5-r10 dirty 源码已与 E 盘副本逐文件闭合，而 formal/state 仍有 WSL-only evidence；依赖目录可由一致 lockfile 重建，且已识别目录外 hardlink，共享块不会被误计为可释放空间。pinned Go/gopls、P0A 7Hb56J/r11-r13、P1-A1 r4/r11/r12/gateway-r1 继续 `hold`，snapshot r1-r3 继续 `hold/review`。本轮不删除、不 prune、不压缩 VHDX。
+下一步准备先修改 `scripts/backup-to-wsl.local.ps1`，将 `artifacts/` 纳入可再生成目录排除项，并用 `-DryRun` 验证正常源码仍会同步、构建产物不再进入 WSL。为什么先做它：本批已经释放并返还宿主空间，但若同步策略不收敛，后续备份仍会重新复制历史 artifact，容量问题会复发。
 
-为什么下一步先确认 fixture/state：execution report、manifest、events、trace、诊断日志均已完成同 hash 对照，但 fixture 快照未归档，stage evidence 还混有 `.env`/allowlist 等 state；先解决这两个缺口，才能证明删除后 evidence 可恢复且不会误删敏感运行状态。
+随后执行一次受控、限定输出目录的 WSL 测试并记录前后 `df`/VHDX 增量，确认 benchmark runner 的结束清理边界。A0 fixture/敏感 state、C0 r5-r10 formal、P1-A1 snapshot r1-r3、P0A dirty worktree、旧 WSL clone 和六份 `node_modules` 继续保持既有 `hold/review`，任何后续删除仍需单独授权。
 
-当前尚缺的关键闭环是：A0 fixture 与敏感 state 仍未闭合；C0 r5-r10 formal 的 fixtures/state/gateway 原始日志和 P1-A1 snapshot r1-r3 的 preparation/失败日志尚未归档；六份 `node_modules` 已完成 hardlink/实际块基线，但尚未获得独立删除授权；P0A dirty worktree、旧 WSL clone 的未提交删除、3 个 r11 worktree 元数据尚未通过 Git 流程处理；备份排除策略尚未修正；VHDX 尚未压缩，也未完成停机压缩后的 WSL 开发环境回归。因此当前只能认定为“B0 已完成、C0 旧 revision 已完成证据分层、六份 node_modules 已完成只读容量基线、ext4 内部空间已部分释放、Windows 宿主空间尚未回收”，不能认定问题已经解决。
+当前尚缺的关键闭环是：备份排除策略尚未修正；一次受控 WSL 测试的容量增量尚未验证；A0 fixture/state 与 C0/P1-A1 历史 evidence 尚未完成可恢复归档；旧 clone 和 r11 worktree 元数据仍未通过 Git 流程处理。因此当前可认定“2026-08-16 A1 精确清理、VHDX 压缩和最小环境回归已完成，容量告急已缓解”，但整个长期容量治理问题尚未关闭。
+
+#### 容量盘点实现结论：`tmp/.tmp/artifacts` 四级保留分层（2026-08-20）
+
+##### 已完成内容
+
+1. **三目录只读容量盘点**：
+   - `E:\project\star-sanctuary\tmp`：`86,268,889,023 bytes`，约 `86.27 GB / 80.34 GiB`，`5,993,659` 个文件、`961,715` 个目录、`888` 个顶层条目。
+   - `E:\project\star-sanctuary\.tmp`：`26,749,666,905 bytes`，约 `26.75 GB / 24.91 GiB`，`1,673,015` 个文件、`249,716` 个目录、`203` 个顶层条目。
+   - `E:\project\star-sanctuary\artifacts`：`7,690,755,295 bytes`，约 `7.69 GB / 7.16 GiB`，`273,125` 个文件、`46,971` 个目录、`423` 个顶层条目。
+   - 合计 `120,709,311,223 bytes`，约 `120.71 GB / 112.42 GiB`，`7,939,799` 个文件、`1,258,402` 个目录、`1,514` 个顶层条目。盘点通过 `robocopy /L /E /BYTES /XJ /R:0 /W:0` 完成，未删除、未改写、未跟随 reparse/junction。
+
+2. **四级保留清单定义**：
+   - **C0 冻结证据**：正式报告、manifest、events、trace、result、patch、diagnostics、preflight、receipt、cleanup log，以及计划文档明确引用的 evidence。当前 formal evidence 先冻结保留，不因目录名包含 `run`、`coding-agent` 或 revision 就删除。
+   - **C1 当前候选**：当前 P0 Web identity、source/harness、正在使用的 candidate 及其必要 runtime/evidence。代表任务和新 identity 的完整闭环完成前保持保留；当前候选不是“已确认可删”。
+   - **C2 可再生构建物**：可由固定 lockfile、source identity 或构建脚本重新生成的 `node_modules`、重复 clean worktree、release/cache/portable/single-exe/winget 输出等。完成 hash、引用关系、Git worktree 和进程核对后，才可进入单独 dry-run 清理候选。
+   - **C3 临时运行物**：runtime、fixture、Gateway 日志、临时输入、中间状态以及开发/测试生成的 `.env`、`.env.local`。先完成 evidence 转存、敏感扫描、进程/句柄和 containment 证明，再按独立批次处理；不得把仍承载唯一原始 evidence 的目录按“临时物”直接处理。
+
+3. **当前分类观察**：
+   - 顶层命名呈现 `p0-required`、`p0-web`、`p0-native`、`p1`、`p0a`、`p1a`、`coding-agent` 等多个 revision/阶段副本；数量不等于必须永久保留，也不等于可以按父目录整棵删除。
+   - `artifacts` 的主要容量集中在可再生构建物：`winget` 约 `2.19 GB`、`_cache` 约 `2.17 GB`、`single-exe` 约 `1.48 GB`、`portable` 约 `0.83 GB`，另有 `start-sh-envdir smoke` 约 `0.62 GB`。这些只能作为 C2 候选，需先对照当前引用和 hash。
+   - Git worktree 共 `89` 个，其中 `tmp` 下 `48` 个、`.tmp` 下 `35` 个、其他位置 `6` 个；涉及 worktree 的处理必须走 Git 支持的逐 worktree 核对和 prune 流程，不能用文件系统递归删除替代。
+
+4. **本轮边界与回滚**：
+   - 本轮只形成保留分层和审计报告，不清理、不删除、不移动、不压缩三目录，也不执行 `git worktree prune`；现有用户改动和全部未闭合 evidence 保持原状。
+   - 后续每批先生成逐目录 manifest、SHA-256、计划文档引用关系、Git worktree 关系、运行进程/句柄证明和敏感扫描 receipt，再输出 dry-run；只有获得该批次明确授权后才执行可回收站清理或 Git 流程。
+   - 目录删除不能由 Git 回滚。可恢复入口必须是已校验的 evidence 归档、构建再生路径或专门备份；任何无法证明可替代的路径继续 `C0/C1 hold`。
+
+##### 效果
+
+- 将约 `120.71 GB` 从“混在三个目录里的一堆文件”收敛为可审计的 C0/C1/C2/C3 保留决策，明确“不能整棵保留，也绝不能整棵直接删除”。
+- 为后续容量处理建立最小闭环：先保住冻结证据和当前候选，再逐项验证可再生构建物和临时运行物，避免因误删 formal、fixture、state 或 worktree 造成不可逆损失。
+
+##### 验证结果
+
+- TypeScript 编译不适用：本轮仅完成只读容量盘点和 Markdown 回写，未修改源码或接口。
+- 测试数量为 `0`：未运行项目测试，未启动 formal、WSL2 或模型调用。
+- 已完成三目录字节、文件/目录数量、顶层条目和 Git worktree 数量核对；未执行任何清理或删除。
 
 ## 实施计划进度表
 
 | 阶段 | 状态 | 结果/下一步 |
 | --- | --- | --- |
-| 只读容量诊断与根因定位 | 已完成 | VHDX=`30.05 GiB`、Ubuntu 已用约 `28 GiB`、D 盘剩余约 `14.53 GiB`；项目 staging、matrix、runtime、旧 clone artifact 和缓存为主要占用 |
+| 只读容量诊断与根因定位 | 已完成 | 2026-08-16 峰值 VHDX=`36.712 GiB`、Ubuntu 已用=`35.126 GiB`、D 盘剩余=`7.878 GiB`；新增 P0.31-P0.35/required-mutation staging 为本次主要增量 |
 | worktree/evidence 保留清单 | 已完成 | 已核对计划引用，建立 A0-D0 候选；pinned Go/gopls、P0A/P1-A1 保持 `hold/review`，3 个 r11 WSL worktree 为 `prunable` 但尚未处理 |
 | B0 低风险缓存清理 | 已完成 | 已按精确路径删除 Linux CI snapshot 与 Go build cache；ext4 实际释放约 `1.167 GiB`，保留项与零进程检查通过 |
+| A1 P0.31-P0.35/required-mutation 清理 | 已完成 | 53 个精确目录、54 个 clean Git 仓库经完整 VHDX 与隔离 tar 双重备份后清理；ext4 实际释放 `8.310 GiB`，10 个关键保留路径验证存在 |
 | A0 staging/evidence 清理 | 进行中 | 3 个 P0.20/P0.23/P0.26 shadow 子目录的 execution evidence 已同 hash 替代，但每个 `7,050` 文件 fixture 快照未在 E 盘归档；四个 evidence-only 目录还含 state/`.env`/allowlist；全部保持 `review/hold`，下一步先闭合 fixture 与敏感 state 证据，不删除 |
 | C0 worktree/runtime 清理 | 进行中 | r5-r10 dirty harness 已与 E 盘副本逐文件 hash 闭合，整目录因 WSL-only formal/state 继续 `review`；六份 `node_modules` 已完成精确路径、lockfile、进程和 hardlink/实际块基线，仍待单独授权删除；snapshot r1-r3 source identity 已闭合但历史失败日志未归档，保持 `hold/review`；其余 7Hb56J、r11-r13、P1-A1 r4/r11/r12/gateway-r1 继续 `hold`，不执行 glob 删除或 prune |
 | 备份同步策略修正 | 待开始 | 评估排除 `artifacts/`，删除同步能力必须显式且可 dry-run |
-| VHDX 受控压缩 | 待开始 | 依赖 WSL 内部清理、停机条件和恢复手段确认 |
-| 容量与开发环境回归验证 | 待开始 | 对比处理前后容量并执行最小 smoke |
+| VHDX 受控压缩 | 已完成 | `fstrim` 与 `Optimize-VHD -Mode Full` 成功；最终 VHDX=`29.088 GiB`、D 盘剩余=`15.502 GiB`，整盘/精确目录两级回滚资产已校验 |
+| 容量与开发环境回归验证 | 进行中 | Ubuntu/ext4、Git、Node、pnpm、Go、gopls 最小 smoke 已通过；仍需观察一次受控 WSL 测试的容量增量后关闭长期治理问题 |
+| `tmp/.tmp/artifacts` 四级保留分层 | 已完成分析，尚未清理 | 三目录合计 `120.71 GB`；C0/C1 继续保留，C2/C3 需逐项 manifest、hash、引用、进程和敏感扫描核对；本轮不删除 |

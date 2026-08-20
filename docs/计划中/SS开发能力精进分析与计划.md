@@ -50,6 +50,7 @@
 P1-A1/A2、P1-B、P1-C、P2-A、P2-B 均已有源码和测试证据。当前真正未闭合的是：
 
 - Web mutation/correction 在真实模型调用中的稳定性；
+- benchmark truth set、visible test 与 evaluator 对同一任务行为的定义是否一致；
 - 多个失败形状的可重复改善，而非单个代表任务成功；
 - P2-C 两个连续冻结候选及原始加权 `>=9.500` 的最终证据。
 
@@ -84,6 +85,7 @@ Git/交付    9.4
 | 分数与连续性 | 两个连续冻结候选的原始加权均 `>=9.500`，且七维分别不低于 `9.5 / 9.6 / 9.4 / 9.5 / 9.6 / 9.5 / 9.4`；单次 canary、四舍五入或跨 revision projection 均不计为完成 |
 | 身份与矩阵 | 每个候选只使用单一 source/harness identity；24 项任务在 Windows/WSL2 各执行 3 次，形成 A/B/C=`72/48/24`、共 `144` 项可复算原生 aggregate；历史失败不覆盖、不移出分母，selected infrastructure error 必须显式保留并阻止该候选通过 |
 | A/B/C 层 | A 原生 `72/72`；B 总成功率 `>=92%`、每个 required 语言生态 `>=90%`、适用测试通过率与 patch acceptance 均 `>=95%` 且无已知回归；C 的安全、恢复、workspace containment、重复副作用和敏感泄漏 `100%`，其余系统任务 `>=90%` |
+| Truth set 与 evaluator 一致性 | 每个代表任务必须同时提供正例、普通属性负例、`data-*` 行为、`null/missing` 行为及边界说明；visible test、prompt、fixture 和 evaluator 使用同一版本化 truth set 与同一任务文本；任何“visible test 通过但 evaluator 拒绝”或 evaluator 与行为定义不一致的情况均阻止 formal，不能用单一正例或最终文字说明代替 |
 | CodeIntel 与语义后端 | TS/JS production 与 Go 只经同一公共 interface；已启用 Provider 的 truth precision/recall `>=95%`，结果绑定 workspace/revision/freshness/allowlist。TS/JS 还须闭合 Context Inspector、双平台 resource soak、semantic adoption/context-waste 与无二值回退 Gate。Go 受控 canary 还须通过 pinned `gopls`/Doctor、Windows/WSL2 comparator、OCI/network-off、readiness timeline、crash/cancel/restart、资源上限与零残留，并固定 `goCanaryEligible=true`、`productionEligible=false`；不据此宣称 Go production |
 | 验证 DAG 与 Browser | 原生 `Vitest`/`go test` 结构化报告，不从任意 Shell 文本推断状态；Impact Truth Set、CodeIntel/project-dependency 选择、首次失败保留与有界 replay 可复算。Browser evidence 必须绑定 DOM/console/request/截图/viewport/revision，覆盖 service-worker/Relay restart、三次多 viewport、跨进程 hydration，生命周期 `pending/orphan=0/0` |
 | TaskProjection 与 capability | 使用 `queued/running/needs_input/blocked/verifying/completed/failed/cancelled/interrupted/uncertain` 十态投影、authoritative owner/exact binding、revision cursor（旧 cursor `cursor_stale`、重启旧 run `not_found`）；required capability 在 persistence/run registration/Agent execution/mutation 前失败关闭。TUI、Headless、WebChat、VS Code 对同一事件得到一致终态、原因和允许动作，不迁移领域真源 |
@@ -101,6 +103,7 @@ Git/交付    9.4
 5. 正式批准 Go 受控 canary 满足 9.5 第二后端 Gate；Go production rollout 独立延期，不改变目标向量、当前评分或历史矩阵。
 6. `4563426` formal 证明新 guard 仍能让模型产生合法结构化终态，但初始 patch 删除了 `value !== false`、留下 `value != NULL`，唯一 correction 也未形成最小收窄；evaluator 正确拒绝。当前本地提示已要求从 prior 删除行恢复缺失 guard，不放行单侧 guard。
 7. P0 Web 外部 correction 未闭合前，不启动 WSL2、完整矩阵、candidate v4 或 P2-C。
+8. Go canary 已正式满足第二后端 Gate，但它不是当前 9.5 阻塞；下一轮 formal 前必须先完成 benchmark truth set、fixture、visible test、prompt 与 evaluator 的版本化一致性审计，并用同一任务文本做本地 red/green replay。
 
 ## 2. 范围、方法与完成边界
 
@@ -931,13 +934,19 @@ Source / Workspace Revision
 | structured repair 是否继承 thinking-disable | 第 6 次调用 reasoning/content=`0/445`、合法 JSON、`run.completed` | 已获真实外部验证，直接根因关闭 |
 | phase-aware output repair 是否稳定产出结构化结果 | `155ed5f` 共 `9/9` 次模型调用获得完整 Provider usage，终态为合法 `run.completed`，没有 structured-output failure | JSON mode/schema 接线已获外部验证；结构化成功不等于语义判断正确 |
 | correction 是否真正收缩前一 mutation | `71b4a88` 保留了 `value != NULL` outer guard 并加入 distinct predicate，但 `name.charCodeAt(3) != 45` 对 `aria-*` 与普通名称都为真，未形成任务子集 | exact-reversal 已避开，但外部/负例保持仍失败；冻结 evaluator 与 semantic-delta guard 正确拒绝，当前不宣称外部通过 |
+| benchmark truth set 与 evaluator 是否一致 | 当前 fixture 只覆盖 `aria-hidden=false` 正例，缺少普通属性 `false` 负例；visible test 可接受的 `name.charCodeAt(3) != 45` 会放行普通属性，而 evaluator 要求 `value != NULL && (value !== false || name[4] == '-')` | 这是 formal 前置阻塞，不是 Go 第二后端问题；必须先补齐正/负 witness、data/null/missing 行为并让 visible test 与 evaluator 共用同一 truth set |
 | final review 是否按当前源码判断 | `71b4a88` 的 tool-only input-correction 提示已进入 prompt snapshot，最终以 `only repeated a current-source block` 和 `status=error` 关闭，没有接纳成功 JSON | 直接状态机绕过已获外部闭环；完整任务仍因 patch 语义和 correction 失败而未完成，需新 identity 才能继续验证 |
 
 ### 5.3 后续计划
 
-- **下一步准备做什么**：本轮按用户要求暂停；用户恢复后先针对 `71b4a88` 的错误字符位置子集和 context-only correction 做本地 red/green，再形成新的 source identity。
-- **为什么先做它**：本次 formal 已证明 tool-only/fail-closed 合同真实生效，但 patch 仍把普通 false 属性纳入，唯一 correction 又没有产生 semantic delta；继续付费或重跑同一 identity 不会改变证据。
-- **当前还缺的关键闭环**：新修复、本地工程 Gate、新 identity 的 clean/零模型 Gate及其后唯一 formal 成功、连续候选与最终 9.5 复算；暂停期间不启动 WSL2、完整矩阵、candidate v4 或 P2-C。
+1. **冻结旧 formal 与历史评分口径**：保留 `71b4a88` 及此前 identity 的原始结果，不重跑、不改写历史失败分母；Go canary 继续标记为第二后端 Gate 已满足，但不据此加分。
+2. **先审计并版本化 benchmark contract**：为代表任务补齐普通属性 `false` 负例、`aria-*` 正例、`data-*` 行为、`null/missing` 行为和边界说明；让 fixture、visible test、prompt、evaluator 引用同一 truth set 和同一任务文本，并先用 zero-cost replay 暴露“visible 通过、evaluator 拒绝”的不一致。
+3. **再做本地 red/green**：在公开 Tool Agent seam 复现 `71b4a88` 的错误字符位置子集与 context-only correction，先保证 evaluator 与行为 truth set 同时通过，再实现最小 correction guard 或有界重建。
+4. **重新建立新 identity 的零模型 Gate**：完成 detached clean、build、owner/Agent 回归、合同、零凭证 dry-run 和 formal prepare-only；未全绿不调用模型、不启动 WSL2。
+5. **仅开放一次 Windows formal**：沿用已审计且冻结的 truth set 与 evaluator，执行新 identity 唯一 formal；无论成败均冻结并核对 patch、tests、evaluator、终态、usage/cost、敏感值和资源收敛。
+6. **通过后再观察真实复杂任务**：只有新的代表任务通过且形成可重复成功证据，才考虑完整矩阵、两个连续候选和 P2-C；在此之前不把单个 canary 或 Go Gate 当作 9.5 完成。
+
+**当前还缺的关键闭环**：truth set/evaluator/visible test 一致性、真实复杂任务稳定通过、新 identity 的全套零模型 Gate、唯一 formal 成功，以及随后两个连续冻结候选的最终复算。费用数字本轮不作调整。
 
 ## 6. 验证、证据、费用与禁止范围
 
@@ -1133,10 +1142,11 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 ### 9.5 当前真正卡住的地方
 
 - 大部分基础能力已经有源码、测试和双平台证据，当前瓶颈不是继续增加功能，而是复杂编辑/测试任务的稳定完成率。
+- benchmark truth set 与 evaluator 尚未完全对齐：当前 fixture/visible test 主要覆盖 `aria-hidden=false` 正例，普通属性 `false` 负例、`data-*`、`null/missing` 等行为没有以同一版本化 truth set 完整表达；因此本地 Green 不能直接证明 evaluator 会接受。
 - `2977780` 已经证明一个 required-mutation 代表任务可以在 Windows/WSL2 双平台完成，但不能推断其余失败都已改善。
 - 最近一次产生产品工作流证据的 Web formal `fcd7a32` 中，构建、费用、敏感值和资源清理均正常；第二次修改也确实把 broad 分支收窄到 aria，但代码所在位置已经只会接收到 `false` 或空值，分支自身却仍要求“不等于 false”，所以目标行为永远走不到。最终说明错误地声称测试通过，检查程序正确拒绝。
 - 现有执行前保护已经能拦截完全绕开、扩大重写、精确反转、删除 prior 约束放宽行为，以及当前有证据的 false 正例不可达 correction；正确的显式 false 分支、aria 析取旁路、小范围收缩、多个既有小改动的联合修正和其他文件独立补漏仍放行。
-- `69cff2e` 与 `2f2c05a` 都只恢复原始 guard，因 exact reversal 被正确拒绝。`71b4a88` 已不再把无工具成功摘要误判为完成，也生成了不同 patch，但字符位置条件会同时放行 aria 和普通 false 属性；后续 correction 又没有形成真实代码变化，系统因此主动失败关闭。clean、零凭证、Provider usage、env/资源均正常，但不能替代 patch/evaluator 成功。闭合前不启动完整付费矩阵、candidate v4 或 P2-C，也不宣称达到 9.5。
+- `69cff2e` 与 `2f2c05a` 都只恢复原始 guard，因 exact reversal 被正确拒绝。`71b4a88` 已不再把无工具成功摘要误判为完成，也生成了不同 patch，但字符位置条件会同时放行 aria 和普通 false 属性；后续 correction 又没有形成真实代码变化，系统因此主动失败关闭。clean、零凭证、Provider usage、env/资源均正常，但不能替代 patch/evaluator 成功。当前第一阻塞是先把 truth set、visible test 和 evaluator 对齐，第二阻塞才是新 identity 上真实复杂任务稳定通过；闭合前不启动完整付费矩阵、candidate v4 或 P2-C，也不宣称达到 9.5。
 
 ### 9.6 费用与发布边界
 
@@ -1146,7 +1156,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 
 ### 9.7 下一步
 
-`71b4a88` 的唯一 Windows formal 已执行、失败并永久冻结，不重跑也不启动对应 WSL2。它证明无工具成功摘要不能再绕过 correction，但新 patch 的字符位置判断扩大了普通 false 行为，后续 correction 又只重复当前源码块；系统和 evaluator 均正确拒绝。用户恢复后先做本地 red/green，不直接启动新 formal；真实代表任务通过前，不进入完整矩阵和两个连续冻结候选。
+`71b4a88` 的唯一 Windows formal 已执行、失败并永久冻结，不重跑也不启动对应 WSL2。用户恢复后先冻结旧证据并审计/版本化 truth set，补齐正反 witness、`data-*`、`null/missing` 行为，让本地测试与 evaluator 使用完全相同的任务文本；随后再做错误字符位置子集和 context-only correction 的 red/green。新 identity 的零模型 Gate 和唯一 Windows formal 都通过后，才观察真实复杂任务的连续成功，再进入完整矩阵和两个连续冻结候选。Go canary 继续满足第二后端 Gate，但不改变上述顺序；费用数字本轮不调整。
 
 ## 10. 实施计划进度表
 
@@ -1687,7 +1697,8 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | SS 横向原始加权 `9.135`、发布分 `9.1`；竞品和证据边界已记录 | - | 真实复杂任务成功率仍需新 formal 和连续候选，不宣称达到 9.5 |
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
-| P0：Web mutation/correction 稳定化 | P0 | **`71b4a88` formal 已失败并冻结；本轮暂停** | `task/tests/patch/regression=false/true/false/0`；tool-only JSON 绕过已关闭，但字符位置谓词扩大普通 false 行为，correction 只有 current-source block；usage/cost=`12,363/1,689/$0.00458746`，零残留全绿 | `本地 TDD、新 identity 与其 Gate，约 0.5 人日` | 用户恢复后先修负例子集与 semantic correction；不重跑 `71b4a88`，不启动其 WSL2；新 identity 外部通过前不进入完整矩阵或 P2-C |
+| P0：Benchmark truth set / evaluator 对齐 | P0 | **待开始，当前 formal 前置阻塞** | 当前 fixture/visible test 缺普通属性 `false` 负例、`data-*`、`null/missing` 行为；存在 visible 通过但 evaluator 拒绝的风险 | `约 0.5-1 人日` | 版本化 truth set、统一 prompt/fixture/test/evaluator，先完成 zero-cost replay 和 red/green；未对齐前不启动新 formal |
+| P0：Web mutation/correction 稳定化 | P0 | **`71b4a88` formal 已失败并冻结；本轮暂停** | `task/tests/patch/regression=false/true/false/0`；tool-only JSON 绕过已关闭，但字符位置谓词扩大普通 false 行为，correction 只有 current-source block；usage/cost=`12,363/1,689/$0.00458746`，零残留全绿 | `truth set 对齐后，本地 TDD、新 identity 与其 Gate，约 0.5 人日` | 用户恢复后先完成 truth set/evaluator 一致性，再修负例子集与 semantic correction；不重跑 `71b4a88`，不启动其 WSL2；新 identity 外部通过前不进入完整矩阵或 P2-C |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |
