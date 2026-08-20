@@ -169,6 +169,7 @@ import {
   WORKSPACE_MUTATION_NAVIGATION_MAX_FILE_READ_CALLS,
   WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE,
   type WorkspaceMutationNavigationRequest,
+  type WorkspaceMutationObjectiveInputCorrectionReason,
   type WorkspaceMutationRecoveryPlan,
   type WorkspaceMutationRecoveryRequest,
   type WorkspaceMutationVerificationRequest,
@@ -2445,6 +2446,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let workspaceMutationObjectiveCorrectionAttempted = false;
     let workspaceMutationObjectiveInputCorrectionPending = false;
     let workspaceMutationObjectiveInputCorrectionAttempted = false;
+    let workspaceMutationObjectiveInputCorrectionReason: WorkspaceMutationObjectiveInputCorrectionReason | undefined;
     let workspaceMutationObjectiveOutputRepairPending = false;
     let workspaceMutationObjectiveOutputRepairAttempted = false;
     let workspaceMutationObjectiveOutputRepairValidationMessage: string | undefined;
@@ -3202,6 +3204,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 tools: mutationTools,
                 maxInputTokens: remainingReviewInputTokens,
                 requiredChangedPaths,
+                correctionReason: workspaceMutationObjectiveInputCorrectionReason,
                 tokenEstimateContext: dispatchTokenEstimateContext,
               })
             : workspaceMutationObjectiveOutputRepairCall
@@ -3262,6 +3265,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           if (workspaceMutationObjectiveInputCorrectionCall) {
             workspaceMutationObjectiveInputCorrectionPending = false;
             workspaceMutationObjectiveInputCorrectionAttempted = true;
+            workspaceMutationObjectiveInputCorrectionReason = undefined;
           }
           if (workspaceMutationObjectiveOutputRepairCall) {
             workspaceMutationObjectiveOutputRepairPending = false;
@@ -4486,6 +4490,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             if (canCorrectObjectiveInputFailure) {
               workspaceMutationObjectiveReviewPending = true;
               workspaceMutationObjectiveInputCorrectionPending = true;
+              workspaceMutationObjectiveInputCorrectionReason = "repeated_current_source";
               lastToolCallFingerprint = undefined;
               lastToolCallName = undefined;
               consecutiveDuplicateToolCalls = 0;

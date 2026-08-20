@@ -1728,6 +1728,43 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：truth set/evaluator 歧义已经关闭，`71b4a88` 冻结证据剩余的直接失败形状是错误任务子集和 correction 重复 current-source；先在本地收敛可避免无新证据的付费重跑。
 - **当前还缺的关键闭环**：Web mutation/correction 本地修复、新 committed source identity、detached clean 零模型 Gate及其后唯一 Windows formal；只有外部通过后才评估 WSL2、完整矩阵、连续候选或 P2-C。
 
+#### P0 Web 修复实现结论：repeated-current-source correction 语义原因闭环（2026-08-20）
+
+##### 已完成内容
+
+1. **`react-workspace-mutation.ts` 扩展**：
+   - 新增类型化 `repeated_current_source` correction reason，由 request builder 映射为固定、可信的本地拒绝说明；
+   - bounded retry 明确获知上一 correction 只重复当前源码、没有 semantic delta，并要求重新核对当前源码与任务行为；
+   - 对命名子集继续要求正反 witness，对通用任务只要求修改最小任务相关 expression/statement，不把 Web predicate 假设扩散到其他任务。
+
+2. **`tool-agent.ts` 接入**：
+   - 仅在 `hasRedundantWorkspaceMutationPatchHunks` 拒绝 correction 时设置原因，并在构建下一次 bounded input-correction 后清除；
+   - 保持原有一次 correction、一次 input retry、required path、完整 post-write source、tool-only 与 fail-closed 边界；
+   - 未增加模型调用阶段、turn/token、Provider retry 或费用上限，未修改 truth set、visible test 或 evaluator。
+
+3. **`tool-agent-workspace-mutation-structured-output.test.ts` 扩展**：
+   - 新增公共 Tool Agent 行为回归，使用 `71b4a88` 的错误 `charCodeAt` 谓词、统一 truth-set 任务文本与重复 current-source correction；
+   - Red 证明旧实现只发出 `4` 次请求并以 semantic-delta guard 失败；Green 形成既有 `6` 阶段请求，实际 patch 仅为初始 broadened mutation 与最小 semantic correction；
+   - 断言 context-only correction 不执行、普通 `false` 属性行为要求保留在 bounded task 中，最终 structured output 为 `done`。
+
+4. **效果**：
+   - `71b4a88` 的直接失败形状已从“唯一 retry 无差别重复当前源码”收敛为带可信原因的最小 semantic correction；
+   - 错误普通属性谓词不会因 context-only patch 耗尽纠正机会，合法 correction 仍必须通过原有路径、hunk、subset、guard 与 post-write verification Gate；
+   - 本环节模型调用=`0`、新增 Provider 费用=`$0`，未启动 formal/WSL2，未重跑冻结 identity，也未生成 runtime `.env/.env.local`。
+
+##### 验证结果
+
+- TypeScript workspace 完整 build 与独立 `verify:build` 无错误；
+- 新增回归 Red=`1 failed`（旧实现请求数 `4`，预期 `6`），Green=`1/1`；workspace-mutation owner/相邻合同=`146/146`，Agent 包=`695 passed / 1 skipped`；
+- `verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 全绿；
+- 关键功能验证：统一 truth-set 任务进入 bounded retry，固定本地拒绝原因触发最小 predicate correction，重复 current-source patch 未执行，最终状态=`done`。
+
+##### 后续计划
+
+- **下一步准备做什么**：提交源码、测试和本文形成新 source identity，随后在 detached clean harness 完成 frozen offline install、完整 build/独立 verifier、Agent/owner/合同、Windows 零凭证、敏感值/env/资源与 formal prepare-only Gate。
+- **为什么先做它**：本地 mock 行为闭环不能替代固定 source/harness identity 的可复算证据；先冻结并验证 clean identity，才能排除主工作区、旧 dist、依赖或 fixture 漂移后再决定是否付费。
+- **当前还缺的关键闭环**：新 identity 全部零模型 Gate、其后唯一 Windows formal 的真实最小 patch/evaluator/终态/usage/cost/零残留，以及后续 WSL2、两个连续候选和最终 9.5 复算。
+
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
 | 文档精简与历史归档 | - | **已完成** | 压缩前 4403 行全文由 `archive-04` 保留；主文档保留目的、目标、方案、完成/验证、费用、风险和计划进度 | - | 后续历史明细只追加到新归档或专门证据，不再把逐 run 流水堆入主计划 |
@@ -1735,7 +1772,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
 | P0：Benchmark truth set / evaluator 对齐 | P0 | **已完成 zero-cost 对齐** | `coding-agent-benchmark-web-ui-truth-set/v1`、6 个正负 witness、SHA/LF 绑定、v2 fixture/evaluator、实际 Red=`1`/Green=`0` replay；定向 `20/20`、benchmark/CI/build Gate 全绿 | - | 保持 truth set、prompt、fixture、visible test 与 evaluator 单一版本绑定；任何 SHA/Schema/任务合同漂移均失败关闭 |
-| P0：Web mutation/correction 稳定化 | P0 | **`71b4a88` formal 已失败并冻结；truth-set 前置已关闭** | `task/tests/patch/regression=false/true/false/0`；tool-only JSON 绕过已关闭，统一 evaluator 已接线，但字符位置谓词扩大普通 false 行为，correction 只有 current-source block | `本地 TDD、新 identity 与其 Gate，约 0.5 人日` | 基于统一 truth set 修复负例子集与 semantic correction；不重跑 `71b4a88`，不启动其 WSL2；新 identity 外部通过前不进入完整矩阵或 P2-C |
+| P0：Web mutation/correction 稳定化 | P0 | **本地 semantic-delta 修复已闭合，待新 identity 零模型 Gate** | `71b4a88` 冻结失败不变；新增普通 false witness/context-only Red→Green，repeated-current-source reason 进入 bounded retry；owner=`146/146`、Agent=`695 passed / 1 skipped`、build/benchmark/CI 全绿 | `新 identity 与其 Gate，约 0.25 人日` | 提交新 identity 后完成 detached clean 与 formal prepare-only；不重跑 `71b4a88`、不启动其 WSL2，新 identity 外部通过前不进入完整矩阵或 P2-C |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |
