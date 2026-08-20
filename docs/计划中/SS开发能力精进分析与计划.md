@@ -6,7 +6,7 @@
 >
 > 横向评估基线：`5b36691d9aba6d9286cf43e912d91b0170bbef0d`
 >
-> 当前 P0 最新 formal identity：`2f2c05a24fe37c0402e6977b6f9b9d007948546d`，该 identity 的唯一 Windows formal 已失败并冻结；本地已闭合 correction 阶段无工具 JSON 被误接纳的问题并通过工程 Gate，待提交为新 source identity 后重走零模型 Gate
+> 当前 P0 最新 formal identity：`71b4a887eed016924739fdbb7a576a53dbd0e072`，该 identity 的唯一 Windows formal 已失败并永久冻结；无工具 JSON 绕过已关闭，但任务子集谓词与后续 semantic correction 仍需在用户恢复后继续收敛
 >
 > **完整回读备份**：本版压缩前的 4403 行完整全文保存在 [SS开发能力精进分析与计划-04.md](../archive/SS开发能力精进分析与计划-04.md)（`E:\project\star-sanctuary\docs\archive\SS开发能力精进分析与计划-04.md`，SHA-256 `91cdd689386031e44c0b5a181b52728e621b2d317f9638bc50efd63d1246bb40`）。需要逐 identity 实现结论、完整命令、artifact/hash、费用流水或历史后续计划时，应回查该备份。
 >
@@ -927,17 +927,17 @@ Source / Workspace Revision
 | --- | --- | --- |
 | 提示材料是否缺失 | task 的 smallest change、subset-preservation、正反 witness 已进入输入 | 不是当前根因 |
 | post-write 复读证据是否 stale/投影错误 | required path 最新完整源码 `5,673 bytes` 已复读；`cb01ccd`、`c124741`、`fe49d51` 重放结论一致 | 已排除 stale/incorrect context 与首次复读投影缺失 |
-| context-only/invalid correction 是否能修复并执行 | `f92f880` 第一次 post-write correction 未通过 required-path/section 校验，`4563426` 的 correction 未形成可执行最小 delta；`69cff2e` 恢复了 prior guard，但只形成 exact reversal；`2f2c05a` 仍生成同形 patch | bounded retry 接线、clean/零凭证/prepare-only 与 evaluator 链路均已到达；下一步必须先改进 correction 合同，不能重跑 frozen identity |
+| context-only/invalid correction 是否能修复并执行 | `71b4a88` 初始 patch 已不再是 exact reversal，但字符位置谓词扩大了普通 false 行为；post-write correction 又只重复当前源码块 | tool-only correction 合同已真实到达且旧 JSON 绕过未复现；semantic-delta guard 正确 fail-closed，下一步需先收敛错误子集与 context-only correction，不能重跑 frozen identity |
 | structured repair 是否继承 thinking-disable | 第 6 次调用 reasoning/content=`0/445`、合法 JSON、`run.completed` | 已获真实外部验证，直接根因关闭 |
 | phase-aware output repair 是否稳定产出结构化结果 | `155ed5f` 共 `9/9` 次模型调用获得完整 Provider usage，终态为合法 `run.completed`，没有 structured-output failure | JSON mode/schema 接线已获外部验证；结构化成功不等于语义判断正确 |
-| correction 是否真正收缩前一 mutation | `155ed5f` 的后续分支 correction 被早期 false removal 遮蔽；`f92f880` 初始 patch 又删除 `value != NULL`；`69cff2e` 与 `2f2c05a` 均只恢复原始组合 guard | 早期遮蔽与 exact-reversal guard 均已按预期拒绝；下一步需让同一 correction 真实加入任务正例子集，当前不宣称外部通过 |
-| final review 是否按当前源码判断 | `2f2c05a` 在 correction input_error 后进入 bounded input-correction，但模型未调用 `apply_patch`、直接返回合法 summary JSON；旧状态机误把该 JSON 接为成功终态 | 本地已暂停该阶段最终 JSON 合同，并在未请求唯一允许 mutation Tool 时 fail-closed；evaluator 仍保持冻结，外部有效性待新 identity formal |
+| correction 是否真正收缩前一 mutation | `71b4a88` 保留了 `value != NULL` outer guard 并加入 distinct predicate，但 `name.charCodeAt(3) != 45` 对 `aria-*` 与普通名称都为真，未形成任务子集 | exact-reversal 已避开，但外部/负例保持仍失败；冻结 evaluator 与 semantic-delta guard 正确拒绝，当前不宣称外部通过 |
+| final review 是否按当前源码判断 | `71b4a88` 的 tool-only input-correction 提示已进入 prompt snapshot，最终以 `only repeated a current-source block` 和 `status=error` 关闭，没有接纳成功 JSON | 直接状态机绕过已获外部闭环；完整任务仍因 patch 语义和 correction 失败而未完成，需新 identity 才能继续验证 |
 
 ### 5.3 后续计划
 
-- **下一步准备做什么**：提交 correction tool-only/fail-closed 修复形成新 identity，再建立 detached clean harness，完成 frozen offline install、build/测试/合同、Windows 零凭证、敏感值/env/资源与 formal prepare-only Gate。
-- **为什么先做它**：`2f2c05a` 已证明 input-correction 请求到达模型，但无工具 JSON 可绕过必须执行的 correction；本地回归已闭合该状态机缺口，只有新的 clean identity 才能冻结真实外部输入，不能重跑旧 identity。
-- **当前还缺的关键闭环**：新 identity 的全部零模型 Gate，以及只在全绿和费用复算通过后开放的唯一 Windows formal；必须同时形成 guard+子集最小 patch、通过 evaluator、产生合法终态并闭合 usage/cost 与零残留。
+- **下一步准备做什么**：本轮按用户要求暂停；用户恢复后先针对 `71b4a88` 的错误字符位置子集和 context-only correction 做本地 red/green，再形成新的 source identity。
+- **为什么先做它**：本次 formal 已证明 tool-only/fail-closed 合同真实生效，但 patch 仍把普通 false 属性纳入，唯一 correction 又没有产生 semantic delta；继续付费或重跑同一 identity 不会改变证据。
+- **当前还缺的关键闭环**：新修复、本地工程 Gate、新 identity 的 clean/零模型 Gate及其后唯一 formal 成功、连续候选与最终 9.5 复算；暂停期间不启动 WSL2、完整矩阵、candidate v4 或 P2-C。
 
 ## 6. 验证、证据、费用与禁止范围
 
@@ -999,15 +999,15 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 | 项目 | 当前值 |
 | --- | ---: |
-| observed conservative upper | `$2.51942691` |
+| observed conservative upper | `$2.52687297` |
 | reserved | `$0.94221000` |
 | unobservable reserve | `$0.80000000` |
-| 一般费用守卫 | `34.10206163 RMB < 50 RMB` |
-| Stage 0D 最坏累计守卫 | `48.18015803 RMB < 50 RMB` |
-| 本次 formal 窗口（已执行） | `$3.31942691 -> $3.41942691` |
-| 本次 formal 实际 Provider cost | `$0.00285860` |
+| 一般费用守卫 | `34.16163011 RMB < 50 RMB` |
+| Stage 0D 最坏累计守卫 | `48.23972651 RMB < 50 RMB` |
+| 本次 formal 实际窗口 / 上限 | `$3.32228551 -> $3.32687297 / $3.42228551` |
+| 本次 formal 实际 Provider cost | `$0.00458746` |
 
-本次 formal 若按单 run 上限完整消耗，Stage 0D 最坏累计守卫为 `48.98015803 RMB < 50 RMB`；实际 Provider cost=`$0.00285860`。后续任何新 identity 或候选运行前仍须按实际账单和最坏单次上限重新核算。
+`71b4a88` 实际 Provider cost=`$0.00458746` 已计入，model/provider calls=`7/7` 且 usage complete。若未来再预留一次完整 `$0.10`，Stage 0D 最坏累计守卫为 `49.03972651 RMB < 50 RMB`；本轮仍按用户要求暂停，不因费用尚有余量自动启动下一次调用。
 
 `4563426` 与 `69cff2e` 唯一 formal 均已产生完整 provider-reported usage，实际 cost=`$0.00535015/$0.00607427` 并计入上述口径；两次 formal 均永久冻结。下一个费用窗口只在新的代码修复、提交和 detached clean Gate 全绿后开放，不能用于重跑 `69cff2e`、`4563426`、`f92f880` 或更早 identity。
 
@@ -1020,7 +1020,7 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 ### 6.4 冻结与禁止范围
 
-- 所有已执行 formal 永久冻结。重点包括 `2977780` 双平台，以及 `d6d7367`、`d01030a`、`8cee589`、`09b5498`、`cb01ccd`、`abe40b1`、`dd6b85b`、`c124741`、`fe49d51`、`18feb22`、`1f06c48`、`ac21fd6`、`f2f7a15`、`3c9b86e`、`d9f021c`、`0213d01`、`ec3f72a`、`fcd7a32`、`82d25a7`、`50669cc`、`155ed5f`、`f92f880`、`4563426`、`69cff2e` Windows；更早冻结 identity 清单见 `archive-04`。
+- 所有已执行 formal 永久冻结。重点包括 `2977780` 双平台，以及 `d6d7367`、`d01030a`、`8cee589`、`09b5498`、`cb01ccd`、`abe40b1`、`dd6b85b`、`c124741`、`fe49d51`、`18feb22`、`1f06c48`、`ac21fd6`、`f2f7a15`、`3c9b86e`、`d9f021c`、`0213d01`、`ec3f72a`、`fcd7a32`、`82d25a7`、`50669cc`、`155ed5f`、`f92f880`、`4563426`、`69cff2e`、`2f2c05a`、`71b4a88` Windows；更早冻结 identity 清单见 `archive-04`。
 - 不重跑上述 dry-run/formal，不为失败的 Web identity 启动 WSL2。
 - 不增加模型 turn/token、Provider retry 或单 run 费用；不使用调价前旧单价。
 - 未获得新证据前不启动完整矩阵或 candidate v4；前序 Gate 未通过前不启动 P2-C。
@@ -1071,7 +1071,7 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 ### 8.1 估算结论
 
-readiness 零模型诊断与 phase-aware structured-output 合同均已获得外部闭环；`69cff2e` 已证明 bounded input-correction 能恢复 prior guard，但只恢复原始条件仍会被 exact-reversal guard 正确拒绝。`2f2c05a` 已把“恢复 guard”和“加入任务正例子集”绑定到同一最小 correction，并完成全部零模型 Gate。达到 9.5 仍按 **9-14 人日工程工作 + 两个连续候选的观察窗口** 管理；该估算保留唯一 formal、后续失败族和连续候选不确定性，不把本地或零模型 Gate 线性换算成分数。
+readiness 零模型诊断与 phase-aware structured-output 合同均已获得外部闭环；`71b4a88` 进一步证明 tool-only input-correction 与无工具 fail-closed 已在真实 Provider 路径生效，但初始字符位置谓词扩大了普通 false 行为，后续 correction 又只重复当前源码块。达到 9.5 仍按 **9-14 人日工程工作 + 两个连续候选的观察窗口** 管理；该估算保留新失败形状、下一 identity 外部复核和连续候选不确定性，不把局部安全关闭线性换算成分数。
 
 该估算不是把分数从 9.1 线性“补 0.4”；主要工作是用真实矩阵证明编辑/测试稳定性提升，并完成两个连续候选。拆分如下：
 
@@ -1096,7 +1096,7 @@ readiness 零模型诊断与 phase-aware structured-output 合同均已获得外
 
 ## 9. 当前状态说明（非技术用语版）
 
-> 本章用于给非技术读者解释当前情况，不是另一份进度表。阶段状态、工作量和完成边界仍以文末唯一的“实施计划进度表”为准；本章已按 archive-04 第 9 章的通俗口径更新到 2026-08-20，并纳入 `69cff2e` 与 `2f2c05a` formal 证据。
+> 本章用于给非技术读者解释当前情况，不是另一份进度表。阶段状态、工作量和完成边界仍以文末唯一的“实施计划进度表”为准；本章已按 archive-04 第 9 章的通俗口径更新到 2026-08-20，并纳入 `69cff2e`、`2f2c05a` 与 `71b4a88` formal 证据。
 
 ### 9.1 一句话结论
 
@@ -1136,17 +1136,17 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - `2977780` 已经证明一个 required-mutation 代表任务可以在 Windows/WSL2 双平台完成，但不能推断其余失败都已改善。
 - 最近一次产生产品工作流证据的 Web formal `fcd7a32` 中，构建、费用、敏感值和资源清理均正常；第二次修改也确实把 broad 分支收窄到 aria，但代码所在位置已经只会接收到 `false` 或空值，分支自身却仍要求“不等于 false”，所以目标行为永远走不到。最终说明错误地声称测试通过，检查程序正确拒绝。
 - 现有执行前保护已经能拦截完全绕开、扩大重写、精确反转、删除 prior 约束放宽行为，以及当前有证据的 false 正例不可达 correction；正确的显式 false 分支、aria 析取旁路、小范围收缩、多个既有小改动的联合修正和其他文件独立补漏仍放行。
-- `f92f880` 携带早期分支遮蔽 guard 进入 formal，但模型没有生成该同形 correction；`4563426` 的 correction 未形成最小 delta。`69cff2e` 与 `2f2c05a` 均从 prior 删除行恢复了组合 null/false guard，却没有在同一 patch 加入 aria 子集谓词，因而被 exact-reversal guard 正确拒绝。`2f2c05a` 的 clean、零凭证、prepare-only、Provider usage 和 env/资源收敛均已全绿，但不能替代 patch/evaluator 成功。闭合前不启动完整付费矩阵、candidate v4 或 P2-C，也不宣称达到 9.5。
+- `69cff2e` 与 `2f2c05a` 都只恢复原始 guard，因 exact reversal 被正确拒绝。`71b4a88` 已不再把无工具成功摘要误判为完成，也生成了不同 patch，但字符位置条件会同时放行 aria 和普通 false 属性；后续 correction 又没有形成真实代码变化，系统因此主动失败关闭。clean、零凭证、Provider usage、env/资源均正常，但不能替代 patch/evaluator 成功。闭合前不启动完整付费矩阵、candidate v4 或 P2-C，也不宣称达到 9.5。
 
 ### 9.6 费用与发布边界
 
-当前一般费用守卫约为 `34.10 RMB`，Stage 0D 最坏累计守卫约为 `48.18 RMB`；再预留一次完整 formal 后约为 `48.98 RMB`，仍低于 `50 RMB` 授权上限但已经接近边界。每次新的付费 formal 或候选运行前都必须重新核算，达到或可能突破上限前停止；在未达到或可能达到上限前无需再次申请费用授权，已冻结的失败版本不会重跑，也不会提高模型预算或 retry。
+当前一般费用守卫约为 `34.16 RMB`，Stage 0D 最坏累计守卫约为 `48.24 RMB`；若未来再预留一次完整 formal 则约为 `49.04 RMB`，仍低于 `50 RMB` 授权上限但已经接近边界。每次新的付费 formal 或候选运行前都必须重新核算，达到或可能突破上限前停止；本轮已按用户要求暂停，已冻结的失败版本不会重跑，也不会提高模型预算或 retry。
 
 需要调用模型时固定使用 `deepseek-v4-flash`；开发与测试中新生成的 `.env` / `.env.local` 已获持续清理授权，按 containment、文件属性、非 reparse point 与 SHA-256 校验后送入 Windows 回收站并记录 cleanup log，无需再次申请。Go canary 只表示“第二套独立代码理解能力已经受控验证”，不表示 Go 已进入生产默认路径。C# 生产接入、自动安装/restore、自动 merge/release/deploy、公开发布和生产环境操作均不属于当前 9.5 范围。
 
 ### 9.7 下一步
 
-`69cff2e` 与 `2f2c05a` 的 Windows formal 均已失败并永久冻结，不重跑也不启动对应 WSL2。离线复核进一步确认：`2f2c05a` 的 input-correction 请求已经到达模型，但模型没有调用修改工具，而是直接返回成功摘要；旧状态机错误接纳了该摘要。本地现已把这一阶段限定为唯一 `apply_patch`，无工具响应立即失败关闭，相关回归、Agent 全量、build 和合同 Gate 均通过。下一步提交新 identity 后重走全部零模型 Gate；真实代表任务通过前，不进入完整矩阵和两个连续冻结候选。
+`71b4a88` 的唯一 Windows formal 已执行、失败并永久冻结，不重跑也不启动对应 WSL2。它证明无工具成功摘要不能再绕过 correction，但新 patch 的字符位置判断扩大了普通 false 行为，后续 correction 又只重复当前源码块；系统和 evaluator 均正确拒绝。用户恢复后先做本地 red/green，不直接启动新 formal；真实代表任务通过前，不进入完整矩阵和两个连续冻结候选。
 
 ## 10. 实施计划进度表
 
@@ -1605,13 +1605,89 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：本地行为闭环不能替代固定 source/harness 的外部证据；先冻结 identity 才能排除主工作区无关改动、旧 dist、fixture 或依赖漂移。
 - **当前还缺的关键闭环**：新 identity 全部零模型 Gate及其后唯一 Windows formal 的最小 patch、evaluator、合法终态、usage/cost 和零残留；未闭合前不启动 WSL2、完整矩阵、candidate v4 或 P2-C。
 
+#### P0 Web Gate 实现结论：`71b4a88` detached clean、零凭证与 formal prepare-only（2026-08-20）
+
+##### 已完成内容
+
+1. **detached clean harness 建立与构建**：
+   - source/harness 固定为 `71b4a887eed016924739fdbb7a576a53dbd0e072`，Git tracked workspace clean；
+   - `corepack pnpm install --offline --frozen-lockfile` 完成 `resolved/reused/downloaded/added=493/492/0/493`，完整 workspace build 与独立 `verify:build` 均通过；
+   - Agent 包=`694 passed / 1 skipped`，workspace-mutation owner=`78/78`，Windows launcher、v3 fixture、runner 与 verifier contract=`71/71`，`verify:coding-benchmark` 和 `verify:coding-ci` 均通过。
+
+2. **Windows 零凭证 dry-run 完成**：
+   - artifact=`artifacts/p0-web-shadowed-false-71b4a88-preact-windows-dry-run-r1`，run=`real-web-ui-regression-windows-a1-1787184731950`，report SHA-256=`780e224058b81d9dec3106d6faf4ab86c99480df940ff2ad2afa9610637c910e`；
+   - source/harness clean exact `71b4a88`，production/repository snapshot preflight=`passed/passed`，model=`deepseek-v4-flash`，credentials/model calls/usage=`false/0/not_reached`，events/trace/patch=`0/0/0 bytes`；
+   - Gateway 首 stdout/端口/认证=`2,025/9,997/10,005ms`，stderr=`0 bytes`，停止=`16ms`，child 与 listener 完整退出。
+
+3. **敏感值、env、资源与 formal prepare-only Gate 完成**：
+   - detached harness、dry-run artifact、fixture 与 runtime 扫描 `16,670` 个常规文件、排除 `11` 个依赖目录，unreadable/Provider key/input blob=`0/0/0`；
+   - dry-run runtime 的 `.env/.env.local` 经 containment、常规文件、非 reparse point 与 SHA-256 校验后送入 Windows 回收站，剩余=`0`；cleanup log SHA-256=`20ffe73d78bc1e217bb5ac862d40772196614d1c0fd124e224bc7f4ac5b65e53`；
+   - formal repository input SHA-256=`c818bb284edabde61bea4cdfe2eb25f4c4b74a1a749630ae051a7e73a2bc8e6a`，绑定本次 receipt SHA-256=`23e4b031d0401342ea55973a83f12103eae0341d3c734402427b4a9816d9cb1b`；
+   - prepare-only 确认 Provider key/env path in args=`false/false`、Gateway/benchmark spawned=`false/false`；模型=`deepseek-v4-flash`、Provider retry=`0`、`12 turns / 24,000 tokens`，费用窗口=`$3.32228551 -> $3.42228551`，formal 端口与任务进程=`0/0`。
+
+4. **效果**：
+   - `71b4a88` 已通过调用模型前的 clean identity、构建、测试、fixture、凭据隔离、费用、敏感值和零残留 Gate；
+   - dry-run 模型调用=`0`、新增 Provider 费用=`$0`，不改写 `2f2c05a` 及更早 frozen formal；
+   - 只开放 `71b4a88` 唯一一次 Windows formal；无论结果如何均立即冻结，失败时不启动 WSL2。
+
+##### 验证结果
+
+- TypeScript workspace 完整 build 与独立 `verify:build` 无错误；
+- Agent `694 passed / 1 skipped`、owner `78/78`、launcher/fixture/runner/verifier `71/71` 全部通过；
+- 双 preflight、零 usage、空 events/trace/patch、敏感扫描、env 回收站清理、资源收敛和 formal prepare-only 全绿。
+
+##### 后续计划
+
+- **下一步准备做什么**：沿用已通过的 formal input，执行且只执行一次 `71b4a88` Windows formal；模型、Provider retry、turn/token 和单 run `$0.10` 上限保持不变。
+- **为什么先做它**：全部零模型 Gate 已关闭，当前唯一缺失证据是 tool-only/fail-closed correction 能否在真实调用中形成 guard+子集最小 patch、通过冻结 evaluator 并产生合法终态。
+- **当前还缺的关键闭环**：formal 的 patch/evaluator、唯一 terminal、完整 Provider usage/cost、敏感值和零残留；未全绿不进入 WSL2、完整矩阵、candidate v4 或 P2-C。
+
+#### P0 Web formal 实现结论：`71b4a88` 错误子集与 context-only correction 失败（2026-08-20）
+
+##### 已完成内容
+
+1. **唯一 Windows formal 执行并永久冻结**：
+   - artifact=`artifacts/p0-web-shadowed-false-71b4a88-preact-windows-formal-r1`，run=`real-web-ui-regression-windows-a1-1787185089910`，source/harness clean exact `71b4a887eed016924739fdbb7a576a53dbd0e072`；
+   - report SHA-256=`a06a81df27b9fdb641b3727f364335b96a0acc70737ab94cbf9ff2a28ac977dd`，changes.patch SHA-256=`ddd938d9207b97c9ed6f5361f1cb288f2533f0ce3a55b5ce48ea25aa6c48f0de`；
+   - status/failure=`failed/product_workflow`；模型=`deepseek-v4-flash`，model/provider calls=`7/7`，Provider retry=`0`，预算=`12 turns / 24,000 tokens / $0.10`；formal 只执行一次，禁止重跑且不启动该 identity 的 WSL2。
+
+2. **mutation、correction 与 evaluator 归因**：
+   - 初始 patch 保留 `value != NULL` guard，并加入 `name.charCodeAt(0)` / `name.charCodeAt(3)` 谓词，已不再是 exact reversal；
+   - `name.charCodeAt(3) != 45` 对 `aria-hidden` 和普通短/小写属性均为真，因而未形成 aria 任务子集并扩大普通 false 属性行为；冻结测试只覆盖正例所以通过，evaluator 仍正确拒绝；
+   - tool-only input-correction、暂停最终 JSON 和唯一 `apply_patch` 合同已进入 prompt snapshot；旧的无工具 JSON 成功绕过没有复现，最终由 semantic-delta guard 以 `only repeated a current-source block` 失败关闭；
+   - evaluation=`taskCompleted/testsPassed/patchAccepted/regression=false/true/false/0`，result=`null`，唯一 terminal=`run.failed`，不能把安全失败关闭记为任务成功。
+
+3. **usage、费用、敏感值与资源闭环**：
+   - input/output=`12,363/1,689`，Provider cost=`$0.00458746`，usage=`complete`；observed conservative upper 更新为 `$2.52687297`，Stage 0D 当前最坏守卫=`48.23972651 RMB < 50 RMB`；
+   - formal runtime `.env/.env.local` 经 containment、常规文件、非 reparse point 与 SHA-256 校验后送入 Windows 回收站，剩余=`0`；cleanup log SHA-256=`d64a26ece1dd4c932115228dd24af8711b89add8c4c5e733c753adc0f44bb602`；
+   - detached harness、artifact、fixture 与 runtime 扫描 `16,984` 个常规文件、排除 `11` 个依赖目录，unreadable/Provider key/repository-input=`0/0/0`；listener/相关任务或扫描进程/剩余 env=`0/0/0`；
+   - coding-ci manifest SHA-256=`60c4b32cee13e5d82cc75903ee2fb40e7e761e1de85b4eb5fb7c5974595c9cd8`，Gateway 首 stdout/端口/认证=`2,034/10,411/10,419ms`，stderr=`0 bytes`，停止=`17ms`。
+
+4. **效果**：
+   - `2f2c05a` 暴露的“用成功 JSON 跳过必须执行 correction”已获真实外部关闭；
+   - Web 代表任务仍未完成，本次不计入 9.5 成功候选、不自动加分，也不从历史 `37` 项失败分母移除；目标向量、Go 第二后端 Gate 和 9.5 完成定义不变；
+   - `71b4a88` 已永久冻结；本轮按用户要求在文档回写后暂停，不启动新修复、WSL2、完整矩阵、candidate v4 或 P2-C。
+
+##### 验证结果
+
+- TypeScript workspace 完整 build 与独立 `verify:build` 无错误；Agent=`694 passed / 1 skipped`、workspace-mutation owner=`78/78`、launcher/fixture/runner/verifier=`71/71`；
+- formal report、patch、coding-ci manifest、repository receipt 和 cleanup log 均已计算 SHA-256；
+- `testsPassed=true`、`patchAccepted=false`、`regressionCount=0`，usage/cost/provider route 完整且模型固定为 `deepseek-v4-flash`；
+- 双 preflight、敏感值扫描、env 回收站清理、端口/进程退出和 detached clean identity 全部通过。
+
+##### 后续计划
+
+- **下一步准备做什么**：本轮暂停；用户恢复后先为普通 false 属性负例与错误字符位置谓词补本地 red/green，并检查 bounded correction 为何只生成 current-source block。
+- **为什么先做它**：tool-only 状态机缺口已经外部关闭，当前最窄的新证据是任务子集判断错误和无 semantic delta correction；重跑 `71b4a88` 只会增加费用，不会改变输入或结果。
+- **当前还缺的关键闭环**：新的本地修复与 source identity、全部零模型 Gate、唯一 formal 通过、两个连续候选及最终 9.5 复算；Go canary 已满足第二后端 Gate，但不替代这些证据。
+
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
 | 文档精简与历史归档 | - | **已完成** | 压缩前 4403 行全文由 `archive-04` 保留；主文档保留目的、目标、方案、完成/验证、费用、风险和计划进度 | - | 后续历史明细只追加到新归档或专门证据，不再把逐 run 流水堆入主计划 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | SS 横向原始加权 `9.135`、发布分 `9.1`；竞品和证据边界已记录 | - | 真实复杂任务成功率仍需新 formal 和连续候选，不宣称达到 9.5 |
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
-| P0：Web mutation/correction 稳定化 | P0 | **`2f2c05a` formal 已冻结；无工具 JSON 绕过已本地闭合，待新 identity Gate** | formal=`failed/product_workflow`、usage/cost=`10,704/664/$0.00285860`；离线确认 correction 返回 summary 而未调用 Tool；本地 owner=`72/72`、Agent=`694 passed / 1 skipped`、build/合同全绿 | `commit + clean/零凭证/prepare-only + formal 归因，约 0.5 人日` | 提交新 identity 并完成全部零模型 Gate；全绿前不再 paid formal，不重跑 `2f2c05a` 或启动其 WSL2 |
+| P0：Web mutation/correction 稳定化 | P0 | **`71b4a88` formal 已失败并冻结；本轮暂停** | `task/tests/patch/regression=false/true/false/0`；tool-only JSON 绕过已关闭，但字符位置谓词扩大普通 false 行为，correction 只有 current-source block；usage/cost=`12,363/1,689/$0.00458746`，零残留全绿 | `本地 TDD、新 identity 与其 Gate，约 0.5 人日` | 用户恢复后先修负例子集与 semantic correction；不重跑 `71b4a88`，不启动其 WSL2；新 identity 外部通过前不进入完整矩阵或 P2-C |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |
