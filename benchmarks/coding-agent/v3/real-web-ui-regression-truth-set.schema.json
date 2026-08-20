@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.local/schemas/coding-agent-benchmark-web-ui-truth-set-v1.json",
+  "title": "Coding Agent Benchmark Web UI Truth Set v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "taskId",
+    "taskText",
+    "sourcePath",
+    "visibleTestPath",
+    "testCommand",
+    "baselineSourceContract",
+    "brokenSourceContract",
+    "cases",
+    "boundaries"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "coding-agent-benchmark-web-ui-truth-set/v1" },
+    "id": { "const": "real-web-ui-regression-v1" },
+    "taskId": { "const": "real-web.ui-regression" },
+    "taskText": { "type": "string", "minLength": 100, "maxLength": 1000 },
+    "sourcePath": { "const": "src/diff/props.js" },
+    "visibleTestPath": { "const": "test/shared/benchmark-v3-ui-regression.test.js" },
+    "testCommand": {
+      "const": "npm exec --offline -- vitest run --config vitest.benchmark-v3.config.mjs test/shared/benchmark-v3-ui-regression.test.js"
+    },
+    "baselineSourceContract": { "const": "value != NULL && (value !== false || name[4] == '-')" },
+    "brokenSourceContract": { "const": "value != NULL && value !== false" },
+    "cases": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 12,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/case" }
+    },
+    "boundaries": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 20, "maxLength": 300 }
+    }
+  },
+  "$defs": {
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "attributeName", "valueKind", "expected"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,49}$" },
+        "attributeName": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,49}$" },
+        "valueKind": { "enum": ["false", "null", "undefined"] },
+        "expected": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operation"],
+          "properties": {
+            "operation": { "enum": ["set", "remove"] },
+            "value": { "const": "false" }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "operation": { "const": "set" } }, "required": ["operation"] },
+              "then": { "required": ["value"] },
+              "else": { "not": { "required": ["value"] } }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

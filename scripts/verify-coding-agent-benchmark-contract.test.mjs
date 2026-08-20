@@ -5,16 +5,20 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { compileOutputSchema } from "../packages/belldandy-core/src/cli/shared/output-schema.ts";
+import {
+  validateCodingAgentBenchmarkWebUiTruthSet,
+} from "./coding-agent-benchmark-v3-web-ui-truth-set.mjs";
 import { collectCodingAgentBenchmarkContractFailures } from "./verify-coding-agent-benchmark-contract.mjs";
 
 const workspaceRoot = path.resolve(import.meta.dirname, "..");
 
 describe("coding agent benchmark repository contract", () => {
   it("keeps the WSL2 host launcher wired into the public benchmark contract", async () => {
-    const [packageJsonText, readme, projectMap] = await Promise.all([
+    const [packageJsonText, readme, projectMap, gitAttributes] = await Promise.all([
       fs.readFile(path.join(workspaceRoot, "package.json"), "utf-8"),
       fs.readFile(path.join(workspaceRoot, "benchmarks/coding-agent/README.md"), "utf-8"),
       fs.readFile(path.join(workspaceRoot, "docs/project-map.md"), "utf-8"),
+      fs.readFile(path.join(workspaceRoot, ".gitattributes"), "utf-8"),
     ]);
     const packageJson = JSON.parse(packageJsonText);
 
@@ -165,6 +169,10 @@ describe("coding agent benchmark repository contract", () => {
     expect(readme).toContain("reconciliationJournal");
     expect(readme).toContain("workspaceRevision");
     expect(readme).toContain("fileTool");
+    expect(readme).toContain("coding-agent-benchmark-v3-web-ui-truth-set.mjs");
+    expect(readme).toContain("coding-agent-benchmark-web-ui-truth-set/v1");
+    expect(readme).toContain("real-web-ui-regression-truth-set.json");
+    expect(readme).toContain("real-web-ui-regression-truth-set.schema.json");
     expect(projectMap).toContain("scripts/run-coding-agent-benchmark-wsl.mjs");
     expect(projectMap).toContain("scripts/coding-agent-benchmark-system-harness.mjs");
     expect(projectMap).toContain("scripts/coding-agent-benchmark-parallel-read-harness.mjs");
@@ -195,8 +203,18 @@ describe("coding agent benchmark repository contract", () => {
     expect(projectMap).toContain("scripts/run-coding-agent-benchmark-navigation-candidate-v3.mjs");
     expect(projectMap).toContain("benchmarks/coding-agent/v3/navigation-candidate-v3.schema.json");
     expect(projectMap).toContain("benchmarks/coding-agent/v2/agents.json");
+    expect(projectMap).toContain("scripts/coding-agent-benchmark-v3-web-ui-truth-set.mjs");
+    expect(projectMap).toContain(
+      "benchmarks/coding-agent/v3/real-web-ui-regression-truth-set.json",
+    );
+    expect(projectMap).toContain(
+      "benchmarks/coding-agent/v3/real-web-ui-regression-truth-set.schema.json",
+    );
     expect(projectMap).toContain("scripts/coding-agent-recovery-harness.mjs");
     expect(projectMap).toContain("scripts/aggregate-coding-agent-benchmark.mjs");
+    expect(gitAttributes).toContain(
+      "benchmarks/coding-agent/v3/real-web-ui-regression-truth-set.json text eol=lf",
+    );
   });
 
   it("publishes a fail-closed Schema for the external Gateway fault artifact", async () => {
@@ -251,8 +269,71 @@ describe("coding agent benchmark repository contract", () => {
     }))).toMatchObject({ ok: false });
   });
 
+  it("rejects Web UI truth cases that contradict the frozen attribute behavior", async () => {
+    const truthSet = JSON.parse(await fs.readFile(path.join(
+      workspaceRoot,
+      "benchmarks/coding-agent/v3/real-web-ui-regression-truth-set.json",
+    ), "utf-8"));
+    truthSet.cases.push({
+      id: "aria-expanded-false",
+      attributeName: "aria-expanded",
+      valueKind: "false",
+      expected: { operation: "remove" },
+    });
+
+    expect(() => validateCodingAgentBenchmarkWebUiTruthSet(truthSet)).toThrow(
+      /aria-expanded-false.*frozen behavior/i,
+    );
+  });
+
+  it("rejects duplicate Web UI truth inputs even when their case ids differ", async () => {
+    const truthSet = JSON.parse(await fs.readFile(path.join(
+      workspaceRoot,
+      "benchmarks/coding-agent/v3/real-web-ui-regression-truth-set.json",
+    ), "utf-8"));
+    truthSet.cases.push({
+      ...truthSet.cases[0],
+      id: "aria-false-duplicate",
+    });
+
+    expect(() => validateCodingAgentBenchmarkWebUiTruthSet(truthSet)).toThrow(
+      /aria-false-duplicate.*duplicate input/i,
+    );
+  });
+
   it("keeps the manifest, schemas, documentation, scripts, and cross-platform gate aligned", async () => {
     await expect(collectCodingAgentBenchmarkContractFailures({ workspaceRoot })).resolves.toEqual([]);
+  });
+
+  it("fails closed when the Web UI truth set SHA drifts from the task manifest", async () => {
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-web-ui-contract-"));
+    const fixturePaths = [
+      "benchmarks/coding-agent/v3/task-manifest.json",
+      "benchmarks/coding-agent/v3/real-web-ui-regression-truth-set.json",
+      "benchmarks/coding-agent/v3/real-web-ui-regression-truth-set.schema.json",
+    ];
+    try {
+      for (const relativePath of fixturePaths) {
+        const target = path.join(fixtureRoot, relativePath);
+        await fs.mkdir(path.dirname(target), { recursive: true });
+        await fs.copyFile(path.join(workspaceRoot, relativePath), target);
+      }
+      const manifestPath = path.join(
+        fixtureRoot,
+        "benchmarks/coding-agent/v3/task-manifest.json",
+      );
+      const manifest = JSON.parse(await fs.readFile(manifestPath, "utf-8"));
+      const task = manifest.tasks.find((candidate) => candidate.id === "real-web.ui-regression");
+      task.truthSet.sha256 = "0".repeat(64);
+      await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf-8");
+
+      const failures = await collectCodingAgentBenchmarkContractFailures({ workspaceRoot: fixtureRoot });
+      expect(failures).toEqual(expect.arrayContaining([
+        expect.stringMatching(/Web UI truth set SHA-256 drifted/i),
+      ]));
+    } finally {
+      await fs.rm(fixtureRoot, { recursive: true, force: true });
+    }
   });
 
   it("fails closed when the standalone run artifact Schema is missing", async () => {
@@ -309,6 +390,8 @@ describe("coding agent benchmark repository contract", () => {
         expect.stringMatching(/v3\/model-loop-budget-termination\.schema\.json is missing/i),
         expect.stringMatching(/v3\/model-loop-rollout-audit\.schema\.json is missing/i),
         expect.stringMatching(/v3\/navigation-candidate-v3\.schema\.json is missing/i),
+        expect.stringMatching(/v3\/real-web-ui-regression-truth-set\.json is missing/i),
+        expect.stringMatching(/v3\/real-web-ui-regression-truth-set\.schema\.json is missing/i),
       ]));
     } finally {
       await fs.rm(fixtureRoot, { recursive: true, force: true });

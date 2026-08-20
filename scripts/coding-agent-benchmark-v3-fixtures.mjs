@@ -20,6 +20,11 @@ import {
   CODING_AGENT_BENCHMARK_MANIFEST_V3_VERSION,
   validateCodingAgentBenchmarkManifest,
 } from "./coding-agent-benchmark-contract.mjs";
+import {
+  loadCodingAgentBenchmarkWebUiTruthSet,
+  renderCodingAgentBenchmarkWebUiPromptSuffix,
+  renderCodingAgentBenchmarkWebUiVisibleTest,
+} from "./coding-agent-benchmark-v3-web-ui-truth-set.mjs";
 
 const CORRECTED_V2_MANIFEST_VERSION = "coding-agent-benchmark-manifest/v2";
 export const CODING_AGENT_BENCHMARK_SNAPSHOT_RECEIPT_VERSION =
@@ -939,8 +944,11 @@ async function generatePreactFixture(input) {
     throw new Error(`Benchmark v3 Preact fixture does not support task ${String(task?.id)}.`);
   }
   const { workspace } = await prepareRepositoryWorkspace(input, "Preact");
+  const truthSet = task.id === "real-web.ui-regression"
+    ? await loadCodingAgentBenchmarkWebUiTruthSet(task)
+    : null;
   const overlay = task.id === "real-web.ui-regression"
-    ? await applyPreactUiRegressionOverlay(workspace)
+    ? await applyPreactUiRegressionOverlay(workspace, truthSet)
     : await applyPreactDependencyDiagnosisOverlay(workspace);
   await initializeRepositoryFixture(workspace);
   return createRepositoryFixtureResult(input, task, workspace, overlay);
@@ -952,6 +960,9 @@ async function evaluatePreactFixture(input, dependencies = {}) {
     throw new Error(`Benchmark v3 Preact evaluator does not support task ${String(task?.id)}.`);
   }
   const workspace = path.resolve(requireNonEmptyString(input.workspace, "workspace"));
+  const truthSet = task.id === "real-web.ui-regression"
+    ? await loadCodingAgentBenchmarkWebUiTruthSet(task)
+    : null;
   const productWorkflowFailures = [];
   const modelFailures = [];
   if (input.runnerExitCode !== 0) {
@@ -972,12 +983,12 @@ async function evaluatePreactFixture(input, dependencies = {}) {
   const changedPaths = collectChangedPaths(workspace);
   let patchAccepted;
   if (task.id === "real-web.ui-regression") {
-    const propsSource = await fs.readFile(path.join(workspace, "src", "diff", "props.js"), "utf-8");
     patchAccepted = JSON.stringify(changedPaths) === JSON.stringify(task.acceptance.requiredChangedPaths)
-      && propsSource.includes("value != NULL && (value !== false || name[4] == '-')")
-      && !propsSource.includes("value != NULL && value !== false");
+      && testsPassed;
     if (!patchAccepted) {
-      productWorkflowFailures.push("Preact UI fix must restore false aria attribute serialization in src/diff/props.js only.");
+      productWorkflowFailures.push(
+        `Preact UI fix must satisfy ${truthSet.id} in ${truthSet.sourcePath} only.`,
+      );
     }
     if (!matchesExactResult(input.result, { summary: input.result?.summary })
       || typeof input.result.summary !== "string"
@@ -1150,33 +1161,28 @@ async function evaluateCobraFixture(input, dependencies = {}) {
   return createMachineEvaluation(productWorkflowFailures, modelFailures, testsPassed, patchAccepted);
 }
 
-async function applyPreactUiRegressionOverlay(workspace) {
-  const propsPath = path.join(workspace, "src", "diff", "props.js");
+async function applyPreactUiRegressionOverlay(workspace, truthSet) {
+  const propsPath = path.join(workspace, ...truthSet.sourcePath.split("/"));
   const propsSource = await fs.readFile(propsPath, "utf-8");
-  const contract = "value != NULL && (value !== false || name[4] == '-')";
+  const contract = truthSet.baselineSourceContract;
   if (propsSource.split(contract).length !== 2) {
     throw new Error("Benchmark v3 Preact source does not contain one frozen aria false-value contract.");
   }
   await fs.writeFile(
     propsPath,
-    propsSource.replace(contract, "value != NULL && value !== false"),
+    propsSource.replace(contract, truthSet.brokenSourceContract),
     "utf-8",
   );
-  const testPath = path.join(workspace, "test", "shared", "benchmark-v3-ui-regression.test.js");
+  const testPath = path.join(workspace, ...truthSet.visibleTestPath.split("/"));
   await fs.mkdir(path.dirname(testPath), { recursive: true });
-  await fs.writeFile(testPath, createPreactUiRegressionTest(), "utf-8");
+  await fs.writeFile(testPath, renderCodingAgentBenchmarkWebUiVisibleTest(truthSet), "utf-8");
   await fs.writeFile(
     path.join(workspace, "vitest.benchmark-v3.config.mjs"),
     createPreactVitestConfig(),
     "utf-8",
   );
   return {
-    promptSuffix: [
-      "The frozen regression is covered by test/shared/benchmark-v3-ui-regression.test.js.",
-      "Restore false aria-* attribute serialization with the smallest change in src/diff/props.js.",
-      "Do not modify tests, dependencies, package metadata, or any other source file.",
-      "Return exactly one JSON object with a non-empty summary.",
-    ].join(" "),
+    promptSuffix: renderCodingAgentBenchmarkWebUiPromptSuffix(truthSet),
     outputSchema: {
       type: "object",
       additionalProperties: false,
@@ -1212,25 +1218,6 @@ async function applyPreactDependencyDiagnosisOverlay(workspace) {
       },
     },
   };
-}
-
-function createPreactUiRegressionTest() {
-  return [
-    "import { setProperty } from '../../src/diff/props';",
-    "",
-    "describe('benchmark v3 aria attribute contract', () => {",
-    "\tit('serializes false for aria-* attributes', () => {",
-    "\t\tconst calls = [];",
-    "\t\tconst dom = {",
-    "\t\t\tsetAttribute(name, value) { calls.push([name, String(value)]); },",
-    "\t\t\tremoveAttribute() { throw new Error('aria-hidden must not be removed'); }",
-    "\t\t};",
-    "\t\tsetProperty(dom, 'aria-hidden', false, undefined, undefined);",
-    "\t\texpect(calls).toEqual([['aria-hidden', 'false']]);",
-    "\t});",
-    "});",
-    "",
-  ].join("\n");
 }
 
 function createPreactVitestConfig() {

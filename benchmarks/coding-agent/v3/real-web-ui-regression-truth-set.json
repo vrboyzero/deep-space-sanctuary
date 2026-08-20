@@ -1,0 +1,55 @@
+{
+  "schemaVersion": "coding-agent-benchmark-web-ui-truth-set/v1",
+  "id": "real-web-ui-regression-v1",
+  "taskId": "real-web.ui-regression",
+  "taskText": "Fix the frozen browser-facing regression in the real web project. Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, and remove every attribute with null or undefined values. Make the smallest change in src/diff/props.js and pass the supplied deterministic checks.",
+  "sourcePath": "src/diff/props.js",
+  "visibleTestPath": "test/shared/benchmark-v3-ui-regression.test.js",
+  "testCommand": "npm exec --offline -- vitest run --config vitest.benchmark-v3.config.mjs test/shared/benchmark-v3-ui-regression.test.js",
+  "baselineSourceContract": "value != NULL && (value !== false || name[4] == '-')",
+  "brokenSourceContract": "value != NULL && value !== false",
+  "cases": [
+    {
+      "id": "aria-false",
+      "attributeName": "aria-hidden",
+      "valueKind": "false",
+      "expected": { "operation": "set", "value": "false" }
+    },
+    {
+      "id": "data-false",
+      "attributeName": "data-state",
+      "valueKind": "false",
+      "expected": { "operation": "set", "value": "false" }
+    },
+    {
+      "id": "ordinary-false",
+      "attributeName": "title",
+      "valueKind": "false",
+      "expected": { "operation": "remove" }
+    },
+    {
+      "id": "aria-null",
+      "attributeName": "aria-hidden",
+      "valueKind": "null",
+      "expected": { "operation": "remove" }
+    },
+    {
+      "id": "data-undefined",
+      "attributeName": "data-state",
+      "valueKind": "undefined",
+      "expected": { "operation": "remove" }
+    },
+    {
+      "id": "ordinary-null",
+      "attributeName": "title",
+      "valueKind": "null",
+      "expected": { "operation": "remove" }
+    }
+  ],
+  "boundaries": [
+    "False aria-* and data-* values are serialized as the string false.",
+    "False values for ordinary attributes remove the attribute.",
+    "Null and undefined values remove every attribute, including aria-* and data-* attributes.",
+    "Only src/diff/props.js may change, and semantically equivalent implementations are accepted."
+  ]
+}

@@ -1691,14 +1691,51 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：tool-only 状态机缺口已经外部关闭，当前最窄的新证据是任务子集判断错误和无 semantic delta correction；重跑 `71b4a88` 只会增加费用，不会改变输入或结果。
 - **当前还缺的关键闭环**：新的本地修复与 source identity、全部零模型 Gate、唯一 formal 通过、两个连续候选及最终 9.5 复算；Go canary 已满足第二后端 Gate，但不替代这些证据。
 
+#### P0 Benchmark 实现结论：Web UI truth set 与 evaluator 对齐（2026-08-20）
+
+##### 已完成内容
+
+1. **`real-web-ui-regression-truth-set.json` / `.schema.json` 新建**：
+   - 发布 `coding-agent-benchmark-web-ui-truth-set/v1`，冻结同一任务文本、源码路径、visible test、测试命令、基线/损坏合同与行为边界；
+   - 以 6 个 witness 同时覆盖 `aria-*`/`data-*` 的 `false` 序列化、普通属性 `false` 移除，以及 `null`/`undefined` 对三类属性的移除行为；
+   - truth set SHA-256=`3b47532d1a7b99f0f91c5fda6ebc31b9e1d058871c4824c0ac13f905554956f3`，`.gitattributes` 固定该文件 `eol=lf`，避免 Windows/WSL2 checkout 改写哈希。
+
+2. **`coding-agent-benchmark-v3-web-ui-truth-set.mjs` 新建，manifest/fixture 接入**：
+   - 单一 owner 负责 SHA、字段、行为 witness、任务文本、fixture/evaluator 版本、测试命令和 changed-path 绑定，并统一渲染 prompt suffix 与 visible test；
+   - `real-web.ui-regression` 升级为 `real-web-ui-regression-v2` fixture/evaluator，manifest 以 `truthSet.id/path/sha256` 绑定 v1 truth set；
+   - `coding-agent-benchmark-v3-fixtures.mjs` 从 truth set 注入损坏合同、测试和提示，不再维护分散的 aria 单正例。
+
+3. **evaluator 与仓库合同 Gate 修改**：
+   - Web UI evaluator 只要求 changed paths 精确等于 `src/diff/props.js` 且同一冻结 visible test 通过，允许行为等价实现，不再硬编码某条源码表达式；
+   - visible test 非零时固定得到 `testsPassed=false`、`patchAccepted=false` 与 `product_workflow`，关闭“测试失败但 patch 被接受”的路径；
+   - `verify-coding-agent-benchmark-contract.mjs` 读取并验证 truth set/Schema/owner 脚本，复用同一 loader 检查 SHA 与任务绑定，README 和 `project-map.md` 同步纳入失败关闭文档 Gate。
+
+4. **效果**：
+   - prompt、fixture、visible test 与 evaluator 现在消费同一版本化行为定义，普通属性负例、`data-*` 和 `null/missing` 边界不再缺失；
+   - 行为正确但源码写法不同的最小 patch 可通过，冻结测试失败或路径扩散仍被拒绝；
+   - 本环节未调用模型/Provider，未启动 formal/WSL2，未改写冻结 aggregate、历史 `37` 项失败或 9.5 分数。
+
+##### 验证结果
+
+- TypeScript workspace 完整 build 与独立 `verify:build` 无错误；
+- fixture/provider 与仓库合同定向组合 `20/20` 通过（含 SHA 漂移、矛盾 witness、重复输入失败关闭测试，以及 visible-test 失败和等价实现回归场景）；
+- `verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 全绿；truth set SHA 和 Git `eol=lf` 属性已复算；
+- 关键功能验证：以 pinned Preact source/cache 实际执行 truth set 绑定命令，损坏合同 Red exit=`1`、行为等价实现 Green exit=`0`；6 个冻结 witness 由同一 visible test 承载，evaluator 对等价实现返回通过、对非零测试结果返回拒绝。
+
+##### 后续计划
+
+- **下一步准备做什么**：基于新 truth set 为 `71b4a88` 的错误字符位置谓词与 context-only correction 补本地 red/green，检查 bounded correction 是否能产生同时保留 null guard、收窄 aria/data 子集且具备 semantic delta 的最小 patch。
+- **为什么先做它**：truth set/evaluator 歧义已经关闭，`71b4a88` 冻结证据剩余的直接失败形状是错误任务子集和 correction 重复 current-source；先在本地收敛可避免无新证据的付费重跑。
+- **当前还缺的关键闭环**：Web mutation/correction 本地修复、新 committed source identity、detached clean 零模型 Gate及其后唯一 Windows formal；只有外部通过后才评估 WSL2、完整矩阵、连续候选或 P2-C。
+
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
 | 文档精简与历史归档 | - | **已完成** | 压缩前 4403 行全文由 `archive-04` 保留；主文档保留目的、目标、方案、完成/验证、费用、风险和计划进度 | - | 后续历史明细只追加到新归档或专门证据，不再把逐 run 流水堆入主计划 |
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | SS 横向原始加权 `9.135`、发布分 `9.1`；竞品和证据边界已记录 | - | 真实复杂任务成功率仍需新 formal 和连续候选，不宣称达到 9.5 |
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
-| P0：Benchmark truth set / evaluator 对齐 | P0 | **待开始，当前 formal 前置阻塞** | 当前 fixture/visible test 缺普通属性 `false` 负例、`data-*`、`null/missing` 行为；存在 visible 通过但 evaluator 拒绝的风险 | `约 0.5-1 人日` | 版本化 truth set、统一 prompt/fixture/test/evaluator，先完成 zero-cost replay 和 red/green；未对齐前不启动新 formal |
-| P0：Web mutation/correction 稳定化 | P0 | **`71b4a88` formal 已失败并冻结；本轮暂停** | `task/tests/patch/regression=false/true/false/0`；tool-only JSON 绕过已关闭，但字符位置谓词扩大普通 false 行为，correction 只有 current-source block；usage/cost=`12,363/1,689/$0.00458746`，零残留全绿 | `truth set 对齐后，本地 TDD、新 identity 与其 Gate，约 0.5 人日` | 用户恢复后先完成 truth set/evaluator 一致性，再修负例子集与 semantic correction；不重跑 `71b4a88`，不启动其 WSL2；新 identity 外部通过前不进入完整矩阵或 P2-C |
+| P0：Benchmark truth set / evaluator 对齐 | P0 | **已完成 zero-cost 对齐** | `coding-agent-benchmark-web-ui-truth-set/v1`、6 个正负 witness、SHA/LF 绑定、v2 fixture/evaluator、实际 Red=`1`/Green=`0` replay；定向 `20/20`、benchmark/CI/build Gate 全绿 | - | 保持 truth set、prompt、fixture、visible test 与 evaluator 单一版本绑定；任何 SHA/Schema/任务合同漂移均失败关闭 |
+| P0：Web mutation/correction 稳定化 | P0 | **`71b4a88` formal 已失败并冻结；truth-set 前置已关闭** | `task/tests/patch/regression=false/true/false/0`；tool-only JSON 绕过已关闭，统一 evaluator 已接线，但字符位置谓词扩大普通 false 行为，correction 只有 current-source block | `本地 TDD、新 identity 与其 Gate，约 0.5 人日` | 基于统一 truth set 修复负例子集与 semantic correction；不重跑 `71b4a88`，不启动其 WSL2；新 identity 外部通过前不进入完整矩阵或 P2-C |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |

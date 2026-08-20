@@ -25,6 +25,10 @@ import {
   validateCodingAgentBenchmarkV3SnapshotReceipt,
 } from "./coding-agent-benchmark-v3-fixtures.mjs";
 import {
+  CODING_AGENT_BENCHMARK_WEB_UI_TRUTH_SET_VERSION,
+  loadCodingAgentBenchmarkWebUiTruthSet,
+} from "./coding-agent-benchmark-v3-web-ui-truth-set.mjs";
+import {
   CODING_AGENT_BENCHMARK_LINUX_SNAPSHOT_PREPARATION_VERSION,
 } from "./coding-agent-benchmark-linux-snapshot-preparation.mjs";
 import {
@@ -178,9 +182,16 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   const navigationCandidateV3V3Schema = await readJson(
     "benchmarks/coding-agent/v3/navigation-candidate-v3.schema.json",
   );
+  const webUiTruthSetV3 = await readJson(
+    "benchmarks/coding-agent/v3/real-web-ui-regression-truth-set.json",
+  );
+  const webUiTruthSetV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/real-web-ui-regression-truth-set.schema.json",
+  );
   const readme = await readText("benchmarks/coding-agent/README.md");
   await readText("scripts/coding-agent-benchmark-v3-contract.mjs");
   await readText("scripts/coding-agent-benchmark-v3-fixtures.mjs");
+  await readText("scripts/coding-agent-benchmark-v3-web-ui-truth-set.mjs");
   await readText("scripts/coding-agent-benchmark-linux-snapshot-preparation.mjs");
   await readText("scripts/coding-agent-benchmark-parallel-read-harness.mjs");
   await readText("scripts/coding-agent-benchmark-fixtures.mjs");
@@ -228,6 +239,18 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
       await loadCodingAgentBenchmarkManifest(path.join(workspaceRoot, manifestV3Path));
     } catch (error) {
       failures.push(`coding benchmark v3 manifest failed semantic validation: ${safeMessage(error)}`);
+    }
+    const webUiTask = manifestV3.tasks?.find((task) => task.id === "real-web.ui-regression");
+    if (!webUiTask) {
+      failures.push("coding benchmark v3 manifest is missing the real-web.ui-regression task.");
+    } else {
+      try {
+        await loadCodingAgentBenchmarkWebUiTruthSet(webUiTask, { workspaceRoot });
+      } catch (error) {
+        failures.push(
+          `coding benchmark v3 Web UI truth set failed semantic validation: ${safeMessage(error)}`,
+        );
+      }
     }
   }
   if (scorecardV3) {
@@ -322,6 +345,7 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   validateSchema(failures, "v3 failure analysis", failureAnalysisV3Schema);
   validateSchema(failures, "v3 navigation candidate v2", navigationCandidateV2V3Schema);
   validateSchema(failures, "v3 navigation candidate v3", navigationCandidateV3V3Schema);
+  validateSchema(failures, "v3 Web UI truth set", webUiTruthSetV3Schema, webUiTruthSetV3);
   if (JSON.stringify(benchmarkAgentsV2) !== JSON.stringify({
     agents: [CODING_AGENT_BENCHMARK_COMMAND_CONTROL_AGENT_PROFILE],
   })) {
@@ -354,6 +378,10 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   }
   if (reportV3Schema?.properties?.schemaVersion?.const !== CODING_AGENT_BENCHMARK_REPORT_V3_VERSION) {
     failures.push("v3 benchmark report Schema version drifted from the external-validity contract.");
+  }
+  if (webUiTruthSetV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_BENCHMARK_WEB_UI_TRUTH_SET_VERSION) {
+    failures.push("v3 Web UI truth set Schema version drifted from the frozen behavior contract.");
   }
   if (failureAnalysisV3Schema?.properties?.schemaVersion?.const
     !== CODING_AGENT_BENCHMARK_FAILURE_ANALYSIS_VERSION) {
@@ -736,6 +764,11 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "回退到 primary",
     "coding-agent-benchmark-fixtures.mjs",
     "coding-agent-benchmark-v3-fixtures.mjs",
+    "coding-agent-benchmark-v3-web-ui-truth-set.mjs",
+    "coding-agent-benchmark-web-ui-truth-set/v1",
+    "real-web-ui-regression-truth-set.json",
+    "real-web-ui-regression-truth-set.schema.json",
+    "real-web-ui-regression-v2",
     "工作区外",
   ]) {
     if (!readme.includes(requiredText)) {
@@ -750,6 +783,9 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "scripts/coding-agent-benchmark-contract.mjs",
     "scripts/coding-agent-benchmark-v3-contract.mjs",
     "scripts/coding-agent-benchmark-v3-fixtures.mjs",
+    "scripts/coding-agent-benchmark-v3-web-ui-truth-set.mjs",
+    "benchmarks/coding-agent/v3/real-web-ui-regression-truth-set.json",
+    "benchmarks/coding-agent/v3/real-web-ui-regression-truth-set.schema.json",
     "scripts/coding-agent-benchmark-linux-snapshot-preparation.mjs",
     "scripts/coding-agent-benchmark-parallel-read-harness.mjs",
     "scripts/coding-agent-benchmark-system-harness.mjs",

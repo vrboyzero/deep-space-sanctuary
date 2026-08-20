@@ -792,13 +792,30 @@ describe("coding agent benchmark v3 fixture providers", () => {
       taskId: "real-web.ui-regression",
       workspace: path.join(root, "ui-workspace"),
     }, identityDependencies);
+    expect(uiFixture.task).toMatchObject({
+      fixture: { generatorId: "real-web-ui-regression-v2", version: 2 },
+      evaluator: { kind: "machine", id: "real-web-ui-regression-v2" },
+      truthSet: {
+        id: "real-web-ui-regression-v1",
+        path: "benchmarks/coding-agent/v3/real-web-ui-regression-truth-set.json",
+        sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
+    });
     expect(compileOutputSchema(uiFixture.outputSchema)).toMatchObject({ ok: true });
+    expect(uiFixture.prompt).toContain("false values for aria-* and data-* attributes");
+    expect(uiFixture.prompt).toContain("ordinary attributes with false values");
+    expect(uiFixture.prompt).toContain("null or undefined values");
     await expect(fs.readFile(path.join(uiFixture.workspace, "src", "diff", "props.js"), "utf-8"))
       .resolves.toContain("value != NULL && value !== false");
-    await expect(fs.readFile(
+    const visibleTest = await fs.readFile(
       path.join(uiFixture.workspace, "test", "shared", "benchmark-v3-ui-regression.test.js"),
       "utf-8",
-    )).resolves.toContain("aria-hidden");
+    );
+    expect(visibleTest).toContain("aria-hidden");
+    expect(visibleTest).toContain("data-state");
+    expect(visibleTest).toContain("title");
+    expect(visibleTest).toContain("value: null");
+    expect(visibleTest).toContain("value: undefined");
     await fs.writeFile(path.join(uiFixture.workspace, "src", "diff", "props.js"), propsSource, "utf-8");
     const uiEvaluation = await uiProvider.evaluate({
       task: uiFixture.task,
@@ -814,6 +831,53 @@ describe("coding agent benchmark v3 fixture providers", () => {
     expect(uiEvaluation).toMatchObject({
       status: "passed",
       evaluation: { taskCompleted: true, testsPassed: true, patchAccepted: true },
+    });
+
+    const equivalentPropsSource = propsSource.replace(
+      "value != NULL && (value !== false || name[4] == '-')",
+      "value != NULL && (value !== false || name.startsWith('aria-') || name.startsWith('data-'))",
+    );
+    await fs.writeFile(
+      path.join(uiFixture.workspace, "src", "diff", "props.js"),
+      equivalentPropsSource,
+      "utf-8",
+    );
+    const equivalentUiEvaluation = await uiProvider.evaluate({
+      task: uiFixture.task,
+      workspace: uiFixture.workspace,
+      runnerExitCode: 0,
+      result: { summary: "Preserved the frozen attribute behavior." },
+    }, {
+      runTestCommands: async () => [{
+        command: "npm exec --offline -- vitest run --config vitest.benchmark-v3.config.mjs test/shared/benchmark-v3-ui-regression.test.js",
+        exitCode: 0,
+      }],
+    });
+    expect(equivalentUiEvaluation).toMatchObject({
+      status: "passed",
+      evaluation: { taskCompleted: true, testsPassed: true, patchAccepted: true },
+    });
+
+    const failedVisibleTestEvaluation = await uiProvider.evaluate({
+      task: uiFixture.task,
+      workspace: uiFixture.workspace,
+      runnerExitCode: 0,
+      result: { summary: "Preserved the frozen attribute behavior." },
+    }, {
+      runTestCommands: async () => [{
+        command: "npm exec --offline -- vitest run --config vitest.benchmark-v3.config.mjs test/shared/benchmark-v3-ui-regression.test.js",
+        exitCode: 1,
+      }],
+    });
+    expect(failedVisibleTestEvaluation).toMatchObject({
+      status: "failed",
+      failureCategory: "product_workflow",
+      evaluation: {
+        taskCompleted: false,
+        testsPassed: false,
+        patchAccepted: false,
+        regressionCount: 1,
+      },
     });
 
     const diagnosisProvider = resolveCodingAgentBenchmarkV3FixtureProvider(

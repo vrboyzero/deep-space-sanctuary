@@ -287,6 +287,16 @@
             "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*-v[1-9][0-9]*$", "maxLength": 100 }
           }
         },
+        "truthSet": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "path", "sha256"],
+          "properties": {
+            "id": { "const": "real-web-ui-regression-v1" },
+            "path": { "const": "benchmarks/coding-agent/v3/real-web-ui-regression-truth-set.json" },
+            "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+          }
+        },
         "acceptance": { "$ref": "#/$defs/acceptance" }
       },
       "allOf": [
@@ -294,6 +304,11 @@
           "if": { "properties": { "layer": { "const": "B" } }, "required": ["layer"] },
           "then": { "required": ["repositoryId"] },
           "else": { "not": { "required": ["repositoryId"] } }
+        },
+        {
+          "if": { "properties": { "id": { "const": "real-web.ui-regression" } }, "required": ["id"] },
+          "then": { "required": ["truthSet"] },
+          "else": { "not": { "required": ["truthSet"] } }
         }
       ]
     },
