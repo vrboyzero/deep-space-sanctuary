@@ -888,6 +888,197 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
     });
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
+
+  it("fails closed when a repeated-source retry leaves invalid unreachable false control flow", async () => {
+    const requiredPath = "src/diff/props.js";
+    const originalCondition = "\t\t} else if (value != NULL && value !== false) {";
+    const sourcePrefix = [
+      "\t\t// aria- and data- attributes have no boolean representation.",
+      "\t\t// A `false` value is different from the attribute not being present.",
+    ].join("\n");
+    const initialPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      " \t\tif (typeof value == 'function') {",
+      " \t\t\t// never serialize functions as attribute values",
+      `-${originalCondition}`,
+      "-\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+      `+${originalCondition}`,
+      "+\t\t\tlet val = name == 'popover' && value == true ? '' : value;",
+      "+\t\t\tif (name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') {",
+      "+\t\t\t\tdom.setAttribute(name, val === false ? 'false' : val);",
+      "+\t\t\t} else if (name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-') {",
+      "+\t\t\t\tdom.setAttribute(name, val === false ? 'false' : val);",
+      "+\t\t\t} else {",
+      "+\t\t\t\tdom.setAttribute(name, val);",
+      "+\t\t\t}",
+      "+\t\t} else if (value === false) {",
+      "+\t\t\tdom.removeAttribute(name);",
+      " \t\t} else {",
+      "*** End Patch",
+    ].join("\n");
+    const repeatedCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${originalCondition}`,
+      `+${originalCondition}`,
+      "*** End Patch",
+    ].join("\n");
+    const invalidCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-\t\tif (typeof value == 'function') {",
+      "-\t\t\t// never serialize functions as attribute values",
+      `-${originalCondition}`,
+      "+\t\tif (typeof value == 'function') {",
+      "+\t\t\t// never serialize functions as attribute values",
+      "+\t\t} else if (value == NULL || value === false) {",
+      "+\t\t\t// attribute values false, null, and undefined are removed;",
+      "+\t\t\t// false values for aria-* and data-* are serialized below",
+      "+\t\t} else {",
+      " \t\t\tlet val = name == 'popover' && value == true ? '' : value;",
+      " \t\t\tif (name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') {",
+      "*** End Patch",
+    ].join("\n");
+    const postInitialSource = [
+      sourcePrefix,
+      "\t\tif (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      originalCondition,
+      "\t\t\tlet val = name == 'popover' && value == true ? '' : value;",
+      "\t\t\tif (name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') {",
+      "\t\t\t\tdom.setAttribute(name, val === false ? 'false' : val);",
+      "\t\t\t} else if (name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-') {",
+      "\t\t\t\tdom.setAttribute(name, val === false ? 'false' : val);",
+      "\t\t\t} else {",
+      "\t\t\t\tdom.setAttribute(name, val);",
+      "\t\t\t}",
+      "\t\t} else if (value === false) {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t} else {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t}",
+    ].join("\n");
+    const postCorrectionSource = postInitialSource.replace(
+      [
+        "\t\tif (typeof value == 'function') {",
+        "\t\t\t// never serialize functions as attribute values",
+        originalCondition,
+      ].join("\n"),
+      [
+        "\t\tif (typeof value == 'function') {",
+        "\t\t\t// never serialize functions as attribute values",
+        "\t\t} else if (value == NULL || value === false) {",
+        "\t\t\t// attribute values false, null, and undefined are removed;",
+        "\t\t\t// false values for aria-* and data-* are serialized below",
+        "\t\t} else {",
+      ].join("\n"),
+    );
+    const successfulSummary = '{"summary":"Verified false aria/data serialization and ordinary false removal."}';
+    const task = "Fix the frozen browser-facing regression in the real web project. Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, and remove every attribute with null or undefined values. Make the smallest change in src/diff/props.js and pass the supplied deterministic checks.";
+    const requests: Array<Record<string, any>> = [];
+    const executedPatches: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const instruction = String(body.messages?.[0]?.content ?? "");
+      if (instruction.includes("Post-mutation verification phase")) {
+        return jsonResponse(modelToolCall(`read-${requests.length}`, "file_read", {
+          path: requiredPath,
+          limit: 1_048_576,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation objective correction input retry phase")) {
+        return jsonResponse(modelToolCall("invalid-control-flow", "apply_patch", {
+          input: invalidCorrection,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation final objective review phase")) {
+        return jsonResponse({
+          choices: [{
+            finish_reason: "stop",
+            message: { content: successfulSummary },
+          }],
+          usage: { prompt_tokens: 300, completion_tokens: 30 },
+        });
+      }
+      if (instruction.includes("Post-mutation objective review phase")) {
+        return jsonResponse(modelToolCall("repeat-current-source", "apply_patch", {
+          input: repeatedCorrection,
+        }, 300, 60));
+      }
+      return jsonResponse(modelToolCall("patch-unreachable-false", "apply_patch", {
+        input: initialPatch,
+      }, 300, 60));
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "apply_patch") {
+        executedPatches.push(String(request.arguments?.input ?? ""));
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: "Patch applied successfully",
+          metadata: {
+            workspaceMutation: { schemaVersion: 1, changedPaths: [requiredPath] },
+          },
+          durationMs: 1,
+        };
+      }
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: JSON.stringify({
+          path: request.arguments?.path,
+          truncated: false,
+          content: executedPatches.includes(invalidCorrection)
+            ? postCorrectionSource
+            : postInitialSource,
+        }),
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent(execute);
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-invalid-false-control-flow",
+      text: task,
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths: [requiredPath],
+          toolLoopIterationBudget: 6,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === successfulSummary
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(executedPatches).toEqual([initialPatch, invalidCorrection]);
+    expect(requests).toHaveLength(6);
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "Keep one coherent sibling if/else chain",
+    );
+    expect(items).not.toContainEqual({ type: "final", text: successfulSummary });
+    expect(items.at(-2)).toEqual({
+      type: "final",
+      text: expect.stringContaining("post-write objective review accepted"),
+    });
+    expect(items.at(-1)).toEqual({ type: "status", status: "error" });
+  });
 });
 
 function createAgent(execute: ReturnType<typeof vi.fn>): ToolEnabledAgent {

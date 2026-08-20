@@ -1840,6 +1840,43 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：重跑 frozen formal 不会改变证据；最小可验证缺口是 post-correction 完整控制流未被 fail-closed，而不是 truth set、evaluator、Provider 或 fixture 异常。
 - **当前还缺的关键闭环**：语法/control-flow reachability 本地修复、新 committed identity、全部零模型 Gate、唯一 Windows formal 通过，以及后续连续候选和最终 9.5 复算。
 
+#### P0 Web TDD 实现结论：post-correction 控制流与虚假成功 fail-closed（2026-08-21）
+
+##### 已完成内容
+
+1. **`react-workspace-mutation.ts` 扩展**：
+   - 从已执行 patch 提取曾被移除的 null/false guard 路径，并只在同一 serialized-false 任务与完整 required-path 源码上做终审；
+   - 新增可达 serialized-false 分支检查，接受既有 `value !== false || name[...]` 与独立 subset 分支形状，拒绝仍把 `false` 挡在 `setAttribute` 之前的源码；
+   - 检测同级 unconditional `else` 后继续出现 `else if` 的无效分支链，并在 repeated-current-source retry 中明确要求保持单一、可达的 sibling chain。
+
+2. **`tool-agent.ts` 接入**：
+   - post-write objective review 返回 final 时，同时检查旧 null-guard 保持与 serialized-false reachability/control-flow；
+   - 首次发现缺口仍复用原有唯一 bounded input correction，correction 已耗尽后返回标准 workspace-mutation 错误终态；
+   - 保持 `6` 次既有模型调用、一次 correction、一次 input retry、required path、turn/token、Provider retry 与费用上限不变。
+
+3. **`tool-agent-workspace-mutation-structured-output.test.ts` 扩展**：
+   - 使用 `86f405f2` formal 的两次实际 patch、完整 post-write/post-correction 源码与成功 JSON 还原真实失败链；
+   - Red 证明旧实现执行两次 patch、完成第 `6` 次模型调用后仍输出成功 final/`done`；
+   - Green 证明相同调用与 patch 序列在 final review 失败关闭，同时锁定 repeated-source retry 的完整分支链指导，合法最小 predicate correction 继续通过。
+
+4. **效果**：
+   - 模型不能再凭结构合格的成功 JSON 覆盖完整源码中不可达的 aria/data `false` 行为或无效 `else` 链；
+   - 修复位于相邻 mutation owner，超过 3000 行的 `tool-agent.ts` 只增加导入、状态判断与错误接线；
+   - 本环节模型调用=`0`、新增 Provider 费用=`$0`，未启动 formal/WSL2，未重跑 `86f405f2`，未生成 runtime `.env/.env.local`。
+
+##### 验证结果
+
+- TypeScript workspace 完整 build 与独立 `verify:build` 无错误；
+- 新增真实链路回归 Red=`1 failed`、Green=`1/1`，并补语法合法的 unreachable/baseline owner 对照；workspace-mutation owner/相邻合同=`148/148`，Agent=`697 passed / 1 skipped`；
+- fixture/benchmark contract=`20/20`，`verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 全绿；
+- 关键功能验证：相同 `6` 次模型调用与两次实际 patch 不再产生虚假成功 final；既有合法 baseline correction 保持 `done`。
+
+##### 后续计划
+
+- **下一步准备做什么**：提交源码、测试和本文形成新 source identity；随后建立 detached clean harness，完成 frozen offline install、完整 build/独立 verifier、Agent/owner/合同、Windows 零凭证、敏感值/env/资源与 formal prepare-only Gate。
+- **为什么先做它**：本地 fail-closed 证明关闭了已知控制流缺口，但只有 clean committed identity 能排除主工作区、旧 dist、依赖与 fixture 漂移，并安全开放下一次付费窗口。
+- **当前还缺的关键闭环**：新 identity 全部零模型 Gate、其后唯一 Windows formal 的真实最小 patch/evaluator/终态/usage/cost/零残留，以及后续 WSL2、两个连续候选和最终 9.5 复算。
+
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
 | 文档精简与历史归档 | - | **已完成** | 压缩前 4403 行全文由 `archive-04` 保留；主文档保留目的、目标、方案、完成/验证、费用、风险和计划进度 | - | 后续历史明细只追加到新归档或专门证据，不再把逐 run 流水堆入主计划 |
@@ -1847,7 +1884,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
 | P0：Benchmark truth set / evaluator 对齐 | P0 | **已完成 zero-cost 对齐** | `coding-agent-benchmark-web-ui-truth-set/v1`、6 个正负 witness、SHA/LF 绑定、v2 fixture/evaluator、实际 Red=`1`/Green=`0` replay；定向 `20/20`、benchmark/CI/build Gate 全绿 | - | 保持 truth set、prompt、fixture、visible test 与 evaluator 单一版本绑定；任何 SHA/Schema/任务合同漂移均失败关闭 |
-| P0：Web mutation/correction 稳定化 | P0 | **`86f405f2` 外部失败已冻结，进入 correction 控制流 TDD** | r2 clean/零凭证/prepare-only 全绿；唯一 formal 触发第二次 patch，但产生相邻 `else` 与不可达 aria/data false 分支；tests/patch/task=`false/false/false`，usage/敏感值/零残留完整 | `本地 fail-closed、新 identity 与其 Gate，约 0.5 人日` | 先关闭 post-correction 语法与 reachability 缺口；不重跑 `86f405f2`、不启动其 WSL2，新 identity 外部通过前不进入完整矩阵或 P2-C |
+| P0：Web mutation/correction 稳定化 | P0 | **本地 control-flow fail-closed 已闭合，待新 identity Gate** | `86f405f2` 冻结失败不变；真实两 patch/六调用 Red→Green，完整源码检测不可达 serialized-false 路径与 invalid sibling chain；owner/相邻=`148/148`、Agent=`697 passed / 1 skipped`、build/benchmark/CI 全绿 | `新 identity 与其 Gate，约 0.25 人日` | 提交新 identity 后完成 detached clean、零凭证与 formal prepare-only；不重跑 `86f405f2`、不启动其 WSL2，新 identity 外部通过前不进入完整矩阵或 P2-C |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |

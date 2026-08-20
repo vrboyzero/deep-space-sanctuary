@@ -153,6 +153,7 @@ import {
   hasOnlyWorkspaceMutationPatchPaths,
   hasRedundantWorkspaceMutationPatchHunks,
   hasRevertedSmallestChangeCorrectionHunks,
+  hasUnreachableSerializedFalseWitnessCurrentSource,
   hasUnpreservedSerializedFalseWitnessCurrentSource,
   inspectContextOnlyWorkspaceMutationPatchPreservation,
   inspectWorkspaceMutationPatchHunks,
@@ -4161,13 +4162,20 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
           const objectiveReviewReturnedFinalOutput = workspaceMutationObjectiveReviewCall
             && (!input.structuredOutput || workspaceMutationObjectiveOutputText !== undefined);
-          if (objectiveReviewReturnedFinalOutput
-            && !workspaceMutationObjectiveInputCorrectionCall
-            && hasUnpreservedSerializedFalseWitnessCurrentSource(
+          const unreachableSerializedFalseWitness = objectiveReviewReturnedFinalOutput
+            && hasUnreachableSerializedFalseWitnessCurrentSource(
               mutationRecoverySourceMessages,
               input.text,
               successfulWorkspaceMutationPatchInputs,
-            )) {
+            );
+          if (objectiveReviewReturnedFinalOutput
+            && !workspaceMutationObjectiveInputCorrectionCall
+            && (unreachableSerializedFalseWitness
+              || hasUnpreservedSerializedFalseWitnessCurrentSource(
+                mutationRecoverySourceMessages,
+                input.text,
+                successfulWorkspaceMutationPatchInputs,
+              ))) {
             const canCorrectObjectiveInput = !workspaceMutationObjectiveInputCorrectionAttempted;
             if (canCorrectObjectiveInput) {
               workspaceMutationObjectiveReviewPending = true;
@@ -4178,7 +4186,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
               consecutiveDuplicateToolCalls = 0;
               recentToolCallTraces.length = 0;
               lastSuccessfulToolResult = undefined;
-              logWarn("[workspace-mutation] objective review accepted a false-subset predicate without the prior null/false guard; scheduling one input correction", {
+              logWarn(`[workspace-mutation] objective review accepted ${unreachableSerializedFalseWitness
+                ? "unreachable or invalid serialized-false control flow"
+                : "a false-subset predicate without the prior null/false guard"}; scheduling one input correction`, {
                 requiredPathCount: requiredChangedPaths.length,
                 conversationId: input.conversationId,
                 agentId: resolvedAgentId,
@@ -4186,7 +4196,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
               continue;
             }
             yield* emitWorkspaceMutationFailure(
-              "the post-write objective review accepted a false-subset predicate that does not preserve the prior null/false guard.",
+              unreachableSerializedFalseWitness
+                ? "the post-write objective review accepted source that leaves the required serialized-false behavior unreachable or the sibling control flow invalid."
+                : "the post-write objective review accepted a false-subset predicate that does not preserve the prior null/false guard.",
             );
             return;
           }

@@ -178,7 +178,7 @@ const MUTATION_OBJECTIVE_INPUT_CORRECTION_REASON_INSTRUCTIONS: Record<
   WorkspaceMutationObjectiveInputCorrectionReason,
   string
 > = {
-  repeated_current_source: "Local validation rejected the preceding correction because it only repeated current-source lines and produced no semantic delta. Re-evaluate every task requirement against the current source. For a named subset, check the task's positive and outside/negative witnesses against the current predicate, then change only the smallest task-relevant expression or statement.",
+  repeated_current_source: "Local validation rejected the preceding correction because it only repeated current-source lines and produced no semantic delta. Re-evaluate every task requirement against the current source. For a named subset, check the task's positive and outside/negative witnesses against the current predicate, then change only the smallest task-relevant expression or statement. Keep one coherent sibling if/else chain: do not place required false handling behind value !== false, consume all false values before the named subset, or append else if after an unconditional else.",
 };
 
 const MUTATION_FINAL_OBJECTIVE_REVIEW_INSTRUCTION = [
@@ -1258,25 +1258,32 @@ function readLatestWorkspaceMutationSourceEvidence(
   return sources;
 }
 
+function collectPriorSerializedFalseGuardPaths(
+  priorSuccessfulPatchInputs: readonly string[],
+): string[] {
+  const paths = new Set<string>();
+  for (const patchInput of priorSuccessfulPatchInputs) {
+    for (const change of collectWorkspaceMutationPatchLineChanges(patchInput) ?? []) {
+      if (change.removed.some((line) => (
+        /\bvalue\s*!=\s*NULL\b/.test(line)
+          && /\bvalue\s*!==?\s*false\b/.test(line)
+      ))) {
+        paths.add(normalizeSourcePath(change.path));
+      }
+    }
+  }
+  return [...paths];
+}
+
 export function hasUnpreservedSerializedFalseWitnessCurrentSource(
   messages: readonly WorkspaceMutationSourceMessage[],
   taskText: string,
   priorSuccessfulPatchInputs: readonly string[],
 ): boolean {
   if (!taskRequiresSerializedFalseWitness(taskText)) return false;
-  const priorGuardPaths = new Set<string>();
-  const priorHadNullAndFalseGuard = priorSuccessfulPatchInputs.some((patchInput) => (
-    (collectWorkspaceMutationPatchLineChanges(patchInput) ?? []).some((change) => (
-      change.removed.some((line) => {
-        const matchesGuard = /\bvalue\s*!=\s*NULL\b/.test(line)
-          && /\bvalue\s*!==?\s*false\b/.test(line);
-        if (matchesGuard) priorGuardPaths.add(normalizeSourcePath(change.path));
-        return matchesGuard;
-      })
-    )
-  )));
-  if (!priorHadNullAndFalseGuard) return false;
-  return readLatestWorkspaceMutationSourceEvidence(messages, [...priorGuardPaths]).some((source) => {
+  const priorGuardPaths = collectPriorSerializedFalseGuardPaths(priorSuccessfulPatchInputs);
+  if (priorGuardPaths.length === 0) return false;
+  return readLatestWorkspaceMutationSourceEvidence(messages, priorGuardPaths).some((source) => {
     const lines = source.split(/\r?\n/);
     return lines.some((line, index) => {
       if (!/}\s*else\s+if\s*\(/.test(line)) return false;
@@ -1305,6 +1312,78 @@ function consumesFalseWitnessInElseIf(line: string): boolean {
   return new RegExp(
     String.raw`\|\|\s*(?:${reference}\s*===?\s*false|false\s*===?\s*${reference})\s*\)\s*\{\s*$`,
   ).test(line);
+}
+
+function readSiblingBranchBody(lines: readonly string[], branchIndex: number): string[] {
+  const indent = /^([ \t]*)/.exec(lines[branchIndex] ?? "")?.[1] ?? "";
+  const body: string[] = [];
+  for (let index = branchIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    if (!line.trim()) {
+      body.push(line);
+      continue;
+    }
+    if (line.startsWith(indent)) {
+      const remainder = line.slice(indent.length);
+      if (!/^[ \t]/.test(remainder) && /^}\s*(?:else\b|$)/.test(remainder)) {
+        break;
+      }
+    }
+    body.push(line);
+  }
+  return body;
+}
+
+function hasElseIfAfterUnconditionalElse(lines: readonly string[]): boolean {
+  return lines.some((line, branchIndex) => {
+    const match = /^([ \t]*)}\s*else\s*{\s*$/.exec(line);
+    if (!match) return false;
+    const indent = match[1] ?? "";
+    for (let index = branchIndex + 1; index < lines.length; index += 1) {
+      const candidate = lines[index] ?? "";
+      if (!candidate.trim()) continue;
+      if (!candidate.startsWith(indent)) return false;
+      const remainder = candidate.slice(indent.length);
+      if (/^[ \t]/.test(remainder)) continue;
+      return /^}\s*else\s+if\b/.test(remainder);
+    }
+    return false;
+  });
+}
+
+function branchPreservesSerializedFalseSubset(condition: string, body: readonly string[]): boolean {
+  const bodyText = body.join("\n");
+  if (!/\.setAttribute\s*\(/.test(bodyText)) return false;
+  const conditionSelectsSubset = /\bname\b/.test(condition) && /&&|\|\|/.test(condition);
+  const bodySelectsSubset = /\bname\b/.test(bodyText) && /\.removeAttribute\s*\(/.test(bodyText);
+  return conditionSelectsSubset || bodySelectsSubset;
+}
+
+export function hasUnreachableSerializedFalseWitnessCurrentSource(
+  messages: readonly WorkspaceMutationSourceMessage[],
+  taskText: string,
+  priorSuccessfulPatchInputs: readonly string[],
+): boolean {
+  if (!taskRequiresSerializedFalseWitness(taskText)) return false;
+  const priorGuardPaths = collectPriorSerializedFalseGuardPaths(priorSuccessfulPatchInputs);
+  if (priorGuardPaths.length === 0) return false;
+  return readLatestWorkspaceMutationSourceEvidence(messages, priorGuardPaths).some((source) => {
+    const lines = source.split(/\r?\n/);
+    if (hasElseIfAfterUnconditionalElse(lines)) return true;
+    if (!lines.some((line) => /\.setAttribute\s*\(/.test(line))) return false;
+    const hasReachableSerializedFalseBranch = lines.some((line, index) => {
+      if (!/\bvalue\s*(?:===?|!==?)\s*false\b/.test(line)
+        && !/\bfalse\s*(?:===?|!==?)\s*value\b/.test(line)) {
+        return false;
+      }
+      const admitsFalse = /\bvalue\s*===?\s*false\b/.test(line)
+        || /\bfalse\s*===?\s*value\b/.test(line)
+        || (/\bvalue\s*!==?\s*false\b/.test(line) && line.includes("||"));
+      return admitsFalse
+        && branchPreservesSerializedFalseSubset(line, readSiblingBranchBody(lines, index));
+    });
+    return !hasReachableSerializedFalseBranch;
+  });
 }
 
 function leavesPriorFalseRemovalBeforeCorrectionTarget(

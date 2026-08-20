@@ -17,6 +17,7 @@ import {
   hasBroadenedSmallestChangeCorrectionHunks,
   hasRevertedSmallestChangeCorrectionHunks,
   hasRedundantWorkspaceMutationPatchHunks,
+  hasUnreachableSerializedFalseWitnessCurrentSource,
   inspectContextOnlyWorkspaceMutationPatchPreservation,
   inspectWorkspaceMutationPatchHunks,
   normalizeWorkspaceMutationRecoveryToolCall,
@@ -603,6 +604,50 @@ describe("ReAct workspace mutation recovery", () => {
       [internallyHandledPriorPatch],
       task,
     )).toBe(false);
+  });
+
+  it("distinguishes a reachable serialized-false route from a valid but unreachable chain", () => {
+    const requiredPath = "src/diff/props.js";
+    const priorPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-\t\t} else if (value != NULL && value !== false) {",
+      "+\t\t} else if (value != NULL && value !== false) {",
+      "*** End Patch",
+    ].join("\n");
+    const task = "Preserve false aria-* attribute serialization with the smallest change while preserving ordinary false behavior.";
+    const sourceEvidence = (content: string) => [{
+      role: "tool",
+      content: JSON.stringify({ path: requiredPath, truncated: false, content }),
+    }];
+    const reachableSource = [
+      "\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {",
+      "\t\t\tdom.setAttribute(name, value);",
+      "\t\t} else {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t}",
+    ].join("\n");
+    const unreachableSource = [
+      "\t\t} else if (value != NULL && value !== false) {",
+      "\t\t\tdom.setAttribute(name, value);",
+      "\t\t} else if (value === false) {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t} else {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t}",
+    ].join("\n");
+
+    expect(hasUnreachableSerializedFalseWitnessCurrentSource(
+      sourceEvidence(reachableSource),
+      task,
+      [priorPatch],
+    )).toBe(false);
+    expect(hasUnreachableSerializedFalseWitnessCurrentSource(
+      sourceEvidence(unreachableSource),
+      task,
+      [priorPatch],
+    )).toBe(true);
   });
 
   it("normalizes only colonless Update File headers inside a recovery patch envelope", () => {
