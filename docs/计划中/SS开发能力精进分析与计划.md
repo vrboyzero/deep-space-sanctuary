@@ -2,11 +2,11 @@
 
 > 当前版本：精简维护版
 >
-> 评估日期：2026-08-17；最新进度复核：2026-08-20
+> 评估日期：2026-08-17；最新进度复核：2026-08-21
 >
 > 横向评估基线：`5b36691d9aba6d9286cf43e912d91b0170bbef0d`
 >
-> 当前 P0 最新 formal identity：`71b4a887eed016924739fdbb7a576a53dbd0e072`，该 identity 的唯一 Windows formal 已失败并永久冻结；无工具 JSON 绕过已关闭，但任务子集谓词与后续 semantic correction 仍需在用户恢复后继续收敛
+> 当前 P0 最新 formal identity：`86f405f2a5ff8a22123246b9e434bf6581801336`，该 identity 的唯一 Windows formal 已失败并永久冻结；bounded correction 已真实触发，但 correction 后的语法/control-flow reachability 与虚假成功摘要仍需继续收敛
 >
 > **完整回读备份**：本版压缩前的 4403 行完整全文保存在 [SS开发能力精进分析与计划-04.md](../archive/SS开发能力精进分析与计划-04.md)（`E:\project\star-sanctuary\docs\archive\SS开发能力精进分析与计划-04.md`，SHA-256 `91cdd689386031e44c0b5a181b52728e621b2d317f9638bc50efd63d1246bb40`）。需要逐 identity 实现结论、完整命令、artifact/hash、费用流水或历史后续计划时，应回查该备份。
 >
@@ -1008,15 +1008,15 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 | 项目 | 当前值 |
 | --- | ---: |
-| observed conservative upper | `$2.52687297` |
+| observed conservative upper | `$2.53220965` |
 | reserved | `$0.94221000` |
 | unobservable reserve | `$0.80000000` |
-| 一般费用守卫 | `34.16163011 RMB < 50 RMB` |
-| Stage 0D 最坏累计守卫 | `48.23972651 RMB < 50 RMB` |
-| 本次 formal 实际窗口 / 上限 | `$3.32228551 -> $3.32687297 / $3.42228551` |
-| 本次 formal 实际 Provider cost | `$0.00458746` |
+| 一般费用守卫 | `34.20432355 RMB < 50 RMB` |
+| Stage 0D 最坏累计守卫 | `48.28241995 RMB < 50 RMB` |
+| 本次 formal 实际窗口 / 上限 | `$3.32687297 -> $3.33220965 / $3.42687297` |
+| 本次 formal 实际 Provider cost | `$0.00533668` |
 
-`71b4a88` 实际 Provider cost=`$0.00458746` 已计入，model/provider calls=`7/7` 且 usage complete。若未来再预留一次完整 `$0.10`，Stage 0D 最坏累计守卫为 `49.03972651 RMB < 50 RMB`；本轮仍按用户要求暂停，不因费用尚有余量自动启动下一次调用。
+`86f405f2` 实际 Provider cost=`$0.00533668` 已计入，model/provider calls=`7/7` 且 usage complete。若未来再预留一次完整 `$0.10`，Stage 0D 最坏累计守卫为 `49.08241995 RMB < 50 RMB`；只有新的本地修复、提交和 detached clean Gate 全绿后才可开放下一次调用。
 
 `4563426` 与 `69cff2e` 唯一 formal 均已产生完整 provider-reported usage，实际 cost=`$0.00535015/$0.00607427` 并计入上述口径；两次 formal 均永久冻结。下一个费用窗口只在新的代码修复、提交和 detached clean Gate 全绿后开放，不能用于重跑 `69cff2e`、`4563426`、`f92f880` 或更早 identity。
 
@@ -1765,6 +1765,81 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：本地 mock 行为闭环不能替代固定 source/harness identity 的可复算证据；先冻结并验证 clean identity，才能排除主工作区、旧 dist、依赖或 fixture 漂移后再决定是否付费。
 - **当前还缺的关键闭环**：新 identity 全部零模型 Gate、其后唯一 Windows formal 的真实最小 patch/evaluator/终态/usage/cost/零残留，以及后续 WSL2、两个连续候选和最终 9.5 复算。
 
+#### P0 Web Gate 实现结论：`86f405f2` detached clean、r2 零凭证与 formal prepare-only（2026-08-21）
+
+##### 已完成内容
+
+1. **r1 provider preflight 归因与 cache 恢复**：
+   - r1 在 fixture/artifact 创建前以 `dependency_cache_mismatch` 失败，source、license、manifest 与 execution-network 检查均通过，模型调用与新增费用=`0/$0`；
+   - 漂移收敛到 pinned cache 中 truth-set replay 遗留的唯一空目录 `node_modules/.vite-temp`；经 workspace/cache containment、目录、空内容和非 reparse 校验后送入 Windows 回收站；
+   - cache content SHA-256 恢复为冻结值 `0f293dccd734f422fda087beb2ed29ea29d225e25fa3b7ef341bf24bc65eb92d`，旧 receipt 五项 preflight 重新全绿；r1 runtime env cleanup SHA-256=`97a8b3cbb4747f26807565f5cb8908b807f38b4f9d8008216bbc1fa226502606`。
+
+2. **Windows r2 零凭证 dry-run**：
+   - artifact=`artifacts/p0-web-semantic-rejection-86f405f-preact-windows-dry-run-r2`，run=`real-web-ui-regression-windows-a1-1787241361955`，source/harness clean exact `86f405f2a5ff8a22123246b9e434bf6581801336`；
+   - production/repository snapshot preflight=`passed/passed`，model=`deepseek-v4-flash`，credentials/usage=`false/not_reached`，events/trace/patch=`0/0/0 bytes`；
+   - report SHA-256=`f054d9f8716ca416a2b2e06714e67d2c378c03829095ae199605d8330bbf564f`，receipt SHA-256=`23e4b031d0401342ea55973a83f12103eae0341d3c734402427b4a9816d9cb1b`；Gateway 首 stdout/端口/认证=`2,032/38,509/38,517ms`，stderr=`0 bytes`，正常停止且端口/子进程退出。
+
+3. **敏感值、env、资源与 formal prepare-only**：
+   - clean harness、r2 artifact/fixture/runtime 与 r1 runtime 受控扫描 `9,260` 个常规文件、排除 `13` 个 `.git/node_modules` 目录，unreadable/Provider key/repository-input/剩余 env=`0/0/0/0`；
+   - r2 runtime `.env/.env.local` 经 containment、常规文件、非 reparse 与 SHA-256 校验后送入回收站；cleanup/scan receipt SHA-256=`78cb8adaecc1588d15d4bb54993a983830789a9dae216b004c05c3e317e4432c/f164e8ed70bbb1d713f353419e9961bbcb537c8a9c10118d8afcf47794f4e2cd`；
+   - formal repository input SHA-256=`76a46be0c16b8b2945e5b4efc9f721ebcd4f1163b29e63c26001f68885c23f28`，prepare-only 确认 Provider key/env path in child args=`false/false`、Gateway/benchmark spawned=`false/false`；
+   - 模型=`deepseek-v4-flash`、Provider retry=`0`、`12 turns / 24,000 tokens`，费用窗口=`$3.32687297 -> $3.42687297`，预留后 Stage 0D 最坏守卫=`49.03972651 RMB < 50 RMB`，formal 目标/端口/任务进程=`0/0/0`。
+
+4. **效果**：
+   - `86f405f2` 通过 clean identity、构建测试、双 preflight、零 usage、凭据隔离、敏感值、费用与零残留 Gate；
+   - r1 仅保留为本地 cache 污染诊断证据，不计产品成功或失败；r2 模型调用=`0`、新增 Provider 费用=`$0`；
+   - 只开放该 identity 唯一一次 Windows formal，不覆盖 `71b4a88` 及更早冻结证据。
+
+##### 验证结果
+
+- TypeScript workspace 完整 build 与独立 `verify:build` 无错误；
+- Agent=`695 passed / 1 skipped`、workspace-mutation owner/相邻合同=`146/146`、launcher/fixture/runner/verifier=`74/74`；
+- `verify:coding-benchmark`、`verify:coding-ci`、双 preflight、敏感扫描、env 回收、资源收敛和 formal prepare-only 全绿。
+
+##### 后续计划
+
+- **下一步准备做什么**：使用已冻结 formal input 执行且只执行一次 `86f405f2` Windows formal。
+- **为什么先做它**：全部零模型 Gate 已关闭，剩余唯一证据是 repeated-current-source reason 能否在真实 Provider 中形成行为正确且语法合法的最小 correction。
+- **当前还缺的关键闭环**：formal 的 patch、冻结测试/evaluator、唯一终态、usage/cost、敏感值与零残留；未全绿不进入 WSL2、完整矩阵、连续候选或 P2-C。
+
+#### P0 Web formal 实现结论：`86f405f2` 无效 correction 控制流失败（2026-08-21）
+
+##### 已完成内容
+
+1. **唯一 Windows formal 执行并永久冻结**：
+   - artifact=`artifacts/p0-web-semantic-rejection-86f405f-preact-windows-formal-r1`，run=`real-web-ui-regression-windows-a1-1787268815121`，source/harness clean exact `86f405f2a5ff8a22123246b9e434bf6581801336`；
+   - report/changes.patch SHA-256=`221978215f62d9c058a699bf48dea0a3555d75e03bb4a8de821d3c291be0d4ea/dc5b6bf7bcf285f562b0fd4ac8694206bcfb1e203fcc46230aa982ecfc0bd535`；
+   - status/failure=`failed/product_workflow`；模型=`deepseek-v4-flash`，Provider retry=`0`，预算=`12 turns / 24,000 tokens / $0.10`；formal 只执行一次，禁止重跑且不启动该 identity 的 WSL2。
+
+2. **mutation、correction 与 evaluator 归因**：
+   - Tool 序列=`list_files -> file_read -> apply_patch -> file_read -> apply_patch -> file_read`；初始 patch 保留 `value !== false` guard，却把 aria/data false 序列化放在该 guard 内，因此目标分支不可达；
+   - correction 将 guard 改为先吞掉 `null/false` 的空分支，并在既有 `else if (value === false)` 前新增另一个 `else`，最终形成连续两个 `else` 的无效控制流；完整 post-write source 已复读，但 final review 仍错误接受并声称行为已验证；
+   - 冻结 visible test 因语法错误返回非零，evaluation=`taskCompleted/testsPassed/patchAccepted/regression=false/false/false/1`，evaluator 正确拒绝，不能把 changed path、成功摘要或 `run.completed` 误记为任务成功；
+   - 本次直接失败形状从“重复 current-source”变化为“correction 产生无效且目标不可达的完整控制流”，证明新 reason 被消费，但尚未保证 correction 后的语法与 reachability。
+
+3. **usage、费用、敏感值与资源闭环**：
+   - input/output=`12,482/913`，model/provider calls=`7/7`，Provider cost=`$0.00533668`，usage=`complete`；observed conservative upper 更新为 `$2.53220965`，Stage 0D 当前最坏守卫=`48.28241995 RMB < 50 RMB`；
+   - formal runtime `.env/.env.local` 经 containment、常规文件、非 reparse point 与 SHA-256 校验后送入 Windows 回收站，剩余=`0`；cleanup log SHA-256=`187d719ef340ef3237c05b9d490769c9438f9f57988857ac8ac0132d56c5a64d`；
+   - clean harness、formal artifact/fixture/runtime 受控扫描 `9,560` 个常规文件、排除 `13` 个依赖目录，unreadable/Provider key/repository-input/剩余 env=`0/0/0/0`；scan receipt SHA-256=`2b81d6b6b3a03f90bab2245e4cab27d96160fee10d908b6f5f443ee83d2664d`；
+   - coding-ci manifest SHA-256=`266062aaa66d580b369fc630b4b7dbeb139c4172e628b40265cd1cf043a5120a`，唯一 terminal=`run.completed`，Gateway 首 stdout/端口/认证=`2,028/11,653/11,665ms`，stderr=`0 bytes`；listener/相关任务进程=`0/0`。
+
+4. **效果**：
+   - repeated-current-source 的 bounded retry 已真实触发第二次 mutation，但 Web 代表任务仍未完成，本次不计入 9.5 成功候选、不从历史 `37` 项失败分母移除；
+   - truth set、visible test 与 evaluator 正确暴露语法和行为错误，不需要放宽 evaluator、预算、retry 或 changed-path 合同；
+   - `86f405f2` 已永久冻结；后续只能在新 identity 以零费用 TDD 关闭 correction 后语法/control-flow reachability 缺口。
+
+##### 验证结果
+
+- formal 双 preflight、source/harness identity、唯一终态、usage completeness、敏感扫描、env 回收与端口/进程退出均通过；
+- `testsPassed=false`、`patchAccepted=false`、`regressionCount=1`，visible test SHA-256=`5185e961e2cc0393adc23629e902896b580f79e5876ad5c2ad5ed2a1c2aafcaf`；
+- patch、report、manifest、events、trace、result、diagnostics、status、preflight、receipt 与 cleanup/scan receipt 均已计算 SHA-256。
+
+##### 后续计划
+
+- **下一步准备做什么**：先补本地 red/green，覆盖 correction 在完整当前源码中制造相邻 `else`、继续令 aria/data false 分支不可达，却被 final review 接受为成功摘要的真实失败形状。
+- **为什么先做它**：重跑 frozen formal 不会改变证据；最小可验证缺口是 post-correction 完整控制流未被 fail-closed，而不是 truth set、evaluator、Provider 或 fixture 异常。
+- **当前还缺的关键闭环**：语法/control-flow reachability 本地修复、新 committed identity、全部零模型 Gate、唯一 Windows formal 通过，以及后续连续候选和最终 9.5 复算。
+
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
 | 文档精简与历史归档 | - | **已完成** | 压缩前 4403 行全文由 `archive-04` 保留；主文档保留目的、目标、方案、完成/验证、费用、风险和计划进度 | - | 后续历史明细只追加到新归档或专门证据，不再把逐 run 流水堆入主计划 |
@@ -1772,7 +1847,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
 | P0：Benchmark truth set / evaluator 对齐 | P0 | **已完成 zero-cost 对齐** | `coding-agent-benchmark-web-ui-truth-set/v1`、6 个正负 witness、SHA/LF 绑定、v2 fixture/evaluator、实际 Red=`1`/Green=`0` replay；定向 `20/20`、benchmark/CI/build Gate 全绿 | - | 保持 truth set、prompt、fixture、visible test 与 evaluator 单一版本绑定；任何 SHA/Schema/任务合同漂移均失败关闭 |
-| P0：Web mutation/correction 稳定化 | P0 | **本地 semantic-delta 修复已闭合，待新 identity 零模型 Gate** | `71b4a88` 冻结失败不变；新增普通 false witness/context-only Red→Green，repeated-current-source reason 进入 bounded retry；owner=`146/146`、Agent=`695 passed / 1 skipped`、build/benchmark/CI 全绿 | `新 identity 与其 Gate，约 0.25 人日` | 提交新 identity 后完成 detached clean 与 formal prepare-only；不重跑 `71b4a88`、不启动其 WSL2，新 identity 外部通过前不进入完整矩阵或 P2-C |
+| P0：Web mutation/correction 稳定化 | P0 | **`86f405f2` 外部失败已冻结，进入 correction 控制流 TDD** | r2 clean/零凭证/prepare-only 全绿；唯一 formal 触发第二次 patch，但产生相邻 `else` 与不可达 aria/data false 分支；tests/patch/task=`false/false/false`，usage/敏感值/零残留完整 | `本地 fail-closed、新 identity 与其 Gate，约 0.5 人日` | 先关闭 post-correction 语法与 reachability 缺口；不重跑 `86f405f2`、不启动其 WSL2，新 identity 外部通过前不进入完整矩阵或 P2-C |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |
