@@ -1919,6 +1919,44 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：全部零模型 Gate 已关闭，当前唯一缺失证据是完整源码 control-flow/reachability 终审能否在真实 Provider 中拒绝错误 correction，并最终形成行为正确、语法合法的最小 patch。
 - **当前还缺的关键闭环**：formal 的 patch、冻结测试/evaluator、唯一终态、usage/cost、敏感值与零残留；未全绿不进入 WSL2、完整矩阵、连续候选或 P2-C。
 
+#### P0 Web formal 实现结论：`2b3638d` patch context mismatch 失败（2026-08-21）
+
+##### 已完成内容
+
+1. **唯一 Windows formal 执行并永久冻结**：
+   - artifact=`artifacts/p0-web-control-flow-2b3638d-preact-windows-formal-r1`，run=`real-web-ui-regression-windows-a1-1787271581660`，source/harness clean exact `2b3638dc8f8c85a1c892f461a30621bbda0801db`；
+   - report/events/trace SHA-256=`bed275041c4fd9f33bb077f910d4bcb2dca80ccd8146a5df23f74e7388bf28f4/9de18a207c8456a571d3853e86ad131252b02168be4ebda77faf782f54a8a0ef/1a47753b4f92012f5b05ff244d7538b8f920412800d3f14c0feab57a17b21b6e`；
+   - status/failure=`failed/product_workflow`；模型=`deepseek-v4-flash`，Provider retry=`0`，预算=`12 turns / 24,000 tokens / $0.10`；formal 只执行一次，禁止重跑且不启动该 identity 的 WSL2。
+
+2. **mutation 与失败归因**：
+   - Tool 序列=`list_files -> file_read -> apply_patch -> apply_patch`；模型读取 `src/diff/props.js` 后，两次 patch 均把真实的 `else { dom.removeAttribute(name); }` 错写为空 `else {}` 上下文；
+   - 两次 `apply_patch` 均以 `input_error/Failed to find expected lines` 失败，workspace baseline/current hash 相同、changed paths=`0`、changes.patch=`0 bytes`；
+   - 唯一 terminal=`run.failed`，evaluation=`taskCompleted/testsPassed/patchAccepted/regression=false/false/false/1`，result=`null`；完整源码 control-flow/reachability 终审尚未进入执行；
+   - 本次直接失败形状从“无效 correction 被虚假接受”变化为“首次 mutation 的 patch context 与已读当前源码不一致，既有一次 tool input retry 仍重复错误上下文”。
+
+3. **usage、费用、敏感值与资源闭环**：
+   - input/output=`6,301/699`，model/provider calls=`3/3`，Provider cost=`$0.00231405`，usage=`complete`；observed conservative upper 更新为 `$2.53452370`，Stage 0D 当前最坏守卫=`48.30093235 RMB < 50 RMB`；
+   - formal runtime `.env/.env.local` 经 containment、常规文件、非 reparse point 与 SHA-256 校验后送入 Windows 回收站，剩余=`0`；cleanup log SHA-256=`3566bd736cf96be6b3cf6d3f811b741558cac3e654fa220e5b7eddd495b9cfeb`；
+   - clean harness、artifact、fixture、runtime 受控扫描 `9,558` 个常规文件、排除 `13` 个依赖目录，unreadable/Provider key/repository-input/剩余 env=`0/0/0/0`；scan receipt SHA-256=`9d037b78b7e38dacb720c71af122d6f4544049286a2c1ec422d92e12271f191a`；
+   - Gateway 首 stdout/端口/认证=`2,033/11,112/11,120ms`，stderr=`0 bytes`，停止=`15ms`；post-run repository/cache preflight 五项 passed，listener/相关任务进程=`0/0`。
+
+4. **效果**：
+   - `2b3638d` 的完整源码 fail-closed 逻辑没有被反证，但尚未获得真实 mutation，因为 patch 在写入前即被上下文校验拒绝；
+   - evaluator、truth set、fixture、Provider route 与费用观测均正常，不需要放宽合同、增加 retry、提高 turn/token 或费用上限；
+   - Web 代表任务仍未完成，本次不计入 9.5 成功候选、不从历史 `37` 项失败分母移除，也不进入 WSL2、完整矩阵或 P2-C。
+
+##### 验证结果
+
+- formal 双 preflight、source/harness identity、唯一终态、usage completeness、敏感扫描、env 回收、post-run cache 与端口/进程退出均通过；
+- `testsPassed=false`、`patchAccepted=false`、`regressionCount=1`，coding-ci manifest SHA-256=`e5ae4cef7d00e74f99491d541096149e4b618e8e5963feb81028e1f9acc5b9cd`；
+- patch=`0 bytes`、changed paths=`0`，两次 tool failure 均由实际 current source 与 patch expected context 的差异直接复核。
+
+##### 后续计划
+
+- **下一步准备做什么**：先补本地 Red/Green，使用本次真实非空 `else` 源码与两次错误 patch，验证 `apply_patch input_error` 后的 bounded recovery 能获得 required path 当前上下文并生成可应用的最小 patch。
+- **为什么先做它**：重跑 frozen formal 不会改变模型已见输入；当前最窄缺口是 retry 只收到失败 patch 的 expected lines，未纠正它对实际 current source 的错误假设。
+- **当前还缺的关键闭环**：tool input recovery 本地修复、新 committed identity、全部零模型 Gate、唯一 Windows formal 真实写入并通过 evaluator，以及后续连续候选和最终 9.5 复算。
+
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
 | 文档精简与历史归档 | - | **已完成** | 压缩前 4403 行全文由 `archive-04` 保留；主文档保留目的、目标、方案、完成/验证、费用、风险和计划进度 | - | 后续历史明细只追加到新归档或专门证据，不再把逐 run 流水堆入主计划 |
@@ -1926,7 +1964,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
 | P0：Benchmark truth set / evaluator 对齐 | P0 | **已完成 zero-cost 对齐** | `coding-agent-benchmark-web-ui-truth-set/v1`、6 个正负 witness、SHA/LF 绑定、v2 fixture/evaluator、实际 Red=`1`/Green=`0` replay；定向 `20/20`、benchmark/CI/build Gate 全绿 | - | 保持 truth set、prompt、fixture、visible test 与 evaluator 单一版本绑定；任何 SHA/Schema/任务合同漂移均失败关闭 |
-| P0：Web mutation/correction 稳定化 | P0 | **全部零模型 Gate 已闭合，待唯一 Windows formal** | `2b3638d` clean detached；Agent=`697 passed / 1 skipped`、owner/相邻=`148/148`、launcher/fixture/runner/verifier=`74/74`；dry-run 双 preflight、零 usage、敏感值/env/资源与 prepare-only 全绿 | `唯一 Windows formal 及收尾，约 0.25 人日` | 执行且只执行一次 `2b3638d` Windows formal；失败则冻结并回到新证据 TDD，通过前不进入 WSL2、完整矩阵或 P2-C |
+| P0：Web mutation/correction 稳定化 | P0 | **`2b3638d` formal 已冻结失败，待 patch-context recovery TDD** | 双 preflight/usage/资源全绿；两次 `apply_patch` 均因遗漏真实 `dom.removeAttribute(name);` 上下文而 `input_error`，changed paths/patch=`0/0`；唯一终态=`run.failed` | `新 TDD identity、Gate 与 formal，约 0.5 人日` | 基于真实两次错误 patch补 bounded current-source recovery；不重跑 `2b3638d`、不启动其 WSL2，新 identity 外部通过前不进入完整矩阵或 P2-C |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |
