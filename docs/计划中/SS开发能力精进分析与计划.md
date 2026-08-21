@@ -1957,6 +1957,38 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：重跑 frozen formal 不会改变模型已见输入；当前最窄缺口是 retry 只收到失败 patch 的 expected lines，未纠正它对实际 current source 的错误假设。
 - **当前还缺的关键闭环**：tool input recovery 本地修复、新 committed identity、全部零模型 Gate、唯一 Windows formal 真实写入并通过 evaluator，以及后续连续候选和最终 9.5 复算。
 
+#### P0 Web TDD 实现结论：patch-context trailing block body 补全（2026-08-21）
+
+##### 已完成内容
+
+1. **`react-workspace-mutation.ts` 扩展**：
+   - 保持 task-relevant context 的既有 `512` 字符后置窗口、`4,096` 总字符预算与最多 `6` 项边界不变；
+   - 当完整行投影恰好截止于以 `{` 结尾的 block header 时，在剩余字符预算允许的前提下补入紧邻的第一条 body line；
+   - 扩展后的范围继续参与既有重叠、完整行、总字符与 token 投影检查，不增加模型阶段、retry、turn/token 或费用上限。
+
+2. **`tool-agent-workspace-mutation-structured-output.test.ts` 扩展**：
+   - 使用 `2b3638d` formal 的 Preact CRLF 分支、非空 `else` body 与两次错误 patch 形状，复现 task context 截止于 `else {`、遗漏 `dom.removeAttribute(name);` 的真实边界；
+   - 通过公共 `ToolEnabledAgent.run()` seam 和唯一 Provider mock 边界验证：首次 patch 以 `input_error` 失败后，atomic correction 从结构化 `file_read` evidence 重建可应用 patch；
+   - 断言完整 body line、两次实际 patch、既有 verification/final review、合法 structured output 与最终 `done`，不放宽 required-path、semantic 或 evaluator 合同。
+
+3. **效果**：
+   - bounded correction 不再把真实非空 `else` 错认成空 body，可按当前源码重建最小 patch；
+   - 相比直接把全局后置窗口扩大到 `1,024`，局部补全不会挤掉同文件第二个 task-relevant occurrence，也不会使紧 token budget 下的完整 `file_read` evidence 被丢弃；
+   - 本环节模型调用=`0`、新增 Provider 费用=`$0`，observed conservative upper 仍为 `$2.53452370`，Stage 0D 当前最坏守卫仍为 `48.30093235 RMB < 50 RMB`；未启动 formal/WSL2，未重跑 `2b3638d`。
+
+##### 验证结果
+
+- TypeScript workspace 完整 build 与独立 `verify:build` 无错误；
+- 新增回归 Red=`1 failed`（首段 decoded context 精确截止于 `else {`）、Green=`1/1`；workspace-mutation owner/相邻=`151/151`，Agent=`698 passed / 1 skipped`；
+- `verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 全绿；
+- 关键功能验证：同一 CRLF 源码进入 `file_read -> failed apply_patch -> atomic correction -> verification -> final review`，第二次 patch 保留真实 `dom.removeAttribute(name);` 上下文并最终状态=`done`。
+
+##### 后续计划
+
+- **下一步准备做什么**：提交源码、测试和本文形成新 source identity；随后建立 detached clean harness，完成 frozen offline install、完整 build/独立 verifier、Agent/owner/合同、Windows 零凭证、敏感值/env/资源与 formal prepare-only Gate。
+- **为什么先做它**：主工作区 Red/Green 已关闭已知 patch-context 缺口，但只有 committed clean identity 能排除旧 dist、依赖、fixture 与工作区漂移，并安全开放下一次唯一付费 formal。
+- **当前还缺的关键闭环**：新 identity 全部零模型 Gate、其后唯一 Windows formal 的真实写入与 evaluator 通过，以及后续 WSL2、两个连续候选和最终 9.5 复算。
+
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
 | 文档精简与历史归档 | - | **已完成** | 压缩前 4403 行全文由 `archive-04` 保留；主文档保留目的、目标、方案、完成/验证、费用、风险和计划进度 | - | 后续历史明细只追加到新归档或专门证据，不再把逐 run 流水堆入主计划 |
@@ -1964,7 +1996,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
 | P0：Benchmark truth set / evaluator 对齐 | P0 | **已完成 zero-cost 对齐** | `coding-agent-benchmark-web-ui-truth-set/v1`、6 个正负 witness、SHA/LF 绑定、v2 fixture/evaluator、实际 Red=`1`/Green=`0` replay；定向 `20/20`、benchmark/CI/build Gate 全绿 | - | 保持 truth set、prompt、fixture、visible test 与 evaluator 单一版本绑定；任何 SHA/Schema/任务合同漂移均失败关闭 |
-| P0：Web mutation/correction 稳定化 | P0 | **`2b3638d` formal 已冻结失败，待 patch-context recovery TDD** | 双 preflight/usage/资源全绿；两次 `apply_patch` 均因遗漏真实 `dom.removeAttribute(name);` 上下文而 `input_error`，changed paths/patch=`0/0`；唯一终态=`run.failed` | `新 TDD identity、Gate 与 formal，约 0.5 人日` | 基于真实两次错误 patch补 bounded current-source recovery；不重跑 `2b3638d`、不启动其 WSL2，新 identity 外部通过前不进入完整矩阵或 P2-C |
+| P0：Web mutation/correction 稳定化 | P0 | **patch-context recovery TDD 已完成，待新 identity Gate** | `2b3638d` formal 永久冻结；CRLF Red 精确复现 context 截止 `else {`，局部 trailing body 补全 Green；owner/相邻=`151/151`、Agent=`698 passed / 1 skipped`、build/benchmark/CI 全绿 | `新 identity、Gate 与 formal，约 0.5 人日` | 提交并建立 detached clean Gate；不重跑 `2b3638d`、不启动其 WSL2，新 identity 外部通过前不进入完整矩阵或 P2-C |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |

@@ -889,6 +889,185 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("rebuilds an atomic patch from the complete current branch context", async () => {
+    const requiredPath = "src/diff/props.js";
+    const originalCondition = "\t\t} else if (value != NULL && value !== false) {";
+    const correctedCondition = "\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {";
+    const removalLine = "\t\t\tdom.removeAttribute(name);";
+    const sourceBranch = [
+      "\t\t// aria- and data- attributes have no boolean representation.",
+      "\t\t// A `false` value is different from the attribute not being",
+      "\t\t// present, so we can't remove it. For non-boolean aria",
+      "\t\t// attributes we could treat false as a removal, but the",
+      "\t\t// amount of exceptions would cost too many bytes. On top of",
+      "\t\t// that other frameworks generally stringify `false`.",
+      "",
+      "\t\tif (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      originalCondition,
+      "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+      "\t\t} else {",
+      removalLine,
+      "\t\t}",
+    ].join("\r\n");
+    const originalSource = [
+      "// shared event objects retain their own clocks",
+      ...Array.from({ length: 220 }, (_, index) => `const prefix${index} = ${index};`),
+      sourceBranch,
+      ...Array.from({ length: 40 }, (_, index) => `const suffix${index} = ${index};`),
+    ].join("\r\n");
+    const correctedSource = originalSource.replace(originalCondition, correctedCondition);
+    const failedPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${originalCondition}`,
+      `+${correctedCondition}`,
+      " \t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+      " \t\t} else {",
+      " \t\t}",
+      "*** End Patch",
+    ].join("\n");
+    const correctedPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${originalCondition}`,
+      `+${correctedCondition}`,
+      " \t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+      " \t\t} else {",
+      ` ${removalLine}`,
+      " \t\t}",
+      "*** End Patch",
+    ].join("\n");
+    const task = "Fix the frozen browser-facing regression in the real web project. Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, and remove every attribute with null or undefined values. Make the smallest change in src/diff/props.js and pass the supplied deterministic checks. Use the frozen behavior truth set real-web-ui-regression-v1. The deterministic checks are in test/shared/benchmark-v3-ui-regression.test.js.";
+    const requests: Array<Record<string, any>> = [];
+    const attemptedPatches: string[] = [];
+    let correctionEvidenceContexts: string[] = [];
+    let correctionApplied = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const instruction = String(body.messages?.[0]?.content ?? "");
+      if (requests.length === 1) {
+        return jsonResponse(modelToolCall("read-current-source", "file_read", {
+          path: requiredPath,
+        }, 300, 60));
+      }
+      if (instruction.includes("Mutation-only recovery phase")) {
+        return jsonResponse(modelToolCall("patch-missing-current-line", "apply_patch", {
+          input: failedPatch,
+        }, 300, 60));
+      }
+      if (instruction.includes("Atomic input correction phase")) {
+        const evidence = String(body.messages?.[1]?.content ?? "");
+        const boundedEvidence = evidence
+          .split("[tool=file_read]\n")
+          .at(-1)
+          ?.split("\n\n[tool=")[0] ?? "";
+        const parsedEvidence = JSON.parse(boundedEvidence) as {
+          taskRelevantContexts?: Array<{ context?: unknown }>;
+        };
+        correctionEvidenceContexts = (parsedEvidence.taskRelevantContexts ?? [])
+          .map(({ context }) => typeof context === "string" ? context : "");
+        return jsonResponse(modelToolCall("patch-current-context", "apply_patch", {
+          input: correctionEvidenceContexts.some((context) => context.includes(removalLine))
+            ? correctedPatch
+            : failedPatch,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation verification phase")) {
+        return jsonResponse(modelToolCall("read-corrected-source", "file_read", {
+          path: requiredPath,
+          limit: 1_048_576,
+        }, 300, 60));
+      }
+      return jsonResponse({
+        choices: [{
+          finish_reason: "stop",
+          message: { content: '{"summary":"corrected and verified"}' },
+        }],
+        usage: { prompt_tokens: 300, completion_tokens: 30 },
+      });
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: requiredPath,
+            size: originalSource.length,
+            bytesRead: originalSource.length,
+            truncated: false,
+            content: correctionApplied ? correctedSource : originalSource,
+          }),
+          durationMs: 1,
+        };
+      }
+      const patchInput = String(request.arguments?.input ?? "");
+      attemptedPatches.push(patchInput);
+      if (patchInput !== correctedPatch) {
+        return {
+          id: request.id,
+          name: request.name,
+          success: false,
+          output: "",
+          error: "Failed to find expected lines",
+          failureKind: "input_error" as const,
+          metadata: { repairAction: "apply_patch_input_invalid" },
+          durationMs: 1,
+        };
+      }
+      correctionApplied = true;
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: [requiredPath] },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent(execute);
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-complete-current-branch-context",
+      text: task,
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths: [requiredPath],
+          toolLoopIterationBudget: 3,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === '{"summary":"corrected and verified"}'
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(requests[2]?.messages[0]?.content).toContain("Atomic input correction phase");
+    expect(correctionEvidenceContexts).toContainEqual(expect.stringContaining(removalLine));
+    expect(requests).toHaveLength(5);
+    expect(attemptedPatches).toEqual([failedPatch, correctedPatch]);
+    expect(items).toContainEqual({
+      type: "final",
+      text: '{"summary":"corrected and verified"}',
+    });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("fails closed when a repeated-source retry leaves invalid unreachable false control flow", async () => {
     const requiredPath = "src/diff/props.js";
     const originalCondition = "\t\t} else if (value != NULL && value !== false) {";

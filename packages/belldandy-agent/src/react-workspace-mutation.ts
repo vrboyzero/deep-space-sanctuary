@@ -2373,6 +2373,10 @@ function collectTaskRelevantFileContexts(
       if (end - start > remainingChars) {
         continue;
       }
+      const extendedEnd = extendTaskContextPastTrailingBlockHeader(fileContent, start, end);
+      if (extendedEnd - start <= remainingChars) {
+        end = extendedEnd;
+      }
       if (retainedRanges.some((range) => start < range.end && end > range.start)) {
         continue;
       }
@@ -2467,6 +2471,20 @@ function expandToCompleteSourceLines(
     start: lineStart,
     end: nextLineBreak < 0 ? value.length : nextLineBreak + 1,
   };
+}
+
+function extendTaskContextPastTrailingBlockHeader(
+  value: string,
+  start: number,
+  end: number,
+): number {
+  const context = value.slice(start, end).trimEnd();
+  const lastLine = context.slice(context.lastIndexOf("\n") + 1).trim();
+  if (!lastLine.endsWith("{") || end >= value.length) {
+    return end;
+  }
+  const nextLineBreak = value.indexOf("\n", end);
+  return nextLineBreak < 0 ? value.length : nextLineBreak + 1;
 }
 
 function hasIdentifierBoundaries(value: string, start: number, length: number): boolean {
