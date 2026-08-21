@@ -2070,6 +2070,38 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：当前 mutation 已真实写入，唯一阻断点位于 evaluator 之前的结构修复；先以本地 deterministic seam 关闭该缺口，可避免在相同输入上增加 Provider 费用。
 - **当前还缺的关键闭环**：本地 correction 修复与完整相邻回归、新 committed clean identity、全部零模型 Gate、其后唯一 Windows formal 的语法合法 patch 与冻结 evaluator 通过；在此之前继续冻结 WSL2、完整矩阵、连续候选和 P2-C。
 
+#### P0 Web TDD 实现结论：额外 closing delimiter 的 deletion-only correction（2026-08-21）
+
+##### 已完成内容
+
+1. **`react-workspace-mutation.ts` 扩展**：
+   - 在类型化 `repeated_current_source` 本地拒绝说明中增加通用结构修复边界：仅当完整当前源码证明 prior replacement 自带 closing delimiter、旧 delimiter 仍紧邻保留时，才要求删除额外 delimiter；
+   - 明确 correction 使用带唯一未改上下文的 deletion-only hunk，不允许 remove-and-readd、重写已正确相邻分支或扩大任务行为；
+   - 保持既有一次 objective correction、一次 input correction、Provider retry=`0`、`12 turns / 24,000 tokens` 与单 run `$0.10` 上限不变，未增加 parser、模型阶段或 Web 专用代码分支。
+
+2. **`tool-agent-workspace-mutation-structured-output.test.ts` 扩展**：
+   - 使用 `1466122` formal 的 CRLF Preact branch replacement 形状，复现 replacement 未消费旧 closing brace、read-after-write 出现两个连续同层 closing delimiter、首次 correction 只重复 current source；
+   - 通过公共 `ToolEnabledAgent.run()` seam 与唯一 Provider mock 边界验证：可信本地说明触发带唯一上下文的纯删除 patch，随后重新读取完整源码并进入 final objective review；
+   - 断言请求阶段=`6`、实际 patch 精确为 initial mutation 与 deletion-only correction、最终 structured output 合法且状态=`done`。
+
+3. **效果**：
+   - `1466122` 的新直接失败形状已在零费用本地路径收敛，重复 current-source correction 不再把“删除额外 delimiter”误表达为 remove-and-readd；
+   - 合法修复仍经过 required path、redundant hunk、smallest-change、read-after-write 与 final review Gate，不放宽 truth set、visible test 或 evaluator；
+   - 本环节模型调用=`0`、新增 Provider 费用=`$0`，observed conservative upper 保持 `$2.53946554`，Stage 0D 当前最坏守卫保持 `48.34046707 RMB`；未启动 formal/WSL2，也未重跑任何 frozen identity。
+
+##### 验证结果
+
+- 新增回归 Red=`1 failed`（旧实现请求数 `4`，预期 `6`）、Green=`1/1`；structured-output=`10/10`、workspace-mutation owner/相邻=`152/152`；
+- Agent=`699 passed / 1 skipped`，TypeScript workspace 完整 build 与独立 `verify:build` 无错误；
+- `verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 全绿；
+- 关键功能验证：同一 CRLF 错误源码进入 `initial mutation -> verification -> repeated correction rejection -> deletion-only correction -> verification -> final review`，两次实际 patch 后最终状态=`done`。
+
+##### 后续计划
+
+- **下一步准备做什么**：提交源码、测试和本文形成新 source identity；随后建立 detached clean harness，完成 frozen offline install、完整 build/独立 verifier、Agent/owner/合同、Windows 零凭证 dry-run、敏感值/env/资源与 formal prepare-only Gate。
+- **为什么先做它**：主工作区 Red/Green 证明状态机可消费 deletion-only correction，但只有 committed clean identity 能排除旧 dist、依赖、fixture 或工作区漂移，并为下一次唯一付费 formal 建立可复算输入。
+- **当前还缺的关键闭环**：新 identity 的全部零模型 Gate、其后唯一 Windows formal 的语法合法 patch、冻结 visible test/evaluator、唯一终态、usage/cost 与零残留；未全绿不进入 WSL2、完整矩阵、连续候选或 P2-C。
+
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
 | 文档精简与历史归档 | - | **已完成** | 压缩前 4403 行全文由 `archive-04` 保留；主文档保留目的、目标、方案、完成/验证、费用、风险和计划进度 | - | 后续历史明细只追加到新归档或专门证据，不再把逐 run 流水堆入主计划 |
@@ -2077,7 +2109,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
 | P0：Benchmark truth set / evaluator 对齐 | P0 | **已完成 zero-cost 对齐** | `coding-agent-benchmark-web-ui-truth-set/v1`、6 个正负 witness、SHA/LF 绑定、v2 fixture/evaluator、实际 Red=`1`/Green=`0` replay；定向 `20/20`、benchmark/CI/build Gate 全绿 | - | 保持 truth set、prompt、fixture、visible test 与 evaluator 单一版本绑定；任何 SHA/Schema/任务合同漂移均失败关闭 |
-| P0：Web mutation/correction 稳定化 | P0 | **`1466122` formal 已失败冻结，进入本地 correction 修复** | 初始 patch 已真实写入，但遗漏旧 closing brace；post-write 两次 correction 无 semantic delta，诊断性 visible test=`1 failed suite / 0 tests`；usage/cost、敏感值/env、五项 preflight 与零残留已闭环 | `本地 Red/Green 与新 Gate，约 0.5-0.75 人日` | 先关闭合法 deletion-only correction 与完整源码 final review；新 identity 全部零模型 Gate 后才开放下一次唯一 Windows formal |
+| P0：Web mutation/correction 稳定化 | P0 | **deletion-only correction 本地完成，待 committed clean Gate** | Red=`1 failed`、Green=`1/1`；owner/相邻=`152/152`、Agent=`699 passed / 1 skipped`、build/benchmark/CI 全绿；不增加 retry、turn/token 或费用 | `提交与零模型 Gate，约 0.25-0.5 人日` | 冻结新 source identity 并完成 detached clean、zero-credential、敏感值/env/资源与 prepare-only Gate；全绿后才开放下一次唯一 Windows formal |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |

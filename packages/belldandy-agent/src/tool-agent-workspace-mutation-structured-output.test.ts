@@ -889,6 +889,201 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("repairs an extra closing branch delimiter after a repeated correction", async () => {
+    const requiredPath = "src/diff/props.js";
+    const removeAttributeLine = "\t\t\tdom.removeAttribute(name);";
+    const setAttributeLine = "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);";
+    const originalMutationSlice = [
+      "\t\tif (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      "\t\t} else if (value != NULL && value !== false) {",
+      setAttributeLine,
+      "\t\t} else {",
+      removeAttributeLine,
+    ].join("\r\n");
+    const replacementBlock = [
+      "\t\tif (value == NULL || typeof value == 'undefined') {",
+      removeAttributeLine,
+      "\t\t} else if (value === false) {",
+      "\t\t\tif (name.startsWith('aria-') || name.startsWith('data-')) {",
+      "\t\t\t\tdom.setAttribute(name, 'false');",
+      "\t\t\t} else {",
+      removeAttributeLine,
+      "\t\t\t}",
+      "\t\t} else if (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      "\t\t} else {",
+      setAttributeLine,
+      "\t\t}",
+    ].join("\r\n");
+    const originalSource = [
+      "export function setProperty(dom, name, value) {",
+      "\to: if (name == 'style') {",
+      "\t\tdom.style.cssText = value;",
+      "\t} else {",
+      "\t\t// aria- and data- attributes have no boolean representation.",
+      "\t\t// A `false` value is different from the attribute not being present.",
+      originalMutationSlice,
+      "\t\t}",
+      "\t}",
+      "}",
+    ].join("\r\n");
+    const postInitialSource = originalSource.replace(originalMutationSlice, replacementBlock);
+    const postCorrectionSource = postInitialSource.replace(
+      `${replacementBlock}\r\n\t\t}\r\n\t}\r\n}`,
+      `${replacementBlock}\r\n\t}\r\n}`,
+    );
+    const initialPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-\t\tif (typeof value == 'function') {",
+      "-\t\t\t// never serialize functions as attribute values",
+      "-\t\t} else if (value != NULL && value !== false) {",
+      `-${setAttributeLine}`,
+      "-\t\t} else {",
+      `-${removeAttributeLine}`,
+      "+\t\tif (value == NULL || typeof value == 'undefined') {",
+      `+${removeAttributeLine}`,
+      "+\t\t} else if (value === false) {",
+      "+\t\t\tif (name.startsWith('aria-') || name.startsWith('data-')) {",
+      "+\t\t\t\tdom.setAttribute(name, 'false');",
+      "+\t\t\t} else {",
+      `+${removeAttributeLine}`,
+      "+\t\t\t}",
+      "+\t\t} else if (typeof value == 'function') {",
+      "+\t\t\t// never serialize functions as attribute values",
+      "+\t\t} else {",
+      `+${setAttributeLine}`,
+      "+\t\t}",
+      "*** End Patch",
+    ].join("\n");
+    const repeatedCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-\t\t}",
+      "+\t\t}",
+      "*** End Patch",
+    ].join("\n");
+    const deletionCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      " \t\t} else {",
+      ` ${setAttributeLine}`,
+      " \t\t}",
+      "-\t\t}",
+      " \t}",
+      " }",
+      "*** End Patch",
+    ].join("\n");
+    const structuralGuidance = "When the complete current source proves that a prior replacement left an extra standalone closing delimiter";
+    const successfulSummary = '{"summary":"removed the extra closing delimiter and verified the attribute behavior"}';
+    const task = "Fix the frozen browser-facing regression in the real web project. Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, and remove every attribute with null or undefined values. Make the smallest change in src/diff/props.js and pass the supplied deterministic checks.";
+    const requests: Array<Record<string, any>> = [];
+    const executedPatches: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const instruction = String(body.messages?.[0]?.content ?? "");
+      if (instruction.includes("Post-mutation verification phase")) {
+        return jsonResponse(modelToolCall(`read-${requests.length}`, "file_read", {
+          path: requiredPath,
+          limit: 1_048_576,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation objective correction input retry phase")) {
+        return jsonResponse(modelToolCall("remove-extra-closing-delimiter", "apply_patch", {
+          input: instruction.includes(structuralGuidance)
+            ? deletionCorrection
+            : repeatedCorrection,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation final objective review phase")) {
+        return jsonResponse({
+          choices: [{
+            finish_reason: "stop",
+            message: { content: successfulSummary },
+          }],
+          usage: { prompt_tokens: 300, completion_tokens: 30 },
+        });
+      }
+      if (instruction.includes("Post-mutation objective review phase")) {
+        return jsonResponse(modelToolCall("repeat-current-closing-delimiter", "apply_patch", {
+          input: repeatedCorrection,
+        }, 300, 60));
+      }
+      return jsonResponse(modelToolCall("patch-incomplete-branch-replacement", "apply_patch", {
+        input: initialPatch,
+      }, 300, 60));
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: requiredPath,
+            size: (executedPatches.includes(deletionCorrection)
+              ? postCorrectionSource
+              : postInitialSource).length,
+            truncated: false,
+            content: executedPatches.includes(deletionCorrection)
+              ? postCorrectionSource
+              : postInitialSource,
+          }),
+          durationMs: 1,
+        };
+      }
+      const patchInput = String(request.arguments?.input ?? "");
+      executedPatches.push(patchInput);
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: [requiredPath] },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent(execute);
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-extra-closing-delimiter",
+      text: task,
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths: [requiredPath],
+          toolLoopIterationBudget: 6,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === successfulSummary
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(postInitialSource).toContain("\t\t}\r\n\t\t}\r\n\t}\r\n}");
+    expect(requests).toHaveLength(6);
+    expect(requests[3]?.messages[0]?.content).toContain(structuralGuidance);
+    expect(requests[3]?.messages[1]?.content).toContain("\\t\\t}\\r\\n\\t\\t}");
+    expect(executedPatches).toEqual([initialPatch, deletionCorrection]);
+    expect(items).toContainEqual({ type: "final", text: successfulSummary });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("rebuilds an atomic patch from the complete current branch context", async () => {
     const requiredPath = "src/diff/props.js";
     const originalCondition = "\t\t} else if (value != NULL && value !== false) {";

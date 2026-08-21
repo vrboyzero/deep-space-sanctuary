@@ -178,7 +178,7 @@ const MUTATION_OBJECTIVE_INPUT_CORRECTION_REASON_INSTRUCTIONS: Record<
   WorkspaceMutationObjectiveInputCorrectionReason,
   string
 > = {
-  repeated_current_source: "Local validation rejected the preceding correction because it only repeated current-source lines and produced no semantic delta. Re-evaluate every task requirement against the current source. For a named subset, check the task's positive and outside/negative witnesses against the current predicate, then change only the smallest task-relevant expression or statement. Keep one coherent sibling if/else chain: do not place required false handling behind value !== false, consume all false values before the named subset, or append else if after an unconditional else.",
+  repeated_current_source: "Local validation rejected the preceding correction because it only repeated current-source lines and produced no semantic delta. Re-evaluate every task requirement against the current source. For a named subset, check the task's positive and outside/negative witnesses against the current predicate, then change only the smallest task-relevant expression or statement. Keep one coherent sibling if/else chain: do not place required false handling behind value !== false, consume all false values before the named subset, or append else if after an unconditional else. When the complete current source proves that a prior replacement left an extra standalone closing delimiter beside the replacement's own closing delimiter, remove only the extra delimiter with a deletion-only hunk and unique unchanged context; do not remove and re-add it.",
 };
 
 const MUTATION_FINAL_OBJECTIVE_REVIEW_INSTRUCTION = [
