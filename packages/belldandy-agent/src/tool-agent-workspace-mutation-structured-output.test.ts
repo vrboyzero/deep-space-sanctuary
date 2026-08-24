@@ -114,6 +114,342 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "error" });
   });
 
+  it("routes a full-length review of a no-op removal branch to one bounded correction", async () => {
+    const requiredPath = "src/diff/props.js";
+    const noOpRemovalCondition = "\t\t} else if (value == NULL || (value === false && !isSvgAttribute)) {";
+    const removeAttributeLine = "\t\t\tdom.removeAttribute(name);";
+    const initialPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      " \t\tif (typeof value == 'function') {",
+      " \t\t\t// never serialize functions as attribute values",
+      "-\t\t} else if (value != NULL && value !== false) {",
+      `+${noOpRemovalCondition}`,
+      "+\t\t\t// null/undefined remove every attribute; false removes ordinary attributes",
+      "+\t\t\t// but aria-* and data-* attributes serialize \"false\"",
+      "+\t\t} else if (value === false) {",
+      "+\t\t\tdom.setAttribute(name, 'false');",
+      "+\t\t} else if (value != NULL) {",
+      " \t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+      " \t\t} else {",
+      "*** End Patch",
+    ].join("\n");
+    const correctedRemovalCondition = "\t\t} else if (value == NULL || (value === false && name[4] != '-')) {";
+    const removalCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${noOpRemovalCondition}`,
+      `+${correctedRemovalCondition}`,
+      " \t\t\t// null/undefined remove every attribute; false removes ordinary attributes",
+      " \t\t\t// but aria-* and data-* attributes serialize \"false\"",
+      `+${removeAttributeLine}`,
+      " \t\t} else if (value === false) {",
+      "*** End Patch",
+    ].join("\n");
+    const postInitialSource = [
+      "export function setProperty(dom, name, value, oldValue, namespace) {",
+      "\tif (name == 'style') {",
+      "\t\tdom.style.cssText = value;",
+      "\t} else {",
+      "\t\tif (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      noOpRemovalCondition,
+      "\t\t\t// null/undefined remove every attribute; false removes ordinary attributes",
+      "\t\t\t// but aria-* and data-* attributes serialize \"false\"",
+      "\t\t} else if (value === false) {",
+      "\t\t\tdom.setAttribute(name, 'false');",
+      "\t\t} else if (value != NULL) {",
+      "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+      "\t\t} else {",
+      removeAttributeLine,
+      "\t\t}",
+      "\t}",
+      "}",
+    ].join("\r\n");
+    const postCorrectionSource = postInitialSource
+      .replace(noOpRemovalCondition, correctedRemovalCondition)
+      .replace(
+        "\t\t\t// but aria-* and data-* attributes serialize \"false\"\r\n\t\t} else if",
+        "\t\t\t// but aria-* and data-* attributes serialize \"false\"\r\n"
+          + `${removeAttributeLine}\r\n\t\t} else if`,
+      );
+    const task = "Fix the frozen browser-facing regression in the real web project. Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, and remove every attribute with null or undefined values. Make the smallest change in src/diff/props.js and pass the supplied deterministic checks.";
+    const successfulSummary = '{"summary":"corrected and verified"}';
+    const correctionGuidance = "complete current source proves that the null/undefined and ordinary-false removal branch has no executable removal statement, and its subset predicate references an identifier that the complete source does not declare";
+    const requests: Array<Record<string, any>> = [];
+    const executedPatches: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const instruction = String(body.messages?.[0]?.content ?? "");
+      if (instruction.includes("Post-mutation verification phase")) {
+        return jsonResponse(modelToolCall(`read-${requests.length}`, "file_read", {
+          path: requiredPath,
+          limit: 1_048_576,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation objective correction input retry phase")) {
+        return jsonResponse(modelToolCall("add-required-removal", "apply_patch", {
+          input: removalCorrection,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation final objective review phase")) {
+        return jsonResponse({
+          choices: [{
+            finish_reason: "stop",
+            message: { content: successfulSummary },
+          }],
+          usage: { prompt_tokens: 300, completion_tokens: 30 },
+        });
+      }
+      if (instruction.includes("Post-mutation objective review phase")
+        || instruction.includes("Post-mutation objective review output repair phase")) {
+        return jsonResponse({
+          choices: [{
+            finish_reason: "length",
+            message: { content: "The current branch still requires a removal correction. ".repeat(64) },
+          }],
+          usage: { prompt_tokens: 1_700, completion_tokens: 1_024 },
+        });
+      }
+      return jsonResponse(modelToolCall("patch-no-op-removal", "apply_patch", {
+        input: initialPatch,
+      }, 300, 60));
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        const source = executedPatches.includes(removalCorrection)
+          ? postCorrectionSource
+          : postInitialSource;
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: requiredPath,
+            size: source.length,
+            truncated: false,
+            content: source,
+          }),
+          durationMs: 1,
+        };
+      }
+      executedPatches.push(String(request.arguments?.input ?? ""));
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: [requiredPath] },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent(execute);
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-no-op-removal-full-length-review",
+      text: task,
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths: [requiredPath],
+          toolLoopIterationBudget: 6,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === successfulSummary
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(executedPatches).toEqual([initialPatch, removalCorrection]);
+    expect(requests).toHaveLength(6);
+    expect(requests[3]?.messages[0]?.content).toContain(correctionGuidance);
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "`value == NULL || (value === false && name[4] != '-')`",
+    );
+    expect(requests[3]?.messages[0]?.content).toContain("`dom.removeAttribute(name);`");
+    expect(requests.some((request) => String(request.messages?.[0]?.content ?? "")
+      .includes("Post-mutation objective review output repair phase"))).toBe(false);
+    expect(items).toContainEqual({ type: "final", text: successfulSummary });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it.each([
+    ["non-atomic changes", "non-atomic"],
+    ["an incorrect ordinary-false predicate", "incorrect-predicate"],
+    ["an incorrect removal target", "incorrect-removal-target"],
+  ] as const)("rejects %s from the no-op removal correction retry", async (_label, scenario) => {
+    const requiredPath = "src/diff/props.js";
+    const noOpCondition = "\t\t} else if (value == NULL || (value === false && !isSvgAttribute)) {";
+    const correctedCondition = scenario === "incorrect-predicate"
+      ? "\t\t} else if (value == NULL || (value === false && name[4] != 'x')) {"
+      : "\t\t} else if (value == NULL || (value === false && name[4] != '-')) {";
+    const removeAttributeLine = "\t\t\tdom.removeAttribute(name);";
+    const correctionRemovalLine = scenario === "incorrect-removal-target"
+      ? "\t\t\tdom.removeAttribute('other');"
+      : removeAttributeLine;
+    const initialPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-\t\t} else if (value != NULL && value !== false) {",
+      `+${noOpCondition}`,
+      "+\t\t\t// null/undefined remove every attribute; false removes ordinary attributes",
+      "+\t\t\t// but aria-* and data-* attributes serialize \"false\"",
+      "+\t\t} else if (value === false) {",
+      "+\t\t\tdom.setAttribute(name, 'false');",
+      "+\t\t} else if (value != NULL) {",
+      "*** End Patch",
+    ].join("\n");
+    const rejectedCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${noOpCondition}`,
+      `+${correctedCondition}`,
+      " \t\t\t// null/undefined remove every attribute; false removes ordinary attributes",
+      " \t\t\t// but aria-* and data-* attributes serialize \"false\"",
+      `+${correctionRemovalLine}`,
+      ...(scenario === "non-atomic" ? ["+\t\t\tdom.setAttribute('debug-repair', 'true');"] : []),
+      " \t\t} else if (value === false) {",
+      "*** End Patch",
+    ].join("\n");
+    const postInitialSource = [
+      "export function setProperty(dom, name, value) {",
+      "\tif (name == 'style') {",
+      "\t\tdom.style.cssText = value;",
+      "\t} else {",
+      noOpCondition,
+      "\t\t\t// null/undefined remove every attribute; false removes ordinary attributes",
+      "\t\t\t// but aria-* and data-* attributes serialize \"false\"",
+      "\t\t} else if (value === false) {",
+      "\t\t\tdom.setAttribute(name, 'false');",
+      "\t\t} else if (value != NULL) {",
+      "\t\t\tdom.setAttribute(name, value);",
+      "\t\t} else {",
+      removeAttributeLine,
+      "\t\t}",
+      "\t}",
+      "}",
+    ].join("\n");
+    const postRejectedSource = postInitialSource
+      .replace(noOpCondition, correctedCondition)
+      .replace(
+        "\t\t\t// but aria-* and data-* attributes serialize \"false\"\n\t\t} else if",
+        "\t\t\t// but aria-* and data-* attributes serialize \"false\"\n"
+          + `${correctionRemovalLine}\n${scenario === "non-atomic" ? "\t\t\tdom.setAttribute('debug-repair', 'true');\n" : ""}\t\t} else if`,
+      );
+    const task = "Preserve false aria-* and data-* attribute values by serializing them, remove ordinary attributes with false values, remove every attribute with null or undefined values, and make the smallest change.";
+    const requests: Array<Record<string, any>> = [];
+    const executedPatches: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const instruction = String(body.messages?.[0]?.content ?? "");
+      if (instruction.includes("Post-mutation verification phase")) {
+        return jsonResponse(modelToolCall(`read-${requests.length}`, "file_read", {
+          path: requiredPath,
+          limit: 1_048_576,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation objective correction input retry phase")) {
+        return jsonResponse(modelToolCall("rejected-removal-repair", "apply_patch", {
+          input: rejectedCorrection,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation final objective review phase")) {
+        return jsonResponse({
+          choices: [{
+            finish_reason: "stop",
+            message: { content: '{"summary":"incorrectly accepted broad repair"}' },
+          }],
+          usage: { prompt_tokens: 300, completion_tokens: 30 },
+        });
+      }
+      if (instruction.includes("Post-mutation objective review phase")) {
+        return jsonResponse({
+          choices: [{
+            finish_reason: "length",
+            message: { content: "The current branch still requires a correction. ".repeat(64) },
+          }],
+          usage: { prompt_tokens: 1_700, completion_tokens: 1_024 },
+        });
+      }
+      return jsonResponse(modelToolCall("patch-no-op-removal", "apply_patch", {
+        input: initialPatch,
+      }, 300, 60));
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        const source = executedPatches.includes(rejectedCorrection)
+          ? postRejectedSource
+          : postInitialSource;
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({ path: requiredPath, truncated: false, content: source }),
+          durationMs: 1,
+        };
+      }
+      executedPatches.push(String(request.arguments?.input ?? ""));
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: [requiredPath] },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent(execute);
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-no-op-removal-non-atomic-correction",
+      text: task,
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths: [requiredPath],
+          toolLoopIterationBudget: 6,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text.startsWith('{"summary":')
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(requests).toHaveLength(4);
+    expect(executedPatches).toEqual([initialPatch]);
+    expect(items.at(-2)).toEqual({
+      type: "final",
+      text: "required workspace mutation was not completed: the post-write no-op removal correction changed lines outside its atomic condition-and-removeAttribute repair.",
+    });
+    expect(items.at(-1)).toEqual({ type: "status", status: "error" });
+  });
+
   it("keeps malformed successful objective review repair inside the objective-review phase", async () => {
     const requiredPath = "src/dom.ts";
     const requests: Array<Record<string, any>> = [];

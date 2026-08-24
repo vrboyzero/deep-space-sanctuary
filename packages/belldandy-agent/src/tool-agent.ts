@@ -150,7 +150,9 @@ import {
   hasExcludedFalseWitnessSmallestChangeCorrectionHunks,
   hasExpandedSmallestChangeCorrectionHunks,
   hasBroadenedSmallestChangeCorrectionHunks,
+  hasNonAtomicSerializedFalseRemovalCorrectionHunks,
   hasNonDeletionOnlyClosingDelimiterCorrectionHunks,
+  hasNoopSerializedFalseRemovalBranchCurrentSource,
   hasOnlyWorkspaceMutationPatchPaths,
   hasPriorPatchAdjacentDuplicateClosingDelimiterCurrentSource,
   hasRedundantWorkspaceMutationPatchHunks,
@@ -4132,10 +4134,60 @@ export class ToolEnabledAgent implements BelldandyAgent {
             });
             continue;
           }
+          const priorPatchAdjacentDuplicateClosingDelimiter = workspaceMutationObjectiveReviewCall
+            && hasPriorPatchAdjacentDuplicateClosingDelimiterCurrentSource(
+              mutationRecoverySourceMessages,
+              input.text,
+              successfulWorkspaceMutationPatchInputs,
+            );
+          const noopSerializedFalseRemovalBranch = workspaceMutationObjectiveReviewCall
+            && hasNoopSerializedFalseRemovalBranchCurrentSource(
+              mutationRecoverySourceMessages,
+              input.text,
+              successfulWorkspaceMutationPatchInputs,
+            );
+          const unreachableSerializedFalseWitness = workspaceMutationObjectiveReviewCall
+            && hasUnreachableSerializedFalseWitnessCurrentSource(
+              mutationRecoverySourceMessages,
+              input.text,
+              successfulWorkspaceMutationPatchInputs,
+            );
+          const unpreservedSerializedFalseWitness = workspaceMutationObjectiveReviewCall
+            && hasUnpreservedSerializedFalseWitnessCurrentSource(
+              mutationRecoverySourceMessages,
+              input.text,
+              successfulWorkspaceMutationPatchInputs,
+            );
           let workspaceMutationObjectiveOutputText: string | undefined;
           if (workspaceMutationObjectiveReviewCall && input.structuredOutput) {
             const objectiveValidation = input.structuredOutput.validateOutput(contentForDisplay);
             if (!objectiveValidation.ok) {
+              const canCorrectDeterministicObjectiveFailure = !workspaceMutationObjectiveInputCorrectionCall
+                && (noopSerializedFalseRemovalBranch
+                  || priorPatchAdjacentDuplicateClosingDelimiter)
+                && !workspaceMutationObjectiveCorrectionAttempted
+                && !workspaceMutationObjectiveInputCorrectionAttempted;
+              if (canCorrectDeterministicObjectiveFailure) {
+                workspaceMutationObjectiveReviewPending = true;
+                workspaceMutationObjectiveInputCorrectionPending = true;
+                workspaceMutationObjectiveInputCorrectionReason = priorPatchAdjacentDuplicateClosingDelimiter
+                  ? "closing_delimiter_requires_deletion_only"
+                  : noopSerializedFalseRemovalBranch
+                  ? "serialized_false_removal_requires_atomic_repair"
+                  : undefined;
+                workspaceMutationObjectiveOutputRepairPending = false;
+                lastToolCallFingerprint = undefined;
+                lastToolCallName = undefined;
+                consecutiveDuplicateToolCalls = 0;
+                recentToolCallTraces.length = 0;
+                lastSuccessfulToolResult = undefined;
+                logWarn("[workspace-mutation] invalid objective output accompanied deterministic current-source failure; scheduling one input correction", {
+                  requiredPathCount: requiredChangedPaths.length,
+                  conversationId: input.conversationId,
+                  agentId: resolvedAgentId,
+                });
+                continue;
+              }
               const canRepairObjectiveOutput = !workspaceMutationObjectiveOutputRepairCall
                 && !workspaceMutationObjectiveOutputRepairAttempted
                 && !workspaceMutationObjectiveCorrectionAttempted;
@@ -4164,26 +4216,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
           const objectiveReviewReturnedFinalOutput = workspaceMutationObjectiveReviewCall
             && (!input.structuredOutput || workspaceMutationObjectiveOutputText !== undefined);
-          const priorPatchAdjacentDuplicateClosingDelimiter = objectiveReviewReturnedFinalOutput
-            && hasPriorPatchAdjacentDuplicateClosingDelimiterCurrentSource(
-              mutationRecoverySourceMessages,
-              input.text,
-              successfulWorkspaceMutationPatchInputs,
-            );
-          const unreachableSerializedFalseWitness = objectiveReviewReturnedFinalOutput
-            && hasUnreachableSerializedFalseWitnessCurrentSource(
-              mutationRecoverySourceMessages,
-              input.text,
-              successfulWorkspaceMutationPatchInputs,
-            );
           if (objectiveReviewReturnedFinalOutput
             && !workspaceMutationObjectiveInputCorrectionCall
-            && (unreachableSerializedFalseWitness
-              || hasUnpreservedSerializedFalseWitnessCurrentSource(
-                mutationRecoverySourceMessages,
-                input.text,
-                successfulWorkspaceMutationPatchInputs,
-              ))) {
+            && (noopSerializedFalseRemovalBranch
+              || unreachableSerializedFalseWitness
+              || unpreservedSerializedFalseWitness)) {
             const canCorrectObjectiveInput = !workspaceMutationObjectiveCorrectionAttempted
               && !workspaceMutationObjectiveInputCorrectionAttempted;
             if (canCorrectObjectiveInput) {
@@ -4191,6 +4228,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
               workspaceMutationObjectiveInputCorrectionPending = true;
               workspaceMutationObjectiveInputCorrectionReason = priorPatchAdjacentDuplicateClosingDelimiter
                 ? "closing_delimiter_requires_deletion_only"
+                : noopSerializedFalseRemovalBranch
+                ? "serialized_false_removal_requires_atomic_repair"
                 : undefined;
               workspaceMutationObjectiveOutputRepairPending = false;
               lastToolCallFingerprint = undefined;
@@ -4558,6 +4597,14 @@ export class ToolEnabledAgent implements BelldandyAgent {
               successfulWorkspaceMutationPatchInputs,
               input.text,
             );
+          const nonAtomicSerializedFalseRemovalCorrection = workspaceMutationObjectiveReviewCall
+            && hasNonAtomicSerializedFalseRemovalCorrectionHunks(
+              constrainedMutationToolCall,
+              mutationRecoverySourceMessages,
+              workspaceMutationCallRequiredPaths,
+              successfulWorkspaceMutationPatchInputs,
+              input.text,
+            );
           if (revertedSmallestChangeCorrection && workspaceMutationObjectiveInputCorrectionCall) {
             workspaceMutationObjectiveCorrectionAttempted = true;
             workspaceMutationObjectiveReviewPending = true;
@@ -4584,6 +4631,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 successfulWorkspaceMutationPatchInputs,
                 input.text,
               )
+              || nonAtomicSerializedFalseRemovalCorrection
               || nonDeletionOnlyClosingDelimiterCorrection
               || excludedFalseWitnessSmallestChangeCorrection
               || broadenedSmallestChangeCorrection
@@ -4595,6 +4643,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
               workspaceMutationObjectiveInputCorrectionPending = true;
               workspaceMutationObjectiveInputCorrectionReason = nonDeletionOnlyClosingDelimiterCorrection
                 ? "closing_delimiter_requires_deletion_only"
+                : nonAtomicSerializedFalseRemovalCorrection
+                ? "serialized_false_removal_requires_atomic_repair"
                 : "smallest_change_requires_semantic_narrowing";
               lastToolCallFingerprint = undefined;
               lastToolCallName = undefined;
@@ -4609,7 +4659,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
               continue;
             }
             yield* emitWorkspaceMutationFailure(
-              "the post-write objective correction did not narrowly refine the prior mutation despite the smallest-change requirement.",
+              nonAtomicSerializedFalseRemovalCorrection
+                ? "the post-write no-op removal correction changed lines outside its atomic condition-and-removeAttribute repair."
+                : "the post-write objective correction did not narrowly refine the prior mutation despite the smallest-change requirement.",
             );
             return;
           }

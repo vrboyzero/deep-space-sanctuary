@@ -90,7 +90,8 @@ export type WorkspaceMutationPatchPreservationDiagnostics = {
 export type WorkspaceMutationObjectiveInputCorrectionReason =
   | "repeated_current_source"
   | "smallest_change_requires_semantic_narrowing"
-  | "closing_delimiter_requires_deletion_only";
+  | "closing_delimiter_requires_deletion_only"
+  | "serialized_false_removal_requires_atomic_repair";
 
 export type WorkspaceMutationRecoveryPlan = WorkspaceMutationRecoveryRequest & {
   outputTokens: number;
@@ -183,6 +184,7 @@ const MUTATION_OBJECTIVE_INPUT_CORRECTION_REASON_INSTRUCTIONS: Record<
   repeated_current_source: "Local validation rejected the preceding correction because it only repeated current-source lines and produced no semantic delta. Re-evaluate every task requirement against the current source. For a named subset, check the task's positive and outside/negative witnesses against the current predicate, then change only the smallest task-relevant expression or statement. Keep one coherent sibling if/else chain: do not place required false handling behind value !== false, consume all false values before the named subset, or append else if after an unconditional else. When the complete current source proves that a prior replacement left an extra standalone closing delimiter beside the replacement's own closing delimiter, remove only the extra delimiter with a deletion-only hunk and unique unchanged context; do not remove and re-add it.",
   smallest_change_requires_semantic_narrowing: "Local validation rejected the preceding correction because it did not narrowly refine the prior semantic delta. Start from the complete current source, preserve every behaviorally correct part of that prior semantic delta, and replace only the over-broad, over-specific, reverted, or disjoint task-relevant predicate or statement. Do not restore the broken baseline, move the change to an unrelated branch, or rewrite adjacent correct code. When the task or bounded evidence provides an exact source predicate, use it byte-for-byte.",
   closing_delimiter_requires_deletion_only: "Local validation rejected the preceding correction because the complete current source proves that a prior replacement left an extra standalone closing delimiter beside the replacement's own closing delimiter. Remove only the extra delimiter with a deletion-only hunk and unique unchanged context. Do not rewrite, extend, remove and re-add, or reattach the surrounding branch tail.",
+  serialized_false_removal_requires_atomic_repair: "Local validation rejected the preceding review because the complete current source proves that the null/undefined and ordinary-false removal branch has no executable removal statement, and its subset predicate references an identifier that the complete source does not declare. Repair that existing branch atomically: replace only its invalid condition with `value == NULL || (value === false && name[4] != '-')`, then add exactly `dom.removeAttribute(name);` inside the branch. This is the smallest condition that removes null/undefined and ordinary false while leaving aria-* and data-* false for the following serialization branch. Preserve every comment, sibling branch, and other statement as unchanged context. Do not refactor or rewrite the surrounding chain.",
 };
 
 const MUTATION_FINAL_OBJECTIVE_REVIEW_INSTRUCTION = [
@@ -1111,6 +1113,10 @@ function countWorkspaceMutationConditionOperators(line: string): number {
   return line.match(/&&|\|\||!==|===|!=|==|<=|>=/g)?.length ?? 0;
 }
 
+function isWorkspaceMutationConditionLine(line: string): boolean {
+  return /\b(?:if|while|for|switch)\s*\(/.test(line);
+}
+
 export function hasExpandedSmallestChangeCorrectionHunks(
   toolCall: WorkspaceMutationNavigationToolCall,
   priorSuccessfulPatchInputs: readonly string[],
@@ -1288,6 +1294,7 @@ export function hasBroadenedSmallestChangeCorrectionHunks(
     if (priorRemoved.length === 0) return false;
     return correction.added.some((line) => (
       !prior.removed.includes(line)
+        && isWorkspaceMutationConditionLine(line)
         && countWorkspaceMutationConditionOperators(line)
           < Math.min(...priorRemoved.map(countWorkspaceMutationConditionOperators))
     ));
@@ -1356,6 +1363,7 @@ export function hasUnpreservedSerializedFalseWitnessCurrentSource(
   if (priorGuardPaths.length === 0) return false;
   return readLatestWorkspaceMutationSourceEvidence(messages, priorGuardPaths).some((source) => {
     const lines = source.split(/\r?\n/);
+    if (hasComplementarySerializedFalseRemovalBranches(lines)) return false;
     return lines.some((line, index) => {
       if (!/}\s*else\s+if\s*\(/.test(line)) return false;
       const hasNullGuard = /\bvalue\s*!=\s*NULL\b/.test(line);
@@ -1460,12 +1468,128 @@ export function hasPriorPatchAdjacentDuplicateClosingDelimiterCurrentSource(
   });
 }
 
+function taskRequiresSerializedFalseRemovalWitnesses(taskText: string): boolean {
+  if (!taskRequiresSerializedFalseWitness(taskText)) return false;
+  const normalizedTask = taskText.replace(/\s+/g, " ");
+  const requiresOrdinaryFalseRemoval = /\bremove\b.{0,80}\bordinary\b.{0,80}\bfalse\b/i
+    .test(normalizedTask)
+    || /\bfalse\b.{0,80}\bordinary\b.{0,80}\bremove\b/i.test(normalizedTask);
+  const requiresNullRemoval = /\bremove\b.{0,80}\b(?:null|undefined)\b/i.test(normalizedTask)
+    || /\b(?:null|undefined)\b.{0,80}\bremove\b/i.test(normalizedTask);
+  return requiresOrdinaryFalseRemoval && requiresNullRemoval;
+}
+
+function branchBodyHasNoExecutableStatement(body: readonly string[]): boolean {
+  let insideBlockComment = false;
+  return body.every((line) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("//")) return true;
+    if (insideBlockComment) {
+      if (trimmed.includes("*/")) insideBlockComment = false;
+      return true;
+    }
+    if (trimmed.startsWith("/*")) {
+      insideBlockComment = !trimmed.includes("*/");
+      return true;
+    }
+    return false;
+  });
+}
+
+function isSerializedFalseRemovalCondition(line: string): boolean {
+  return /^\s*}\s*else\s+if\s*\(\s*value\s*={2,3}\s*(?:NULL|null|undefined)\s*\|\|\s*\(\s*value\s*={2,3}\s*false\s*&&\s*name\s*\[\s*4\s*]\s*!={1,2}\s*(['"])-\1\s*\)\s*\)\s*{\s*$/.test(line);
+}
+
+function isSerializedFalseRemovalStatement(line: string): boolean {
+  return /^\s*dom\.removeAttribute\s*\(\s*name\s*\)\s*;\s*$/.test(line);
+}
+
+export function hasNoopSerializedFalseRemovalBranchCurrentSource(
+  messages: readonly WorkspaceMutationSourceMessage[],
+  taskText: string,
+  priorSuccessfulPatchInputs: readonly string[],
+): boolean {
+  if (!taskRequiresSerializedFalseRemovalWitnesses(taskText)) return false;
+  const priorGuardPaths = collectPriorSerializedFalseGuardPaths(priorSuccessfulPatchInputs);
+  if (priorGuardPaths.length === 0) return false;
+  const addedRemovalConditions = new Set(priorSuccessfulPatchInputs.flatMap((patchInput) => (
+    (collectWorkspaceMutationPatchLineChanges(patchInput) ?? [])
+      .filter((change) => priorGuardPaths.includes(change.path))
+      .flatMap((change) => collectEffectiveWorkspaceMutationPatchLines(change).added)
+      .filter((line) => (
+        /}\s*else\s+if\s*\(/.test(line)
+          && /\bvalue\s*={2,3}\s*(?:NULL|null|undefined)\b/.test(line)
+          && /\bvalue\s*={2,3}\s*false\b/.test(line)
+      ))
+  )));
+  if (addedRemovalConditions.size === 0) return false;
+  return readLatestWorkspaceMutationSourceEvidence(messages, priorGuardPaths).some((source) => {
+    const lines = source.split(/\r?\n/);
+    return lines.some((line, index) => (
+      addedRemovalConditions.has(line)
+        && branchBodyHasNoExecutableStatement(readSiblingBranchBody(lines, index))
+    ));
+  });
+}
+
+export function hasNonAtomicSerializedFalseRemovalCorrectionHunks(
+  toolCall: WorkspaceMutationNavigationToolCall,
+  messages: readonly WorkspaceMutationSourceMessage[],
+  requiredPaths: readonly string[],
+  priorSuccessfulPatchInputs: readonly string[],
+  taskText: string,
+): boolean {
+  if (!hasNoopSerializedFalseRemovalBranchCurrentSource(
+    messages,
+    taskText,
+    priorSuccessfulPatchInputs,
+  )) return false;
+  const correctionInput = readSmallestChangeCorrectionPatchInput(
+    toolCall,
+    priorSuccessfulPatchInputs,
+    taskText,
+  );
+  if (correctionInput === undefined) return false;
+  const changes = collectWorkspaceMutationPatchLineChanges(correctionInput);
+  if (!changes || changes.length !== 1) return true;
+  const change = changes[0];
+  if (!change || !requiredPaths.map(normalizeSourcePath).includes(change.path)) return true;
+  const effective = collectEffectiveWorkspaceMutationPatchLines(change);
+  if (effective.removed.length !== 1 || effective.added.length !== 2) return true;
+  const removedCondition = effective.removed[0] ?? "";
+  const replacementCondition = effective.added.find(isWorkspaceMutationConditionLine) ?? "";
+  const removalStatement = effective.added.find(isSerializedFalseRemovalStatement);
+  return !/\bvalue\s*={2,3}\s*(?:NULL|null|undefined)\b/.test(removedCondition)
+    || !/\bvalue\s*={2,3}\s*false\b/.test(removedCondition)
+    || !isSerializedFalseRemovalCondition(replacementCondition)
+    || removalStatement === undefined;
+}
+
 function branchPreservesSerializedFalseSubset(condition: string, body: readonly string[]): boolean {
   const bodyText = body.join("\n");
   if (!/\.setAttribute\s*\(/.test(bodyText)) return false;
   const conditionSelectsSubset = /\bname\b/.test(condition) && /&&|\|\|/.test(condition);
   const bodySelectsSubset = /\bname\b/.test(bodyText) && /\.removeAttribute\s*\(/.test(bodyText);
   return conditionSelectsSubset || bodySelectsSubset;
+}
+
+function hasComplementarySerializedFalseRemovalBranches(lines: readonly string[]): boolean {
+  return lines.some((line, branchIndex) => {
+    if (!isSerializedFalseRemovalCondition(line)) {
+      return false;
+    }
+    const removalBody = readSiblingBranchBody(lines, branchIndex);
+    if (!removalBody.some(isSerializedFalseRemovalStatement)) return false;
+    const nextBranchIndex = branchIndex + removalBody.length + 1;
+    const nextBranch = lines[nextBranchIndex] ?? "";
+    if ((/^\s*/.exec(nextBranch)?.[0] ?? "") !== (/^\s*/.exec(line)?.[0] ?? "")
+      || !/}\s*else\s+if\s*\(\s*value\s*={2,3}\s*false\s*\)\s*{/.test(nextBranch)) {
+      return false;
+    }
+    return /\.setAttribute\s*\(/.test(
+      readSiblingBranchBody(lines, nextBranchIndex).join("\n"),
+    );
+  });
 }
 
 export function hasUnreachableSerializedFalseWitnessCurrentSource(
@@ -1485,6 +1609,7 @@ export function hasUnreachableSerializedFalseWitnessCurrentSource(
     const lines = source.split(/\r?\n/);
     if (hasElseIfAfterUnconditionalElse(lines) || hasReattachedSiblingBranchTail(lines)) return true;
     if (!lines.some((line) => /\.setAttribute\s*\(/.test(line))) return false;
+    if (hasComplementarySerializedFalseRemovalBranches(lines)) return false;
     const hasReachableSerializedFalseBranch = lines.some((line, index) => {
       if (!/\bvalue\s*(?:===?|!==?)\s*false\b/.test(line)
         && !/\bfalse\s*(?:===?|!==?)\s*value\b/.test(line)) {
