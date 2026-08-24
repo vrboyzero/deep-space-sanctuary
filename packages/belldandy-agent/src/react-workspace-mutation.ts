@@ -88,7 +88,8 @@ export type WorkspaceMutationPatchPreservationDiagnostics = {
 };
 
 export type WorkspaceMutationObjectiveInputCorrectionReason =
-  | "repeated_current_source";
+  | "repeated_current_source"
+  | "closing_delimiter_requires_deletion_only";
 
 export type WorkspaceMutationRecoveryPlan = WorkspaceMutationRecoveryRequest & {
   outputTokens: number;
@@ -179,6 +180,7 @@ const MUTATION_OBJECTIVE_INPUT_CORRECTION_REASON_INSTRUCTIONS: Record<
   string
 > = {
   repeated_current_source: "Local validation rejected the preceding correction because it only repeated current-source lines and produced no semantic delta. Re-evaluate every task requirement against the current source. For a named subset, check the task's positive and outside/negative witnesses against the current predicate, then change only the smallest task-relevant expression or statement. Keep one coherent sibling if/else chain: do not place required false handling behind value !== false, consume all false values before the named subset, or append else if after an unconditional else. When the complete current source proves that a prior replacement left an extra standalone closing delimiter beside the replacement's own closing delimiter, remove only the extra delimiter with a deletion-only hunk and unique unchanged context; do not remove and re-add it.",
+  closing_delimiter_requires_deletion_only: "Local validation rejected the preceding correction because the complete current source proves that a prior replacement left an extra standalone closing delimiter beside the replacement's own closing delimiter. Remove only the extra delimiter with a deletion-only hunk and unique unchanged context. Do not rewrite, extend, remove and re-add, or reattach the surrounding branch tail.",
 };
 
 const MUTATION_FINAL_OBJECTIVE_REVIEW_INSTRUCTION = [
@@ -1154,6 +1156,71 @@ export function hasExpandedSmallestChangeCorrectionHunks(
   return false;
 }
 
+function collectReplacementBoundaryClosingDelimiters(
+  messages: WorkspaceMutationSourceMessage[],
+  requiredPaths: readonly string[],
+  priorSuccessfulPatchInputs: readonly string[],
+): Map<string, Set<string>> {
+  const currentSourceByPath = readLatestRequiredFileReadSourceContents(messages, requiredPaths);
+  if (!currentSourceByPath) return new Map();
+  const delimitersByPath = new Map<string, Set<string>>();
+  for (const patchInput of priorSuccessfulPatchInputs) {
+    for (const change of collectWorkspaceMutationPatchLineChanges(patchInput) ?? []) {
+      if (change.added.length === 0) continue;
+      const currentSource = currentSourceByPath.get(change.path);
+      if (currentSource === undefined) continue;
+      const sourceLines = currentSource.split(/\r?\n/);
+      const replacementClosingLine = change.added.at(-1);
+      if (!replacementClosingLine || !/^\s*}\s*;?\s*$/.test(replacementClosingLine)) continue;
+      for (let start = 0; start <= sourceLines.length - change.added.length - 1; start += 1) {
+        if (!change.added.every((line, index) => sourceLines[start + index] === line)) continue;
+        if (sourceLines[start + change.added.length] !== replacementClosingLine) continue;
+        const delimiters = delimitersByPath.get(change.path) ?? new Set<string>();
+        delimiters.add(replacementClosingLine);
+        delimitersByPath.set(change.path, delimiters);
+        break;
+      }
+    }
+  }
+  return delimitersByPath;
+}
+
+export function hasNonDeletionOnlyClosingDelimiterCorrectionHunks(
+  toolCall: WorkspaceMutationNavigationToolCall,
+  messages: WorkspaceMutationSourceMessage[],
+  requiredPaths: readonly string[],
+  priorSuccessfulPatchInputs: readonly string[],
+  taskText: string,
+): boolean {
+  const correctionInput = readSmallestChangeCorrectionPatchInput(
+    toolCall,
+    priorSuccessfulPatchInputs,
+    taskText,
+  );
+  if (correctionInput === undefined) return false;
+  const boundaryDelimiters = collectReplacementBoundaryClosingDelimiters(
+    messages,
+    requiredPaths,
+    priorSuccessfulPatchInputs,
+  );
+  if (boundaryDelimiters.size === 0) return false;
+  const correctionChanges = collectWorkspaceMutationPatchLineChanges(correctionInput);
+  if (!correctionChanges || correctionChanges.length === 0) return true;
+  let removedDelimiterCount = 0;
+  for (const change of correctionChanges) {
+    const effective = collectEffectiveWorkspaceMutationPatchLines(change);
+    const allowedDelimiters = boundaryDelimiters.get(change.path);
+    if (effective.added.length > 0
+      || effective.removed.length === 0
+      || !allowedDelimiters
+      || effective.removed.some((line) => !allowedDelimiters.has(line))) {
+      return true;
+    }
+    removedDelimiterCount += effective.removed.length;
+  }
+  return removedDelimiterCount === 0;
+}
+
 export function hasRevertedSmallestChangeCorrectionHunks(
   toolCall: WorkspaceMutationNavigationToolCall,
   priorSuccessfulPatchInputs: readonly string[],
@@ -1351,6 +1418,21 @@ function hasElseIfAfterUnconditionalElse(lines: readonly string[]): boolean {
   });
 }
 
+function hasReattachedSiblingBranchTail(lines: readonly string[]): boolean {
+  return lines.some((line, index) => {
+    const branchMatch = /^([ \t]*)}\s*else\b/.exec(line);
+    if (!branchMatch) return false;
+    for (let previousIndex = index - 1; previousIndex >= 0; previousIndex -= 1) {
+      const previousLine = lines[previousIndex] ?? "";
+      if (!previousLine.trim()) continue;
+      const closingMatch = /^([ \t]*)}\s*;?\s*$/.exec(previousLine);
+      return Boolean(closingMatch
+        && (branchMatch[1]?.length ?? 0) > (closingMatch[1]?.length ?? 0));
+    }
+    return false;
+  });
+}
+
 function branchPreservesSerializedFalseSubset(condition: string, body: readonly string[]): boolean {
   const bodyText = body.join("\n");
   if (!/\.setAttribute\s*\(/.test(bodyText)) return false;
@@ -1369,7 +1451,7 @@ export function hasUnreachableSerializedFalseWitnessCurrentSource(
   if (priorGuardPaths.length === 0) return false;
   return readLatestWorkspaceMutationSourceEvidence(messages, priorGuardPaths).some((source) => {
     const lines = source.split(/\r?\n/);
-    if (hasElseIfAfterUnconditionalElse(lines)) return true;
+    if (hasElseIfAfterUnconditionalElse(lines) || hasReattachedSiblingBranchTail(lines)) return true;
     if (!lines.some((line) => /\.setAttribute\s*\(/.test(line))) return false;
     const hasReachableSerializedFalseBranch = lines.some((line, index) => {
       if (!/\bvalue\s*(?:===?|!==?)\s*false\b/.test(line)

@@ -150,6 +150,7 @@ import {
   hasExcludedFalseWitnessSmallestChangeCorrectionHunks,
   hasExpandedSmallestChangeCorrectionHunks,
   hasBroadenedSmallestChangeCorrectionHunks,
+  hasNonDeletionOnlyClosingDelimiterCorrectionHunks,
   hasOnlyWorkspaceMutationPatchPaths,
   hasRedundantWorkspaceMutationPatchHunks,
   hasRevertedSmallestChangeCorrectionHunks,
@@ -4176,7 +4177,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 input.text,
                 successfulWorkspaceMutationPatchInputs,
               ))) {
-            const canCorrectObjectiveInput = !workspaceMutationObjectiveInputCorrectionAttempted;
+            const canCorrectObjectiveInput = !workspaceMutationObjectiveCorrectionAttempted
+              && !workspaceMutationObjectiveInputCorrectionAttempted;
             if (canCorrectObjectiveInput) {
               workspaceMutationObjectiveReviewPending = true;
               workspaceMutationObjectiveInputCorrectionPending = true;
@@ -4538,6 +4540,14 @@ export class ToolEnabledAgent implements BelldandyAgent {
               successfulWorkspaceMutationPatchInputs,
               input.text,
             );
+          const nonDeletionOnlyClosingDelimiterCorrection = workspaceMutationObjectiveReviewCall
+            && hasNonDeletionOnlyClosingDelimiterCorrectionHunks(
+              constrainedMutationToolCall,
+              mutationRecoverySourceMessages,
+              workspaceMutationCallRequiredPaths,
+              successfulWorkspaceMutationPatchInputs,
+              input.text,
+            );
           if (revertedSmallestChangeCorrection && workspaceMutationObjectiveInputCorrectionCall) {
             workspaceMutationObjectiveCorrectionAttempted = true;
             workspaceMutationObjectiveReviewPending = true;
@@ -4564,6 +4574,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 successfulWorkspaceMutationPatchInputs,
                 input.text,
               )
+              || nonDeletionOnlyClosingDelimiterCorrection
               || excludedFalseWitnessSmallestChangeCorrection
               || broadenedSmallestChangeCorrection
               || revertedSmallestChangeCorrection)) {
@@ -4572,6 +4583,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
             if (canCorrectObjectiveInputFailure) {
               workspaceMutationObjectiveReviewPending = true;
               workspaceMutationObjectiveInputCorrectionPending = true;
+              workspaceMutationObjectiveInputCorrectionReason = nonDeletionOnlyClosingDelimiterCorrection
+                ? "closing_delimiter_requires_deletion_only"
+                : undefined;
               lastToolCallFingerprint = undefined;
               lastToolCallName = undefined;
               consecutiveDuplicateToolCalls = 0;

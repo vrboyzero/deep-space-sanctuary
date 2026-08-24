@@ -1084,6 +1084,417 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("rejects an LF tail rewrite when an extra delimiter requires deletion-only correction", async () => {
+    const requiredPath = "src/diff/props.js";
+    const removeAttributeLine = "\t\t\tdom.removeAttribute(name);";
+    const setAttributeLine = "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);";
+    const brokenMutationSlice = [
+      "\t\tif (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      "\t\t} else if (value != NULL && value !== false) {",
+      setAttributeLine,
+      "\t\t} else {",
+      removeAttributeLine,
+    ].join("\n");
+    const initialReplacement = [
+      "\t\tconst isAriaOrData = name.indexOf('aria-') === 0 || name.indexOf('data-') === 0;",
+      "\t\tif (value == NULL) {",
+      removeAttributeLine,
+      "\t\t} else if (value === false) {",
+      "\t\t\tif (isAriaOrData) {",
+      "\t\t\t\tdom.setAttribute(name, 'false');",
+      "\t\t\t} else {",
+      removeAttributeLine,
+      "\t\t\t}",
+      "\t\t} else if (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      "\t\t} else {",
+      setAttributeLine,
+      "\t\t}",
+    ].join("\n");
+    const originalSource = [
+      "export function setProperty(dom, name, value) {",
+      "\to: if (name == 'style') {",
+      "\t\tdom.style.cssText = value;",
+      "\t} else {",
+      "\t\t// aria- and data- attributes have no boolean representation.",
+      "\t\t// A `false` value is different from the attribute not being present.",
+      brokenMutationSlice,
+      "\t\t}",
+      "\t}",
+      "}",
+    ].join("\n");
+    const postInitialSource = originalSource.replace(brokenMutationSlice, initialReplacement);
+    const broadRemovedPrefix = [
+      "\t\tif (value == NULL) {",
+      removeAttributeLine,
+      "\t\t} else if (value === false) {",
+      "\t\t\tif (isAriaOrData) {",
+      "\t\t\t\tdom.setAttribute(name, 'false');",
+    ].join("\n");
+    const broadAddedPrefix = [
+      broadRemovedPrefix,
+      "\t\t\t} else {",
+      removeAttributeLine,
+      "\t\t\t}",
+      "\t\t} else {",
+      "\t\t\tdom.setAttribute(name, value);",
+      "\t\t}",
+    ].join("\n");
+    const postBroadSource = postInitialSource.replace(broadRemovedPrefix, broadAddedPrefix);
+    const postDeletionSource = postInitialSource.replace(
+      `${initialReplacement}\n\t\t}\n\t}\n}`,
+      `${initialReplacement}\n\t}\n}`,
+    );
+    const initialPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-\t\tif (typeof value == 'function') {",
+      "-\t\t\t// never serialize functions as attribute values",
+      "-\t\t} else if (value != NULL && value !== false) {",
+      `-${setAttributeLine}`,
+      "-\t\t} else {",
+      `-${removeAttributeLine}`,
+      "+\t\tconst isAriaOrData = name.indexOf('aria-') === 0 || name.indexOf('data-') === 0;",
+      "+\t\tif (value == NULL) {",
+      `+${removeAttributeLine}`,
+      "+\t\t} else if (value === false) {",
+      "+\t\t\tif (isAriaOrData) {",
+      "+\t\t\t\tdom.setAttribute(name, 'false');",
+      "+\t\t\t} else {",
+      `+${removeAttributeLine}`,
+      "+\t\t\t}",
+      "+\t\t} else if (typeof value == 'function') {",
+      "+\t\t\t// never serialize functions as attribute values",
+      "+\t\t} else {",
+      `+${setAttributeLine}`,
+      "+\t\t}",
+      "*** End Patch",
+    ].join("\n");
+    const broadCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-\t\tif (value == NULL) {",
+      `-${removeAttributeLine}`,
+      "-\t\t} else if (value === false) {",
+      "-\t\t\tif (isAriaOrData) {",
+      "-\t\t\t\tdom.setAttribute(name, 'false');",
+      "+\t\tif (value == NULL) {",
+      `+${removeAttributeLine}`,
+      "+\t\t} else if (value === false) {",
+      "+\t\t\tif (isAriaOrData) {",
+      "+\t\t\t\tdom.setAttribute(name, 'false');",
+      "+\t\t\t} else {",
+      `+${removeAttributeLine}`,
+      "+\t\t\t}",
+      "+\t\t} else {",
+      "+\t\t\tdom.setAttribute(name, value);",
+      "+\t\t}",
+      "*** End Patch",
+    ].join("\n");
+    const deletionCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      " \t\t} else {",
+      ` ${setAttributeLine}`,
+      " \t\t}",
+      "-\t\t}",
+      " \t}",
+      " }",
+      "*** End Patch",
+    ].join("\n");
+    const deletionOnlyGuidance = "Remove only the extra delimiter with a deletion-only hunk";
+    const successfulSummary = '{"summary":"removed the extra closing delimiter and verified the attribute behavior"}';
+    const task = "Fix the frozen browser-facing regression in the real web project. Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, and remove every attribute with null or undefined values. Make the smallest change in src/diff/props.js and pass the supplied deterministic checks.";
+    const requests: Array<Record<string, any>> = [];
+    const executedPatches: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const instruction = String(body.messages?.[0]?.content ?? "");
+      if (instruction.includes("Post-mutation verification phase")) {
+        return jsonResponse(modelToolCall(`read-${requests.length}`, "file_read", {
+          path: requiredPath,
+          limit: 1_048_576,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation objective correction input retry phase")) {
+        return jsonResponse(modelToolCall("delete-extra-closing-delimiter", "apply_patch", {
+          input: instruction.includes(deletionOnlyGuidance)
+            ? deletionCorrection
+            : broadCorrection,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation final objective review phase")) {
+        return jsonResponse({
+          choices: [{
+            finish_reason: "stop",
+            message: { content: successfulSummary },
+          }],
+          usage: { prompt_tokens: 300, completion_tokens: 30 },
+        });
+      }
+      if (instruction.includes("Post-mutation objective review phase")) {
+        return jsonResponse(modelToolCall("rewrite-current-tail", "apply_patch", {
+          input: broadCorrection,
+        }, 300, 60));
+      }
+      return jsonResponse(modelToolCall("patch-incomplete-lf-replacement", "apply_patch", {
+        input: initialPatch,
+      }, 300, 60));
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        const content = executedPatches.includes(deletionCorrection)
+          ? postDeletionSource
+          : executedPatches.includes(broadCorrection)
+            ? postBroadSource
+            : postInitialSource;
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: requiredPath,
+            size: content.length,
+            truncated: false,
+            content,
+          }),
+          durationMs: 1,
+        };
+      }
+      executedPatches.push(String(request.arguments?.input ?? ""));
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: [requiredPath] },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent(execute);
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-lf-deletion-only-tail",
+      text: task,
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths: [requiredPath],
+          toolLoopIterationBudget: 6,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === successfulSummary
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(postInitialSource).toContain("\t\t}\n\t\t}\n\t}\n}");
+    expect(postBroadSource).toContain("\t\t}\n\t\t\t} else {");
+    expect(items).toContainEqual({ type: "final", text: successfulSummary });
+    expect(executedPatches).toEqual([initialPatch, deletionCorrection]);
+    expect(requests).toHaveLength(6);
+    expect(requests[3]?.messages[0]?.content).toContain(deletionOnlyGuidance);
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("fails closed when complete LF post-correction source still has a reattached branch tail", async () => {
+    const requiredPath = "src/diff/props.js";
+    const removeAttributeLine = "\t\t\tdom.removeAttribute(name);";
+    const setAttributeLine = "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);";
+    const brokenMutationSlice = [
+      "\t\tif (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      "\t\t} else if (value != NULL && value !== false) {",
+      setAttributeLine,
+      "\t\t} else {",
+      removeAttributeLine,
+    ].join("\n");
+    const initialReplacement = [
+      "\t\tconst isAriaOrData = name.indexOf('aria-') === 0 || name.indexOf('data-') === 0;",
+      "\t\tif (value == NULL) {",
+      removeAttributeLine,
+      "\t\t} else if (value === false) {",
+      "\t\t\tif (isAriaOrData) {",
+      "\t\t\t\tdom.setAttribute(name, 'false');",
+      "\t\t\t} else {",
+      removeAttributeLine,
+      "\t\t\t}",
+      "\t\t} else if (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      "\t\t} else {",
+      setAttributeLine,
+      "\t\t}",
+    ].join("\n");
+    const originalSource = [
+      "export function setProperty(dom, name, value) {",
+      "\to: if (name == 'style') {",
+      "\t\tdom.style.cssText = value;",
+      "\t} else {",
+      "\t\t// aria- and data- attributes have no boolean representation.",
+      "\t\t// A `false` value is different from the attribute not being present.",
+      brokenMutationSlice,
+      "\t\t}",
+      "\t}",
+      "}",
+    ].join("\n");
+    const postInitialSource = originalSource.replace(brokenMutationSlice, initialReplacement);
+    const broadRemovedPrefix = [
+      "\t\tif (value == NULL) {",
+      removeAttributeLine,
+      "\t\t} else if (value === false) {",
+      "\t\t\tif (isAriaOrData) {",
+      "\t\t\t\tdom.setAttribute(name, 'false');",
+    ].join("\n");
+    const invalidFinalSource = postInitialSource.replace(
+      broadRemovedPrefix,
+      [
+        broadRemovedPrefix,
+        "\t\t\t} else {",
+        removeAttributeLine,
+        "\t\t\t}",
+        "\t\t} else {",
+        "\t\t\tdom.setAttribute(name, value);",
+        "\t\t}",
+      ].join("\n"),
+    );
+    const initialPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-\t\tif (typeof value == 'function') {",
+      "-\t\t\t// never serialize functions as attribute values",
+      "-\t\t} else if (value != NULL && value !== false) {",
+      `-${setAttributeLine}`,
+      "-\t\t} else {",
+      `-${removeAttributeLine}`,
+      ...initialReplacement.split("\n").map((line) => `+${line}`),
+      "*** End Patch",
+    ].join("\n");
+    const deletionCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      " \t\t} else {",
+      ` ${setAttributeLine}`,
+      " \t\t}",
+      "-\t\t}",
+      " \t}",
+      " }",
+      "*** End Patch",
+    ].join("\n");
+    const successfulSummary = '{"summary":"removed the extra closing delimiter and verified the attribute behavior"}';
+    const task = "Fix the frozen browser-facing regression in the real web project. Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, and remove every attribute with null or undefined values. Make the smallest change in src/diff/props.js and pass the supplied deterministic checks.";
+    const requests: Array<Record<string, any>> = [];
+    const executedPatches: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const instruction = String(body.messages?.[0]?.content ?? "");
+      if (instruction.includes("Post-mutation verification phase")) {
+        return jsonResponse(modelToolCall(`read-${requests.length}`, "file_read", {
+          path: requiredPath,
+          limit: 1_048_576,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation final objective review phase")) {
+        return jsonResponse({
+          choices: [{
+            finish_reason: "stop",
+            message: { content: successfulSummary },
+          }],
+          usage: { prompt_tokens: 300, completion_tokens: 30 },
+        });
+      }
+      if (instruction.includes("Post-mutation objective review phase")) {
+        return jsonResponse(modelToolCall("delete-extra-closing-delimiter", "apply_patch", {
+          input: deletionCorrection,
+        }, 300, 60));
+      }
+      return jsonResponse(modelToolCall("patch-incomplete-lf-replacement", "apply_patch", {
+        input: initialPatch,
+      }, 300, 60));
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "apply_patch") {
+        executedPatches.push(String(request.arguments?.input ?? ""));
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: "Patch applied successfully",
+          metadata: {
+            workspaceMutation: { schemaVersion: 1, changedPaths: [requiredPath] },
+          },
+          durationMs: 1,
+        };
+      }
+      const content = executedPatches.includes(deletionCorrection)
+        ? invalidFinalSource
+        : postInitialSource;
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: JSON.stringify({
+          path: requiredPath,
+          size: content.length,
+          truncated: false,
+          content,
+        }),
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent(execute);
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-lf-invalid-final-tail",
+      text: task,
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths: [requiredPath],
+          toolLoopIterationBudget: 6,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === successfulSummary
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(invalidFinalSource).toContain("\t\t}\n\t\t\t} else {");
+    expect(executedPatches).toEqual([initialPatch, deletionCorrection]);
+    expect(requests).toHaveLength(5);
+    expect(items).not.toContainEqual({ type: "final", text: successfulSummary });
+    expect(items.at(-2)).toEqual({
+      type: "final",
+      text: expect.stringContaining("post-write objective review accepted"),
+    });
+    expect(items.at(-1)).toEqual({ type: "status", status: "error" });
+  });
+
   it("rebuilds an atomic patch from the complete current branch context", async () => {
     const requiredPath = "src/diff/props.js";
     const originalCondition = "\t\t} else if (value != NULL && value !== false) {";

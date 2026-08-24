@@ -2190,6 +2190,44 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：这是 evaluator 前唯一已证实的产品缺口，可在零模型费用下稳定复现；先关闭它才能避免对 frozen identity 试错或把平台差异误归因到 Provider/WSL。
 - **当前还缺的关键闭环**：本地修复与相邻回归、新 committed clean identity、Windows 零凭证和唯一 formal、其后 WSL2 零凭证和唯一 formal；双平台 evaluator 全绿前不进入连续候选、完整矩阵或 P2-C。
 
+#### P0 Web TDD 实现结论：LF deletion-only correction 与 final review 失败关闭（2026-08-24）
+
+##### 已完成内容
+
+1. **`react-workspace-mutation.ts` 扩展**：
+   - 从 required path 最新完整 `file_read` 与已成功 replacement patch 中识别“replacement 自带 closing delimiter、旧 delimiter 紧邻保留”的可信边界；
+   - 在该边界成立时只允许删除已证明重复 delimiter 的纯删除 correction，拒绝 broad rewrite、remove-and-readd、附带新增或跨路径修改；
+   - final review 新增相邻 sibling branch tail 结构检查，完整源码出现较浅独立 closing delimiter 后重挂接更深 `} else` 时失败关闭。
+
+2. **`tool-agent.ts` 接入**：
+   - 新增 `closing_delimiter_requires_deletion_only` correction reason，为一次 bounded input correction 提供精确的 deletion-only 指令；
+   - correction 已成功执行后，deterministic final review 再发现无效控制流时不启动第三次 mutation，保持既有首次 post-write review 的一次修复机会；
+   - Provider retry=`0`、`12 turns / 24,000 tokens`、单 run `$0.10`、required-path 与 smallest-change 合同均未放宽。
+
+3. **`tool-agent-workspace-mutation-structured-output.test.ts` 扩展**：
+   - 使用冻结 WSL2 formal 的 LF Preact 源码、首个不完整 replacement、broad correction 与最终重挂接源码，通过公共 `ToolEnabledAgent.run()` seam 补两条行为回归；
+   - 第一条验证 broad correction 在执行前被拒绝，随后只执行 initial patch 与 deletion-only correction 并最终 `done`；
+   - 第二条验证 correction 后完整源码仍有重挂接 sibling tail 时，即使 Provider 返回合法成功 JSON，也以 `error` 失败关闭且不执行第三个 patch。
+
+4. **效果**：
+   - WSL2 formal 已证实的 correction 尾部扩写路径在零费用本地反馈环中被阻断；
+   - syntax-invalid 的完整 post-correction source 不再被 final review 成功摘要掩盖；
+   - 本环节模型调用=`0`、新增 Provider 费用=`$0`，observed conservative upper 保持 `$2.54598701`，Stage 0D 当前最坏守卫保持 `48.39263883 RMB`；未重跑任何 frozen formal，未启动新 Windows/WSL2 formal。
+
+##### 验证结果
+
+- TypeScript workspace 完整 build 与独立 `verify:build` 无错误；
+- 新 LF correction 回归 Red=请求数实际 `5`、预期 `6`，Green=`1/1`；新 final-review 回归 Red=错误完整源码仍接受成功 JSON，Green=`1/1`；structured-output=`12/12`；
+- workspace-mutation owner/相邻=`154/154`，Agent=`701 passed / 1 skipped`；
+- `verify:coding-benchmark`、`verify:coding-ci`、`git diff --check` 全绿，`[DEBUG-*]` 临时探针扫描为 `0`；
+- 关键功能验证：LF 路径只允许 initial mutation + deletion-only correction；correction 后仍存在错误 sibling tail 时最终状态=`error`。
+
+##### 后续计划
+
+- **下一步准备做什么**：提交源码、测试和本文形成新 committed identity；随后建立 detached clean harness，完成 frozen offline install、完整 build/独立 verifier、Agent/owner/合同、Windows 零凭证 dry-run 与 formal prepare-only Gate。
+- **为什么先做它**：主工作区 TDD 与零模型回归已关闭已知 LF 缺口，但只有 committed clean identity 能排除旧 dist、依赖、fixture 与工作区漂移，安全开放下一次唯一付费 formal。
+- **当前还缺的关键闭环**：新 identity 的 clean Gate、Windows 唯一 formal evaluator 全绿，以及其后 WSL2 零凭证与唯一 formal；双平台均通过前不进入连续候选、完整矩阵或 P2-C。
+
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
 | 文档精简与历史归档 | - | **已完成** | 压缩前 4403 行全文由 `archive-04` 保留；主文档保留目的、目标、方案、完成/验证、费用、风险和计划进度 | - | 后续历史明细只追加到新归档或专门证据，不再把逐 run 流水堆入主计划 |
@@ -2197,7 +2235,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
 | P0：Benchmark truth set / evaluator 对齐 | P0 | **已完成 zero-cost 对齐** | `coding-agent-benchmark-web-ui-truth-set/v1`、6 个正负 witness、SHA/LF 绑定、v2 fixture/evaluator、实际 Red=`1`/Green=`0` replay；定向 `20/20`、benchmark/CI/build Gate 全绿 | - | 保持 truth set、prompt、fixture、visible test 与 evaluator 单一版本绑定；任何 SHA/Schema/任务合同漂移均失败关闭 |
-| P0：Web mutation/correction 稳定化 | P0 | **Windows formal 全绿；WSL2 formal 失败并冻结** | `1bdb48e` Windows run=`real-web-ui-regression-windows-a1-1787283393285` evaluator=`true/true/true`；WSL2 run=`real-web-ui-regression-wsl2-linux-a1-1787285945709` evaluator=`false/false/false`，regression=`1`，visible test=`1 failed suite / 0 tests`；failure=`correction 尾部重挂接` | `LF correction Red/Green + 新 identity 双平台 Gate/formal，约 0.75-1.25 人日` | 下一轮先做零费用公共 seam TDD；新 identity 必须依次通过 Windows 与 WSL2 唯一 formal，双平台全绿后才进入连续候选和最终复算 |
+| P0：Web mutation/correction 稳定化 | P0 | **LF 本地修复全绿；待新 identity 双平台 formal** | 公共 `ToolEnabledAgent.run()` LF correction/final-review Red/Green=`2/2`；structured-output=`12/12`、owner/相邻=`154/154`、Agent=`701 passed / 1 skipped`；`1bdb48e` Windows evaluator=`true/true/true`、旧 WSL2 失败证据永久冻结 | `新 identity clean Gate + Windows/WSL2 唯一 formal，约 0.5-1 人日` | 先提交并完成 clean harness/零凭证 Gate；Windows evaluator 全绿后才启动 WSL2，双平台全绿后才进入连续候选和最终复算 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |
