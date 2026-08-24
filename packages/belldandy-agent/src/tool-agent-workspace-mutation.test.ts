@@ -2966,6 +2966,152 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
   });
 
+  it("rebuilds a rejected broad correction from the prior semantic delta", async () => {
+    const requiredPath = "src/diff/props.js";
+    const originalCondition = "\t\t} else if (value != NULL && value !== false) {";
+    const expandedCondition = [
+      "\t\t} else if (",
+      "\t\t\tvalue != NULL &&",
+      "\t\t\t(value !== false || (name[0] == 'a' && name[1] == 'r') || name.slice(0, 5) == 'data-')",
+      "\t\t) {",
+    ];
+    const broadenedCondition = "\t\t} else if (value != NULL) {";
+    const minimalCondition = "\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {";
+    const initialPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${originalCondition}`,
+      ...expandedCondition.map((line) => `+${line}`),
+      "*** End Patch",
+    ].join("\n");
+    const broadenedCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      ...expandedCondition.map((line) => `-${line}`),
+      `+${broadenedCondition}`,
+      "*** End Patch",
+    ].join("\n");
+    const minimalCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      ...expandedCondition.map((line) => `-${line}`),
+      `+${minimalCondition}`,
+      "*** End Patch",
+    ].join("\n");
+    const successfulSummary = '{"summary":"narrowed the predicate and verified the attribute behavior"}';
+    const task = "Fix the frozen browser-facing regression in the real web project. Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, and remove every attribute with null or undefined values. Make the smallest change in src/diff/props.js and pass the supplied deterministic checks.";
+    let currentCondition = [originalCondition];
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const instruction = String(body.messages?.[0]?.content ?? "");
+      if (instruction.includes("Post-mutation verification phase")) {
+        return response(modelToolCall(`read-${requests.length}`, "file_read", {
+          path: requiredPath,
+          limit: 1_048_576,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation objective correction input retry phase")) {
+        return response(modelToolCall("narrow-correction", "apply_patch", {
+          input: instruction.includes("prior semantic delta")
+            ? minimalCorrection
+            : broadenedCorrection,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation final objective review phase")) {
+        return response({
+          choices: [{
+            finish_reason: "stop",
+            message: { content: successfulSummary },
+          }],
+          usage: { prompt_tokens: 300, completion_tokens: 30 },
+        });
+      }
+      if (instruction.includes("Post-mutation objective review phase")) {
+        return response(modelToolCall("broaden-correction", "apply_patch", {
+          input: broadenedCorrection,
+        }, 300, 60));
+      }
+      return response(modelToolCall("initial-expanded", "apply_patch", {
+        input: initialPatch,
+      }, 300, 60));
+    });
+    const executedPatches: string[] = [];
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: requiredPath,
+            truncated: false,
+            content: [
+              "\t\tif (typeof value == 'function') {",
+              ...currentCondition,
+              "\t\t\tdom.setAttribute(name, value);",
+            ].join("\n"),
+          }),
+          durationMs: 1,
+        };
+      }
+      const patchInput = String(request.arguments?.input ?? "");
+      executedPatches.push(patchInput);
+      if (patchInput === initialPatch) currentCondition = expandedCondition;
+      if (patchInput === broadenedCorrection) currentCondition = [broadenedCondition];
+      if (patchInput === minimalCorrection) currentCondition = [minimalCondition];
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: [requiredPath] },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 6,
+      thinking: { type: "enabled" },
+    });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-expanded-correction-rebuild",
+      text: task,
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths: [requiredPath],
+          toolLoopIterationBudget: 6,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === successfulSummary
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(requests[3]?.messages[0]?.content).toContain("prior semantic delta");
+    expect(requests).toHaveLength(6);
+    expect(executedPatches).toEqual([initialPatch, minimalCorrection]);
+    expect(items).toContainEqual({ type: "final", text: successfulSummary });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("retries one post-write correction rejected by the local required-path guard", async () => {
     const requiredChangedPaths = ["src/api.ts"];
     const requests: Array<Record<string, any>> = [];

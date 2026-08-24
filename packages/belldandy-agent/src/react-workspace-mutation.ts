@@ -89,6 +89,7 @@ export type WorkspaceMutationPatchPreservationDiagnostics = {
 
 export type WorkspaceMutationObjectiveInputCorrectionReason =
   | "repeated_current_source"
+  | "smallest_change_requires_semantic_narrowing"
   | "closing_delimiter_requires_deletion_only";
 
 export type WorkspaceMutationRecoveryPlan = WorkspaceMutationRecoveryRequest & {
@@ -180,6 +181,7 @@ const MUTATION_OBJECTIVE_INPUT_CORRECTION_REASON_INSTRUCTIONS: Record<
   string
 > = {
   repeated_current_source: "Local validation rejected the preceding correction because it only repeated current-source lines and produced no semantic delta. Re-evaluate every task requirement against the current source. For a named subset, check the task's positive and outside/negative witnesses against the current predicate, then change only the smallest task-relevant expression or statement. Keep one coherent sibling if/else chain: do not place required false handling behind value !== false, consume all false values before the named subset, or append else if after an unconditional else. When the complete current source proves that a prior replacement left an extra standalone closing delimiter beside the replacement's own closing delimiter, remove only the extra delimiter with a deletion-only hunk and unique unchanged context; do not remove and re-add it.",
+  smallest_change_requires_semantic_narrowing: "Local validation rejected the preceding correction because it did not narrowly refine the prior semantic delta. Start from the complete current source, preserve every behaviorally correct part of that prior semantic delta, and replace only the over-broad, over-specific, reverted, or disjoint task-relevant predicate or statement. Do not restore the broken baseline, move the change to an unrelated branch, or rewrite adjacent correct code. When the task or bounded evidence provides an exact source predicate, use it byte-for-byte.",
   closing_delimiter_requires_deletion_only: "Local validation rejected the preceding correction because the complete current source proves that a prior replacement left an extra standalone closing delimiter beside the replacement's own closing delimiter. Remove only the extra delimiter with a deletion-only hunk and unique unchanged context. Do not rewrite, extend, remove and re-add, or reattach the surrounding branch tail.",
 };
 

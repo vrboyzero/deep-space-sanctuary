@@ -4585,7 +4585,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
               workspaceMutationObjectiveInputCorrectionPending = true;
               workspaceMutationObjectiveInputCorrectionReason = nonDeletionOnlyClosingDelimiterCorrection
                 ? "closing_delimiter_requires_deletion_only"
-                : undefined;
+                : "smallest_change_requires_semantic_narrowing";
               lastToolCallFingerprint = undefined;
               lastToolCallName = undefined;
               consecutiveDuplicateToolCalls = 0;
