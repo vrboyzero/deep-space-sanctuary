@@ -152,6 +152,7 @@ import {
   hasBroadenedSmallestChangeCorrectionHunks,
   hasNonDeletionOnlyClosingDelimiterCorrectionHunks,
   hasOnlyWorkspaceMutationPatchPaths,
+  hasPriorPatchAdjacentDuplicateClosingDelimiterCurrentSource,
   hasRedundantWorkspaceMutationPatchHunks,
   hasRevertedSmallestChangeCorrectionHunks,
   hasUnreachableSerializedFalseWitnessCurrentSource,
@@ -4163,6 +4164,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
           const objectiveReviewReturnedFinalOutput = workspaceMutationObjectiveReviewCall
             && (!input.structuredOutput || workspaceMutationObjectiveOutputText !== undefined);
+          const priorPatchAdjacentDuplicateClosingDelimiter = objectiveReviewReturnedFinalOutput
+            && hasPriorPatchAdjacentDuplicateClosingDelimiterCurrentSource(
+              mutationRecoverySourceMessages,
+              input.text,
+              successfulWorkspaceMutationPatchInputs,
+            );
           const unreachableSerializedFalseWitness = objectiveReviewReturnedFinalOutput
             && hasUnreachableSerializedFalseWitnessCurrentSource(
               mutationRecoverySourceMessages,
@@ -4182,6 +4189,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
             if (canCorrectObjectiveInput) {
               workspaceMutationObjectiveReviewPending = true;
               workspaceMutationObjectiveInputCorrectionPending = true;
+              workspaceMutationObjectiveInputCorrectionReason = priorPatchAdjacentDuplicateClosingDelimiter
+                ? "closing_delimiter_requires_deletion_only"
+                : undefined;
               workspaceMutationObjectiveOutputRepairPending = false;
               lastToolCallFingerprint = undefined;
               lastToolCallName = undefined;

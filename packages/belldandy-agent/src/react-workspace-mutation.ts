@@ -1336,7 +1336,9 @@ function collectPriorSerializedFalseGuardPaths(
       if (change.removed.some((line) => (
         /\bvalue\s*!=\s*NULL\b/.test(line)
           && /\bvalue\s*!==?\s*false\b/.test(line)
-      ))) {
+      )) || (change.added.some((line) => (
+        /\bvalue\s*===?\s*false\b/.test(line)
+      )) && change.added.some((line) => /\.setAttribute\s*\(/.test(line)))) {
         paths.add(normalizeSourcePath(change.path));
       }
     }
@@ -1435,6 +1437,29 @@ function hasReattachedSiblingBranchTail(lines: readonly string[]): boolean {
   });
 }
 
+export function hasPriorPatchAdjacentDuplicateClosingDelimiterCurrentSource(
+  messages: readonly WorkspaceMutationSourceMessage[],
+  taskText: string,
+  priorSuccessfulPatchInputs: readonly string[],
+): boolean {
+  if (!taskRequiresSerializedFalseWitness(taskText)) return false;
+  const priorGuardPaths = collectPriorSerializedFalseGuardPaths(priorSuccessfulPatchInputs);
+  if (priorGuardPaths.length === 0) return false;
+  const addedClosingDelimiters = new Set(priorSuccessfulPatchInputs.flatMap((patchInput) => (
+    (collectWorkspaceMutationPatchLineChanges(patchInput) ?? [])
+      .filter((change) => priorGuardPaths.includes(change.path))
+      .flatMap((change) => collectEffectiveWorkspaceMutationPatchLines(change).added)
+      .filter((line) => /^\s*}\s*;?\s*$/.test(line))
+  )));
+  if (addedClosingDelimiters.size === 0) return false;
+  return readLatestWorkspaceMutationSourceEvidence(messages, priorGuardPaths).some((source) => {
+    const lines = source.split(/\r?\n/);
+    return lines.some((line, index) => (
+      addedClosingDelimiters.has(line) && lines[index + 1] === line
+    ));
+  });
+}
+
 function branchPreservesSerializedFalseSubset(condition: string, body: readonly string[]): boolean {
   const bodyText = body.join("\n");
   if (!/\.setAttribute\s*\(/.test(bodyText)) return false;
@@ -1451,6 +1476,11 @@ export function hasUnreachableSerializedFalseWitnessCurrentSource(
   if (!taskRequiresSerializedFalseWitness(taskText)) return false;
   const priorGuardPaths = collectPriorSerializedFalseGuardPaths(priorSuccessfulPatchInputs);
   if (priorGuardPaths.length === 0) return false;
+  if (hasPriorPatchAdjacentDuplicateClosingDelimiterCurrentSource(
+    messages,
+    taskText,
+    priorSuccessfulPatchInputs,
+  )) return true;
   return readLatestWorkspaceMutationSourceEvidence(messages, priorGuardPaths).some((source) => {
     const lines = source.split(/\r?\n/);
     if (hasElseIfAfterUnconditionalElse(lines) || hasReattachedSiblingBranchTail(lines)) return true;

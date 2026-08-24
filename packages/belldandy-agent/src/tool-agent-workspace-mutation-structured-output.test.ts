@@ -889,6 +889,176 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("repairs an extra closing delimiter when objective review accepts the initial broken source", async () => {
+    const requiredPath = "src/diff/props.js";
+    const originalCondition = "\t\t} else if (value != NULL && value !== false) {";
+    const serializedFalseCondition = "\t\t} else if (value === false && (name[0] === 'a' && name[1] === 'r' && name[2] === 'i' && name[3] === 'a' || name[0] === 'd' && name[1] === 'a' && name[2] === 't' && name[3] === 'a')) {";
+    const setAttributeLine = "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);";
+    const removeAttributeLine = "\t\t\tdom.removeAttribute(name);";
+    const originalSource = [
+      "export function setProperty(dom, name, value) {",
+      "\tif (name == 'style') {",
+      "\t\tdom.style.cssText = value;",
+      "\t} else {",
+      "\t\t// aria- and data- attributes have no boolean representation.",
+      "\t\t// A `false` value is different from the attribute not being present.",
+      "\t\tif (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      originalCondition,
+      setAttributeLine,
+      "\t\t} else {",
+      removeAttributeLine,
+      "\t\t}",
+      "\t}",
+      "}",
+    ].join("\n");
+    const postInitialSource = originalSource.replace(
+      [
+        originalCondition,
+        setAttributeLine,
+        "\t\t} else {",
+        removeAttributeLine,
+        "\t\t}",
+      ].join("\n"),
+      [
+        originalCondition,
+        setAttributeLine,
+        serializedFalseCondition,
+        "\t\t\tdom.setAttribute(name, 'false');",
+        "\t\t} else {",
+        removeAttributeLine,
+        "\t\t}",
+        "\t\t}",
+      ].join("\n"),
+    );
+    const postCorrectionSource = postInitialSource.replace(
+      "\t\t}\n\t\t}\n\t}\n}",
+      "\t\t}\n\t}\n}",
+    );
+    const initialPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      ` ${originalCondition}`,
+      ` ${setAttributeLine}`,
+      `+${serializedFalseCondition}`,
+      "+\t\t\tdom.setAttribute(name, 'false');",
+      " \t\t} else {",
+      ` ${removeAttributeLine}`,
+      " \t\t}",
+      "+\t\t}",
+      "*** End Patch",
+    ].join("\n");
+    const deletionCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      " \t\t} else {",
+      ` ${removeAttributeLine}`,
+      " \t\t}",
+      "-\t\t}",
+      " \t}",
+      " }",
+      "*** End Patch",
+    ].join("\n");
+    const structuralGuidance = "complete current source proves that a prior replacement left an extra standalone closing delimiter";
+    const successfulSummary = "{\"summary\":\"Corrected src/diff/props.js to preserve and serialize false values for aria-* and data-* attributes as the string 'false', while removing ordinary attributes with false values and removing every attribute with null or undefined values.\"}";
+    const task = "Fix the frozen browser-facing regression in the real web project. Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, and remove every attribute with null or undefined values. Make the smallest change in src/diff/props.js and pass the supplied deterministic checks.";
+    const requests: Array<Record<string, any>> = [];
+    const executedPatches: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const instruction = String(body.messages?.[0]?.content ?? "");
+      if (instruction.includes("Post-mutation verification phase")) {
+        return jsonResponse(modelToolCall(`read-${requests.length}`, "file_read", {
+          path: requiredPath,
+          limit: 1_048_576,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation objective correction input retry phase")) {
+        return jsonResponse(modelToolCall("remove-extra-closing-delimiter", "apply_patch", {
+          input: deletionCorrection,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation final objective review phase")
+        || instruction.includes("Post-mutation objective review phase")) {
+        return jsonResponse({
+          choices: [{
+            finish_reason: "stop",
+            message: { content: successfulSummary },
+          }],
+          usage: { prompt_tokens: 300, completion_tokens: 30 },
+        });
+      }
+      return jsonResponse(modelToolCall("patch-formal-source", "apply_patch", {
+        input: initialPatch,
+      }, 300, 60));
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        const source = executedPatches.includes(deletionCorrection)
+          ? postCorrectionSource
+          : postInitialSource;
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: requiredPath,
+            size: source.length,
+            truncated: false,
+            content: source,
+          }),
+          durationMs: 1,
+        };
+      }
+      executedPatches.push(String(request.arguments?.input ?? ""));
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: [requiredPath] },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent(execute);
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-initial-extra-closing-delimiter",
+      text: task,
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths: [requiredPath],
+          toolLoopIterationBudget: 6,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === successfulSummary
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(postInitialSource).toContain("\t\t}\n\t\t}\n\t}\n}");
+    expect(requests).toHaveLength(6);
+    expect(requests[3]?.messages[0]?.content).toContain(structuralGuidance);
+    expect(requests[3]?.messages[1]?.content).toContain("\\t\\t}\\n\\t\\t}");
+    expect(executedPatches).toEqual([initialPatch, deletionCorrection]);
+    expect(items).toContainEqual({ type: "final", text: successfulSummary });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("repairs an extra closing branch delimiter after a repeated correction", async () => {
     const requiredPath = "src/diff/props.js";
     const removeAttributeLine = "\t\t\tdom.removeAttribute(name);";
