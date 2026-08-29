@@ -154,6 +154,7 @@ import {
   hasNonDeletionOnlyClosingDelimiterCorrectionHunks,
   hasNonGroupingSerializedFalsePrecedenceCorrectionHunks,
   hasNonReachabilitySerializedFalseDataPredicateCorrectionHunks,
+  hasNonReachabilitySerializedFalseParentGuardCorrectionHunks,
   hasNoopSerializedFalseRemovalBranchCurrentSource,
   hasOnlyWorkspaceMutationPatchPaths,
   hasPriorPatchAdjacentDuplicateClosingDelimiterCurrentSource,
@@ -161,6 +162,7 @@ import {
   hasRevertedSmallestChangeCorrectionHunks,
   hasUnreachableSerializedFalseWitnessCurrentSource,
   hasUnreachableSerializedFalseDataPredicateCurrentSource,
+  hasUnreachableSerializedFalseParentGuardCurrentSource,
   hasUnpreservedSerializedFalseWitnessCurrentSource,
   inspectContextOnlyWorkspaceMutationPatchPreservation,
   inspectWorkspaceMutationPatchHunks,
@@ -4161,6 +4163,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
               input.text,
               successfulWorkspaceMutationPatchInputs,
             );
+          const unreachableSerializedFalseParentGuard = workspaceMutationObjectiveReviewCall
+            && hasUnreachableSerializedFalseParentGuardCurrentSource(
+              mutationRecoverySourceMessages,
+              input.text,
+              successfulWorkspaceMutationPatchInputs,
+            );
           const unpreservedSerializedFalseWitness = workspaceMutationObjectiveReviewCall
             && hasUnpreservedSerializedFalseWitnessCurrentSource(
               mutationRecoverySourceMessages,
@@ -4241,6 +4249,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 ? "closing_delimiter_requires_deletion_only"
                 : noopSerializedFalseRemovalBranch
                 ? "serialized_false_removal_requires_atomic_repair"
+                : unreachableSerializedFalseParentGuard
+                ? "serialized_false_parent_guard_requires_reachability"
                 : unreachableSerializedFalseDataPredicate
                 ? "serialized_false_data_predicate_requires_reachability"
                 : undefined;
@@ -4555,6 +4565,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
             );
             return;
           }
+          const repeatedCurrentSourceParentGuard = workspaceMutationObjectiveReviewCall
+            && hasUnreachableSerializedFalseParentGuardCurrentSource(
+              mutationRecoverySourceMessages,
+              input.text,
+              successfulWorkspaceMutationPatchInputs,
+            );
           if (workspaceMutationObjectiveReviewCall
             && hasRedundantWorkspaceMutationPatchHunks(
               constrainedMutationToolCall,
@@ -4566,7 +4582,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
             if (canCorrectObjectiveInputFailure) {
               workspaceMutationObjectiveReviewPending = true;
               workspaceMutationObjectiveInputCorrectionPending = true;
-              workspaceMutationObjectiveInputCorrectionReason = "repeated_current_source";
+              workspaceMutationObjectiveInputCorrectionReason = repeatedCurrentSourceParentGuard
+                ? "serialized_false_parent_guard_requires_reachability"
+                : "repeated_current_source";
               lastToolCallFingerprint = undefined;
               lastToolCallName = undefined;
               consecutiveDuplicateToolCalls = 0;
@@ -4634,6 +4652,14 @@ export class ToolEnabledAgent implements BelldandyAgent {
               successfulWorkspaceMutationPatchInputs,
               input.text,
             );
+          const nonReachabilitySerializedFalseParentGuardCorrection = workspaceMutationObjectiveReviewCall
+            && hasNonReachabilitySerializedFalseParentGuardCorrectionHunks(
+              constrainedMutationToolCall,
+              mutationRecoverySourceMessages,
+              workspaceMutationCallRequiredPaths,
+              successfulWorkspaceMutationPatchInputs,
+              input.text,
+            );
           if (revertedSmallestChangeCorrection && workspaceMutationObjectiveInputCorrectionCall) {
             workspaceMutationObjectiveCorrectionAttempted = true;
             workspaceMutationObjectiveReviewPending = true;
@@ -4650,17 +4676,18 @@ export class ToolEnabledAgent implements BelldandyAgent {
             continue;
           }
           if (workspaceMutationObjectiveReviewCall
-            && (hasDisjointSmallestChangeCorrectionHunks(
+            && ((hasDisjointSmallestChangeCorrectionHunks(
                 constrainedMutationToolCall,
                 successfulWorkspaceMutationPatchInputs,
                 input.text,
-              )
+              ) && !repeatedCurrentSourceParentGuard)
               || hasExpandedSmallestChangeCorrectionHunks(
                 constrainedMutationToolCall,
                 successfulWorkspaceMutationPatchInputs,
                 input.text,
               )
               || nonReachabilitySerializedFalseDataPredicateCorrection
+              || nonReachabilitySerializedFalseParentGuardCorrection
               || nonGroupingSerializedFalsePrecedenceCorrection
               || nonAtomicSerializedFalseRemovalCorrection
               || nonDeletionOnlyClosingDelimiterCorrection
@@ -4674,6 +4701,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
               workspaceMutationObjectiveInputCorrectionPending = true;
               workspaceMutationObjectiveInputCorrectionReason = nonDeletionOnlyClosingDelimiterCorrection
                 ? "closing_delimiter_requires_deletion_only"
+                : nonReachabilitySerializedFalseParentGuardCorrection
+                ? "serialized_false_parent_guard_requires_reachability"
                 : nonReachabilitySerializedFalseDataPredicateCorrection
                 ? "serialized_false_data_predicate_requires_reachability"
                 : nonGroupingSerializedFalsePrecedenceCorrection

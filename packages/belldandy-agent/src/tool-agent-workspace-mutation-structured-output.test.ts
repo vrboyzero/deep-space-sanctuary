@@ -2499,6 +2499,170 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("repairs only the parent false guard that makes nested aria/data serialization unreachable", async () => {
+    const requiredPath = "src/diff/props.js";
+    const parentCondition = "\t\t} else if (value != NULL && value !== false) {";
+    const reachableParentCondition = "\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {";
+    const originalSetAttribute = "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);";
+    const initialPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      ` ${parentCondition}`,
+      `-${originalSetAttribute}`,
+      "+\t\t\tdom.setAttribute(",
+      "+\t\t\t\tname,",
+      "+\t\t\t\tname == 'popover' && value == true",
+      "+\t\t\t\t\t? ''",
+      "+\t\t\t\t\t: value == false && (name[0] == 'a' || name[0] == 'd')",
+      "+\t\t\t\t\t\t? String(value)",
+      "+\t\t\t\t\t\t: value",
+      "+\t\t\t);",
+      " \t\t} else {",
+      "*** End Patch",
+    ].join("\n");
+    const repeatedCurrentSource = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-\t\t\tdom.setAttribute(",
+      "+\t\t\tdom.setAttribute(",
+      " \t\t\t\tname,",
+      "*** End Patch",
+    ].join("\n");
+    const parentGuardCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${parentCondition}`,
+      `+${reachableParentCondition}`,
+      " \t\t\tdom.setAttribute(",
+      "*** End Patch",
+    ].join("\n");
+    const postInitialSource = [
+      "export function setProperty(dom, name, value) {",
+      "\tif (typeof value == 'function') {",
+      "\t\t// never serialize functions as attribute values",
+      parentCondition,
+      "\t\t\tdom.setAttribute(",
+      "\t\t\t\tname,",
+      "\t\t\t\tname == 'popover' && value == true",
+      "\t\t\t\t\t? ''",
+      "\t\t\t\t\t: value == false && (name[0] == 'a' || name[0] == 'd')",
+      "\t\t\t\t\t\t? String(value)",
+      "\t\t\t\t\t\t: value",
+      "\t\t\t);",
+      "\t\t} else {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t}",
+      "\t}",
+      "}",
+    ].join("\n");
+    const postCorrectionSource = postInitialSource.replace(
+      parentCondition,
+      reachableParentCondition,
+    );
+    const task = "Fix the frozen browser-facing regression in the real web project. Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, and remove every attribute with null or undefined values. Make the smallest change in src/diff/props.js and pass the supplied deterministic checks.";
+    const successfulSummary = '{"summary":"Verified reachable false aria/data serialization and nullish removal."}';
+    const localRejection = "the parent value !== false guard makes the nested aria/data serialized-false branch unreachable";
+    const requests: Array<Record<string, any>> = [];
+    const executedPatches: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const instruction = String(body.messages?.[0]?.content ?? "");
+      if (instruction.includes("Post-mutation verification phase")) {
+        return jsonResponse(modelToolCall(`read-${requests.length}`, "file_read", {
+          path: requiredPath,
+          limit: 1_048_576,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation objective correction input retry phase")) {
+        return jsonResponse(modelToolCall("restore-parent-reachability", "apply_patch", {
+          input: instruction.includes(localRejection)
+            ? parentGuardCorrection
+            : repeatedCurrentSource,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation final objective review phase")) {
+        return jsonResponse({
+          choices: [{
+            finish_reason: "stop",
+            message: { content: successfulSummary },
+          }],
+          usage: { prompt_tokens: 300, completion_tokens: 30 },
+        });
+      }
+      if (instruction.includes("Post-mutation objective review phase")) {
+        return jsonResponse(modelToolCall("repeat-current-source", "apply_patch", {
+          input: repeatedCurrentSource,
+        }, 300, 60));
+      }
+      return jsonResponse(modelToolCall("patch-parent-false-guard", "apply_patch", {
+        input: initialPatch,
+      }, 300, 60));
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "apply_patch") {
+        executedPatches.push(String(request.arguments?.input ?? ""));
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: "Patch applied successfully",
+          metadata: {
+            workspaceMutation: { schemaVersion: 1, changedPaths: [requiredPath] },
+          },
+          durationMs: 1,
+        };
+      }
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: JSON.stringify({
+          path: request.arguments?.path,
+          truncated: false,
+          content: executedPatches.includes(parentGuardCorrection)
+            ? postCorrectionSource
+            : postInitialSource,
+        }),
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent(execute);
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-parent-false-guard",
+      text: task,
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths: [requiredPath],
+          toolLoopIterationBudget: 6,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === successfulSummary
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(requests).toHaveLength(6);
+    expect(requests[3]?.messages[0]?.content).toContain(localRejection);
+    expect(executedPatches).toEqual([initialPatch, parentGuardCorrection]);
+    expect(executedPatches).not.toContain(repeatedCurrentSource);
+    expect(items).toContainEqual({ type: "final", text: successfulSummary });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("fails closed when a repeated-source retry leaves invalid unreachable false control flow", async () => {
     const requiredPath = "src/diff/props.js";
     const originalCondition = "\t\t} else if (value != NULL && value !== false) {";

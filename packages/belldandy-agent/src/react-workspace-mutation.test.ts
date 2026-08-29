@@ -18,10 +18,12 @@ import {
   hasNonDeletionOnlyClosingDelimiterCorrectionHunks,
   hasNonGroupingSerializedFalsePrecedenceCorrectionHunks,
   hasNonReachabilitySerializedFalseDataPredicateCorrectionHunks,
+  hasNonReachabilitySerializedFalseParentGuardCorrectionHunks,
   hasRevertedSmallestChangeCorrectionHunks,
   hasRedundantWorkspaceMutationPatchHunks,
   hasUngroupedSerializedFalsePrecedenceCurrentSource,
   hasUnreachableSerializedFalseDataPredicateCurrentSource,
+  hasUnreachableSerializedFalseParentGuardCurrentSource,
   hasUnreachableSerializedFalseWitnessCurrentSource,
   inspectContextOnlyWorkspaceMutationPatchPreservation,
   inspectWorkspaceMutationPatchHunks,
@@ -37,6 +39,111 @@ import {
 } from "./react-workspace-mutation.js";
 
 describe("ReAct workspace mutation recovery", () => {
+  it("accepts only the frozen parent-guard repair for owned nested false serialization", () => {
+    const requiredPath = "src/diff/props.js";
+    const parentCondition = "\t\t} else if (value != NULL && value !== false) {";
+    const reachableParentCondition = "\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {";
+    const followingLine = "\t\t\tdom.setAttribute(";
+    const nestedFalsePredicate = "\t\t\t\t\t: value == false && (name[0] == 'a' || name[0] == 'd')";
+    const stringValueLine = "\t\t\t\t\t\t? String(value)";
+    const priorPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      ` ${parentCondition}`,
+      "+\t\t\tdom.setAttribute(",
+      "+\t\t\t\tname,",
+      "+\t\t\t\tname == 'popover' && value == true",
+      "+\t\t\t\t\t? ''",
+      `+${nestedFalsePredicate}`,
+      `+${stringValueLine}`,
+      "+\t\t\t\t\t\t: value",
+      "+\t\t\t);",
+      "*** End Patch",
+    ].join("\n");
+    const source = [
+      parentCondition,
+      followingLine,
+      "\t\t\t\tname,",
+      "\t\t\t\tname == 'popover' && value == true",
+      "\t\t\t\t\t? ''",
+      nestedFalsePredicate,
+      stringValueLine,
+      "\t\t\t\t\t\t: value",
+      "\t\t\t);",
+      "\t\t} else {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t}",
+    ].join("\n");
+    const validCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${parentCondition}`,
+      `+${reachableParentCondition}`,
+      ` ${followingLine}`,
+      "*** End Patch",
+    ]);
+    const nestedRewrite = applyPatchToolCall([
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      ` ${parentCondition}`,
+      `-${nestedFalsePredicate}`,
+      "+\t\t\t\t\t: value == false && name[4] == '-'",
+      ` ${stringValueLine}`,
+      "*** End Patch",
+    ]);
+    const ariaOnlyParentGuard = applyPatchToolCall([
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${parentCondition}`,
+      "+\t\t} else if (value != NULL && (value !== false || name[0] == 'a')) {",
+      ` ${followingLine}`,
+      "*** End Patch",
+    ]);
+    const task = "Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, remove null and undefined values, and make the smallest change.";
+    const messages = sourceEvidenceMessages(requiredPath, source);
+
+    expect(hasUnreachableSerializedFalseParentGuardCurrentSource(
+      messages,
+      task,
+      [priorPatch],
+    )).toBe(true);
+    expect(hasNonReachabilitySerializedFalseParentGuardCorrectionHunks(
+      validCorrection,
+      messages,
+      [requiredPath],
+      [priorPatch],
+      task,
+    )).toBe(false);
+    expect(hasNonReachabilitySerializedFalseParentGuardCorrectionHunks(
+      nestedRewrite,
+      messages,
+      [requiredPath],
+      [priorPatch],
+      task,
+    )).toBe(true);
+    expect(hasNonReachabilitySerializedFalseParentGuardCorrectionHunks(
+      ariaOnlyParentGuard,
+      messages,
+      [requiredPath],
+      [priorPatch],
+      task,
+    )).toBe(true);
+    expect(hasUnreachableSerializedFalseParentGuardCurrentSource(
+      sourceEvidenceMessages(requiredPath, source.replace(parentCondition, reachableParentCondition)),
+      task,
+      [priorPatch],
+    )).toBe(false);
+    expect(hasUnreachableSerializedFalseParentGuardCurrentSource(
+      messages,
+      task,
+      [priorPatch.replace(`+${nestedFalsePredicate}`, "+\t\t\t\t\t: value == false")],
+    )).toBe(false);
+  });
+
   it("accepts only removal of an owned aria-only ternary wrapper", () => {
     const requiredPath = "src/diff/props.js";
     const ariaPredicate = "(name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-')";
