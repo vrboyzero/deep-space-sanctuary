@@ -2,7 +2,7 @@
 
 > 当前版本：精简维护版
 >
-> 评估日期：2026-08-17；最新进度复核：2026-08-24
+> 评估日期：2026-08-17；最新进度复核：2026-08-29
 >
 > 横向评估基线：`5b36691d9aba6d9286cf43e912d91b0170bbef0d`
 >
@@ -98,12 +98,12 @@ Git/交付    9.4
 
 1. 不继续扩功能面，优先提升复杂真实任务的编辑/测试稳定性。
 2. `2977780` required-mutation 双平台代表已关闭，但不从历史分母移除失败，也不外推为 `37` 项整体改善。
-3. `18feb22`、`1f06c48`、`ac21fd6`、`f2f7a15`、`3c9b86e`、`d9f021c`、`0213d01`、`ec3f72a`、`fcd7a32`、`82d25a7`、`50669cc`、`155ed5f`、`f92f880` 与 `4563426` Windows formal 均永久冻结；不重跑，也不为失败 identity 启动 WSL2。
-4. `f92f880` formal 的初始 patch 删除了 `value != NULL` 外层保护，并把局部 aria 谓词改写为 `indexOf`；冻结测试虽通过，evaluator 仍正确拒绝该非精确最小 patch。两次 post-write correction 都未执行：首次 required-path/section 校验失败，唯一 input-correction 又只重复当前源码。当前本地修复要求 review/correction 保留既有 null/missing guard，并在模型直接返回成功 summary 时根据完整 post-write 源码强制进入唯一 bounded correction；外部有效性仍待新 identity，不提高 output/turn/token/retry，也不放宽 evaluator。
+3. 所有已执行 formal 均永久冻结；不重跑，也不为失败 identity 启动 WSL2。当前完整重点清单与禁止范围见第 6.4 节。
+4. `fc2d496` Windows formal 已永久冻结为 `failed/product_workflow`，evaluator=`false/false/false`，不启动 WSL2；其 artifact、usage/cost、snapshot、env、敏感值与资源收尾均已闭合。
 5. 正式批准 Go 受控 canary 满足 9.5 第二后端 Gate；Go production rollout 独立延期，不改变目标向量、当前评分或历史矩阵。
-6. `4563426` formal 证明新 guard 仍能让模型产生合法结构化终态，但初始 patch 删除了 `value !== false`、留下 `value != NULL`，唯一 correction 也未形成最小收窄；evaluator 正确拒绝。当前本地提示已要求从 prior 删除行恢复缺失 guard，不放行单侧 guard。
+6. `fc2d496` 的新增 delimiter 紧邻 unchanged delimiter 形状已在公共 Agent seam 稳定 Red/Green；本地 validator 只为精确绑定的 prior-added delimiter开放 deletion-only correction，不放宽 truth set、evaluator、预算或任意 brace 删除。
 7. P0 Web 外部 correction 未闭合前，不启动 WSL2、完整矩阵、candidate v4 或 P2-C。
-8. Go canary 已正式满足第二后端 Gate，但它不是当前 9.5 阻塞；下一轮 formal 前必须先完成 benchmark truth set、fixture、visible test、prompt 与 evaluator 的版本化一致性审计，并用同一任务文本做本地 red/green replay。
+8. Go canary 已正式满足第二后端 Gate，但它不是当前 9.5 阻塞；下一轮 formal 前必须先提交本轮源码/测试/文档形成 clean identity，并完成 Windows detached clean、零凭证 dry-run 与 prepare-only Gate。
 
 ## 2. 范围、方法与完成边界
 
@@ -1008,13 +1008,13 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 | 项目 | 当前值 |
 | --- | ---: |
-| observed conservative upper | `$2.55301857` |
+| observed conservative upper | `$2.56001668` |
 | reserved | `$0.94221000` |
 | unobservable reserve | `$0.80000000` |
-| 一般费用守卫 | `34.37079491 RMB < 50 RMB` |
-| Stage 0D 最坏累计守卫 | `48.44889131 RMB < 50 RMB` |
-| 最近 formal 实际窗口 / 上限 | `$3.34996366 -> $3.35301857 / $3.44996366` |
-| 最近 formal 实际 Provider cost | `$0.00305491` |
+| 一般费用守卫 | `34.42677979 RMB < 50 RMB` |
+| Stage 0D 最坏累计守卫 | `48.50487619 RMB < 50 RMB` |
+| 最近 formal 实际窗口 / 上限 | `$3.35743827 -> $3.36001668 / $3.45743827` |
+| 最近 formal 实际 Provider cost | `$0.00257841` |
 
 `86f405f2` 实际 Provider cost=`$0.00533668` 已计入，model/provider calls=`7/7` 且 usage complete。若未来再预留一次完整 `$0.10`，Stage 0D 最坏累计守卫为 `49.08241995 RMB < 50 RMB`；只有新的本地修复、提交和 detached clean Gate 全绿后才可开放下一次调用。
 
@@ -1023,6 +1023,8 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 `71016f5` 唯一 Windows formal 的实际 Provider cost=`$0.00223332` 已计入；observed conservative upper=`$2.54822033`，下一次完整 `$0.10` 预留后 Stage 0D 最坏累计守卫=`49.21050539 RMB < 50 RMB`。该 frozen identity 不得重跑；后续调用仍须先完成新 committed clean identity 的全部零模型 Gate。
 
 `d0f53f1` 唯一 Windows/WSL2 formal 的实际 Provider cost=`$0.00174333/$0.00305491` 均已计入；observed conservative upper=`$2.55301857`，Stage 0D 当前=`48.44889131 RMB`，下一次完整 `$0.10` 预留后=`49.24889131 RMB < 50 RMB`。两次 formal 均已永久冻结，后续调用必须来自新的 committed clean identity。
+
+`6b9ac09` 与 `fc2d496` 唯一 Windows formal 的实际 Provider cost=`$0.00441970/$0.00257841` 均已计入；observed conservative upper=`$2.56001668`，Stage 0D 当前=`48.50487619 RMB`，下一次完整 `$0.10` 预留后=`49.30487619 RMB < 50 RMB`。两次 formal 均已永久冻结且未开放 WSL2；后续调用必须来自新的 committed clean identity。
 
 持续授权边界：
 
@@ -1033,7 +1035,7 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 ### 6.4 冻结与禁止范围
 
-- 所有已执行 formal 永久冻结。重点包括 `2977780` 双平台，以及 `d6d7367`、`d01030a`、`8cee589`、`09b5498`、`cb01ccd`、`abe40b1`、`dd6b85b`、`c124741`、`fe49d51`、`18feb22`、`1f06c48`、`ac21fd6`、`f2f7a15`、`3c9b86e`、`d9f021c`、`0213d01`、`ec3f72a`、`fcd7a32`、`82d25a7`、`50669cc`、`155ed5f`、`f92f880`、`4563426`、`69cff2e`、`2f2c05a`、`71b4a88` Windows；更早冻结 identity 清单见 `archive-04`。
+- 所有已执行 formal 永久冻结。重点包括 `2977780` 双平台，以及 `d6d7367`、`d01030a`、`8cee589`、`09b5498`、`cb01ccd`、`abe40b1`、`dd6b85b`、`c124741`、`fe49d51`、`18feb22`、`1f06c48`、`ac21fd6`、`f2f7a15`、`3c9b86e`、`d9f021c`、`0213d01`、`ec3f72a`、`fcd7a32`、`82d25a7`、`50669cc`、`155ed5f`、`f92f880`、`4563426`、`69cff2e`、`2f2c05a`、`71b4a88`、`86f405f2`、`2b3638d`、`1466122`、`1bdb48e`、`71016f5`、`d0f53f1`、`6b9ac09`、`fc2d496` Windows；更早冻结 identity 清单见 `archive-04`。
 - 不重跑上述 dry-run/formal，不为失败的 Web identity 启动 WSL2。
 - 不增加模型 turn/token、Provider retry 或单 run 费用；不使用调价前旧单价。
 - 未获得新证据前不启动完整矩阵或 candidate v4；前序 Gate 未通过前不启动 P2-C。
@@ -2541,6 +2543,74 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：本地 Red/Green 已关闭已知路径，但只有 clean committed identity 能排除旧 dist、fixture、依赖和工作区漂移，并为唯一付费 Formal 绑定可复算输入。
 - **当前还缺的关键闭环**：新 identity 的 Windows evaluator 外部全绿证据；Windows 未通过前继续禁止 WSL2，双平台全绿前不进入连续候选、最终复算或 P2-C。
 
+#### P0 Web formal 实现结论：`fc2d496` Windows Gate 与唯一 formal（2026-08-29）
+
+##### 已完成内容
+
+1. **committed clean Gate、零凭证 dry-run 与 prepare-only**：
+   - source/harness 精确绑定 `fc2d4961c022ac6825ffee9d852c3584dc301ed5`，Windows detached harness clean；frozen offline install、workspace build、Agent/owner/contracts、内置及独立 `verify:build` 均在断线前完成并通过；
+   - dry-run artifact=`artifacts/p0-web-atomic-removal-fc2d496-preact-windows-dry-run-r1`，run=`real-web-ui-regression-windows-a1-1787593248483`，credentials/usage=`false/not_reached`，双 snapshot preflight 通过；
+   - prepare-only 绑定 repository input SHA-256=`7c569261695239ff41ebd5933c1a713381928aba9a91148770c2e16c72a774a4`，确认 Provider retry=`0`、`12 turns / 24,000 tokens / $0.10`、child args 凭证隔离、Gateway/benchmark 未启动、端口关闭与目标目录不存在。
+
+2. **唯一 Windows formal 完成并永久冻结**：
+   - artifact=`artifacts/p0-web-atomic-removal-fc2d496-preact-windows-formal-r1`，run=`real-web-ui-regression-windows-a1-1787593628761`，status/failure=`failed/product_workflow`，machine evaluator=`false/false/false`、regression=`1`，唯一 terminal=`run.failed`；
+   - changed path 仅 `src/diff/props.js`，已执行工具序列=`list_files -> file_read -> apply_patch -> file_read`；初始 patch 新增 aria/data false 序列化分支，但在既有 branch delimiter 后又新增同缩进 delimiter，冻结测试与 evaluator 正确拒绝；
+   - Formal 已永久冻结，run-once 与 artifact 阻止重放；Windows 未通过，因此未启动 WSL2。
+
+3. **correction 失败归因**：
+   - 完整 current source 实际尾部为同缩进 `\t\t} / \t\t}` 后接外层 `\t}`；先前临时中断摘要将其简化为不同缩进相邻 delimiter，不作为最终根因依据；
+   - 第 4 次 objective review 已返回 `apply_patch` correction，但本地 smallest-change validator 将其归入通用 semantic narrowing；第 5 次 bounded input-correction 同样返回 `apply_patch`，仍在工具执行前被拒绝，未产生第二次 workspace mutation；
+   - 直接根因是 delimiter correction owner 只保留 added/removed 行、丢失 unchanged context 顺序，并要求完整 added sequence 后再出现同文本 delimiter；当 prior patch 形状为“既有 delimiter context 后新增同文本 delimiter”时，current-source detector 能发现重复结构，但 correction validator 无法将其绑定到 `closing_delimiter_requires_deletion_only`。
+
+4. **usage、费用与断线后安全收尾**：
+   - input/output=`9,146/1,058`、model/provider calls=`5/5`、Provider cost=`$0.00257841`，usage=`provider_reported/complete`；observed conservative upper=`$2.56001668`，Stage 0D 当前=`48.50487619 RMB`，下一次完整 `$0.10` 预留后=`49.30487619 RMB < 50 RMB`；
+   - manifest/patch/events/trace SHA-256=`3c708403ed15f3c831af0ff7d04981b7e15e0c85030082c202f934440fabe4fb/85796c3702b3669438b456820baeccf44bdf7fba98d70ca5ee850c8cb6976ba7/0ef824c03cfe675b8314b02517f8ddf2d899d911c6f09836461b88565569e3a7/4b05121ba8a678330b52b445fddb9ccb2544ee6c32304de8ff7aae74f00dc95c`；post-run snapshot 五项通过；
+   - 两份 Formal runtime env 经绝对路径 containment、普通文件、非 reparse point 与 expected SHA-256 校验后送入 Windows 回收站，cleanup log 已生成且 remaining=`0`；最终扫描 `9,562` 个普通文件、排除 `13` 个 `.git/node_modules` 目录，symlink/unreadable/Provider key/repository-input/env=`0/0/0/0/0`，Gateway PID/端口 listener=`0/0`。
+
+5. **效果**：
+   - 断线时未完成的 artifact、snapshot、env、敏感值和资源收尾已闭合，`fc2d496` 作为失败产品证据永久保留；
+   - 本次不计入 9.5 成功候选、不启动 WSL2，也不改变 truth set、evaluator、turn/token/retry/cost 上限；后续修复可完全在公共 seam 零费用复现。
+
+##### 验证结果
+
+- `fc2d496` clean Gate 的 TypeScript workspace build、Agent/owner/contracts、内置及独立 `verify:build` 无错误；
+- Formal usage/route/终态/changed-path、post-run snapshot、env 回收、敏感扫描与资源收敛均已验证；frozen evaluator 如实失败并永久保留；
+- 未重跑 Formal、未调用新模型、未启动 WSL2。
+
+#### P0 Web TDD 实现结论：added/context delimiter deletion-only 绑定（2026-08-29）
+
+##### 已完成内容
+
+1. **`tool-agent-workspace-mutation-structured-output.test.ts` 修改**：
+   - 通过公共 `ToolEnabledAgent.run()` 固定 Formal 的 prior patch 所有权：原有 `\t\t}` 保持 unchanged context，新增同文本 `\t\t}`，完整 current source 形成精确相邻重复 delimiter；
+   - 修复前稳定 Red：只执行 initial patch，首次 broad correction 后唯一 retry 仍收到通用 semantic narrowing，最终 `status=error`；
+   - 修复后 Green：首次 broad correction 不执行，唯一 bounded retry 收到 deletion-only 指令，只删除 prior-added delimiter，再次复读并由 final review 形成 `status=done`。
+
+2. **`react-workspace-mutation.ts` 修改**：
+   - delimiter correction evidence 保留 prior patch 的 `added delimiter + unchanged context` 相邻顺序，并要求完整 current source 存在同文本相邻 delimiter；
+   - 继续保留旧 replacement-block 尾部 detector，兼容此前完整 added sequence 后遗留 delimiter 的路径；
+   - 合法 correction 仍只能删除已绑定的精确 delimiter；任何 added line、非 delimiter removal、其他路径或缺少 current-source 重复证据均失败关闭，不放宽为任意 brace 删除或缩进归一化。
+
+3. **`react-workspace-mutation.test.ts` 扩展**：
+   - 新增 owner 级行为测试，固定 broad correction 被识别、合法 deletion-only correction 放行、当前源码没有相邻重复 delimiter 时不误报三项不变量；
+   - 公共 seam 与 owner 测试共同覆盖真实调用链和快速边界回归。
+
+4. **效果**：
+   - `fc2d496` 的 correction 不再被降级为通用 semantic narrowing，模型只获得一次精确 deletion-only 修复机会；
+   - 修复没有改变 truth set、evaluator、Tool loop 预算、模型 turn/token、Provider retry 或费用上限；本环节模型调用/新增 Provider 费用=`0/$0`。
+
+##### 验证结果
+
+- TypeScript workspace 完整 build、内置及独立 `verify:build` 无错误；
+- workspace-mutation owner/公共 seam=`86/86`，Agent=`708 passed / 1 skipped`（含 `1` 个新增 owner 边界测试与 `1` 个按真实 Formal 所有权重写的公共 seam 回归）；
+- `verify:coding-benchmark` 与 `verify:coding-ci` 全绿，`git diff --check` 无 whitespace error；原始 Red 已在同一公共 seam 复现，修复后 Green。
+
+##### 后续计划
+
+- **下一步准备做什么**：复核最小 diff 后提交源码、测试与本文形成新 committed identity；随后在该 identity 建立 Windows detached clean harness，完成 frozen offline install、完整 build/独立 verifier、Agent/owner/contracts、零凭证 dry-run、敏感值/env/资源与 formal prepare-only Gate。
+- **为什么先做它**：本地 Red/Green 已关闭已知 correction owner 缺口，但只有 clean committed identity 能排除旧 dist、fixture、依赖和工作区漂移，并为下一次唯一付费 Formal 绑定可复算输入。
+- **当前还缺的关键闭环**：新 identity 的 Windows evaluator 外部全绿证据；Windows 未通过前继续禁止 WSL2，双平台全绿前不进入连续候选、最终复算或 P2-C。
+
 ## 实施计划进度表
 
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
@@ -2550,7 +2620,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
 | P0：Benchmark truth set / evaluator 对齐 | P0 | **已完成 zero-cost 对齐** | `coding-agent-benchmark-web-ui-truth-set/v1`、6 个正负 witness、SHA/LF 绑定、v2 fixture/evaluator、实际 Red=`1`/Green=`0` replay；定向 `20/20`、benchmark/CI/build Gate 全绿 | - | 保持 truth set、prompt、fixture、visible test 与 evaluator 单一版本绑定；任何 SHA/Schema/任务合同漂移均失败关闭 |
-| P0：Web mutation/correction 稳定化 | P0 | **原子 correction 本地 Gate 已完成；待新 identity Windows Formal** | 公共 seam 新增 `4` 个用例，owner=`160/160`、Agent=`707 passed / 1 skipped`；`6b9ac09` Windows frozen 失败已收敛为 no-op removal + 未声明 `isSvgAttribute`，本地现会跳过无效 output-repair 并要求精确 condition/`removeAttribute` correction | `新 identity Windows/WSL2 唯一 formal，约 0.5 人日` | 提交 clean identity 并完成 Windows clean Gate/唯一 Formal；Windows evaluator 全绿后才允许 WSL2，双平台全绿后才进入连续候选和最终复算 |
+| P0：Web mutation/correction 稳定化 | P0 | **added/context delimiter 本地 Gate 已完成；待新 identity Windows Formal** | `fc2d496` Windows frozen evaluator=`false/false/false`；断线后 artifact/snapshot/env/敏感值/资源收尾闭合；真实公共 seam Red/Green、owner/公共 seam=`86/86`、Agent=`708 passed / 1 skipped`，build/benchmark/CI Gate 全绿 | `新 identity Windows/WSL2 唯一 formal，约 0.5 人日` | 提交 clean identity并完成 Windows clean Gate/唯一 Formal；Windows evaluator 全绿后才允许 WSL2，双平台全绿后才进入连续候选和最终复算 |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |

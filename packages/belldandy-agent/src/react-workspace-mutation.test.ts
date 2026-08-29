@@ -15,6 +15,7 @@ import {
   hasExcludedFalseWitnessSmallestChangeCorrectionHunks,
   hasExpandedSmallestChangeCorrectionHunks,
   hasBroadenedSmallestChangeCorrectionHunks,
+  hasNonDeletionOnlyClosingDelimiterCorrectionHunks,
   hasRevertedSmallestChangeCorrectionHunks,
   hasRedundantWorkspaceMutationPatchHunks,
   hasUnreachableSerializedFalseWitnessCurrentSource,
@@ -32,6 +33,70 @@ import {
 } from "./react-workspace-mutation.js";
 
 describe("ReAct workspace mutation recovery", () => {
+  it("binds deletion-only delimiter repair to an added delimiter beside unchanged context", () => {
+    const requiredPath = "src/diff/props.js";
+    const priorPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-\t\t} else if (value != NULL && value !== false) {",
+      "+\t\t} else if (value === false) {",
+      " \t\t\tdom.setAttribute(name, 'false');",
+      " \t\t}",
+      "+\t\t}",
+      "*** End Patch",
+    ].join("\n");
+    const sourceWithOwnedDuplicate = [
+      "\t\t} else if (value === false) {",
+      "\t\t\tdom.setAttribute(name, 'false');",
+      "\t\t}",
+      "\t\t}",
+      "\t}",
+    ].join("\n");
+    const broadCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-\t\t} else if (value === false) {",
+      "+\t\t} else if (value === false || value == NULL) {",
+      "*** End Patch",
+    ]);
+    const deletionCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      " \t\t\tdom.setAttribute(name, 'false');",
+      " \t\t}",
+      "-\t\t}",
+      " \t}",
+      "*** End Patch",
+    ]);
+    const task = "Preserve false aria-* values with the smallest change.";
+    const messages = sourceEvidenceMessages(requiredPath, sourceWithOwnedDuplicate);
+
+    expect(hasNonDeletionOnlyClosingDelimiterCorrectionHunks(
+      broadCorrection,
+      messages,
+      [requiredPath],
+      [priorPatch],
+      task,
+    )).toBe(true);
+    expect(hasNonDeletionOnlyClosingDelimiterCorrectionHunks(
+      deletionCorrection,
+      messages,
+      [requiredPath],
+      [priorPatch],
+      task,
+    )).toBe(false);
+    expect(hasNonDeletionOnlyClosingDelimiterCorrectionHunks(
+      broadCorrection,
+      sourceEvidenceMessages(requiredPath, sourceWithOwnedDuplicate.replace("\t\t}\n\t\t}", "\t\t}\n\t}")),
+      [requiredPath],
+      [priorPatch],
+      task,
+    )).toBe(false);
+  });
+
   it("detects a smallest-change correction that leaves the prior patch delta intact", () => {
     const priorPatch = [
       "*** Begin Patch",
@@ -2378,6 +2443,20 @@ function applyPatchToolCall(lines: string[]) {
       arguments: JSON.stringify({ input: lines.join("\n") }),
     },
   };
+}
+
+function sourceEvidenceMessages(path: string, content: string) {
+  return [
+    {
+      role: "assistant" as const,
+      tool_calls: [fileReadToolCall("read-source", path)],
+    },
+    {
+      role: "tool" as const,
+      tool_call_id: "read-source",
+      content: JSON.stringify({ path, truncated: false, content }),
+    },
+  ];
 }
 
 function fileReadToolCall(id: string, path: string) {

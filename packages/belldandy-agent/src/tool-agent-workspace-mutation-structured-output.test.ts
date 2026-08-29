@@ -1590,34 +1590,12 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
-  it("rejects an LF tail rewrite when an extra delimiter requires deletion-only correction", async () => {
+  it("rejects an LF tail rewrite when an added delimiter follows an unchanged delimiter", async () => {
     const requiredPath = "src/diff/props.js";
+    const originalCondition = "\t\t} else if (value != NULL && value !== false) {";
+    const serializedFalseCondition = "\t\t} else if (value === false && (name[0] === 'a' && name[1] === 'r' && name[2] === 'i' && name[3] === 'a' || name[0] === 'd' && name[1] === 'a' && name[2] === 't' && name[3] === 'a')) {";
     const removeAttributeLine = "\t\t\tdom.removeAttribute(name);";
     const setAttributeLine = "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);";
-    const brokenMutationSlice = [
-      "\t\tif (typeof value == 'function') {",
-      "\t\t\t// never serialize functions as attribute values",
-      "\t\t} else if (value != NULL && value !== false) {",
-      setAttributeLine,
-      "\t\t} else {",
-      removeAttributeLine,
-    ].join("\n");
-    const initialReplacement = [
-      "\t\tconst isAriaOrData = name.indexOf('aria-') === 0 || name.indexOf('data-') === 0;",
-      "\t\tif (value == NULL) {",
-      removeAttributeLine,
-      "\t\t} else if (value === false) {",
-      "\t\t\tif (isAriaOrData) {",
-      "\t\t\t\tdom.setAttribute(name, 'false');",
-      "\t\t\t} else {",
-      removeAttributeLine,
-      "\t\t\t}",
-      "\t\t} else if (typeof value == 'function') {",
-      "\t\t\t// never serialize functions as attribute values",
-      "\t\t} else {",
-      setAttributeLine,
-      "\t\t}",
-    ].join("\n");
     const originalSource = [
       "export function setProperty(dom, name, value) {",
       "\to: if (name == 'style') {",
@@ -1625,56 +1603,50 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
       "\t} else {",
       "\t\t// aria- and data- attributes have no boolean representation.",
       "\t\t// A `false` value is different from the attribute not being present.",
-      brokenMutationSlice,
+      "\t\tif (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      originalCondition,
+      setAttributeLine,
+      "\t\t} else {",
+      removeAttributeLine,
       "\t\t}",
       "\t}",
       "}",
     ].join("\n");
-    const postInitialSource = originalSource.replace(brokenMutationSlice, initialReplacement);
-    const broadRemovedPrefix = [
-      "\t\tif (value == NULL) {",
-      removeAttributeLine,
-      "\t\t} else if (value === false) {",
-      "\t\t\tif (isAriaOrData) {",
-      "\t\t\t\tdom.setAttribute(name, 'false');",
-    ].join("\n");
-    const broadAddedPrefix = [
-      broadRemovedPrefix,
-      "\t\t\t} else {",
-      removeAttributeLine,
-      "\t\t\t}",
-      "\t\t} else {",
-      "\t\t\tdom.setAttribute(name, value);",
-      "\t\t}",
-    ].join("\n");
-    const postBroadSource = postInitialSource.replace(broadRemovedPrefix, broadAddedPrefix);
+    const postInitialSource = originalSource.replace(
+      [
+        originalCondition,
+        setAttributeLine,
+        "\t\t} else {",
+        removeAttributeLine,
+        "\t\t}",
+      ].join("\n"),
+      [
+        originalCondition,
+        setAttributeLine,
+        serializedFalseCondition,
+        "\t\t\tdom.setAttribute(name, 'false');",
+        "\t\t} else {",
+        removeAttributeLine,
+        "\t\t}",
+        "\t\t}",
+      ].join("\n"),
+    );
     const postDeletionSource = postInitialSource.replace(
-      `${initialReplacement}\n\t\t}\n\t}\n}`,
-      `${initialReplacement}\n\t}\n}`,
+      "\t\t}\n\t\t}\n\t}\n}",
+      "\t\t}\n\t}\n}",
     );
     const initialPatch = [
       "*** Begin Patch",
       `*** Update File: ${requiredPath}`,
       "@@",
-      "-\t\tif (typeof value == 'function') {",
-      "-\t\t\t// never serialize functions as attribute values",
-      "-\t\t} else if (value != NULL && value !== false) {",
-      `-${setAttributeLine}`,
-      "-\t\t} else {",
-      `-${removeAttributeLine}`,
-      "+\t\tconst isAriaOrData = name.indexOf('aria-') === 0 || name.indexOf('data-') === 0;",
-      "+\t\tif (value == NULL) {",
-      `+${removeAttributeLine}`,
-      "+\t\t} else if (value === false) {",
-      "+\t\t\tif (isAriaOrData) {",
-      "+\t\t\t\tdom.setAttribute(name, 'false');",
-      "+\t\t\t} else {",
-      `+${removeAttributeLine}`,
-      "+\t\t\t}",
-      "+\t\t} else if (typeof value == 'function') {",
-      "+\t\t\t// never serialize functions as attribute values",
-      "+\t\t} else {",
-      `+${setAttributeLine}`,
+      ` ${originalCondition}`,
+      ` ${setAttributeLine}`,
+      `+${serializedFalseCondition}`,
+      "+\t\t\tdom.setAttribute(name, 'false');",
+      " \t\t} else {",
+      ` ${removeAttributeLine}`,
+      " \t\t}",
       "+\t\t}",
       "*** End Patch",
     ].join("\n");
@@ -1682,22 +1654,18 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
       "*** Begin Patch",
       `*** Update File: ${requiredPath}`,
       "@@",
-      "-\t\tif (value == NULL) {",
-      `-${removeAttributeLine}`,
-      "-\t\t} else if (value === false) {",
-      "-\t\t\tif (isAriaOrData) {",
-      "-\t\t\t\tdom.setAttribute(name, 'false');",
-      "+\t\tif (value == NULL) {",
-      `+${removeAttributeLine}`,
+      `-${serializedFalseCondition}`,
       "+\t\t} else if (value === false) {",
-      "+\t\t\tif (isAriaOrData) {",
-      "+\t\t\t\tdom.setAttribute(name, 'false');",
-      "+\t\t\t} else {",
-      `+${removeAttributeLine}`,
-      "+\t\t\t}",
-      "+\t\t} else {",
-      "+\t\t\tdom.setAttribute(name, value);",
-      "+\t\t}",
+      "+\t\t\t// broad rewrite line 1",
+      "+\t\t\t// broad rewrite line 2",
+      "+\t\t\t// broad rewrite line 3",
+      "+\t\t\t// broad rewrite line 4",
+      "+\t\t\t// broad rewrite line 5",
+      "+\t\t\t// broad rewrite line 6",
+      "+\t\t\t// broad rewrite line 7",
+      "+\t\t\t// broad rewrite line 8",
+      "+\t\t\t// broad rewrite line 9",
+      "+\t\t\t// broad rewrite line 10",
       "*** End Patch",
     ].join("\n");
     const deletionCorrection = [
@@ -1760,9 +1728,7 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
       if (request.name === "file_read") {
         const content = executedPatches.includes(deletionCorrection)
           ? postDeletionSource
-          : executedPatches.includes(broadCorrection)
-            ? postBroadSource
-            : postInitialSource;
+          : postInitialSource;
         return {
           id: request.id,
           name: request.name,
@@ -1810,7 +1776,6 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
     } as any));
 
     expect(postInitialSource).toContain("\t\t}\n\t\t}\n\t}\n}");
-    expect(postBroadSource).toContain("\t\t}\n\t\t\t} else {");
     expect(items).toContainEqual({ type: "final", text: successfulSummary });
     expect(executedPatches).toEqual([initialPatch, deletionCorrection]);
     expect(requests).toHaveLength(6);

@@ -1173,6 +1173,39 @@ function collectReplacementBoundaryClosingDelimiters(
   if (!currentSourceByPath) return new Map();
   const delimitersByPath = new Map<string, Set<string>>();
   for (const patchInput of priorSuccessfulPatchInputs) {
+    const patchLines = patchInput.trim().split(/\r?\n/);
+    let currentPath: string | undefined;
+    for (let index = 0; index < patchLines.length; index += 1) {
+      const line = patchLines[index] ?? "";
+      const updateHeader = /^\*\*\* Update File:?\s+(.+)$/.exec(line);
+      if (updateHeader) {
+        currentPath = normalizeSourcePath(
+          normalizeWorkspaceMutationDiagnosticPath(updateHeader[1] ?? ""),
+        );
+        continue;
+      }
+      if (line.startsWith("*** ")) {
+        currentPath = undefined;
+        continue;
+      }
+      if (!currentPath || !line.startsWith("+")) continue;
+      const addedLine = line.slice(1);
+      if (!/^\s*}\s*;?\s*$/.test(addedLine)) continue;
+      const previousLine = patchLines[index - 1];
+      const nextLine = patchLines[index + 1];
+      const isAdjacentToUnchangedDelimiter = (previousLine?.startsWith(" ")
+          && previousLine.slice(1) === addedLine)
+        || (nextLine?.startsWith(" ") && nextLine.slice(1) === addedLine);
+      if (!isAdjacentToUnchangedDelimiter) continue;
+      const currentSource = currentSourceByPath.get(currentPath);
+      const sourceLines = currentSource?.split(/\r?\n/) ?? [];
+      if (!sourceLines.some((sourceLine, sourceIndex) => (
+        sourceLine === addedLine && sourceLines[sourceIndex + 1] === sourceLine
+      ))) continue;
+      const delimiters = delimitersByPath.get(currentPath) ?? new Set<string>();
+      delimiters.add(addedLine);
+      delimitersByPath.set(currentPath, delimiters);
+    }
     for (const change of collectWorkspaceMutationPatchLineChanges(patchInput) ?? []) {
       if (change.added.length === 0) continue;
       const currentSource = currentSourceByPath.get(change.path);
@@ -1181,7 +1214,9 @@ function collectReplacementBoundaryClosingDelimiters(
       const replacementClosingLine = change.added.at(-1);
       if (!replacementClosingLine || !/^\s*}\s*;?\s*$/.test(replacementClosingLine)) continue;
       for (let start = 0; start <= sourceLines.length - change.added.length - 1; start += 1) {
-        if (!change.added.every((line, index) => sourceLines[start + index] === line)) continue;
+        if (!change.added.every((addedLine, index) => sourceLines[start + index] === addedLine)) {
+          continue;
+        }
         if (sourceLines[start + change.added.length] !== replacementClosingLine) continue;
         const delimiters = delimitersByPath.get(change.path) ?? new Set<string>();
         delimiters.add(replacementClosingLine);
