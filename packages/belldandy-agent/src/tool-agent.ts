@@ -152,6 +152,7 @@ import {
   hasBroadenedSmallestChangeCorrectionHunks,
   hasNonAtomicSerializedFalseRemovalCorrectionHunks,
   hasNonDeletionOnlyClosingDelimiterCorrectionHunks,
+  hasNonGroupingSerializedFalsePrecedenceCorrectionHunks,
   hasNoopSerializedFalseRemovalBranchCurrentSource,
   hasOnlyWorkspaceMutationPatchPaths,
   hasPriorPatchAdjacentDuplicateClosingDelimiterCurrentSource,
@@ -4605,6 +4606,14 @@ export class ToolEnabledAgent implements BelldandyAgent {
               successfulWorkspaceMutationPatchInputs,
               input.text,
             );
+          const nonGroupingSerializedFalsePrecedenceCorrection = workspaceMutationObjectiveReviewCall
+            && hasNonGroupingSerializedFalsePrecedenceCorrectionHunks(
+              constrainedMutationToolCall,
+              mutationRecoverySourceMessages,
+              workspaceMutationCallRequiredPaths,
+              successfulWorkspaceMutationPatchInputs,
+              input.text,
+            );
           if (revertedSmallestChangeCorrection && workspaceMutationObjectiveInputCorrectionCall) {
             workspaceMutationObjectiveCorrectionAttempted = true;
             workspaceMutationObjectiveReviewPending = true;
@@ -4631,6 +4640,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 successfulWorkspaceMutationPatchInputs,
                 input.text,
               )
+              || nonGroupingSerializedFalsePrecedenceCorrection
               || nonAtomicSerializedFalseRemovalCorrection
               || nonDeletionOnlyClosingDelimiterCorrection
               || excludedFalseWitnessSmallestChangeCorrection
@@ -4643,6 +4653,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
               workspaceMutationObjectiveInputCorrectionPending = true;
               workspaceMutationObjectiveInputCorrectionReason = nonDeletionOnlyClosingDelimiterCorrection
                 ? "closing_delimiter_requires_deletion_only"
+                : nonGroupingSerializedFalsePrecedenceCorrection
+                ? "serialized_false_precedence_requires_grouping"
                 : nonAtomicSerializedFalseRemovalCorrection
                 ? "serialized_false_removal_requires_atomic_repair"
                 : "smallest_change_requires_semantic_narrowing";

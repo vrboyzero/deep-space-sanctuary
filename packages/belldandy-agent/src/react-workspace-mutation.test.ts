@@ -16,8 +16,10 @@ import {
   hasExpandedSmallestChangeCorrectionHunks,
   hasBroadenedSmallestChangeCorrectionHunks,
   hasNonDeletionOnlyClosingDelimiterCorrectionHunks,
+  hasNonGroupingSerializedFalsePrecedenceCorrectionHunks,
   hasRevertedSmallestChangeCorrectionHunks,
   hasRedundantWorkspaceMutationPatchHunks,
+  hasUngroupedSerializedFalsePrecedenceCurrentSource,
   hasUnreachableSerializedFalseWitnessCurrentSource,
   inspectContextOnlyWorkspaceMutationPatchPreservation,
   inspectWorkspaceMutationPatchHunks,
@@ -33,6 +35,110 @@ import {
 } from "./react-workspace-mutation.js";
 
 describe("ReAct workspace mutation recovery", () => {
+  it("accepts only grouping delimiters for an owned false aria/data precedence repair", () => {
+    const requiredPath = "src/diff/props.js";
+    const ariaPredicate = "\t\t\t(name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') ||";
+    const dataPredicate = "\t\t\t(name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-')";
+    const priorPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "+\t\t} else if (",
+      "+\t\t\tvalue === false &&",
+      `+${ariaPredicate}`,
+      `+${dataPredicate}`,
+      "+\t\t) {",
+      "+\t\t\tdom.setAttribute(name, 'false');",
+      " \t\t} else {",
+      "*** End Patch",
+    ].join("\n");
+    const ungroupedSource = [
+      "\t\t} else if (",
+      "\t\t\tvalue === false &&",
+      ariaPredicate,
+      dataPredicate,
+      "\t\t) {",
+      "\t\t\tdom.setAttribute(name, 'false');",
+      "\t\t} else {",
+    ].join("\n");
+    const groupingCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-\t\t\tvalue === false &&",
+      "+\t\t\tvalue === false && (",
+      ` ${ariaPredicate}`,
+      ` ${dataPredicate}`,
+      "+\t\t\t)",
+      " \t\t) {",
+      "*** End Patch",
+    ]);
+    const broadenedCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-\t\t\tvalue === false &&",
+      "+\t\t\tvalue != NULL && value === false && (",
+      ` ${ariaPredicate}`,
+      ` ${dataPredicate}`,
+      "+\t\t\t)",
+      " \t\t) {",
+      "*** End Patch",
+    ]);
+    const misplacedClosingCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-\t\t\tvalue === false &&",
+      "+\t\t\tvalue === false && (",
+      ` ${ariaPredicate}`,
+      ` ${dataPredicate}`,
+      " \t\t) {",
+      "+\t\t\t)",
+      "*** End Patch",
+    ]);
+    const task = "Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, remove null and undefined values, and make the smallest change.";
+    const messages = sourceEvidenceMessages(requiredPath, ungroupedSource);
+
+    expect(hasUngroupedSerializedFalsePrecedenceCurrentSource(
+      messages,
+      task,
+      [priorPatch],
+    )).toBe(true);
+    expect(hasNonGroupingSerializedFalsePrecedenceCorrectionHunks(
+      groupingCorrection,
+      messages,
+      [requiredPath],
+      [priorPatch],
+      task,
+    )).toBe(false);
+    expect(hasNonGroupingSerializedFalsePrecedenceCorrectionHunks(
+      broadenedCorrection,
+      messages,
+      [requiredPath],
+      [priorPatch],
+      task,
+    )).toBe(true);
+    expect(hasNonGroupingSerializedFalsePrecedenceCorrectionHunks(
+      misplacedClosingCorrection,
+      messages,
+      [requiredPath],
+      [priorPatch],
+      task,
+    )).toBe(true);
+    expect(hasUngroupedSerializedFalsePrecedenceCurrentSource(
+      sourceEvidenceMessages(
+        requiredPath,
+        ungroupedSource.replace(
+          ["\t\t\tvalue === false &&", ariaPredicate, dataPredicate].join("\n"),
+          ["\t\t\tvalue === false && (", ariaPredicate, dataPredicate, "\t\t\t)"].join("\n"),
+        ),
+      ),
+      task,
+      [priorPatch],
+    )).toBe(false);
+  });
+
   it("binds deletion-only delimiter repair to an added delimiter beside unchanged context", () => {
     const requiredPath = "src/diff/props.js";
     const priorPatch = [

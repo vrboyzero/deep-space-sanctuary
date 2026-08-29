@@ -2145,6 +2145,180 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("accepts only grouping parentheses for a false aria/data precedence correction", async () => {
+    const requiredPath = "src/diff/props.js";
+    const originalCondition = "\t\t} else if (value != NULL && value !== false) {";
+    const setAttributeLine = "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);";
+    const ariaPredicate = "\t\t\t(name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') ||";
+    const dataPredicate = "\t\t\t(name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-')";
+    const initialPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      ` ${originalCondition}`,
+      ` ${setAttributeLine}`,
+      "+\t\t} else if (",
+      "+\t\t\tvalue === false &&",
+      `+${ariaPredicate}`,
+      `+${dataPredicate}`,
+      "+\t\t) {",
+      "+\t\t\tdom.setAttribute(name, 'false');",
+      " \t\t} else {",
+      "*** End Patch",
+    ].join("\n");
+    const broadCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-\t\t\tvalue === false &&",
+      "+\t\t\tvalue != NULL && value === false && (",
+      ` ${ariaPredicate}`,
+      ` ${dataPredicate}`,
+      "+\t\t\t)",
+      "*** End Patch",
+    ].join("\n");
+    const groupingCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-\t\t\tvalue === false &&",
+      "+\t\t\tvalue === false && (",
+      ` ${ariaPredicate}`,
+      ` ${dataPredicate}`,
+      "+\t\t\t)",
+      " \t\t) {",
+      "*** End Patch",
+    ].join("\n");
+    const sourcePrefix = [
+      "export function setProperty(dom, name, value) {",
+      "\tif (name == 'style') {",
+      "\t\tdom.style.cssText = value;",
+      "\t} else {",
+      "\t\tif (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      originalCondition,
+      setAttributeLine,
+    ];
+    const sourceSuffix = [
+      "\t\t) {",
+      "\t\t\tdom.setAttribute(name, 'false');",
+      "\t\t} else {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t}",
+      "\t}",
+      "}",
+    ];
+    const postInitialSource = [
+      ...sourcePrefix,
+      "\t\t} else if (",
+      "\t\t\tvalue === false &&",
+      ariaPredicate,
+      dataPredicate,
+      ...sourceSuffix,
+    ].join("\n");
+    const postCorrectionSource = postInitialSource.replace(
+      ["\t\t\tvalue === false &&", ariaPredicate, dataPredicate].join("\n"),
+      ["\t\t\tvalue === false && (", ariaPredicate, dataPredicate, "\t\t\t)"].join("\n"),
+    );
+    const task = "Fix the frozen browser-facing regression in the real web project. Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, and remove every attribute with null or undefined values. Make the smallest change in src/diff/props.js and pass the supplied deterministic checks.";
+    const successfulSummary = '{"summary":"Verified false aria/data serialization and nullish removal."}';
+    const localRejection = "operator precedence lets the data-* predicate bypass `value === false`";
+    const requests: Array<Record<string, any>> = [];
+    const executedPatches: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const instruction = String(body.messages?.[0]?.content ?? "");
+      if (instruction.includes("Post-mutation verification phase")) {
+        return jsonResponse(modelToolCall(`read-${requests.length}`, "file_read", {
+          path: requiredPath,
+          limit: 1_048_576,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation objective correction input retry phase")) {
+        return jsonResponse(modelToolCall("group-precedence", "apply_patch", {
+          input: instruction.includes(localRejection) ? groupingCorrection : broadCorrection,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation final objective review phase")) {
+        return jsonResponse({
+          choices: [{
+            finish_reason: "stop",
+            message: { content: successfulSummary },
+          }],
+          usage: { prompt_tokens: 300, completion_tokens: 30 },
+        });
+      }
+      if (instruction.includes("Post-mutation objective review phase")) {
+        return jsonResponse(modelToolCall("broad-precedence", "apply_patch", {
+          input: broadCorrection,
+        }, 300, 60));
+      }
+      return jsonResponse(modelToolCall("patch-precedence", "apply_patch", {
+        input: initialPatch,
+      }, 300, 60));
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "apply_patch") {
+        executedPatches.push(String(request.arguments?.input ?? ""));
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: "Patch applied successfully",
+          metadata: {
+            workspaceMutation: { schemaVersion: 1, changedPaths: [requiredPath] },
+          },
+          durationMs: 1,
+        };
+      }
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: JSON.stringify({
+          path: request.arguments?.path,
+          truncated: false,
+          content: executedPatches.includes(groupingCorrection)
+            ? postCorrectionSource
+            : postInitialSource,
+        }),
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent(execute);
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-false-precedence-grouping",
+      text: task,
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths: [requiredPath],
+          toolLoopIterationBudget: 6,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === successfulSummary
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(requests).toHaveLength(6);
+    expect(requests[3]?.messages[0]?.content).toContain(localRejection);
+    expect(executedPatches).toEqual([initialPatch, groupingCorrection]);
+    expect(executedPatches).not.toContain(broadCorrection);
+    expect(items).toContainEqual({ type: "final", text: successfulSummary });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("fails closed when a repeated-source retry leaves invalid unreachable false control flow", async () => {
     const requiredPath = "src/diff/props.js";
     const originalCondition = "\t\t} else if (value != NULL && value !== false) {";

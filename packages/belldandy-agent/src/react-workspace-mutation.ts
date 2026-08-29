@@ -91,6 +91,7 @@ export type WorkspaceMutationObjectiveInputCorrectionReason =
   | "repeated_current_source"
   | "smallest_change_requires_semantic_narrowing"
   | "closing_delimiter_requires_deletion_only"
+  | "serialized_false_precedence_requires_grouping"
   | "serialized_false_removal_requires_atomic_repair";
 
 export type WorkspaceMutationRecoveryPlan = WorkspaceMutationRecoveryRequest & {
@@ -184,6 +185,7 @@ const MUTATION_OBJECTIVE_INPUT_CORRECTION_REASON_INSTRUCTIONS: Record<
   repeated_current_source: "Local validation rejected the preceding correction because it only repeated current-source lines and produced no semantic delta. Re-evaluate every task requirement against the current source. For a named subset, check the task's positive and outside/negative witnesses against the current predicate, then change only the smallest task-relevant expression or statement. Keep one coherent sibling if/else chain: do not place required false handling behind value !== false, consume all false values before the named subset, or append else if after an unconditional else. When the complete current source proves that a prior replacement left an extra standalone closing delimiter beside the replacement's own closing delimiter, remove only the extra delimiter with a deletion-only hunk and unique unchanged context; do not remove and re-add it.",
   smallest_change_requires_semantic_narrowing: "Local validation rejected the preceding correction because it did not narrowly refine the prior semantic delta. Start from the complete current source, preserve every behaviorally correct part of that prior semantic delta, and replace only the over-broad, over-specific, reverted, or disjoint task-relevant predicate or statement. Do not restore the broken baseline, move the change to an unrelated branch, or rewrite adjacent correct code. When the task or bounded evidence provides an exact source predicate, use it byte-for-byte.",
   closing_delimiter_requires_deletion_only: "Local validation rejected the preceding correction because the complete current source proves that a prior replacement left an extra standalone closing delimiter beside the replacement's own closing delimiter. Remove only the extra delimiter with a deletion-only hunk and unique unchanged context. Do not rewrite, extend, remove and re-add, or reattach the surrounding branch tail.",
+  serialized_false_precedence_requires_grouping: "Local validation rejected the preceding correction because operator precedence lets the data-* predicate bypass `value === false`. Preserve the complete current branch byte-for-byte and only group the existing aria-* / data-* predicate: append ` (` to the existing `value === false &&` line and add its matching closing `)` immediately before the branch condition's existing closing `) {`. Do not add a null/undefined guard, change either prefix predicate, rewrite statements, or touch another branch.",
   serialized_false_removal_requires_atomic_repair: "Local validation rejected the preceding review because the complete current source proves that the null/undefined and ordinary-false removal branch has no executable removal statement, and its subset predicate references an identifier that the complete source does not declare. Repair that existing branch atomically: replace only its invalid condition with `value == NULL || (value === false && name[4] != '-')`, then add exactly `dom.removeAttribute(name);` inside the branch. This is the smallest condition that removes null/undefined and ordinary false while leaving aria-* and data-* false for the following serialization branch. Preserve every comment, sibling branch, and other statement as unchanged context. Do not refactor or rewrite the surrounding chain.",
 };
 
@@ -1410,6 +1412,132 @@ export function hasUnpreservedSerializedFalseWitnessCurrentSource(
   });
 }
 
+type SerializedFalsePrecedenceEvidence = {
+  path: string;
+  valueGuard: string;
+  ariaPredicate: string;
+  dataPredicate: string;
+  groupingDelimiter: string;
+  branchEnd: string;
+};
+
+function collectUngroupedSerializedFalsePrecedenceEvidence(
+  messages: readonly WorkspaceMutationSourceMessage[],
+  taskText: string,
+  priorSuccessfulPatchInputs: readonly string[],
+): SerializedFalsePrecedenceEvidence[] {
+  if (!taskRequiresSerializedFalseRemovalWitnesses(taskText)) return [];
+  const priorGuardPaths = collectPriorSerializedFalseGuardPaths(priorSuccessfulPatchInputs);
+  if (priorGuardPaths.length === 0) return [];
+  const addedLinesByPath = new Map<string, Set<string>>();
+  for (const patchInput of priorSuccessfulPatchInputs) {
+    for (const change of collectWorkspaceMutationPatchLineChanges(patchInput) ?? []) {
+      if (!priorGuardPaths.includes(change.path)) continue;
+      const addedLines = addedLinesByPath.get(change.path) ?? new Set<string>();
+      for (const line of collectEffectiveWorkspaceMutationPatchLines(change).added) {
+        addedLines.add(line);
+      }
+      addedLinesByPath.set(change.path, addedLines);
+    }
+  }
+  const evidence: SerializedFalsePrecedenceEvidence[] = [];
+  for (const path of priorGuardPaths) {
+    const addedLines = addedLinesByPath.get(path);
+    if (!addedLines) continue;
+    for (const source of readLatestWorkspaceMutationSourceEvidence(messages, [path])) {
+      const lines = source.split(/\r?\n/);
+      for (let index = 0; index <= lines.length - 5; index += 1) {
+        const branchStart = lines[index] ?? "";
+        const valueGuard = lines[index + 1] ?? "";
+        const ariaPredicate = lines[index + 2] ?? "";
+        const dataPredicate = lines[index + 3] ?? "";
+        const branchEnd = lines[index + 4] ?? "";
+        if (!/^\s*}\s*else\s+if\s*\(\s*$/.test(branchStart)
+          || !/^\s*value\s*={2,3}\s*false\s*&&\s*$/.test(valueGuard)
+          || !/^\s*\(\s*name\s*\[\s*0\s*]\s*={2,3}\s*(['"])a\1\s*&&.*name\s*\[\s*4\s*]\s*={2,3}\s*(['"])-\2\s*\)\s*\|\|\s*$/.test(ariaPredicate)
+          || !/^\s*\(\s*name\s*\[\s*0\s*]\s*={2,3}\s*(['"])d\1\s*&&.*name\s*\[\s*4\s*]\s*={2,3}\s*(['"])-\2\s*\)\s*$/.test(dataPredicate)
+          || !/^\s*\)\s*{\s*$/.test(branchEnd)
+          || ![branchStart, valueGuard, ariaPredicate, dataPredicate, branchEnd]
+            .every((line) => addedLines.has(line))) {
+          continue;
+        }
+        evidence.push({
+          path,
+          valueGuard,
+          ariaPredicate,
+          dataPredicate,
+          groupingDelimiter: `${/^\s*/.exec(valueGuard)?.[0] ?? ""})`,
+          branchEnd,
+        });
+      }
+    }
+  }
+  return evidence;
+}
+
+export function hasUngroupedSerializedFalsePrecedenceCurrentSource(
+  messages: readonly WorkspaceMutationSourceMessage[],
+  taskText: string,
+  priorSuccessfulPatchInputs: readonly string[],
+): boolean {
+  return collectUngroupedSerializedFalsePrecedenceEvidence(
+    messages,
+    taskText,
+    priorSuccessfulPatchInputs,
+  ).length > 0;
+}
+
+export function hasNonGroupingSerializedFalsePrecedenceCorrectionHunks(
+  toolCall: WorkspaceMutationNavigationToolCall,
+  messages: readonly WorkspaceMutationSourceMessage[],
+  requiredPaths: readonly string[],
+  priorSuccessfulPatchInputs: readonly string[],
+  taskText: string,
+): boolean {
+  const evidence = collectUngroupedSerializedFalsePrecedenceEvidence(
+    messages,
+    taskText,
+    priorSuccessfulPatchInputs,
+  );
+  if (evidence.length === 0) return false;
+  const correctionInput = readSmallestChangeCorrectionPatchInput(
+    toolCall,
+    priorSuccessfulPatchInputs,
+    taskText,
+  );
+  if (correctionInput === undefined) return false;
+  const changes = collectWorkspaceMutationPatchLineChanges(correctionInput);
+  if (!changes || changes.length !== 1) return true;
+  const change = changes[0];
+  const ownedEvidence = evidence.find((candidate) => candidate.path === change?.path);
+  if (!change
+    || !requiredPaths.map(normalizeSourcePath).includes(change.path)
+    || !ownedEvidence) {
+    return true;
+  }
+  const effective = collectEffectiveWorkspaceMutationPatchLines(change);
+  const expectedGroupedGuard = `${ownedEvidence.valueGuard.trimEnd()} (`;
+  const expectedOrderedHunk = [
+    `-${ownedEvidence.valueGuard}`,
+    `+${expectedGroupedGuard}`,
+    ` ${ownedEvidence.ariaPredicate}`,
+    ` ${ownedEvidence.dataPredicate}`,
+    `+${ownedEvidence.groupingDelimiter}`,
+    ` ${ownedEvidence.branchEnd}`,
+  ];
+  const hasExpectedOrderedHunk = change.lines.some((line, start) => (
+    expectedOrderedHunk.every((expectedLine, offset) => (
+      change.lines[start + offset] === expectedLine
+    ))
+  ));
+  return effective.removed.length !== 1
+    || effective.removed[0] !== ownedEvidence.valueGuard
+    || effective.added.length !== 2
+    || !effective.added.includes(expectedGroupedGuard)
+    || !effective.added.includes(ownedEvidence.groupingDelimiter)
+    || !hasExpectedOrderedHunk;
+}
+
 function isUnconditionalElseLine(line: string): boolean {
   return /^\s*}\s*else\s*{\s*$/.test(line);
 }
@@ -1751,16 +1879,21 @@ function readSmallestChangeCorrectionPatchInput(
 
 function collectWorkspaceMutationPatchLineChanges(
   patchInput: string,
-): Array<{ path: string; added: string[]; removed: string[] }> | undefined {
+): Array<{ path: string; added: string[]; removed: string[]; lines: string[] }> | undefined {
   const lines = patchInput.trim().split(/\r?\n/);
   if (lines[0] !== "*** Begin Patch"
     || lines.at(-1) !== "*** End Patch"
     || lines.indexOf("*** End Patch") !== lines.length - 1) {
     return undefined;
   }
-  const changes: Array<{ path: string; added: string[]; removed: string[] }> = [];
+  const changes: Array<{ path: string; added: string[]; removed: string[]; lines: string[] }> = [];
   let currentPath: string | undefined;
-  let currentChange: { path: string; added: string[]; removed: string[] } | undefined;
+  let currentChange: {
+    path: string;
+    added: string[];
+    removed: string[];
+    lines: string[];
+  } | undefined;
   const finishChange = () => {
     if (currentChange && (currentChange.added.length > 0 || currentChange.removed.length > 0)) {
       changes.push(currentChange);
@@ -1784,11 +1917,14 @@ function collectWorkspaceMutationPatchLineChanges(
     if (line.startsWith("@@")) {
       finishChange();
       currentChange = currentPath
-        ? { path: currentPath, added: [], removed: [] }
+        ? { path: currentPath, added: [], removed: [], lines: [] }
         : undefined;
       continue;
     }
     if (!currentChange) continue;
+    if (/^[ +\-]/.test(line)) {
+      currentChange.lines.push(line);
+    }
     if (line.startsWith("+")) {
       currentChange.added.push(line.slice(1));
     } else if (line.startsWith("-")) {
