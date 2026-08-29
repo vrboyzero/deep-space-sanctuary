@@ -17,9 +17,11 @@ import {
   hasBroadenedSmallestChangeCorrectionHunks,
   hasNonDeletionOnlyClosingDelimiterCorrectionHunks,
   hasNonGroupingSerializedFalsePrecedenceCorrectionHunks,
+  hasNonReachabilitySerializedFalseDataPredicateCorrectionHunks,
   hasRevertedSmallestChangeCorrectionHunks,
   hasRedundantWorkspaceMutationPatchHunks,
   hasUngroupedSerializedFalsePrecedenceCurrentSource,
+  hasUnreachableSerializedFalseDataPredicateCurrentSource,
   hasUnreachableSerializedFalseWitnessCurrentSource,
   inspectContextOnlyWorkspaceMutationPatchPreservation,
   inspectWorkspaceMutationPatchHunks,
@@ -35,6 +37,112 @@ import {
 } from "./react-workspace-mutation.js";
 
 describe("ReAct workspace mutation recovery", () => {
+  it("accepts only removal of an owned aria-only ternary wrapper", () => {
+    const requiredPath = "src/diff/props.js";
+    const ariaPredicate = "(name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-')";
+    const dataPredicate = "(name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-')";
+    const unreachableCondition = `\t\t} else if (name[0] == 'a' && (name[1] == 'r' || name[1] == 'a') ? ${ariaPredicate} || ${dataPredicate} : false) {`;
+    const reachableCondition = `\t\t} else if (${ariaPredicate} || ${dataPredicate}) {`;
+    const followingLine = "\t\t\t// aria-* and data-* have no boolean representation.";
+    const priorPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `+${unreachableCondition}`,
+      `+${followingLine}`,
+      "+\t\t\tif (value != NULL && value !== false) {",
+      "+\t\t\t\tdom.setAttribute(name, value);",
+      "+\t\t\t} else if (value === false) {",
+      "+\t\t\t\tdom.setAttribute(name, 'false');",
+      " \t\t} else if (value != NULL && value !== false) {",
+      "*** End Patch",
+    ].join("\n");
+    const source = [
+      unreachableCondition,
+      followingLine,
+      "\t\t\tif (value != NULL && value !== false) {",
+      "\t\t\t\tdom.setAttribute(name, value);",
+      "\t\t\t} else if (value === false) {",
+      "\t\t\t\tdom.setAttribute(name, 'false');",
+      "\t\t\t} else {",
+      "\t\t\t\tdom.removeAttribute(name);",
+      "\t\t\t}",
+      "\t\t} else if (value != NULL && value !== false) {",
+    ].join("\n");
+    const reachabilityCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${unreachableCondition}`,
+      `+${reachableCondition}`,
+      ` ${followingLine}`,
+      "*** End Patch",
+    ]);
+    const nullGuardCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${unreachableCondition}`,
+      `+\t\t} else if (value != NULL && (${unreachableCondition.slice("\t\t} else if (".length, -3)})) {`,
+      ` ${followingLine}`,
+      "*** End Patch",
+    ]);
+    const predicateRewrite = applyPatchToolCall([
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${unreachableCondition}`,
+      "+\t\t} else if (name.startsWith('aria-') || name.startsWith('data-')) {",
+      ` ${followingLine}`,
+      "*** End Patch",
+    ]);
+    const task = "Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, remove null and undefined values, and make the smallest change.";
+    const messages = sourceEvidenceMessages(requiredPath, source);
+
+    expect(hasUnreachableSerializedFalseDataPredicateCurrentSource(
+      messages,
+      task,
+      [priorPatch],
+    )).toBe(true);
+    expect(hasNonReachabilitySerializedFalseDataPredicateCorrectionHunks(
+      reachabilityCorrection,
+      messages,
+      [requiredPath],
+      [priorPatch],
+      task,
+    )).toBe(false);
+    expect(hasNonReachabilitySerializedFalseDataPredicateCorrectionHunks(
+      nullGuardCorrection,
+      messages,
+      [requiredPath],
+      [priorPatch],
+      task,
+    )).toBe(true);
+    expect(hasNonReachabilitySerializedFalseDataPredicateCorrectionHunks(
+      predicateRewrite,
+      messages,
+      [requiredPath],
+      [priorPatch],
+      task,
+    )).toBe(true);
+    expect(hasUnreachableSerializedFalseDataPredicateCurrentSource(
+      sourceEvidenceMessages(requiredPath, source.replace(unreachableCondition, reachableCondition)),
+      task,
+      [priorPatch],
+    )).toBe(false);
+    expect(hasUnreachableSerializedFalseDataPredicateCurrentSource(
+      messages,
+      task,
+      [priorPatch.replace(`+${unreachableCondition}`, "+\t\t} else if (value === false) {")],
+    )).toBe(false);
+    const shadowedDirectCondition = `\t\t} else if (name[0] == 'a' && (${ariaPredicate} || ${dataPredicate})) {`;
+    expect(hasUnreachableSerializedFalseWitnessCurrentSource(
+      sourceEvidenceMessages(requiredPath, source.replace(unreachableCondition, shadowedDirectCondition)),
+      task,
+      [priorPatch],
+    )).toBe(true);
+  });
+
   it("accepts only grouping delimiters for an owned false aria/data precedence repair", () => {
     const requiredPath = "src/diff/props.js";
     const ariaPredicate = "\t\t\t(name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') ||";

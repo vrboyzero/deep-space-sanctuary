@@ -153,12 +153,14 @@ import {
   hasNonAtomicSerializedFalseRemovalCorrectionHunks,
   hasNonDeletionOnlyClosingDelimiterCorrectionHunks,
   hasNonGroupingSerializedFalsePrecedenceCorrectionHunks,
+  hasNonReachabilitySerializedFalseDataPredicateCorrectionHunks,
   hasNoopSerializedFalseRemovalBranchCurrentSource,
   hasOnlyWorkspaceMutationPatchPaths,
   hasPriorPatchAdjacentDuplicateClosingDelimiterCurrentSource,
   hasRedundantWorkspaceMutationPatchHunks,
   hasRevertedSmallestChangeCorrectionHunks,
   hasUnreachableSerializedFalseWitnessCurrentSource,
+  hasUnreachableSerializedFalseDataPredicateCurrentSource,
   hasUnpreservedSerializedFalseWitnessCurrentSource,
   inspectContextOnlyWorkspaceMutationPatchPreservation,
   inspectWorkspaceMutationPatchHunks,
@@ -4153,6 +4155,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
               input.text,
               successfulWorkspaceMutationPatchInputs,
             );
+          const unreachableSerializedFalseDataPredicate = workspaceMutationObjectiveReviewCall
+            && hasUnreachableSerializedFalseDataPredicateCurrentSource(
+              mutationRecoverySourceMessages,
+              input.text,
+              successfulWorkspaceMutationPatchInputs,
+            );
           const unpreservedSerializedFalseWitness = workspaceMutationObjectiveReviewCall
             && hasUnpreservedSerializedFalseWitnessCurrentSource(
               mutationRecoverySourceMessages,
@@ -4175,6 +4183,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
                   ? "closing_delimiter_requires_deletion_only"
                   : noopSerializedFalseRemovalBranch
                   ? "serialized_false_removal_requires_atomic_repair"
+                  : unreachableSerializedFalseDataPredicate
+                  ? "serialized_false_data_predicate_requires_reachability"
                   : undefined;
                 workspaceMutationObjectiveOutputRepairPending = false;
                 lastToolCallFingerprint = undefined;
@@ -4231,6 +4241,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 ? "closing_delimiter_requires_deletion_only"
                 : noopSerializedFalseRemovalBranch
                 ? "serialized_false_removal_requires_atomic_repair"
+                : unreachableSerializedFalseDataPredicate
+                ? "serialized_false_data_predicate_requires_reachability"
                 : undefined;
               workspaceMutationObjectiveOutputRepairPending = false;
               lastToolCallFingerprint = undefined;
@@ -4614,6 +4626,14 @@ export class ToolEnabledAgent implements BelldandyAgent {
               successfulWorkspaceMutationPatchInputs,
               input.text,
             );
+          const nonReachabilitySerializedFalseDataPredicateCorrection = workspaceMutationObjectiveReviewCall
+            && hasNonReachabilitySerializedFalseDataPredicateCorrectionHunks(
+              constrainedMutationToolCall,
+              mutationRecoverySourceMessages,
+              workspaceMutationCallRequiredPaths,
+              successfulWorkspaceMutationPatchInputs,
+              input.text,
+            );
           if (revertedSmallestChangeCorrection && workspaceMutationObjectiveInputCorrectionCall) {
             workspaceMutationObjectiveCorrectionAttempted = true;
             workspaceMutationObjectiveReviewPending = true;
@@ -4640,6 +4660,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 successfulWorkspaceMutationPatchInputs,
                 input.text,
               )
+              || nonReachabilitySerializedFalseDataPredicateCorrection
               || nonGroupingSerializedFalsePrecedenceCorrection
               || nonAtomicSerializedFalseRemovalCorrection
               || nonDeletionOnlyClosingDelimiterCorrection
@@ -4653,6 +4674,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
               workspaceMutationObjectiveInputCorrectionPending = true;
               workspaceMutationObjectiveInputCorrectionReason = nonDeletionOnlyClosingDelimiterCorrection
                 ? "closing_delimiter_requires_deletion_only"
+                : nonReachabilitySerializedFalseDataPredicateCorrection
+                ? "serialized_false_data_predicate_requires_reachability"
                 : nonGroupingSerializedFalsePrecedenceCorrection
                 ? "serialized_false_precedence_requires_grouping"
                 : nonAtomicSerializedFalseRemovalCorrection

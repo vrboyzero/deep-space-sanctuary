@@ -92,6 +92,7 @@ export type WorkspaceMutationObjectiveInputCorrectionReason =
   | "smallest_change_requires_semantic_narrowing"
   | "closing_delimiter_requires_deletion_only"
   | "serialized_false_precedence_requires_grouping"
+  | "serialized_false_data_predicate_requires_reachability"
   | "serialized_false_removal_requires_atomic_repair";
 
 export type WorkspaceMutationRecoveryPlan = WorkspaceMutationRecoveryRequest & {
@@ -186,6 +187,7 @@ const MUTATION_OBJECTIVE_INPUT_CORRECTION_REASON_INSTRUCTIONS: Record<
   smallest_change_requires_semantic_narrowing: "Local validation rejected the preceding correction because it did not narrowly refine the prior semantic delta. Start from the complete current source, preserve every behaviorally correct part of that prior semantic delta, and replace only the over-broad, over-specific, reverted, or disjoint task-relevant predicate or statement. Do not restore the broken baseline, move the change to an unrelated branch, or rewrite adjacent correct code. When the task or bounded evidence provides an exact source predicate, use it byte-for-byte.",
   closing_delimiter_requires_deletion_only: "Local validation rejected the preceding correction because the complete current source proves that a prior replacement left an extra standalone closing delimiter beside the replacement's own closing delimiter. Remove only the extra delimiter with a deletion-only hunk and unique unchanged context. Do not rewrite, extend, remove and re-add, or reattach the surrounding branch tail.",
   serialized_false_precedence_requires_grouping: "Local validation rejected the preceding correction because operator precedence lets the data-* predicate bypass `value === false`. Preserve the complete current branch byte-for-byte and only group the existing aria-* / data-* predicate: append ` (` to the existing `value === false &&` line and add its matching closing `)` immediately before the branch condition's existing closing `) {`. Do not add a null/undefined guard, change either prefix predicate, rewrite statements, or touch another branch.",
+  serialized_false_data_predicate_requires_reachability: "Local validation rejected the preceding correction because the outer aria-only ternary makes the data-* serialized-false predicate unreachable. Preserve the complete current branch byte-for-byte and replace only that branch condition: remove the outer aria-only predicate, `?`, and `: false`, leaving the existing aria-* predicate directly joined to the existing data-* predicate by their existing `||`. Do not add a null/undefined or value guard, change either prefix predicate, rewrite statements, or touch another branch.",
   serialized_false_removal_requires_atomic_repair: "Local validation rejected the preceding review because the complete current source proves that the null/undefined and ordinary-false removal branch has no executable removal statement, and its subset predicate references an identifier that the complete source does not declare. Repair that existing branch atomically: replace only its invalid condition with `value == NULL || (value === false && name[4] != '-')`, then add exactly `dom.removeAttribute(name);` inside the branch. This is the smallest condition that removes null/undefined and ordinary false while leaving aria-* and data-* false for the following serialization branch. Preserve every comment, sibling branch, and other statement as unchanged context. Do not refactor or rewrite the surrounding chain.",
 };
 
@@ -1538,6 +1540,148 @@ export function hasNonGroupingSerializedFalsePrecedenceCorrectionHunks(
     || !hasExpectedOrderedHunk;
 }
 
+type SerializedFalseDataReachabilityEvidence = {
+  path: string;
+  unreachableCondition: string;
+  reachableCondition: string;
+  followingLine: string;
+};
+
+function isSerializedFalsePrefixPredicate(
+  predicate: string,
+  expectedPrefix: "aria" | "data",
+): boolean {
+  const expectedCharacters = expectedPrefix.split("");
+  return expectedCharacters.every((character, index) => (
+    new RegExp(
+      String.raw`name\s*\[\s*${index}\s*]\s*={2,3}\s*(['"])${character}\1`,
+    ).test(predicate)
+  )) && /name\s*\[\s*4\s*]\s*={2,3}\s*(['"])-\1/.test(predicate);
+}
+
+function parseSerializedFalseDataReachabilityCondition(
+  line: string,
+): { reachableCondition: string } | undefined {
+  const branchMatch = /^(\s*}\s*else\s+if\s*\()(.+)(\)\s*\{\s*)$/.exec(line);
+  if (!branchMatch) return undefined;
+  const expression = branchMatch[2] ?? "";
+  const ternaryMatch = /^(.+?)\s*\?\s*(.+)\s*:\s*false$/.exec(expression);
+  if (!ternaryMatch) return undefined;
+  const outerPredicate = (ternaryMatch[1] ?? "").trim();
+  const serializedPredicates = (ternaryMatch[2] ?? "").trim();
+  if (!/^name\s*\[\s*0\s*]\s*={2,3}\s*(['"])a\1\s*&&\s*\(\s*name\s*\[\s*1\s*]\s*={2,3}\s*(['"])r\2\s*\|\|\s*name\s*\[\s*1\s*]\s*={2,3}\s*(['"])a\3\s*\)$/.test(outerPredicate)) {
+    return undefined;
+  }
+  const predicateMatch = /^(\(.+\))\s*\|\|\s*(\(.+\))$/.exec(serializedPredicates);
+  if (!predicateMatch
+    || !isSerializedFalsePrefixPredicate(predicateMatch[1] ?? "", "aria")
+    || !isSerializedFalsePrefixPredicate(predicateMatch[2] ?? "", "data")) {
+    return undefined;
+  }
+  return {
+    reachableCondition: `${branchMatch[1] ?? ""}${serializedPredicates}${branchMatch[3] ?? ""}`,
+  };
+}
+
+function collectSerializedFalseDataReachabilityEvidence(
+  messages: readonly WorkspaceMutationSourceMessage[],
+  taskText: string,
+  priorSuccessfulPatchInputs: readonly string[],
+): SerializedFalseDataReachabilityEvidence[] {
+  if (!taskRequiresSerializedFalseRemovalWitnesses(taskText)) return [];
+  const priorGuardPaths = collectPriorSerializedFalseGuardPaths(priorSuccessfulPatchInputs);
+  if (priorGuardPaths.length === 0) return [];
+  const addedLinesByPath = new Map<string, Set<string>>();
+  for (const patchInput of priorSuccessfulPatchInputs) {
+    for (const change of collectWorkspaceMutationPatchLineChanges(patchInput) ?? []) {
+      if (!priorGuardPaths.includes(change.path)) continue;
+      const addedLines = addedLinesByPath.get(change.path) ?? new Set<string>();
+      for (const line of collectEffectiveWorkspaceMutationPatchLines(change).added) {
+        addedLines.add(line);
+      }
+      addedLinesByPath.set(change.path, addedLines);
+    }
+  }
+  const evidence: SerializedFalseDataReachabilityEvidence[] = [];
+  for (const path of priorGuardPaths) {
+    const addedLines = addedLinesByPath.get(path);
+    if (!addedLines) continue;
+    for (const source of readLatestWorkspaceMutationSourceEvidence(messages, [path])) {
+      const lines = source.split(/\r?\n/);
+      for (let index = 0; index < lines.length - 1; index += 1) {
+        const unreachableCondition = lines[index] ?? "";
+        const parsed = parseSerializedFalseDataReachabilityCondition(unreachableCondition);
+        if (!parsed || !addedLines.has(unreachableCondition)) continue;
+        evidence.push({
+          path,
+          unreachableCondition,
+          reachableCondition: parsed.reachableCondition,
+          followingLine: lines[index + 1] ?? "",
+        });
+      }
+    }
+  }
+  return evidence;
+}
+
+export function hasUnreachableSerializedFalseDataPredicateCurrentSource(
+  messages: readonly WorkspaceMutationSourceMessage[],
+  taskText: string,
+  priorSuccessfulPatchInputs: readonly string[],
+): boolean {
+  return collectSerializedFalseDataReachabilityEvidence(
+    messages,
+    taskText,
+    priorSuccessfulPatchInputs,
+  ).length > 0;
+}
+
+export function hasNonReachabilitySerializedFalseDataPredicateCorrectionHunks(
+  toolCall: WorkspaceMutationNavigationToolCall,
+  messages: readonly WorkspaceMutationSourceMessage[],
+  requiredPaths: readonly string[],
+  priorSuccessfulPatchInputs: readonly string[],
+  taskText: string,
+): boolean {
+  const evidence = collectSerializedFalseDataReachabilityEvidence(
+    messages,
+    taskText,
+    priorSuccessfulPatchInputs,
+  );
+  if (evidence.length === 0) return false;
+  const correctionInput = readSmallestChangeCorrectionPatchInput(
+    toolCall,
+    priorSuccessfulPatchInputs,
+    taskText,
+  );
+  if (correctionInput === undefined) return false;
+  const changes = collectWorkspaceMutationPatchLineChanges(correctionInput);
+  if (!changes || changes.length !== 1) return true;
+  const change = changes[0];
+  const ownedEvidence = evidence.find((candidate) => candidate.path === change?.path);
+  if (!change
+    || !requiredPaths.map(normalizeSourcePath).includes(change.path)
+    || !ownedEvidence) {
+    return true;
+  }
+  const effective = collectEffectiveWorkspaceMutationPatchLines(change);
+  const expectedOrderedHunk = [
+    `-${ownedEvidence.unreachableCondition}`,
+    `+${ownedEvidence.reachableCondition}`,
+    ` ${ownedEvidence.followingLine}`,
+  ];
+  const hasExpectedOrderedHunk = change.lines.some((line, start) => (
+    expectedOrderedHunk.every((expectedLine, offset) => (
+      change.lines[start + offset] === expectedLine
+    ))
+  ));
+  return effective.removed.length !== 1
+    || effective.removed[0] !== ownedEvidence.unreachableCondition
+    || effective.added.length !== 1
+    || effective.added[0] !== ownedEvidence.reachableCondition
+    || !hasExpectedOrderedHunk;
+}
+
 function isUnconditionalElseLine(line: string): boolean {
   return /^\s*}\s*else\s*{\s*$/.test(line);
 }
@@ -1736,6 +1880,23 @@ function branchPreservesSerializedFalseSubset(condition: string, body: readonly 
   return conditionSelectsSubset || bodySelectsSubset;
 }
 
+function branchDirectlyPreservesSerializedFalsePrefixes(
+  condition: string,
+  body: readonly string[],
+): boolean {
+  const branchMatch = /^\s*}\s*else\s+if\s*\((.+)\)\s*\{\s*$/.exec(condition);
+  const predicate = branchMatch?.[1] ?? "";
+  const predicateMatch = /^(\(.+\))\s*\|\|\s*(\(.+\))$/.exec(predicate);
+  if (!predicateMatch
+    || !isSerializedFalsePrefixPredicate(predicateMatch[1] ?? "", "aria")
+    || !isSerializedFalsePrefixPredicate(predicateMatch[2] ?? "", "data")) {
+    return false;
+  }
+  const bodyText = body.join("\n");
+  return /}\s*else\s+if\s*\(\s*value\s*={2,3}\s*false\s*\)\s*\{/.test(bodyText)
+    && /dom\.setAttribute\s*\(\s*name\s*,\s*(['"])false\1\s*\)\s*;/.test(bodyText);
+}
+
 function hasComplementarySerializedFalseRemovalBranches(lines: readonly string[]): boolean {
   return lines.some((line, branchIndex) => {
     if (!isSerializedFalseRemovalCondition(line)) {
@@ -1774,6 +1935,8 @@ export function hasUnreachableSerializedFalseWitnessCurrentSource(
     if (!lines.some((line) => /\.setAttribute\s*\(/.test(line))) return false;
     if (hasComplementarySerializedFalseRemovalBranches(lines)) return false;
     const hasReachableSerializedFalseBranch = lines.some((line, index) => {
+      const body = readSiblingBranchBody(lines, index);
+      if (branchDirectlyPreservesSerializedFalsePrefixes(line, body)) return true;
       if (!/\bvalue\s*(?:===?|!==?)\s*false\b/.test(line)
         && !/\bfalse\s*(?:===?|!==?)\s*value\b/.test(line)) {
         return false;
@@ -1782,7 +1945,7 @@ export function hasUnreachableSerializedFalseWitnessCurrentSource(
         || /\bfalse\s*===?\s*value\b/.test(line)
         || (/\bvalue\s*!==?\s*false\b/.test(line) && line.includes("||"));
       return admitsFalse
-        && branchPreservesSerializedFalseSubset(line, readSiblingBranchBody(lines, index));
+        && branchPreservesSerializedFalseSubset(line, body);
     });
     return !hasReachableSerializedFalseBranch;
   });
