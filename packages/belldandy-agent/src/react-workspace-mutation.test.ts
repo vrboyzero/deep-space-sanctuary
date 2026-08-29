@@ -15,6 +15,8 @@ import {
   hasExcludedFalseWitnessSmallestChangeCorrectionHunks,
   hasExpandedSmallestChangeCorrectionHunks,
   hasBroadenedSmallestChangeCorrectionHunks,
+  hasIncompleteSerializedFalseSiblingDataCoverageCurrentSource,
+  hasNonDataCoverageSerializedFalseSiblingCorrectionHunks,
   hasNonDeletionOnlyClosingDelimiterCorrectionHunks,
   hasNonGroupingSerializedFalsePrecedenceCorrectionHunks,
   hasNonReachabilitySerializedFalseDataPredicateCorrectionHunks,
@@ -39,6 +41,104 @@ import {
 } from "./react-workspace-mutation.js";
 
 describe("ReAct workspace mutation recovery", () => {
+  it("accepts only the frozen data-coverage repair for an owned aria-only false sibling", () => {
+    const requiredPath = "src/diff/props.js";
+    const ariaOnlyCondition = "\t\t} else if (value === false && (name.charCodeAt(0) & 31) == 1) {";
+    const serializedFalseCondition = "\t\t} else if (value === false && name[4] == '-') {";
+    const followingLine = "\t\t\tdom.setAttribute(name, 'false');";
+    const priorPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      " \t\t} else if (value != NULL && value !== false) {",
+      " \t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+      `+${ariaOnlyCondition}`,
+      `+${followingLine}`,
+      "+\t\t} else if (value == NULL) {",
+      "+\t\t\tdom.removeAttribute(name);",
+      " \t\t} else {",
+      "*** End Patch",
+    ].join("\n");
+    const source = [
+      "\t\t} else if (value != NULL && value !== false) {",
+      "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+      ariaOnlyCondition,
+      followingLine,
+      "\t\t} else if (value == NULL) {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t} else {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t}",
+    ].join("\n");
+    const validCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${ariaOnlyCondition}`,
+      `+${serializedFalseCondition}`,
+      ` ${followingLine}`,
+      "*** End Patch",
+    ]);
+    const dataOnlyCorrection = applyPatchToolCall([
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${ariaOnlyCondition}`,
+      "+\t\t} else if (value === false && (name.charCodeAt(0) & 31) == 4) {",
+      ` ${followingLine}`,
+      "*** End Patch",
+    ]);
+    const statementRewrite = applyPatchToolCall([
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${ariaOnlyCondition}`,
+      `+${serializedFalseCondition}`,
+      `-${followingLine}`,
+      "+\t\t\tdom.setAttribute(name, String(value));",
+      "*** End Patch",
+    ]);
+    const task = "Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, remove null and undefined values, and make the smallest change.";
+    const messages = sourceEvidenceMessages(requiredPath, source);
+
+    expect(hasIncompleteSerializedFalseSiblingDataCoverageCurrentSource(
+      messages,
+      task,
+      [priorPatch],
+    )).toBe(true);
+    expect(hasNonDataCoverageSerializedFalseSiblingCorrectionHunks(
+      validCorrection,
+      messages,
+      [requiredPath],
+      [priorPatch],
+      task,
+    )).toBe(false);
+    expect(hasNonDataCoverageSerializedFalseSiblingCorrectionHunks(
+      dataOnlyCorrection,
+      messages,
+      [requiredPath],
+      [priorPatch],
+      task,
+    )).toBe(true);
+    expect(hasNonDataCoverageSerializedFalseSiblingCorrectionHunks(
+      statementRewrite,
+      messages,
+      [requiredPath],
+      [priorPatch],
+      task,
+    )).toBe(true);
+    expect(hasIncompleteSerializedFalseSiblingDataCoverageCurrentSource(
+      sourceEvidenceMessages(requiredPath, source.replace(ariaOnlyCondition, serializedFalseCondition)),
+      task,
+      [priorPatch],
+    )).toBe(false);
+    expect(hasIncompleteSerializedFalseSiblingDataCoverageCurrentSource(
+      messages,
+      task,
+      [priorPatch.replace(`+${ariaOnlyCondition}`, "+\t\t} else if (value === false) {")],
+    )).toBe(false);
+  });
+
   it("accepts only the frozen parent-guard repair for owned nested false serialization", () => {
     const requiredPath = "src/diff/props.js";
     const parentCondition = "\t\t} else if (value != NULL && value !== false) {";

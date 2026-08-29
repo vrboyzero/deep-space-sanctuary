@@ -94,6 +94,7 @@ export type WorkspaceMutationObjectiveInputCorrectionReason =
   | "serialized_false_precedence_requires_grouping"
   | "serialized_false_data_predicate_requires_reachability"
   | "serialized_false_parent_guard_requires_reachability"
+  | "serialized_false_sibling_requires_data_coverage"
   | "serialized_false_removal_requires_atomic_repair";
 
 export type WorkspaceMutationRecoveryPlan = WorkspaceMutationRecoveryRequest & {
@@ -190,6 +191,7 @@ const MUTATION_OBJECTIVE_INPUT_CORRECTION_REASON_INSTRUCTIONS: Record<
   serialized_false_precedence_requires_grouping: "Local validation rejected the preceding correction because operator precedence lets the data-* predicate bypass `value === false`. Preserve the complete current branch byte-for-byte and only group the existing aria-* / data-* predicate: append ` (` to the existing `value === false &&` line and add its matching closing `)` immediately before the branch condition's existing closing `) {`. Do not add a null/undefined guard, change either prefix predicate, rewrite statements, or touch another branch.",
   serialized_false_data_predicate_requires_reachability: "Local validation rejected the preceding correction because the outer aria-only ternary makes the data-* serialized-false predicate unreachable. Preserve the complete current branch byte-for-byte and replace only that branch condition: remove the outer aria-only predicate, `?`, and `: false`, leaving the existing aria-* predicate directly joined to the existing data-* predicate by their existing `||`. Do not add a null/undefined or value guard, change either prefix predicate, rewrite statements, or touch another branch.",
   serialized_false_parent_guard_requires_reachability: "Local validation rejected the preceding correction because the parent value !== false guard makes the nested aria/data serialized-false branch unreachable. Preserve the complete current setAttribute expression byte-for-byte and replace only the parent condition `value != NULL && value !== false` with the frozen source contract `value != NULL && (value !== false || name[4] == '-')`. Do not change the nested ternary, prefix checks, statements, null/undefined behavior, or any sibling branch.",
+  serialized_false_sibling_requires_data_coverage: "Local validation rejected the current source because the owned false sibling serializes aria-* but does not preserve data-*. Preserve the sibling body and every adjacent branch byte-for-byte. Replace only its condition `value === false && (name.charCodeAt(0) & 31) == 1` with the frozen source contract `value === false && name[4] == '-'`. Do not add another branch, change setAttribute/removeAttribute statements, or alter ordinary false, null, or undefined behavior.",
   serialized_false_removal_requires_atomic_repair: "Local validation rejected the preceding review because the complete current source proves that the null/undefined and ordinary-false removal branch has no executable removal statement, and its subset predicate references an identifier that the complete source does not declare. Repair that existing branch atomically: replace only its invalid condition with `value == NULL || (value === false && name[4] != '-')`, then add exactly `dom.removeAttribute(name);` inside the branch. This is the smallest condition that removes null/undefined and ordinary false while leaving aria-* and data-* false for the following serialization branch. Preserve every comment, sibling branch, and other statement as unchanged context. Do not refactor or rewrite the surrounding chain.",
 };
 
@@ -1659,6 +1661,125 @@ export function hasNonReachabilitySerializedFalseParentGuardCorrectionHunks(
     || effective.removed[0] !== ownedEvidence.unreachableCondition
     || effective.added.length !== 1
     || effective.added[0] !== ownedEvidence.reachableCondition
+    || !hasExpectedOrderedHunk;
+}
+
+type SerializedFalseSiblingDataCoverageEvidence = {
+  path: string;
+  ariaOnlyCondition: string;
+  serializedFalseCondition: string;
+  followingLine: string;
+};
+
+function collectSerializedFalseSiblingDataCoverageEvidence(
+  messages: readonly WorkspaceMutationSourceMessage[],
+  taskText: string,
+  priorSuccessfulPatchInputs: readonly string[],
+): SerializedFalseSiblingDataCoverageEvidence[] {
+  if (!taskRequiresSerializedFalseRemovalWitnesses(taskText)) return [];
+  const ownedConditionsByPath = new Map<string, Set<string>>();
+  for (const patchInput of priorSuccessfulPatchInputs) {
+    for (const change of collectWorkspaceMutationPatchLineChanges(patchInput) ?? []) {
+      const ownsFalseStatement = change.added.some((line) => (
+        /^\s*dom\.setAttribute\(name,\s*(['"])false\1\);\s*$/.test(line)
+      ));
+      if (!ownsFalseStatement) continue;
+      for (const line of change.added) {
+        if (!/^\s*}\s*else\s+if\s*\(\s*value\s*===\s*false\s*&&\s*\(\s*name\.charCodeAt\(\s*0\s*\)\s*&\s*31\s*\)\s*==\s*1\s*\)\s*\{\s*$/.test(line)) {
+          continue;
+        }
+        const conditions = ownedConditionsByPath.get(change.path) ?? new Set<string>();
+        conditions.add(line);
+        ownedConditionsByPath.set(change.path, conditions);
+      }
+    }
+  }
+  const evidence: SerializedFalseSiblingDataCoverageEvidence[] = [];
+  for (const [path, ownedConditions] of ownedConditionsByPath) {
+    for (const source of readLatestWorkspaceMutationSourceEvidence(messages, [path])) {
+      const lines = source.split(/\r?\n/);
+      for (let index = 0; index < lines.length - 6; index += 1) {
+        const ariaOnlyCondition = lines[index] ?? "";
+        if (!ownedConditions.has(ariaOnlyCondition)) continue;
+        const match = /^(\s*)}\s*else\s+if\s*\(\s*value\s*===\s*false\s*&&\s*\(\s*name\.charCodeAt\(\s*0\s*\)\s*&\s*31\s*\)\s*==\s*1\s*\)\s*\{\s*$/.exec(
+          ariaOnlyCondition,
+        );
+        if (!match
+          || !/^\s*dom\.setAttribute\(name,\s*(['"])false\1\);\s*$/.test(lines[index + 1] ?? "")
+          || !/^\s*}\s*else\s+if\s*\(\s*value\s*==\s*NULL\s*\)\s*\{\s*$/.test(lines[index + 2] ?? "")
+          || !/^\s*dom\.removeAttribute\(name\);\s*$/.test(lines[index + 3] ?? "")
+          || !/^\s*}\s*else\s*\{\s*$/.test(lines[index + 4] ?? "")
+          || !/^\s*dom\.removeAttribute\(name\);\s*$/.test(lines[index + 5] ?? "")
+          || !/^\s*}\s*$/.test(lines[index + 6] ?? "")) {
+          continue;
+        }
+        evidence.push({
+          path,
+          ariaOnlyCondition,
+          serializedFalseCondition: `${match[1] ?? ""}} else if (value === false && name[4] == '-') {`,
+          followingLine: lines[index + 1] ?? "",
+        });
+      }
+    }
+  }
+  return evidence;
+}
+
+export function hasIncompleteSerializedFalseSiblingDataCoverageCurrentSource(
+  messages: readonly WorkspaceMutationSourceMessage[],
+  taskText: string,
+  priorSuccessfulPatchInputs: readonly string[],
+): boolean {
+  return collectSerializedFalseSiblingDataCoverageEvidence(
+    messages,
+    taskText,
+    priorSuccessfulPatchInputs,
+  ).length > 0;
+}
+
+export function hasNonDataCoverageSerializedFalseSiblingCorrectionHunks(
+  toolCall: WorkspaceMutationNavigationToolCall,
+  messages: readonly WorkspaceMutationSourceMessage[],
+  requiredPaths: readonly string[],
+  priorSuccessfulPatchInputs: readonly string[],
+  taskText: string,
+): boolean {
+  const evidence = collectSerializedFalseSiblingDataCoverageEvidence(
+    messages,
+    taskText,
+    priorSuccessfulPatchInputs,
+  );
+  if (evidence.length === 0) return false;
+  const correctionInput = readSmallestChangeCorrectionPatchInput(
+    toolCall,
+    priorSuccessfulPatchInputs,
+    taskText,
+  );
+  if (correctionInput === undefined) return false;
+  const changes = collectWorkspaceMutationPatchLineChanges(correctionInput);
+  if (!changes || changes.length !== 1) return true;
+  const change = changes[0];
+  const ownedEvidence = evidence.find((candidate) => candidate.path === change?.path);
+  if (!change
+    || !requiredPaths.map(normalizeSourcePath).includes(change.path)
+    || !ownedEvidence) {
+    return true;
+  }
+  const effective = collectEffectiveWorkspaceMutationPatchLines(change);
+  const expectedOrderedHunk = [
+    `-${ownedEvidence.ariaOnlyCondition}`,
+    `+${ownedEvidence.serializedFalseCondition}`,
+    ` ${ownedEvidence.followingLine}`,
+  ];
+  const hasExpectedOrderedHunk = change.lines.some((line, start) => (
+    expectedOrderedHunk.every((expectedLine, offset) => (
+      change.lines[start + offset] === expectedLine
+    ))
+  ));
+  return effective.removed.length !== 1
+    || effective.removed[0] !== ownedEvidence.ariaOnlyCondition
+    || effective.added.length !== 1
+    || effective.added[0] !== ownedEvidence.serializedFalseCondition
     || !hasExpectedOrderedHunk;
 }
 
