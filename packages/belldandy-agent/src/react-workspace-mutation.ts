@@ -216,6 +216,7 @@ const FILE_READ_ANCHOR_CONTEXT_AFTER_CHARS = 1_024;
 const FILE_READ_TASK_CONTEXT_MIN_CONTENT_CHARS = 4_096;
 const FILE_READ_TASK_CONTEXT_BEFORE_CHARS = 192;
 const FILE_READ_TASK_CONTEXT_AFTER_CHARS = 512;
+const FILE_READ_TASK_CONTEXT_BRANCH_TAIL_CHARS = 2_048;
 const FILE_READ_TASK_CONTEXT_MAX_ITEMS = 6;
 const FILE_READ_TASK_CONTEXT_MAX_CHARS = 4_096;
 const MUTATION_SOURCE_EVIDENCE_TOOLS = new Set(["file_read", "text_search", "code_intel"]);
@@ -2732,6 +2733,7 @@ export function buildWorkspaceMutationObjectiveInputCorrectionRequest(input: {
     missingRequiredChangedPaths: requiredCorrectionPaths,
     trustedPathsLabel: "Trusted required paths for the atomic post-write correction input retry",
     latestRequiredFileReadEvidenceOnly: true,
+    includeMutationBranchTail: true,
     includeAdjacentDuplicateClosingDelimiterEvidence:
       input.correctionReason === "closing_delimiter_requires_deletion_only",
   });
@@ -2783,6 +2785,7 @@ function buildBoundedWorkspaceMutationRequest(input: {
   trustedPathsLabel?: string;
   allowNoTools?: boolean;
   latestRequiredFileReadEvidenceOnly?: boolean;
+  includeMutationBranchTail?: boolean;
   includeAdjacentDuplicateClosingDelimiterEvidence?: boolean;
   tokenEstimateContext?: TokenEstimateOptions;
 }): WorkspaceMutationRecoveryRequest | undefined {
@@ -2879,12 +2882,14 @@ function buildBoundedWorkspaceMutationRequest(input: {
       item.content,
       taskText,
       input.includeAdjacentDuplicateClosingDelimiterEvidence,
+      input.includeMutationBranchTail,
     );
     const boundedContent = clipWorkspaceMutationEvidence(
       item.toolName,
       focusedContent,
       Math.max(1, itemBudget - estimateTokens(label, input.tokenEstimateContext) - 2),
       input.tokenEstimateContext,
+      input.includeMutationBranchTail,
     );
     if (!boundedContent) {
       continue;
@@ -3102,6 +3107,7 @@ function projectFileReadEvidence(
   content: string,
   taskText: string,
   includeAdjacentDuplicateClosingDelimiterEvidence = false,
+  includeMutationBranchTail = false,
 ): string {
   if (toolName !== "file_read") {
     return content;
@@ -3160,6 +3166,7 @@ function projectFileReadEvidence(
       taskText,
       FILE_READ_TASK_CONTEXT_MAX_ITEMS - closingDelimiterContexts.length,
       FILE_READ_TASK_CONTEXT_MAX_CHARS - reservedContextChars,
+      includeMutationBranchTail,
     ),
   ];
   if (taskRelevantContexts.length === 0) {
@@ -3178,6 +3185,7 @@ function collectTaskRelevantFileContexts(
   taskText: string,
   maxItems = FILE_READ_TASK_CONTEXT_MAX_ITEMS,
   maxChars = FILE_READ_TASK_CONTEXT_MAX_CHARS,
+  includeMutationBranchTail = false,
 ): Array<{ identifier: string; lines: string; context: string }> {
   if (fileContent.length < FILE_READ_TASK_CONTEXT_MIN_CONTENT_CHARS
     || maxItems <= 0
@@ -3231,6 +3239,18 @@ function collectTaskRelevantFileContexts(
       const extendedEnd = extendTaskContextPastTrailingBlockHeader(fileContent, start, end);
       if (extendedEnd - start <= remainingChars) {
         end = extendedEnd;
+      }
+      if (includeMutationBranchTail
+        && /\bvalue\b/.test(fileContent.slice(start, end))
+        && /\.setAttribute\s*\(|\.removeAttribute\s*\(/.test(fileContent.slice(start, end))) {
+        const branchTailEnd = expandToCompleteSourceLines(
+          fileContent,
+          end,
+          Math.min(fileContent.length, end + FILE_READ_TASK_CONTEXT_BRANCH_TAIL_CHARS),
+        ).end;
+        if (branchTailEnd - start <= remainingChars) {
+          end = branchTailEnd;
+        }
       }
       if (retainedRanges.some((range) => start < range.end && end > range.start)) {
         continue;
@@ -3512,6 +3532,7 @@ function clipWorkspaceMutationEvidence(
   value: string,
   maxTokens: number,
   tokenEstimateContext?: TokenEstimateOptions,
+  preserveStructuredContextTail = false,
 ): string {
   const normalized = value.trim();
   const tokenBudget = normalizePositiveInt(maxTokens);
@@ -3550,6 +3571,40 @@ function clipWorkspaceMutationEvidence(
     const candidate = JSON.stringify({ ...metadata, taskRelevantContexts: candidateContexts });
     if (estimateTokens(candidate, tokenEstimateContext) <= tokenBudget) {
       selectedContexts.push(context);
+      continue;
+    }
+    if (!preserveStructuredContextTail) {
+      continue;
+    }
+
+    const contextText = (context as Record<string, unknown>).context as string;
+    const contextTokenCount = estimateTokens(contextText, tokenEstimateContext);
+    let low = 1;
+    let high = contextTokenCount;
+    let bestContext: string | undefined;
+    while (low <= high) {
+      const contextBudget = Math.floor((low + high) / 2);
+      const boundedContext = clipTextToTokenBudget(
+        contextText,
+        contextBudget,
+        tokenEstimateContext,
+      );
+      const boundedCandidate = JSON.stringify({
+        ...metadata,
+        taskRelevantContexts: [
+          ...selectedContexts,
+          { ...context, context: boundedContext },
+        ],
+      });
+      if (estimateTokens(boundedCandidate, tokenEstimateContext) <= tokenBudget) {
+        bestContext = boundedContext;
+        low = contextBudget + 1;
+      } else {
+        high = contextBudget - 1;
+      }
+    }
+    if (bestContext) {
+      selectedContexts.push({ ...context, context: bestContext });
     }
   }
   return selectedContexts.length > 0

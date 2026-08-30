@@ -4,6 +4,7 @@ import {
   buildWorkspaceMutationContinuationPlan,
   buildWorkspaceMutationContinuationRequest,
   buildWorkspaceMutationNavigationRequest,
+  buildWorkspaceMutationObjectiveInputCorrectionRequest,
   buildWorkspaceMutationObjectiveReviewRequest,
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationRecoveryRequest,
@@ -2590,6 +2591,56 @@ describe("ReAct workspace mutation recovery", () => {
       "Do not refactor, expand, normalize, modernize, or make an equivalent rewrite",
     );
     expect(request?.messages[1]?.content).toContain("} else if (value != NULL) {");
+  });
+
+  it("retains the complete current branch in objective correction evidence", () => {
+    const requiredPath = "src/diff/props.js";
+    const branchTail = "\t\t\tconst correctionTail = true;";
+    const currentBranch = [
+      "\t\tif (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      "\t\t} else if (value == NULL) {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t} else if (",
+      "\t\t\tvalue !== false &&",
+      "\t\t\t(name[0] == 'a' || name[0] == 'd') &&",
+      "\t\t\t(name[1] == 'r' || name[1] == 'a')",
+      "\t\t) {",
+      "\t\t\tdom.setAttribute(name, value);",
+      "\t\t} else if (value === false) {",
+      "\t\t\tif ((name[0] == 'a' && name[1] == 'r') || (name[0] == 'd' && name[1] == 'a')) {",
+      "\t\t\t\tdom.setAttribute(name, 'false');",
+      "\t\t\t} else {",
+      "\t\t\t\tdom.removeAttribute(name);",
+      "\t\t\t}",
+      ...Array.from({ length: 30 }, (_, index) => `\t\t\t\tconst branchFiller${index} = ${index};`),
+      branchTail,
+      "\t\t}",
+    ].join("\n");
+    const source = [
+      ...Array.from({ length: 150 }, (_, index) => `const unrelated${index} = ${index};`),
+      currentBranch,
+    ].join("\n");
+    const request = buildWorkspaceMutationObjectiveInputCorrectionRequest({
+      maxInputTokens: 2_048,
+      tools: [toolDefinition("apply_patch")],
+      requiredChangedPaths: [requiredPath],
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+      messages: [
+        {
+          role: "user",
+          content: "Fix the frozen browser-facing regression in src/diff/props.js. Preserve false aria-* and data-* values with the smallest change.",
+        },
+        ...sourceEvidenceMessages(requiredPath, source),
+      ],
+    });
+
+    expect(source.length).toBeGreaterThan(4_096);
+    expect(request).toBeDefined();
+    const evidence = JSON.parse(
+      String(request?.messages[1]?.content ?? "").split("[tool=file_read]\n").at(-1) ?? "{}",
+    ) as { taskRelevantContexts?: Array<{ context?: string }> };
+    expect(evidence.taskRelevantContexts?.some(({ context }) => context?.includes(branchTail))).toBe(true);
   });
 
   it("fails closed when every required objective-review read cannot fit the request", () => {

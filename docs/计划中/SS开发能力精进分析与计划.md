@@ -3259,6 +3259,37 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：本次失败不是测试回归或费用/基础设施问题，而是 correction 输入与实际源码不同步；先用本地可重复断言收敛证据，避免再次用 Formal 试探同一模型工具错误。
 - **当前还缺的关键闭环**：新本地修复的 committed clean identity、Windows 唯一 Formal 的合法 `run.completed` 与 evaluator 全绿；在此之前继续禁止 WSL2、完整矩阵、连续候选、最终复算和 P2-C。
 
+#### P0 Web mutation/correction 实现结论：stale correction 的 current-source evidence budget 修复（2026-08-31）
+
+##### 已完成内容
+
+1. **`packages/belldandy-agent/src/react-workspace-mutation.ts` 修改**：
+   - correction-only objective input retry 在大文件 task projection 中向后保留 mutation branch tail，避免当前分支的有效 witness 被默认 `512` 字符窗口截断；
+   - 当 JSON evidence 的转义开销使完整 context 超过单项 token budget 时，仅对该 correction-only structured context 做头尾有界裁剪，保留当前分支头部与尾部 witness；
+   - 普通 recovery、continuation、objective review 与 broad-correction failure-closed 行为保持不变。
+
+2. **`packages/belldandy-agent/src/react-workspace-mutation.test.ts` 与 `packages/belldandy-agent/src/tool-agent-workspace-mutation.test.ts` 扩展**：
+   - 新增超过既有 projection 阈值的大源码 builder 回归，断言 correction evidence 保留完整当前分支尾部；
+   - 公共 `ToolEnabledAgent.run()` seam 固定 stale correction 第一次失败、第二次使用当前 source evidence 成功的请求链，断言 stale pre-write/failed context 不进入 correction prompt，并完成重新复读与最终收尾。
+
+3. **效果**：
+   - 在 `2,048` token bounded correction 输入预算下，当前 required path evidence 不再因 JSON 投影开销被整项丢弃，第二次 correction request 可稳定构建；
+   - correction 模型同时获得可执行的当前分支头部与尾部上下文，避免引用已不存在的 stale hunk；
+   - 本轮仅为本地 mock/contract 验证，Provider 调用与新增费用=`0/$0`，未修改任何 frozen Formal artifact。
+
+##### 验证结果
+
+- TypeScript workspace 编译无错误：`corepack pnpm build`（含 `tsc -b` 与 `verify:build`）通过；
+- Agent 全包=`719 passed / 1 skipped`；mutation builder=`74/74`，Tool Agent mutation seam=`73/73`；
+- `verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 通过；
+- 关键行为验证：stale `apply_patch` 被拒绝后，bounded current-source correction 成功执行，required path 重新复读并完成 finalization；Provider 调用=`0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：将本轮 source、测试与计划文档提交为新的 clean identity；随后按既有顺序执行该 identity 的 Windows detached clean install/build/tests/contracts、零凭证 dry-run、安全清理、敏感扫描与 Formal prepare-only。
+- **为什么先做它**：本地 Green 已证明预算裁剪缺口可重复修复，但只有 committed clean identity 才能把后续 Windows Formal 结果与本轮 source/test 唯一绑定，排除构建产物与 fixture 漂移。
+- **当前还缺的关键闭环**：新 identity 的 Windows Formal 必须形成合法 `run.completed`、tests/evaluator/final review=`true/true/true` 且 regression=`0`；Windows 全绿前继续禁止 WSL2、完整矩阵、连续候选、最终复算和 P2-C。
+
 ## 实施计划进度表
 
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
@@ -3268,7 +3299,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
 | P0：Benchmark truth set / evaluator 对齐 | P0 | **已完成 zero-cost 对齐** | `coding-agent-benchmark-web-ui-truth-set/v1`、6 个正负 witness、SHA/LF 绑定、v2 fixture/evaluator、实际 Red=`1`/Green=`0` replay；定向 `20/20`、benchmark/CI/build Gate 全绿 | - | 保持 truth set、prompt、fixture、visible test 与 evaluator 单一版本绑定；任何 SHA/Schema/任务合同漂移均失败关闭 |
-| P0：Web mutation/correction 稳定化 | P0 | **新 identity Windows Formal 失败并冻结；WSL2 禁止** | `ac75387` Windows tests=`true`、patchAccepted=`true`、taskCompleted=`false`、regression=`0`；唯一 terminal=`run.failed`，失败为 correction `apply_patch` context mismatch；usage=`$0.00200341`，env/敏感值/端口/进程收尾闭合 | `本地 correction robustness TDD + 新 identity Gate，约 0.25 人日` | 先在公共 Agent seam 重放 stale correction context 并补 Red/Green；新 identity Windows 全绿前不启动 WSL2、完整矩阵、连续候选、最终复算或 P2-C |
+| P0：Web mutation/correction 稳定化 | P0 | **本地 current-source correction evidence 已 Green；待新 identity Windows Formal，WSL2 禁止** | `ac75387` Windows tests=`true`、patchAccepted=`true`、taskCompleted=`false`、regression=`0`；本轮公共 seam stale correction=`Green`，Agent=`719/720`，build/contracts 全绿，Provider=`0` | `新 identity Gate + Windows Formal，约 0.25 人日` | 先提交 source/test/doc 并执行 Windows detached clean、零凭证 dry-run 与 prepare-only；Windows Formal evaluator=`true/true/true` 且 regression=`0` 前不启动 WSL2、完整矩阵、连续候选、最终复算或 P2-C |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |

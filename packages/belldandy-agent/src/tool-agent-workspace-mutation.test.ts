@@ -2103,6 +2103,8 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       "\t\t\tdom.setAttribute(name, value);",
       "\t\t} else {",
       "\t\t\tdom.removeAttribute(name);",
+      ...Array.from({ length: 30 }, (_, index) => `\t\t\tconst correctionFiller${index} = ${index};`),
+      "\t\t\tconst correctionTail = true;",
       "\t\t}",
     ].join("\n");
     const preWriteContent = [
@@ -2140,7 +2142,9 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       }
       if (requests.length === 5) {
         return response(modelToolCall("current-correction", "apply_patch", {
-          input: "*** Begin Patch\n*** Update File: src/diff/props.js\n@@\n-\t\t} else if (value != NULL && value !== false) {\n+\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {\n*** End Patch",
+          input: String((requests.at(-1)?.messages?.[1]?.content) ?? "").includes("correctionTail")
+            ? "*** Begin Patch\n*** Update File: src/diff/props.js\n@@\n-\t\t} else if (value != NULL && value !== false) {\n+\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {\n*** End Patch"
+            : "*** Begin Patch\n*** Update File: src/diff/props.js\n@@\n-STALE_FAILED_PATCH_CONTEXT\n+current\n*** End Patch",
         }, 300, 60));
       }
       return response({
@@ -2168,7 +2172,8 @@ describe("ToolEnabledAgent required workspace mutation", () => {
         };
       }
       mutationAttempt++;
-      if (mutationAttempt === 2) {
+      const patchInput = String(request.arguments?.input ?? "");
+      if (mutationAttempt === 2 || patchInput.includes("STALE_FAILED_PATCH_CONTEXT")) {
         return {
           id: request.id,
           name: request.name,
@@ -2218,6 +2223,12 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       expect(prompt).not.toContain("STALE_PREWRITE_CONTEXT");
       expect(prompt).not.toContain("STALE_FAILED_PATCH_CONTEXT");
     }
+    const correctionEvidence = JSON.parse(
+      String(requests[4]?.messages?.[1]?.content ?? "").split("[tool=file_read]\n").at(-1) ?? "{}",
+    ) as { taskRelevantContexts?: Array<{ context?: string }> };
+    expect(correctionEvidence.taskRelevantContexts?.some(({ context }) => (
+      context?.includes("\t\t\tconst correctionTail = true;")
+    ))).toBe(true);
     expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
       "file_read",
       "apply_patch",
