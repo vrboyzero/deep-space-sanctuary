@@ -1,4 +1,5 @@
 import { estimateTokens, type TokenEstimateOptions } from "./tokenizer.js";
+import { buildClosingDelimiterDeletionOnlyCorrectionInstruction } from "./react-workspace-mutation-objective-correction.js";
 
 export const WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE = 4_096;
 export const WORKSPACE_MUTATION_RECOVERY_MIN_OUTPUT_TOKEN_RESERVE = 1_024;
@@ -2720,7 +2721,9 @@ export function buildWorkspaceMutationObjectiveInputCorrectionRequest(input: {
   }
   return buildBoundedWorkspaceMutationRequest({
     ...input,
-    instruction: input.correctionReason
+    instruction: input.correctionReason === "closing_delimiter_requires_deletion_only"
+      ? buildClosingDelimiterDeletionOnlyCorrectionInstruction(MUTATION_PATCH_HUNK_INSTRUCTION)
+      : input.correctionReason
       ? `${MUTATION_OBJECTIVE_INPUT_CORRECTION_INSTRUCTION} ${MUTATION_OBJECTIVE_INPUT_CORRECTION_REASON_INSTRUCTIONS[input.correctionReason]}`
       : MUTATION_OBJECTIVE_INPUT_CORRECTION_INSTRUCTION,
     missingRequiredChangedPaths: requiredCorrectionPaths,
