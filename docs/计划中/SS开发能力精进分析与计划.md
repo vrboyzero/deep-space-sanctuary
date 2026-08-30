@@ -1034,6 +1034,8 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 `d3d8f1e` 唯一 Windows formal 的实际 Provider cost=`$0.00400424` 已计入；observed conservative upper=`$2.57516811`，Stage 0D 当前=`48.62608763 RMB`，下一次完整 `$0.10` 预留后=`49.42608763 RMB < 50 RMB`。该 formal 已永久冻结且未开放 WSL2；后续调用必须来自新的 committed clean identity。
 
+`ac75387` 唯一 Windows formal 的实际 Provider cost=`$0.00200341` 已计入；在上一轮 Stage 0D 当前=`48.73319291 RMB` 基础上，本轮当前=`48.74922019 RMB`，下一次完整 `$0.10` 预留后=`49.54922019 RMB < 80 RMB`。该 identity 的 Formal 已永久冻结且不启动对应 WSL2；后续付费调用必须来自新的本地修复与 committed clean identity。
+
 持续授权边界（2026-08-31 起）：
 
 - 本持续开发周期内，只要费用最坏守卫仍低于 `80 RMB` 且下一计划内调用不会使其达到或突破上限，模型调用无需再次申请费用授权；达到或可能突破边界前必须停止并重新申请。
@@ -3216,6 +3218,47 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：Red/Green 已证明本地缺口与修复均绑定真实 WSL2 failure shape；新的 committed identity 是外部 Gate 唯一归因前提，可排除工作区、构建产物与 fixture 漂移。
 - **当前还缺的关键闭环**：新 identity 的 Windows Formal evaluator=`true/true/true` 且 regression=`0`；Windows 全绿后才允许同 identity WSL2，双平台全绿前继续禁止完整矩阵、连续候选、最终复算和 P2-C。
 
+#### P0 Web Gate/Formal 实现结论：`ac75387` Windows correction 失败并冻结（2026-08-31）
+
+##### 已完成内容
+
+1. **授权文档与 clean identity 固化**：
+   - 自动化规则、benchmark README 与本计划同步记录持续开发授权上限为 `80 RMB`；Stage 0D runner 内部 `$5.00`、单次 `$0.10`、`12 turns / 24,000 tokens`、Provider retry=`0` 保持不变；
+   - 文档提交=`ac7538704d461a5d3141dae3d2edd2da5312b25b`，detached worktree=`tmp/p0-web-whole-branch-ac75387-clean`，HEAD 精确绑定且 Gate 后 clean；
+   - frozen offline install=`493 resolved / 492 reused / 0 downloaded / 493 added`。
+
+2. **Windows 零费用工程与 dry-run Gate**：
+   - `corepack pnpm build`、Agent=`718 passed / 1 skipped`、mutation 相关 5 文件=`173/173`、`verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 全部通过；
+   - 零凭证 artifact=`artifacts/p0-web-whole-branch-ac75387-preact-windows-dry-run-r1`，run=`real-web-ui-regression-windows-a1-1788112061518`，credentials/provider calls/usage=`false/0/not_reached`，events/trace/patch/changed paths=`0/0/0/0`，双 preflight 通过；
+   - Formal prepare-only 固定 model=`deepseek-v4-flash`、retry=`0`、`12 turns / 24,000 tokens / $0.10`，cost window=`$3.38855627 -> $3.48855627`，child args 不含 Provider key 或 env 路径，Formal target 与端口均为空。
+
+3. **唯一 Windows Formal 执行并永久冻结**：
+   - artifact=`artifacts/p0-web-whole-branch-ac75387-preact-windows-formal-r1`，run=`real-web-ui-regression-windows-a1-1788112323358`，status=`failed/product_workflow`，唯一 terminal=`run.failed`；
+   - machine evaluator=`testsPassed=true / patchAccepted=true / regression=0`，但 `taskCompleted=false`；模型初始 patch 后发起 correction，第二次 `apply_patch` 因 stale context mismatch 被拒绝，最终保留初始 patch并失败关闭；
+   - changed path 仅 `src/diff/props.js`，patch/events/trace/result SHA-256=`1dd5f8d63a89d19738fa72ceb71c34037050edca128ebab59beffa8ab394aa93/ec5173643606d902930ca3337fc044f3eb3a19b1ba34b1f89a7971c4b7fb59aa/20b673a61234b3e01ab1929eba7b5c5b1b8da7e13a4754e8873896c36ea539bf/38e0b9de817f645c4bec37c0d4a3e58baecccb040f5718dc069a72c7385a0bed`。
+
+4. **usage、费用与安全收尾**：
+   - model/provider calls=`5/5`，input/output=`9,147/959`，usage=`provider_reported/complete`，Provider cost=`$0.00200341`；Stage 0D 当前=`48.74922019 RMB`，下一次完整 `$0.10` 预留后=`49.54922019 RMB < 80 RMB`；
+   - post-run snapshot preflight=`passed`；runtime `.env/.env.local` 已逐个完成 containment、常规文件、非 reparse point 与 SHA-256 校验后送入 Windows 回收站，cleanup log SHA-256=`1a6fec09412c4cf321859d054e14003efb2b867ccf9372b8fce8466da3cb3082`，remaining env=`0`；
+   - 二次敏感扫描 SHA-256=`63348a70e0515f89b5de9e1ffb9292a2fe78f60d9770e0965ef7f2b484d418d7`，普通文件=`17,002`，unreadable/Provider key/repository input/env=`0/0/0/0`；端口 listener 与本任务残留进程=`0/0`。
+
+5. **效果**：
+   - 新 identity 的工程、snapshot、Provider usage、evaluator 与资源收尾证据完整，但 Windows Formal 未形成合法 `run.completed`，因此该 identity 永久冻结且不启动 WSL2；
+   - 失败根因收敛为模型在 correction 阶段使用与当前源码不一致的 patch context，不改变现有 broad-correction failure-closed 边界；
+   - 技术债决策=`record_only`：本轮首次敏感扫描的 input 自包含误报已由 r2 扫描修正，失败扫描结果保留，不影响 Formal 原始证据。
+
+##### 验证结果
+
+- TypeScript workspace build、独立 `verify:build`、Agent 与 mutation 定向测试、benchmark/CI contract Gate 均通过；
+- Windows Formal tests/evaluator/final review=`true/true/failed`，regression=`0`，usage=`provider_reported/complete`；
+- post-run snapshot、env 回收、敏感扫描、端口与进程收敛均验证通过；未启动 WSL2、完整矩阵、连续候选、最终复算或 P2-C。
+
+##### 后续计划
+
+- **下一步准备做什么**：在公共 `ToolEnabledAgent.run()` seam 复现“初始 patch 通过但 correction patch context mismatch”的 failure shape，先补一个只验证可观察失败终态与 stale-context 拒绝的 Red；再评估最小 evidence/current-source projection 修复，完成零费用 Green、Agent、build 与合同 Gate。
+- **为什么先做它**：本次失败不是测试回归或费用/基础设施问题，而是 correction 输入与实际源码不同步；先用本地可重复断言收敛证据，避免再次用 Formal 试探同一模型工具错误。
+- **当前还缺的关键闭环**：新本地修复的 committed clean identity、Windows 唯一 Formal 的合法 `run.completed` 与 evaluator 全绿；在此之前继续禁止 WSL2、完整矩阵、连续候选、最终复算和 P2-C。
+
 ## 实施计划进度表
 
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
@@ -3225,7 +3268,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
 | P0：Benchmark truth set / evaluator 对齐 | P0 | **已完成 zero-cost 对齐** | `coding-agent-benchmark-web-ui-truth-set/v1`、6 个正负 witness、SHA/LF 绑定、v2 fixture/evaluator、实际 Red=`1`/Green=`0` replay；定向 `20/20`、benchmark/CI/build Gate 全绿 | - | 保持 truth set、prompt、fixture、visible test 与 evaluator 单一版本绑定；任何 SHA/Schema/任务合同漂移均失败关闭 |
-| P0：Web mutation/correction 稳定化 | P0 | **TDD 修复已完成；待新 identity Windows Gate/Formal** | `8838932e` Windows evaluator=`true/true/true`、regression=`0`；同 identity WSL2 evaluator=`false/false/false`、regression=`1` 已冻结；新 Red/Green 覆盖约 `5.5 KB` task projection 遗漏相邻 `}\n}` witness，Agent=`718/1`，build/benchmark/CI Gate 全绿 | `新 identity Gate/Formal，约 0.25 人日` | 提交当前 source/test/doc 形成 clean identity；之后按 Windows clean/dry-run/prepare-only/唯一 Formal 顺序推进，Windows 全绿后才允许 WSL2 |
+| P0：Web mutation/correction 稳定化 | P0 | **新 identity Windows Formal 失败并冻结；WSL2 禁止** | `ac75387` Windows tests=`true`、patchAccepted=`true`、taskCompleted=`false`、regression=`0`；唯一 terminal=`run.failed`，失败为 correction `apply_patch` context mismatch；usage=`$0.00200341`，env/敏感值/端口/进程收尾闭合 | `本地 correction robustness TDD + 新 identity Gate，约 0.25 人日` | 先在公共 Agent seam 重放 stale correction context 并补 Red/Green；新 identity Windows 全绿前不启动 WSL2、完整矩阵、连续候选、最终复算或 P2-C |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |
