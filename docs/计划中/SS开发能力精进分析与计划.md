@@ -12,6 +12,8 @@
 >
 > 更早阶段见 `archive-01` 至 `archive-03`。归档只保存历史证据；当前状态以本文末尾唯一的“实施计划进度表”为准。
 
+> **授权变更（2026-08-31）**：本持续开发周期的费用最坏守卫上限由 `50 RMB` 提升至 `80 RMB`。该变更只适用于尚未执行的计划内调用；历史实现结论中的 `50 RMB` 保留为当时的费用事实。单次 `$0.10`、`12 turns / 24,000 tokens`、Provider retry=`0` 及不重跑 frozen Formal 等硬边界不变。Stage 0D runner 继续使用独立的 `$5.00` 内部 guard，除非另有明确代码变更。
+
 ---
 
 ## 1. 目的与当前结论
@@ -1011,8 +1013,8 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 | observed conservative upper | `$2.57516811` |
 | reserved | `$0.94221000` |
 | unobservable reserve | `$0.80000000` |
-| 一般费用守卫 | `34.54799123 RMB < 50 RMB` |
-| Stage 0D 最坏累计守卫 | `48.62608763 RMB < 50 RMB` |
+| 一般费用守卫 | `34.54799123 RMB < 80 RMB` |
+| Stage 0D 最坏累计守卫 | `48.62608763 RMB < 80 RMB` |
 | 最近 formal 实际窗口 / 上限 | `$3.37116387 -> $3.37516811 / $3.47116387` |
 | 最近 formal 实际 Provider cost | `$0.00400424` |
 
@@ -1032,9 +1034,9 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 `d3d8f1e` 唯一 Windows formal 的实际 Provider cost=`$0.00400424` 已计入；observed conservative upper=`$2.57516811`，Stage 0D 当前=`48.62608763 RMB`，下一次完整 `$0.10` 预留后=`49.42608763 RMB < 50 RMB`。该 formal 已永久冻结且未开放 WSL2；后续调用必须来自新的 committed clean identity。
 
-持续授权边界：
+持续授权边界（2026-08-31 起）：
 
-- 本持续开发周期内，只要费用最坏守卫仍低于 `50 RMB` 且下一计划内调用不会使其达到或突破上限，模型调用无需再次申请费用授权；达到或可能突破边界前必须停止并重新申请。
+- 本持续开发周期内，只要费用最坏守卫仍低于 `80 RMB` 且下一计划内调用不会使其达到或突破上限，模型调用无需再次申请费用授权；达到或可能突破边界前必须停止并重新申请。
 - 需要调用模型时固定使用 `deepseek-v4-flash`；单 run `$0.10`、`12 turns / 24,000 tokens`、Provider retry=`0`，不得放宽或改用其他模型。
 - 开发与测试中新生成的全部 `.env` / `.env.local` 已获持续清理授权，无需再次申请；清理前仍须逐个通过绝对路径 containment、常规文件属性、非 reparse point 和 SHA-256 校验，统一送入 Windows 回收站并记录 cleanup log，不得读取/回显敏感正文、覆盖原文件或处理校验范围外文件。
 - 项目内记录不能替代 Provider 外部账单；push、公开发布和生产操作不在该授权内。
