@@ -13,7 +13,18 @@ afterEach(() => {
 });
 
 describe("ToolEnabledAgent whole-branch post-write correction", () => {
-  it("keeps an invalid whole-branch delimiter correction deletion-only", async () => {
+  it.each([
+    { evidenceShape: "complete short source", unrelatedSourcePrefix: "" },
+    {
+      evidenceShape: "task-projected 5 KB source",
+      unrelatedSourcePrefix: Array.from(
+        { length: 135 },
+        (_, index) => `const unrelatedSourceValue${index} = ${index};`,
+      ).join("\n"),
+    },
+  ])("keeps an invalid whole-branch delimiter correction deletion-only with $evidenceShape", async ({
+    unrelatedSourcePrefix,
+  }) => {
     const requiredPath = "src/diff/props.js";
     const removeAttributeLine = "\t\t\tdom.removeAttribute(name);";
     const setAttributeLine = "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);";
@@ -41,6 +52,7 @@ describe("ToolEnabledAgent whole-branch post-write correction", () => {
       "\t\t}",
     ].join("\n");
     const originalSource = [
+      ...(unrelatedSourcePrefix ? [unrelatedSourcePrefix, ""] : []),
       "export function setProperty(dom, name, value) {",
       "\tif (name == 'style') {",
       "\t\tdom.style.cssText = value;",
@@ -193,9 +205,14 @@ describe("ToolEnabledAgent whole-branch post-write correction", () => {
     expect(requests[3]?.messages[0]?.content).not.toContain(
       "The rebuilt correction must change task-relevant behavior",
     );
-    expect(requests[3]?.messages[1]?.content).toContain(
-      JSON.stringify(postWriteSource).slice(1, -1),
-    );
+    const correctionEvidence = String(requests[3]?.messages[1]?.content ?? "");
+    if (unrelatedSourcePrefix) {
+      expect(postWriteSource.length).toBeGreaterThan(5_000);
+      expect(correctionEvidence).toContain('"contentTruncatedForMutationRecovery":true');
+      expect(correctionEvidence).toContain(JSON.stringify("\t\t}\n\t\t}").slice(1, -1));
+    } else {
+      expect(correctionEvidence).toContain(JSON.stringify(postWriteSource).slice(1, -1));
+    }
     expect(executedPatches).toEqual([initialPatch]);
     expect(items.at(-2)).toEqual({
       type: "final",

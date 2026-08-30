@@ -1,5 +1,8 @@
 import { estimateTokens, type TokenEstimateOptions } from "./tokenizer.js";
-import { buildClosingDelimiterDeletionOnlyCorrectionInstruction } from "./react-workspace-mutation-objective-correction.js";
+import {
+  buildClosingDelimiterDeletionOnlyCorrectionInstruction,
+  collectAdjacentDuplicateClosingDelimiterEvidenceContexts,
+} from "./react-workspace-mutation-objective-correction.js";
 
 export const WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE = 4_096;
 export const WORKSPACE_MUTATION_RECOVERY_MIN_OUTPUT_TOKEN_RESERVE = 1_024;
@@ -2729,6 +2732,8 @@ export function buildWorkspaceMutationObjectiveInputCorrectionRequest(input: {
     missingRequiredChangedPaths: requiredCorrectionPaths,
     trustedPathsLabel: "Trusted required paths for the atomic post-write correction input retry",
     latestRequiredFileReadEvidenceOnly: true,
+    includeAdjacentDuplicateClosingDelimiterEvidence:
+      input.correctionReason === "closing_delimiter_requires_deletion_only",
   });
 }
 
@@ -2778,6 +2783,7 @@ function buildBoundedWorkspaceMutationRequest(input: {
   trustedPathsLabel?: string;
   allowNoTools?: boolean;
   latestRequiredFileReadEvidenceOnly?: boolean;
+  includeAdjacentDuplicateClosingDelimiterEvidence?: boolean;
   tokenEstimateContext?: TokenEstimateOptions;
 }): WorkspaceMutationRecoveryRequest | undefined {
   const maxInputTokens = normalizePositiveInt(input.maxInputTokens);
@@ -2868,7 +2874,12 @@ function buildBoundedWorkspaceMutationRequest(input: {
       Math.floor(remainingTokens / Math.min(index + 1, 3)),
     );
     const label = `[tool=${item.toolName}]`;
-    const focusedContent = projectFileReadEvidence(item.toolName, item.content, taskText);
+    const focusedContent = projectFileReadEvidence(
+      item.toolName,
+      item.content,
+      taskText,
+      input.includeAdjacentDuplicateClosingDelimiterEvidence,
+    );
     const boundedContent = clipWorkspaceMutationEvidence(
       item.toolName,
       focusedContent,
@@ -3086,7 +3097,12 @@ function readTextContent(content: unknown): string {
     .join("\n");
 }
 
-function projectFileReadEvidence(toolName: string, content: string, taskText: string): string {
+function projectFileReadEvidence(
+  toolName: string,
+  content: string,
+  taskText: string,
+  includeAdjacentDuplicateClosingDelimiterEvidence = false,
+): string {
   if (toolName !== "file_read") {
     return content;
   }
@@ -3129,7 +3145,23 @@ function projectFileReadEvidence(toolName: string, content: string, taskText: st
     }
   }
 
-  const taskRelevantContexts = collectTaskRelevantFileContexts(fileContent, taskText);
+  const closingDelimiterContexts = includeAdjacentDuplicateClosingDelimiterEvidence
+    && fileContent.length >= FILE_READ_TASK_CONTEXT_MIN_CONTENT_CHARS
+    ? collectAdjacentDuplicateClosingDelimiterEvidenceContexts(fileContent)
+    : [];
+  const reservedContextChars = closingDelimiterContexts.reduce(
+    (total, context) => total + context.context.length,
+    0,
+  );
+  const taskRelevantContexts = [
+    ...closingDelimiterContexts,
+    ...collectTaskRelevantFileContexts(
+      fileContent,
+      taskText,
+      FILE_READ_TASK_CONTEXT_MAX_ITEMS - closingDelimiterContexts.length,
+      FILE_READ_TASK_CONTEXT_MAX_CHARS - reservedContextChars,
+    ),
+  ];
   if (taskRelevantContexts.length === 0) {
     return content;
   }
@@ -3144,8 +3176,12 @@ function projectFileReadEvidence(toolName: string, content: string, taskText: st
 function collectTaskRelevantFileContexts(
   fileContent: string,
   taskText: string,
+  maxItems = FILE_READ_TASK_CONTEXT_MAX_ITEMS,
+  maxChars = FILE_READ_TASK_CONTEXT_MAX_CHARS,
 ): Array<{ identifier: string; lines: string; context: string }> {
-  if (fileContent.length < FILE_READ_TASK_CONTEXT_MIN_CONTENT_CHARS) {
+  if (fileContent.length < FILE_READ_TASK_CONTEXT_MIN_CONTENT_CHARS
+    || maxItems <= 0
+    || maxChars <= 0) {
     return [];
   }
   const identifiers = [...new Set(taskText.match(/[A-Za-z_$][A-Za-z0-9_$]{3,}/g) ?? [])]
@@ -3166,7 +3202,7 @@ function collectTaskRelevantFileContexts(
 
   for (const identifier of identifiers) {
     let searchOffset = 0;
-    while (contexts.length < FILE_READ_TASK_CONTEXT_MAX_ITEMS) {
+    while (contexts.length < maxItems) {
       const matchIndex = fileContent.indexOf(identifier, searchOffset);
       if (matchIndex < 0) {
         break;
@@ -3180,7 +3216,7 @@ function collectTaskRelevantFileContexts(
         fileContent.length,
         matchIndex + identifier.length + FILE_READ_TASK_CONTEXT_AFTER_CHARS,
       );
-      const remainingChars = FILE_READ_TASK_CONTEXT_MAX_CHARS - retainedChars;
+      const remainingChars = maxChars - retainedChars;
       let { start, end } = expandToCompleteSourceLines(fileContent, desiredStart, desiredEnd);
       if (end - start > remainingChars) {
         ({ start, end } = expandToCompleteSourceLines(
@@ -3210,7 +3246,7 @@ function collectTaskRelevantFileContexts(
         context,
       });
     }
-    if (contexts.length >= FILE_READ_TASK_CONTEXT_MAX_ITEMS) {
+    if (contexts.length >= maxItems) {
       break;
     }
   }
