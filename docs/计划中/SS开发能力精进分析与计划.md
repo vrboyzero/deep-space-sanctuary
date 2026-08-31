@@ -3568,7 +3568,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
    - frozen snapshot=`/home/vrboyzero/star-sanctuary-p0-web-1bdb48e-linux-snapshots-r1`，Preact source=`6bb827251ac7111234b293cac013a0a67c2ca8b2` 且 clean，cache/receipt 均存在；
    - dry-run artifact=`artifacts/p0-web-current-source-c17d806-preact-wsl-dry-run-r1`，run=`real-web-ui-regression-wsl2-linux-a1-1788144483336`，report SHA-256=`c4facd38ab8fb4eb5a0ed48753d716e25cf7f816a08fc34afbc53a51b510a3a7`；
    - source/harness 均为 clean exact `c17d806`，contract/snapshot preflight=`passed/passed`，credentials/provider calls/usage=`false/0/not_reached`，events/trace/patch/changed path=`0/0/0/0`；
-   - Windows Gateway port/auth ready=`16,846/16,855 ms`，stderr=`0 bytes`，child 正常退出；dry-run 的 `failed/product_workflow` 是无凭证未进入产品工作流的预期结果，不计为 Formal。
+   - 后续复核 `diagnostics.log` 发现 runner 实际以 `connect ECONNREFUSED 127.0.0.1:28935` 退出；Windows Gateway port/auth 虽为 `16,846/16,855 ms` 且自身 readiness 正常，但旧 Gate 没有验证 WSL→Windows endpoint，因此本 dry-run 不能作为有效跨宿主前置证据。
 
 3. **env、安全与资源收尾**：
    - dry-run runtime `.env/.env.local` 已逐个完成 containment、常规文件、非 reparse point、长度与 SHA-256 校验后送入 Windows 回收站，removed/remaining=`2/0`；cleanup log SHA-256=`2f9ba0db184284b38ae4d98c08db3186599a5fc752ddfca3d7845384bbfec1a9`；
@@ -3582,14 +3582,14 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
    - 费用窗口=`$3.39700988 -> $3.49700988`，Stage 0D 当前=`48.80082179 RMB`，完整 `$0.10` 预留后=`49.60082179 RMB < 80 RMB`；prepare-only SHA-256=`6e7b821553efcf79608067a95c8538675f412cb51cdfba424020cb77c61b335c`。
 
 5. **效果**：
-   - WSL2 的 ext4 checkout、Linux 依赖、合同、Windows Gateway/WSL runner 跨平台路径、snapshot、token 隔离、env 清理与费用前置均已闭合；
+   - WSL2 的 ext4 checkout、Linux 依赖、合同、snapshot、token 隔离、env 清理与费用前置已闭合；Windows Gateway/WSL runner 跨宿主 endpoint 因缺少 WSL→Gateway 探针而未闭合，后续 Formal 已如实暴露该缺口；
    - 本环节 Provider 调用与新增费用=`0/$0`，未重跑任何冻结 Formal；
-   - 只开放 clean `c17d806` identity 的唯一一次 WSL2 Formal，仍不开放完整矩阵、连续候选、最终复算或 P2-C。
+   - 当时只开放 clean `c17d806` identity 的唯一一次 WSL2 Formal；该 Formal 已执行并永久冻结为基础设施路由失败，仍不开放完整矩阵、连续候选、最终复算或 P2-C。
 
 ##### 验证结果
 
 - TypeScript workspace 编译无错误，Agent=`720 passed / 1 skipped`，benchmark/CI contract 与 WSL clean/diff Gate 全绿；
-- WSL dry-run 双 preflight、零事件/trace/patch/changed path、零 usage、env 回收、限定敏感扫描、端口与任务进程收敛通过；
+- WSL dry-run 双 preflight、零事件/trace/patch/changed path、零 usage、env 回收、限定敏感扫描、端口与任务进程收敛通过，但 `diagnostics.log` 的 `ECONNREFUSED` 证明跨宿主连接 Gate 未通过；
 - WSL Formal prepare-only 的双进程未启动、model/retry/预算/定价、费用窗口、跨平台路径、Provider key 与 token 隔离、空目标检查全部通过。
 
 ##### 后续计划
@@ -3597,6 +3597,48 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **下一步准备做什么**：最终复核 clean harness/Preact、Formal 空目标、端口、任务进程和费用后，只执行 `c17d806` 唯一 WSL2 Formal；无论成败均永久冻结，并完成 evaluator、usage/cost、snapshot、env 回收、限定敏感扫描和资源收尾。
 - **为什么先做它**：全部零模型前置已经闭合，只有一次真实 WSL2 Provider 路径能验证 Windows 已通过的 current-source correction 在 LF/ext4 与跨平台 runner 边界下是否同样成立。
 - **当前还缺的关键闭环**：WSL2 Formal 必须形成唯一合法 `run.completed`、tests/taskCompleted/patchAccepted=`true/true/true`、regression=`0`、usage=`provider_reported/complete` 与安全资源全绿；失败则冻结该 identity 并回到零模型修复，成功后才进入完整矩阵/连续候选评估。
+
+#### P0 Web Fix 实现结论：WSL2 Gateway endpoint 与前置探针失败关闭（2026-08-31）
+
+##### 已完成内容
+
+1. **`c17d806` 唯一 WSL2 Formal 冻结与根因收敛**：
+   - artifact=`artifacts/p0-web-current-source-c17d806-preact-wsl-formal-r1`，run=`real-web-ui-regression-wsl2-linux-a1-1788145077657`，report SHA-256=`e509fb4d33291c9ba245e80c213aa40f9ae205b7349d10edcef426d096d6195a`；
+   - status/failure=`failed/product_workflow`、CLI exit=`7`，events/trace/patch=`0/0/0`，terminal=`none`，tests/taskCompleted/patchAccepted=`false/false/false`、regression=`1`，usage=`not_reached`、新增 Provider 费用=`$0`；该 Formal 已永久冻结，禁止重跑；
+   - Windows Gateway 自身 port/auth ready=`12,048/12,057 ms`、stderr=`0 bytes`、child 未提前退出；Linux runner 唯一直接错误为 `connect ECONNREFUSED 127.0.0.1:28945`；
+   - 同轮 dry-run diagnostics 也为 `connect ECONNREFUSED 127.0.0.1:28935`，证明旧 Gate 只验证 Windows loopback readiness，漏检 WSL2 NAT 下 Linux `127.0.0.1` 不指向 Windows loopback。
+
+2. **`run-coding-agent-benchmark-wsl.mjs` TDD 修复**：
+   - 从目标 WSL2 发行版的 IPv4 default route 解析 Windows host，不再默认把 Windows `127.0.0.1` 交给 Linux runner；
+   - WSL launcher 复用 Windows Gateway 生命周期，统一启动、readiness、runner 与停止流程；临时 token 仍只通过 child env/`WSLENV` 传递，不进入参数；
+   - Windows readiness 通过后、Linux runner 启动前，新增目标发行版到同 endpoint 的 TCP 探针；不可达时直接失败关闭且不启动 benchmark runner。
+
+3. **`run-coding-agent-benchmark-windows.mjs` 受限接入扩展**：
+   - 默认 Windows benchmark 仍只允许 loopback；只有显式 `gatewayAccess=wsl2` 才接受非 loopback bind；
+   - WSL2 bind 地址必须精确匹配本机名称含 `WSL` 的虚拟网卡 IPv4，LAN/WLAN 或任意外部地址继续拒绝；
+   - Gateway bind、allowed origin、Windows readiness、WSL TCP 探针与 Linux runner 使用同一 host/port，避免手工双进程参数漂移。
+
+4. **测试、工程与安全验证**：
+   - 真实零 Provider TCP 反馈环：WSL `127.0.0.1` 返回 `ECONNREFUSED`；WSL `172.27.128.1` 成功连接 Windows `node.exe` listener，远端为 WSL `172.27.131.73`；
+   - launcher/benchmark contract 定向测试=`51/51`，`verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 通过；
+   - `corepack pnpm build` 通过，Agent 单 worker 串行全包=`720 passed / 1 skipped`；本轮修复与验证未调用 Provider、费用=`$0`，未修改或重跑任何冻结 Formal artifact。
+
+5. **效果**：
+   - WSL2 runner 不再依赖宿主 loopback 转发是否偶然可用；NAT 模式下 endpoint 由当前发行版路由动态解析；
+   - Windows Gateway readiness 与 WSL2 实际可达性成为两个独立且都必须通过的前置条件，旧 dry-run 漏检形状已失败关闭；
+   - 安全边界保持为 Windows loopback 或本机 WSL 私有 adapter，不开放 LAN bind，不放宽模型、Provider retry、turn/token、费用、truth set 或 evaluator 合同。
+
+##### 验证结果
+
+- TypeScript workspace 编译无错误，Agent=`720 passed / 1 skipped`；
+- launcher/benchmark contract=`51/51`，benchmark/CI verifier、diff check 与真实 WSL→Windows TCP 探针通过；
+- `c17d806` WSL2 Formal 已按原始失败与 `$0` 新增费用永久冻结；历史 artifact 未重跑、未改写。
+
+##### 后续计划
+
+- **下一步准备做什么**：提交 source、测试、project map 与本文形成新 committed identity；在新的 ext4 clean harness 重新执行 offline install、build、Agent/合同 Gate，再以新 artifact/runtime 进行零凭证 WSL dry-run、env 安全回收、限定敏感扫描与 Formal prepare-only。
+- **为什么先做它**：当前 Green 发生在开发 worktree；只有 committed clean identity 的真实 Windows Gateway→WSL runner dry-run 才能证明 endpoint、token、workspace、snapshot 与 cleanup 在完整进程边界上共同成立，并阻止再次用付费 Formal 探索本地路由问题。
+- **当前还缺的关键闭环**：新 identity 的 clean Gate、WSL dry-run 必须真实穿透 Gateway 且仅因无凭证停止、Formal prepare-only 全绿；之后才可按完整 `$0.10` 预算评估一次新的 WSL2 Formal。双平台全绿前继续禁止完整矩阵、连续候选、最终复算和 P2-C。
 
 ## 实施计划进度表
 
@@ -3607,7 +3649,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
 | P0：Benchmark truth set / evaluator 对齐 | P0 | **已完成 zero-cost 对齐** | `coding-agent-benchmark-web-ui-truth-set/v1`、6 个正负 witness、SHA/LF 绑定、v2 fixture/evaluator、实际 Red=`1`/Green=`0` replay；定向 `20/20`、benchmark/CI/build Gate 全绿 | - | 保持 truth set、prompt、fixture、visible test 与 evaluator 单一版本绑定；任何 SHA/Schema/任务合同漂移均失败关闭 |
-| P0：Web mutation/correction 稳定化 | P0 | **Windows Formal 已冻结全绿；`c17d806` WSL2 前置全绿，待唯一 Formal** | Windows evaluator=`true/true/true`；WSL build、Agent=`720 passed / 1 skipped`、合同、双 preflight、env/敏感值/资源和 `$3.39700988 -> $3.49700988` 费用 Gate 全绿，Provider=`0` | `WSL2 唯一 Formal 与安全收尾，约 0.1-0.25 人日` | 最终复核后执行唯一 WSL2 Formal；双平台全绿前不启动完整矩阵、连续候选、最终复算或 P2-C |
+| P0：Web mutation/correction 稳定化 | P0 | **Windows Formal 已冻结全绿；`c17d806` WSL2 路由失败已冻结，新 endpoint 修复待 clean Gate** | WSL Formal=`ECONNREFUSED 127.0.0.1`、Provider=`0/$0`；default-route endpoint、受限 WSL adapter bind、WSL→Gateway 探针 TDD Green，build、Agent=`720 passed / 1 skipped`、合同=`51/51` | `新 identity clean/dry-run/prepare-only + 唯一 Formal，约 0.25-0.5 人日` | 先证明新 committed identity 的 WSL dry-run 真实穿透 Gateway；全绿后才评估一次新 Formal，双平台全绿前不启动完整矩阵、连续候选、最终复算或 P2-C |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |

@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -6,6 +7,7 @@ import {
   resolveBenchmarkMaximumCostUsd,
   resolvePriorObservedCostUsd,
 } from "./run-coding-agent-benchmark.mjs";
+import { runWindowsBenchmark as runWindowsBenchmarkGateway } from "./run-coding-agent-benchmark-windows.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultWorkspaceRoot = path.resolve(path.dirname(scriptPath), "..");
@@ -153,6 +155,68 @@ function requireInput(input, key) {
   return value.trim();
 }
 
+export function resolveWslGatewayHost(distribution, dependencies = {}) {
+  const run = dependencies.spawnSync ?? spawnSync;
+  const result = run(
+    "wsl.exe",
+    ["--distribution", requireInput({ distribution }, "distribution"), "--exec", "ip", "-4", "route", "show", "default"],
+    {
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf-8",
+    },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`Failed to resolve the Windows host from the WSL2 default route: ${String(result.stderr ?? "").trim()}`);
+  }
+  const match = String(result.stdout ?? "").match(/^default\s+via\s+(\S+)/m);
+  const host = match?.[1] ?? "";
+  if (net.isIP(host) !== 4) {
+    throw new Error("WSL2 default route did not contain a valid Windows host IPv4 address.");
+  }
+  return host;
+}
+
+export function verifyWslBenchmarkGatewayReachability(input, dependencies = {}) {
+  const distribution = requireInput(input, "distribution");
+  const host = requireInput(input, "host");
+  if (net.isIP(host) !== 4) throw new Error("WSL2 Gateway host must be an IPv4 address.");
+  const port = Number(input.port);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error("WSL2 Gateway port is invalid.");
+  }
+  const probe = [
+    "const net=require('node:net');",
+    "const socket=net.connect({host:process.argv[1],port:Number(process.argv[2])});",
+    "socket.setTimeout(3000);",
+    "socket.once('connect',()=>{socket.end();});",
+    "socket.once('timeout',()=>{socket.destroy();process.exitCode=2;});",
+    "socket.once('error',()=>{process.exitCode=3;});",
+  ].join("");
+  const run = dependencies.spawnSync ?? spawnSync;
+  const result = run(
+    "wsl.exe",
+    [
+      "--distribution", distribution,
+      "--exec", "node", "-e", probe,
+      host, String(port),
+    ],
+    {
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf-8",
+      timeout: 5_000,
+    },
+  );
+  if (result.error) {
+    throw new Error(`Target WSL2 distribution cannot reach the Windows Gateway: ${result.error.code ?? "probe_failed"}.`);
+  }
+  if (result.status !== 0) {
+    throw new Error("Target WSL2 distribution cannot reach the Windows Gateway.");
+  }
+}
+
 function resolveWslToolchainBin(value) {
   if (value === undefined) return undefined;
   const toolchainBin = requireInput({ toolchainBin: value }, "toolchainBin").replace(/\/+$/, "");
@@ -181,6 +245,60 @@ function requireValue(values, key) {
   return value.trim();
 }
 
+export async function runWslBenchmark(input, dependencies = {}) {
+  const distribution = requireInput(input, "distribution");
+  const host = input.host ?? resolveWslGatewayHost(distribution, dependencies);
+  const port = input.port ?? "28889";
+  const gatewayWorkspaceRoot = input.gatewayWorkspaceRoot ?? defaultWorkspaceRoot;
+  const startGateway = dependencies.runWindowsBenchmark ?? runWindowsBenchmarkGateway;
+  return await startGateway({
+    workspaceRoot: gatewayWorkspaceRoot,
+    gatewayStateRoot: input.gatewayStateRoot ?? input.stateRoot,
+    fixtureRoot: input.fixtureRoot,
+    artifactRoot: input.artifactRoot,
+    stateRoot: input.stateRoot,
+    provider: input.provider,
+    modelId: input.modelId,
+    credentialsConfigured: input.credentialsConfigured,
+    attempt: input.attempt,
+    host,
+    gatewayAccess: "wsl2",
+    port,
+    authMode: input.authMode ?? "token",
+    taskId: input.taskId,
+    manifestRevision: input.manifestRevision,
+    sourceRoot: gatewayWorkspaceRoot,
+    providerEnvFile: input.providerEnvFile,
+    priorObservedCostUsd: input.priorObservedCostUsd,
+    maxTotalCostUsd: input.maxTotalCostUsd,
+    shadowCandidateId: input.shadowCandidateId,
+  }, {
+    ...dependencies,
+    runBenchmark: async ({ endpoint }) => {
+      verifyWslBenchmarkGatewayReachability({ distribution, host, port }, dependencies);
+      const invocation = buildWslBenchmarkInvocation({
+        ...input,
+        distribution,
+        host,
+        port,
+        authMode: endpoint.authMode,
+        authToken: endpoint.authToken,
+      }, dependencies);
+      const start = dependencies.spawn ?? spawn;
+      const child = start(invocation.command, invocation.args, {
+        cwd: defaultWorkspaceRoot,
+        stdio: "inherit",
+        windowsHide: true,
+        env: invocation.env ?? process.env,
+      });
+      return await new Promise((resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", (exitCode) => resolve(exitCode ?? 1));
+      });
+    },
+  });
+}
+
 async function main() {
   if (process.platform !== "win32") {
     throw new Error("The WSL benchmark launcher must execute on a Windows host.");
@@ -190,9 +308,12 @@ async function main() {
   if (credentialsValue !== "true" && credentialsValue !== "false") {
     throw new Error("--credentials-configured must be true or false.");
   }
-  const invocation = buildWslBenchmarkInvocation({
-    distribution: requireValue(values, "distribution"),
+  const distribution = requireValue(values, "distribution");
+  const exitCode = await runWslBenchmark({
+    distribution,
     workspaceRoot: values.get("workspace-root") ?? defaultWorkspaceRoot,
+    gatewayWorkspaceRoot: values.get("gateway-workspace-root") ?? defaultWorkspaceRoot,
+    gatewayStateRoot: values.get("gateway-state-root"),
     fixtureRoot: requireValue(values, "fixture-root"),
     artifactRoot: requireValue(values, "artifact-root"),
     stateRoot: requireValue(values, "state-root"),
@@ -200,10 +321,10 @@ async function main() {
     modelId: requireValue(values, "model-id"),
     credentialsConfigured: credentialsValue === "true",
     attempt: Number(values.get("attempt") ?? 1),
-    host: values.get("host"),
+    host: values.get("host") ?? resolveWslGatewayHost(distribution),
     port: values.get("port"),
     authMode: values.get("auth-mode"),
-    authToken: process.env.BELLDANDY_AUTH_TOKEN,
+    providerEnvFile: values.get("provider-env-file"),
     taskId: values.get("task-id"),
     manifestRevision: values.get("manifest-revision") ?? "v1",
     sourceRoot: values.get("source-root"),
@@ -219,19 +340,7 @@ async function main() {
       shadowCandidateId: requireValue(values, "shadow-candidate-id"),
     } : {}),
   });
-  const child = spawn(invocation.command, invocation.args, {
-    cwd: defaultWorkspaceRoot,
-    stdio: "inherit",
-    windowsHide: true,
-    env: invocation.env ?? process.env,
-  });
-  child.once("error", (error) => {
-    console.error(`[coding-agent-benchmark-wsl] ${error.message}`);
-    process.exitCode = 1;
-  });
-  child.once("close", (exitCode) => {
-    process.exitCode = exitCode ?? 1;
-  });
+  process.exitCode = exitCode;
 }
 
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : "";

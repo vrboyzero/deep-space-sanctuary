@@ -438,6 +438,45 @@ describe("coding agent benchmark Windows launcher", () => {
     })).toThrow(/loopback/i);
   });
 
+  it("binds an explicit WSL2 benchmark only to the local WSL virtual adapter", () => {
+    const input = {
+      workspaceRoot,
+      gatewayStateRoot: "E:/project/star-sanctuary/tmp/runtime",
+      fixtureRoot: "E:/project/star-sanctuary/tmp/fixtures",
+      artifactRoot: "E:/project/star-sanctuary/artifacts/wsl-formal",
+      stateRoot: "E:/project/star-sanctuary/tmp/runtime",
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      credentialsConfigured: false,
+      host: "172.27.128.1",
+      gatewayAccess: "wsl2",
+      port: 28945,
+    };
+    const dependencies = {
+      baseEnv: {},
+      networkInterfaces: () => ({
+        "vEthernet (WSL)": [{ address: "172.27.128.1", family: "IPv4", internal: false }],
+        "WLAN 2": [{ address: "192.168.0.114", family: "IPv4", internal: false }],
+      }),
+      resolvePath: (value) => path.win32.resolve(value),
+    };
+    const invocation = buildWindowsBenchmarkInvocation(input, dependencies);
+
+    expect(invocation.endpoint).toMatchObject({
+      host: "172.27.128.1",
+      port: 28945,
+      origin: "http://172.27.128.1:28945",
+    });
+    expect(invocation.gateway.env).toMatchObject({
+      BELLDANDY_HOST: "172.27.128.1",
+      BELLDANDY_ALLOWED_ORIGINS: "http://172.27.128.1:28945",
+    });
+    expect(() => buildWindowsBenchmarkInvocation({
+      ...input,
+      host: "192.168.0.114",
+    }, dependencies)).toThrow(/WSL virtual adapter/i);
+  });
+
   it("terminates the exact Gateway child and escalates only after the grace period", async () => {
     const child = new EventEmitter();
     child.pid = 43210;

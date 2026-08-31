@@ -2,6 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
@@ -197,8 +198,22 @@ export function buildWindowsBenchmarkInvocation(input, dependencies = {}) {
   const baseEnv = dependencies.baseEnv ?? process.env;
 
   const host = input.host ?? DEFAULT_HOST;
-  if (host !== "127.0.0.1" && host !== "localhost") {
+  const gatewayAccess = input.gatewayAccess ?? "loopback";
+  if (gatewayAccess !== "loopback" && gatewayAccess !== "wsl2") {
+    throw new Error("Windows benchmark Gateway access must be loopback or wsl2.");
+  }
+  const isLoopbackHost = host === "127.0.0.1" || host === "localhost";
+  const networkInterfaces = dependencies.networkInterfaces ?? os.networkInterfaces;
+  const isWslAdapterHost = gatewayAccess === "wsl2"
+    && Object.entries(networkInterfaces()).some(([name, addresses]) => (
+      /(?:^|\W)wsl(?:\W|$)/i.test(name)
+      && addresses?.some((address) => address.family === "IPv4" && address.address === host)
+    ));
+  if (gatewayAccess === "loopback" && !isLoopbackHost) {
     throw new Error("Windows benchmark Gateway host must use loopback.");
+  }
+  if (gatewayAccess === "wsl2" && !isWslAdapterHost) {
+    throw new Error("Windows benchmark Gateway host must match a local WSL virtual adapter.");
   }
   const port = normalizePort(input.port ?? DEFAULT_PORT);
   const authMode = input.authMode ?? "token";
@@ -469,6 +484,11 @@ export async function runWindowsBenchmark(input, dependencies = {}) {
     diagnostic.authReady();
     diagnostic.ready();
     gatewayReady = true;
+    if (dependencies.runBenchmark) {
+      return await dependencies.runBenchmark({
+        endpoint: invocation.endpoint,
+      });
+    }
     const benchmark = spawnProcess(invocation.benchmark.command, invocation.benchmark.args, {
       cwd: invocation.benchmark.cwd,
       env: invocation.benchmark.env,
@@ -664,6 +684,7 @@ async function main() {
     credentialsConfigured: credentialsValue === "true",
     attempt: Number(values.get("attempt") ?? 1),
     host: values.get("host"),
+    gatewayAccess: values.get("gateway-access") ?? "loopback",
     port: values.has("port") ? Number(requireValue(values, "port")) : undefined,
     authMode: values.get("auth-mode") ?? "token",
     taskId: values.get("task-id"),

@@ -1,10 +1,142 @@
 import path from "node:path";
+import { EventEmitter } from "node:events";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { buildWslBenchmarkInvocation } from "./run-coding-agent-benchmark-wsl.mjs";
+import {
+  buildWslBenchmarkInvocation,
+  resolveWslGatewayHost,
+  runWslBenchmark,
+  verifyWslBenchmarkGatewayReachability,
+} from "./run-coding-agent-benchmark-wsl.mjs";
 
 describe("coding agent benchmark WSL launcher", () => {
+  it("resolves the Windows host from the target WSL2 default route", () => {
+    const run = vi.fn(() => ({
+      status: 0,
+      stdout: "default via 172.27.128.1 dev eth0 proto kernel\n",
+      stderr: "",
+    }));
+
+    expect(resolveWslGatewayHost("Ubuntu-22.04", { spawnSync: run })).toBe("172.27.128.1");
+    expect(run).toHaveBeenCalledWith(
+      "wsl.exe",
+      ["--distribution", "Ubuntu-22.04", "--exec", "ip", "-4", "route", "show", "default"],
+      expect.objectContaining({ windowsHide: true, encoding: "utf-8" }),
+    );
+  });
+
+  it("fails closed when the target WSL2 distribution cannot reach the Gateway", () => {
+    const run = vi.fn(() => ({ status: 3, stdout: "", stderr: "" }));
+
+    expect(() => verifyWslBenchmarkGatewayReachability({
+      distribution: "Ubuntu-22.04",
+      host: "172.27.128.1",
+      port: 28945,
+    }, { spawnSync: run })).toThrow(/cannot reach the Windows Gateway/i);
+    expect(run).toHaveBeenCalledWith(
+      "wsl.exe",
+      expect.arrayContaining([
+        "--distribution", "Ubuntu-22.04",
+        "--exec", "node", "-e",
+        "172.27.128.1", "28945",
+      ]),
+      expect.objectContaining({ windowsHide: true, timeout: 5_000 }),
+    );
+  });
+
+  it("does not start the benchmark runner before the WSL2 Gateway probe passes", async () => {
+    const start = vi.fn();
+    const runWindowsBenchmark = vi.fn(async (_input, dependencies) => await dependencies.runBenchmark({
+      endpoint: {
+        host: "172.27.128.1",
+        port: 28945,
+        authMode: "token",
+        authToken: "ephemeral-token",
+      },
+    }));
+
+    await expect(runWslBenchmark({
+      distribution: "Ubuntu-22.04",
+      workspaceRoot: "E:/project/star-sanctuary",
+      fixtureRoot: "E:/project/star-sanctuary/.tmp/coding-agent-fixtures-wsl",
+      artifactRoot: "E:/project/star-sanctuary/artifacts/coding-agent-wsl",
+      stateRoot: "E:/project/star-sanctuary/artifacts/coding-agent-state-wsl",
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      credentialsConfigured: false,
+      host: "172.27.128.1",
+      port: "28945",
+    }, {
+      baseEnv: {},
+      resolvePath: (value) => path.win32.resolve(value),
+      toWslPath(value) {
+        return `/mnt/e/${path.win32.resolve(value).replace(/^E:[\\/]/i, "").replaceAll("\\", "/")}`;
+      },
+      spawn: start,
+      spawnSync: () => ({ status: 3, stdout: "", stderr: "" }),
+      runWindowsBenchmark,
+    })).rejects.toThrow(/cannot reach the Windows Gateway/i);
+    expect(runWindowsBenchmark).toHaveBeenCalledWith(
+      expect.objectContaining({
+        host: "172.27.128.1",
+        gatewayAccess: "wsl2",
+        sourceRoot: path.win32.resolve("E:/project/star-sanctuary"),
+      }),
+      expect.objectContaining({ runBenchmark: expect.any(Function) }),
+    );
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("starts the Linux runner through the ready Windows Gateway lifecycle", async () => {
+    const child = new EventEmitter();
+    const start = vi.fn(() => child);
+    const runWindowsBenchmark = vi.fn(async (_input, dependencies) => await dependencies.runBenchmark({
+      endpoint: {
+        host: "172.27.128.1",
+        port: 28945,
+        authMode: "token",
+        authToken: "ephemeral-token",
+      },
+    }));
+    queueMicrotask(() => child.emit("close", 0));
+
+    await expect(runWslBenchmark({
+      distribution: "Ubuntu-22.04",
+      workspaceRoot: "E:/project/star-sanctuary",
+      fixtureRoot: "E:/project/star-sanctuary/.tmp/coding-agent-fixtures-wsl",
+      artifactRoot: "E:/project/star-sanctuary/artifacts/coding-agent-wsl",
+      stateRoot: "E:/project/star-sanctuary/artifacts/coding-agent-state-wsl",
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      credentialsConfigured: false,
+      host: "172.27.128.1",
+      port: "28945",
+    }, {
+      baseEnv: {},
+      resolvePath: (value) => path.win32.resolve(value),
+      toWslPath(value) {
+        return `/mnt/e/${path.win32.resolve(value).replace(/^E:[\\/]/i, "").replaceAll("\\", "/")}`;
+      },
+      spawn: start,
+      spawnSync: () => ({ status: 0, stdout: "", stderr: "" }),
+      runWindowsBenchmark,
+    })).resolves.toBe(0);
+
+    expect(start).toHaveBeenCalledOnce();
+    const invocation = start.mock.calls[0];
+    expect(invocation[1]).toEqual(expect.arrayContaining([
+      "BELLDANDY_HOST=172.27.128.1",
+      "BELLDANDY_PORT=28945",
+      "BELLDANDY_AUTH_MODE=token",
+    ]));
+    expect(invocation[1].join(" ")).not.toContain("ephemeral-token");
+    expect(invocation[2].env).toMatchObject({
+      BELLDANDY_AUTH_TOKEN: "ephemeral-token",
+      WSLENV: "BELLDANDY_AUTH_TOKEN",
+    });
+  });
+
   it("builds one shell-free WSL2 invocation with translated paths and non-sensitive model identity", () => {
     const invocation = buildWslBenchmarkInvocation({
       distribution: "Ubuntu-22.04",
