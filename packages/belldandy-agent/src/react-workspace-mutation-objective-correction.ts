@@ -47,17 +47,17 @@ export function rebuildClosingDelimiterDeletionOnlyToolCall<
   if (input.toolCall.function.name !== "apply_patch"
     || input.priorGuardPaths.length !== 1
     || input.priorGuardPaths[0] !== input.requiredPathIdentity
-    || input.addedClosingDelimiters.length !== 1
+    || input.addedClosingDelimiters.length === 0
     || input.sources.length !== 1) {
     return undefined;
   }
 
-  const addedDelimiter = input.addedClosingDelimiters[0] ?? "";
+  const addedDelimiters = new Set(input.addedClosingDelimiters);
   const source = input.sources[0] ?? "";
   const lineEnding = source.includes("\r\n") ? "\r\n" : "\n";
   const lines = source.split(/\r?\n/);
   const duplicateIndices = lines.flatMap((line, index) => (
-    line === addedDelimiter && lines[index + 1] === addedDelimiter ? [index] : []
+    addedDelimiters.has(line) && lines[index + 1] === line ? [index] : []
   ));
   if (duplicateIndices.length !== 1) return undefined;
   const duplicateIndex = duplicateIndices[0] ?? -1;
