@@ -81,7 +81,8 @@ describe("coding agent benchmark WSL launcher", () => {
       expect.objectContaining({
         host: "172.27.128.1",
         gatewayAccess: "wsl2",
-        sourceRoot: path.win32.resolve("E:/project/star-sanctuary"),
+        workspaceRoot: "E:/project/star-sanctuary",
+        sourceRoot: "E:/project/star-sanctuary",
       }),
       expect.objectContaining({ runBenchmark: expect.any(Function) }),
     );

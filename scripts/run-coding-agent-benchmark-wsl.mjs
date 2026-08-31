@@ -249,7 +249,7 @@ export async function runWslBenchmark(input, dependencies = {}) {
   const distribution = requireInput(input, "distribution");
   const host = input.host ?? resolveWslGatewayHost(distribution, dependencies);
   const port = input.port ?? "28889";
-  const gatewayWorkspaceRoot = input.gatewayWorkspaceRoot ?? defaultWorkspaceRoot;
+  const gatewayWorkspaceRoot = input.gatewayWorkspaceRoot ?? input.workspaceRoot ?? defaultWorkspaceRoot;
   const startGateway = dependencies.runWindowsBenchmark ?? runWindowsBenchmarkGateway;
   return await startGateway({
     workspaceRoot: gatewayWorkspaceRoot,

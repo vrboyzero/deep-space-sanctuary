@@ -3622,6 +3622,8 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
    - 真实零 Provider TCP 反馈环：WSL `127.0.0.1` 返回 `ECONNREFUSED`；WSL `172.27.128.1` 成功连接 Windows `node.exe` listener，远端为 WSL `172.27.131.73`；
    - launcher/benchmark contract 定向测试=`51/51`，`verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 通过；
    - `corepack pnpm build` 通过，Agent 单 worker 串行全包=`720 passed / 1 skipped`；本轮修复与验证未调用 Provider、费用=`$0`，未修改或重跑任何冻结 Formal artifact。
+   - 首个提交 identity `cfb933a7` 的新 ext4 clean Gate 中，build 与两个 verifier 通过，但跨平台 launcher 定向测试=`50 passed / 1 failed`：`runWslBenchmark()` 的 Gateway workspace 默认值忽略调用方 `workspaceRoot`，在 Linux 进程下误取 ext4 当前仓；该 identity 据实冻结为 Gate 失败，未启动 Gateway/dry-run/Provider；
+   - 后续最小修复让 Gateway workspace 默认复用显式 `input.workspaceRoot`，并将测试断言收敛到 launcher 公共输入合同，不耦合下游 Windows 构造器的斜杠规范化。
 
 5. **效果**：
    - WSL2 runner 不再依赖宿主 loopback 转发是否偶然可用；NAT 模式下 endpoint 由当前发行版路由动态解析；
@@ -3636,7 +3638,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 
 ##### 后续计划
 
-- **下一步准备做什么**：提交 source、测试、project map 与本文形成新 committed identity；在新的 ext4 clean harness 重新执行 offline install、build、Agent/合同 Gate，再以新 artifact/runtime 进行零凭证 WSL dry-run、env 安全回收、限定敏感扫描与 Formal prepare-only。
+- **下一步准备做什么**：提交 `cfb933a7` clean Gate 暴露的 workspace 默认值修复形成下一 committed identity；让既有 ext4 clean harness 前进到新 identity，重新执行 build、Agent/合同 Gate，再以新 artifact/runtime 进行零凭证 WSL dry-run、env 安全回收、限定敏感扫描与 Formal prepare-only。
 - **为什么先做它**：当前 Green 发生在开发 worktree；只有 committed clean identity 的真实 Windows Gateway→WSL runner dry-run 才能证明 endpoint、token、workspace、snapshot 与 cleanup 在完整进程边界上共同成立，并阻止再次用付费 Formal 探索本地路由问题。
 - **当前还缺的关键闭环**：新 identity 的 clean Gate、WSL dry-run 必须真实穿透 Gateway 且仅因无凭证停止、Formal prepare-only 全绿；之后才可按完整 `$0.10` 预算评估一次新的 WSL2 Formal。双平台全绿前继续禁止完整矩阵、连续候选、最终复算和 P2-C。
 
