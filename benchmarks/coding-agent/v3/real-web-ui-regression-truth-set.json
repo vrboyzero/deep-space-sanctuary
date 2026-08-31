@@ -28,6 +28,18 @@
       "expected": { "operation": "remove" }
     },
     {
+      "id": "ordinary-a-prefix-false",
+      "attributeName": "align",
+      "valueKind": "false",
+      "expected": { "operation": "remove" }
+    },
+    {
+      "id": "ordinary-d-prefix-false",
+      "attributeName": "draggable",
+      "valueKind": "false",
+      "expected": { "operation": "remove" }
+    },
+    {
       "id": "aria-null",
       "attributeName": "aria-hidden",
       "valueKind": "null",

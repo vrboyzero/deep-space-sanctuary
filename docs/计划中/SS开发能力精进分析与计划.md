@@ -4013,6 +4013,80 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：当前 Green 来自 Windows 开发 worktree；下一次不可重跑 Formal 必须绑定新的 clean commit，并先证明 ext4/LF、跨宿主 Gateway、snapshot、凭证和资源边界全部稳定。
 - **当前还缺的关键闭环**：新 identity 的 committed clean、ext4 工程 Gate、有效零凭证 dry-run、env 回收、限定扫描与 prepare-only；全部通过后才开放该 identity 唯一 WSL2 Formal，继续禁止重跑历史 Formal。
 
+#### P0 Web Formal 实现结论：`d190f59` WSL2 evaluator 全绿但语义假阳性并冻结（2026-08-31）
+
+##### 已完成内容
+
+1. **`d190f59` committed clean、零凭证与 prepare-only Gate**：
+   - Windows/ext4 harness 精确绑定 commit=`d190f59537e1a557737bb290835108d37563231b` 且 clean；冻结 Preact=`6bb827251ac7111234b293cac013a0a67c2ca8b2` 且 clean；
+   - ext4 offline install、完整 build、独立 `verify:build`、Agent=`744 passed / 1 skipped`、benchmark/CI 与 WSL launcher=`11/11` 通过；已知 relay mode `644→755` 经确认内容 diff=`0/0` 后恢复为 `644`；
+   - 有效零凭证 artifact=`artifacts/p0-web-double-else-d190f59-dry-run-r2`，run=`real-web-ui-regression-wsl2-linux-a1-1788158114877`；双 preflight 全绿，diagnostics 仅含缺少 API key、不含 `ECONNREFUSED`，events/trace/patch=`0/0/0`，usage/provider cost=`not_reached/$0`；
+   - `prepare-only.json` SHA-256=`7a80653a5f59f502f9075863223d7fb9bb9ee288fe8e0dfb867e36a65deebd66`；identity、snapshot 五项、凭证隔离、空目标、端口/进程和费用守卫写后独立复核全绿。
+
+2. **唯一 WSL2 Formal 执行并永久冻结**：
+   - artifact=`artifacts/p0-web-double-else-d190f59-formal-r1`，run=`real-web-ui-regression-wsl2-linux-a1-1788159098263`，report SHA-256=`bb8b49fd8b9464bcef57682f5a019e1f8cbadf1fbce25af7f2602ed3313901a7`；
+   - 唯一且末尾终态=`run.completed`，CLI exit=`0`；machine evaluator tests/taskCompleted/patchAccepted=`true/true/true`，regression/manual intervention=`0/0`；
+   - usage calls=`8/8`，input/output=`17,317/2,299`，实际费用=`$0.00504347`；累计 observed=`$3.41569117`，Stage 0D 当前=`48.95027211 RMB`，再完整预留后=`49.75027211 RMB < 80 RMB`；
+   - events/trace/patch SHA-256=`4a001f3f3e202b968b213c1263a57e84a683173970d25d22c0972e9db7e546a1/30de50f2301002e8fc41913db33e10cd2944a2e148f35e09a8a162566f47e3b8/edd847f14cde25dfdc32916feb59e1168131b239c85b455ae5bea12e6bb502eb`。
+
+3. **语义假阳性与安全收尾**：
+   - 最终 patch 使用 `(value !== false || name[0] == 'a' || name[0] == 'd')`，会把任意以 `a` 或 `d` 开头的普通属性 false 序列化，宽于冻结 baseline contract=`value != NULL && (value !== false || name[4] == '-')`；
+   - 现 visible test/evaluator 只有普通属性 witness，缺少以 `a`/`d` 开头但不是 `aria-*`/`data-*` 的普通属性反例，因此错误实现被 machine evaluator 接受；本轮不把该绿灯记为 P0 外部闭环；
+   - Formal env removed/remaining=`2/0`，cleanup SHA-256=`36d709dc993e72abf87e45f874e428b596327d42dd6fc2c7742f2c9e306b0632`；限定扫描 regular/excluded=`3,604/2`，symlink/unreadable/env/key/input leakage=`0/0/0/0/0`，scan SHA-256=`e908bad958a39d769e9051026a4fffb4d1e7729fe6952097b5f206998297526a`；端口、精确任务进程和 runtime env 残留=`0/0/0`。
+
+4. **效果**：
+   - sibling double-else 的 deterministic rebuilder 已在真实路径中阻止历史失败形状，Formal 获得合法终态和完整 usage/snapshot 证据；
+   - 对抗性 review 进一步暴露 truth-set/evaluator 的反例覆盖缺口，避免把“机器全绿但行为越界”误报为 P0 完成；
+   - 技术债决策=`fix_now`：先零模型增加普通 `a*`/`d*` false witness，并把同一语义约束前移到 Agent 写后 guard，再形成新 identity；禁止重跑 `d190f59` 或任何历史 Formal。
+
+##### 验证结果
+
+- TypeScript workspace 双端编译无错误；Windows/ext4 Agent 均=`744 passed / 1 skipped`，workspace-mutation=`197/197`，benchmark/CI 与 WSL launcher Gate 通过；
+- Formal 机器合同、唯一终态、usage/cost、snapshot、安全与资源收尾全绿；但冻结 baseline 的普通 `a*`/`d*` 属性语义未满足，因此 P0 仍未闭环；
+- 本轮新增费用与累计费用完整，下一完整 `$0.10` 预留仍低于 `80 RMB`，但在本地修复和新 clean Gate 前不再调用模型。
+
+##### 后续计划
+
+- **下一步准备做什么**：先给 truth set、visible fixture test 与 evaluator 增加以 `a`/`d` 开头但非 `aria-*`/`data-*` 的普通属性 false 反例，重放冻结 patch取得确定性 Red；随后在 Agent 写后 source guard 识别同一 broad first-character predicate，并路由到 source-derived baseline correction。
+- **为什么先做它**：当前最大风险不是模型未完成任务，而是 evaluator 将越界行为判为成功；先修判定真源并让 Agent 在写入后复读阶段看到同一 witness，才能恢复下一次 Formal 的可信度。
+- **当前还缺的关键闭环**：truth-set/evaluator Red/Green、Agent 公共 seam Red/Green、完整零模型 Gate、新 committed clean identity，以及该 identity 的 clean ext4/dry-run/prepare-only；在这些前置闭合前继续禁止完整矩阵、连续候选、最终复算与 P2-C。
+
+#### P0 Web Fix 实现结论：broad first-character 反例与 baseline correction guard（2026-08-31）
+
+##### 已完成内容
+
+1. **`real-web-ui-regression-truth-set.json`、manifest 与 evaluator 合同扩展**：
+   - 新增 `align=false` 与 `draggable=false` 两个普通属性 removal witness，覆盖冻结假阳性的 `a*` / `d*` first-character 家族；
+   - truth-set validator 强制两个反例存在，visible fixture test 由同一真值生成，manifest SHA-256 更新为 `2e3ecc08873dfca9a0f2593429734105e92b5f1113b594e1e5af754c3ccabbb8`；
+   - 用冻结 broad source `(value !== false || name[0] == 'a' || name[0] == 'd')` 重放真实 fixture evaluator，确认 tests/taskCompleted/patchAccepted 均失败关闭。
+
+2. **`react-workspace-mutation-serialized-false-correction.ts` 扩展**：
+   - 新增 broad first-character rebuilder，仅在完整 serialized-false truth set、单 required path、同路径 prior successful patch、最新完整 source、唯一冻结 multiline branch 与精确 broad correction 全部绑定时触发；
+   - prior patch 与 correction 必须在同一 update section 内匹配连续冻结行序列；多 hunk 拼接、source 漂移、更新的截断 evidence、合法 baseline correction 或未绑定输入均失败关闭；
+   - 从 current source 确定性生成 `value != NULL && (value !== false || name[4] == '-')` 单行 baseline patch，不执行 Provider 的 broad correction。
+
+3. **`tool-agent.ts` 与测试接入**：
+   - 在 direct objective correction 的 Tool 执行前接入 rebuilder；重建结果继续经过 required-path、patch diagnostics、semantic validation 与写后完整复读 Gate；
+   - 公共 `ToolEnabledAgent.run()` seam 重放冻结 initial patch→完整复读→broad correction→deterministic baseline patch→再次复读→合法 final，并断言 broad patch 从未进入 Tool executor；
+   - 纯函数负例覆盖无关任务、多 required path、未绑定/非连续 prior patch、最新 source 截断、source 漂移、合法 correction 与非连续 correction context。
+
+4. **效果**：
+   - evaluator 不再把普通 `align=false` / `draggable=false` 序列化误判为成功，机器绿灯重新绑定完整冻结行为；
+   - `d190f59` 的 broad correction 会在本地 Tool 执行前被 source-derived baseline 替换，aria/data false 保留且普通 false、null、undefined 继续移除；
+   - 本轮零 Provider 调用、历史 Formal 未重跑，新增费用=`$0`；技术债决策=`record_only`，不把精确任务 detector 扩张为通用 JavaScript parser。
+
+##### 验证结果
+
+- truth-set / fixture 合同 Red=`2 failed / 19 passed`、Green=`21/21`，冻结 broad source 的真实 evaluator replay 已失败关闭；
+- Agent 公共 seam 初始 Red=`2 failed / 23 passed`、Green=`31/31`；对抗性 review 的连续序列负例 Red=`2 failed / 28 passed`、最终定向=`33/33`；
+- workspace-mutation=`207/207`、Agent 全包=`754 passed / 1 skipped`；TypeScript build、`verify:build`、`verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 均已通过。
+
+##### 后续计划
+
+- **下一步准备做什么**：完成最终零模型复核并提交 source、测试、truth set、project map 与本结论形成新 committed identity；随后把 ext4 clean harness 前进到该 identity，执行 frozen offline install、完整 build、Agent 全包、benchmark/CI、WSL launcher、零凭证 dry-run、安全收尾与 Formal prepare-only。
+- **为什么先做它**：本地行为与 evaluator 已共同闭合，但下一次唯一 Formal 必须归因于 committed clean identity，并先排除 LF、跨宿主 endpoint、snapshot、凭证和资源残留风险。
+- **当前还缺的关键闭环**：新 identity 的 committed clean、ext4 工程 Gate、有效零凭证 dry-run、env 回收、限定扫描与 prepare-only；全部通过后才评估该 identity 的唯一 WSL2 Formal，继续禁止重跑历史 Formal、完整矩阵、连续候选、最终复算与 P2-C。
+
 ## 实施计划进度表
 
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
@@ -4021,8 +4095,8 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | 本轮能力复核与 9.5 增强规划 | - | **已完成** | SS 横向原始加权 `9.135`、发布分 `9.1`；竞品和证据边界已记录 | - | 真实复杂任务成功率仍需新 formal 和连续候选，不宣称达到 9.5 |
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
-| P0：Benchmark truth set / evaluator 对齐 | P0 | **已完成 zero-cost 对齐** | `coding-agent-benchmark-web-ui-truth-set/v1`、6 个正负 witness、SHA/LF 绑定、v2 fixture/evaluator、实际 Red=`1`/Green=`0` replay；定向 `20/20`、benchmark/CI/build Gate 全绿 | - | 保持 truth set、prompt、fixture、visible test 与 evaluator 单一版本绑定；任何 SHA/Schema/任务合同漂移均失败关闭 |
-| P0：Web mutation/correction 稳定化 | P0 | **Windows Formal 已冻结全绿；`9772f4d` WSL2 failure 已冻结；sibling double-else 零模型修复与 Windows Gate 全绿** | deterministic baseline rebuilder；定向=`23/23`、workspace-mutation=`197/197`、Agent=`744 passed / 1 skipped`；build、benchmark/CI、diff check 全绿 | `新 identity commit + ext4 clean/dry-run/prepare-only + 唯一 Formal，约 0.2-0.4 人日` | 先形成 committed clean identity 并完成 ext4/LF、跨宿主 endpoint、零凭证、安全资源与 prepare-only Gate；全绿后只开放该 identity 唯一 WSL2 Formal，禁止重跑历史 Formal；双平台全绿前不启动完整矩阵、连续候选、最终复算或 P2-C |
+| P0：Benchmark truth set / evaluator 对齐 | P0 | **已完成 zero-cost 对齐** | `coding-agent-benchmark-web-ui-truth-set/v1`、8 个正负 witness、SHA/LF 绑定、v2 fixture/evaluator；新增 `align/draggable` 反例使冻结 broad source replay 失败，定向 `21/21`、benchmark/CI/build Gate 全绿 | - | 保持 truth set、prompt、fixture、visible test 与 evaluator 单一版本绑定；任何 SHA/Schema/任务合同漂移均失败关闭 |
+| P0：Web mutation/correction 稳定化 | P0 | **`d190f59` 语义假阳性已完成 zero-cost evaluator/Agent guard 修复；待新 identity clean Gate** | broad source evaluator replay 已失败；公共 seam 只执行 initial 与 source-derived baseline patch，Provider broad patch 零执行；最终定向 `33/33` | `新 identity clean/ext4/dry-run/prepare-only + 唯一 Formal，约 0.2-0.4 人日` | 完成最终复核并提交新 identity；再执行 ext4、零凭证、安全收尾与 prepare-only，仅在全部前置全绿后评估一次新 Formal；禁止重跑历史 Formal，可信双平台全绿前不启动完整矩阵、连续候选、最终复算或 P2-C |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |

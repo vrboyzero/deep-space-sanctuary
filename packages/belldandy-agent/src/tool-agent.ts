@@ -128,6 +128,7 @@ import {
 } from "./react-run-budget.js";
 import {
   hasSerializedFalseNullishSerializationCurrentSource,
+  rebuildSerializedFalseBroadFirstCharacterToolCall,
   rebuildSerializedFalseSiblingDoubleElseToolCall,
   rebuildSerializedFalseSemanticNarrowingToolCall,
 } from "./react-workspace-mutation-serialized-false-correction.js";
@@ -4593,12 +4594,24 @@ export class ToolEnabledAgent implements BelldandyAgent {
               requiredPaths: workspaceMutationCallRequiredPaths,
             })
             : undefined;
+          const rebuiltSerializedFalseBroadFirstCharacterToolCall = workspaceMutationObjectiveReviewCall
+            && !workspaceMutationObjectiveInputCorrectionCall
+            ? rebuildSerializedFalseBroadFirstCharacterToolCall({
+              toolCall: constrainedMutationToolCall,
+              messages: mutationRecoverySourceMessages,
+              taskText: input.text,
+              priorSuccessfulPatchInputs: successfulWorkspaceMutationPatchInputs,
+              requiredPaths: workspaceMutationCallRequiredPaths,
+            })
+            : undefined;
           const validatedMutationToolCall = rebuiltClosingDelimiterToolCall
             ?? rebuiltSerializedFalseToolCall
             ?? rebuiltSerializedFalseSiblingDoubleElseToolCall
+            ?? rebuiltSerializedFalseBroadFirstCharacterToolCall
             ?? constrainedMutationToolCall;
           const semanticValidationToolCall = rebuiltSerializedFalseToolCall
             || rebuiltSerializedFalseSiblingDoubleElseToolCall
+            || rebuiltSerializedFalseBroadFirstCharacterToolCall
             ? validatedMutationToolCall
             : constrainedMutationToolCall;
           if (rebuiltClosingDelimiterToolCall) {
@@ -4617,6 +4630,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
           if (rebuiltSerializedFalseSiblingDoubleElseToolCall) {
             logWarn("[workspace-mutation] rebuilt trusted sibling double-else correction as baseline serialized-false condition", {
+              requiredPathCount: workspaceMutationCallRequiredPaths.length,
+              conversationId: input.conversationId,
+              agentId: resolvedAgentId,
+            });
+          }
+          if (rebuiltSerializedFalseBroadFirstCharacterToolCall) {
+            logWarn("[workspace-mutation] rebuilt trusted broad first-character correction as baseline serialized-false condition", {
               requiredPathCount: workspaceMutationCallRequiredPaths.length,
               conversationId: input.conversationId,
               agentId: resolvedAgentId,

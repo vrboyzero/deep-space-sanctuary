@@ -13,6 +13,147 @@ afterEach(() => {
 });
 
 describe("ToolEnabledAgent serialized-false correction", () => {
+  it("rebuilds a broad first-character objective correction as the baseline condition", async () => {
+    const requiredPath = "src/diff/props.js";
+    const initialPredicate = "\t\t\t(value !== false || (name[0] == 'a' && name[0] == 'a'))";
+    const broadPredicate = "\t\t\t(value !== false || name[0] == 'a' || name[0] == 'd')";
+    const baselineCondition = "\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {";
+    const initialPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-\t\t} else if (value != NULL && value !== false) {",
+      "+\t\t} else if (",
+      "+\t\t\tvalue != NULL &&",
+      `+${initialPredicate}`,
+      "+\t\t) {",
+      " \t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+      "*** End Patch",
+    ].join("\n");
+    const broadCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      " \t\t} else if (",
+      " \t\t\tvalue != NULL &&",
+      `-${initialPredicate}`,
+      `+${broadPredicate}`,
+      " \t\t) {",
+      "*** End Patch",
+    ].join("\n");
+    const expectedCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-\t\t} else if (",
+      "-\t\t\tvalue != NULL &&",
+      `-${initialPredicate}`,
+      "-\t\t) {",
+      `+${baselineCondition}`,
+      "*** End Patch",
+    ].join("\n");
+    const sourceAroundCondition = [
+      "\t\tif (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      "__CONDITION__",
+      "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+      "\t\t} else {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t}",
+    ].join("\n");
+    const initialSource = sourceAroundCondition.replace("__CONDITION__", [
+      "\t\t} else if (",
+      "\t\t\tvalue != NULL &&",
+      initialPredicate,
+      "\t\t) {",
+    ].join("\n"));
+    const correctedSource = sourceAroundCondition.replace("__CONDITION__", baselineCondition);
+    const successfulSummary = '{"summary":"preserved the frozen serialized-false contract"}';
+    const task = "Fix the frozen browser-facing regression in the real web project. Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, and remove every attribute with null or undefined values. Make the smallest change in src/diff/props.js and pass the supplied deterministic checks.";
+    const requests: Array<Record<string, any>> = [];
+    const executedPatches: string[] = [];
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const instruction = String(body.messages?.[0]?.content ?? "");
+      if (instruction.includes("Post-mutation verification phase")) {
+        return response(modelToolCall(`read-${requests.length}`, "file_read", {
+          path: requiredPath,
+          limit: 1_048_576,
+        }));
+      }
+      if (instruction.includes("Post-mutation final objective review phase")) {
+        return response({
+          choices: [{ finish_reason: "stop", message: { content: successfulSummary } }],
+          usage: { prompt_tokens: 300, completion_tokens: 30 },
+        });
+      }
+      if (instruction.includes("Post-mutation objective review phase")) {
+        return response(modelToolCall("formal-broad-first-character-correction", "apply_patch", {
+          input: broadCorrection,
+        }));
+      }
+      return response(modelToolCall("formal-initial-multiline-patch", "apply_patch", {
+        input: initialPatch,
+      }));
+    });
+
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        const content = executedPatches.length > 1 ? correctedSource : initialSource;
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({ path: requiredPath, truncated: false, content }),
+          durationMs: 1,
+        };
+      }
+      executedPatches.push(String(request.arguments?.input ?? ""));
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: [requiredPath] },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent(execute);
+
+    const items = await collect(agent.run({
+      conversationId: "conv-formal-broad-first-character-correction",
+      text: task,
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths: [requiredPath],
+          toolLoopIterationBudget: 6,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === successfulSummary
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(requests).toHaveLength(5);
+    expect(executedPatches).toEqual([initialPatch, expectedCorrection]);
+    expect(executedPatches).not.toContain(broadCorrection);
+    expect(items).toContainEqual({ type: "final", text: successfulSummary });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("rebuilds a direct sibling double-else correction as the baseline condition", async () => {
     const requiredPath = "src/diff/props.js";
     const reachableCondition = "\t\t} else if (value != NULL && (value !== false || name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' || name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-')) {";

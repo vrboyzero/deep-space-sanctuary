@@ -301,6 +301,21 @@ describe("coding agent benchmark repository contract", () => {
     );
   });
 
+  it("requires ordinary false witnesses for both broad first-character families", async () => {
+    const truthSet = JSON.parse(await fs.readFile(path.join(
+      workspaceRoot,
+      "benchmarks/coding-agent/v3/real-web-ui-regression-truth-set.json",
+    ), "utf-8"));
+    truthSet.cases = truthSet.cases.filter((testCase) => (
+      testCase.id !== "ordinary-a-prefix-false"
+        && testCase.id !== "ordinary-d-prefix-false"
+    ));
+
+    expect(() => validateCodingAgentBenchmarkWebUiTruthSet(truthSet)).toThrow(
+      /ordinary a-prefix and d-prefix false witnesses/i,
+    );
+  });
+
   it("keeps the manifest, schemas, documentation, scripts, and cross-platform gate aligned", async () => {
     await expect(collectCodingAgentBenchmarkContractFailures({ workspaceRoot })).resolves.toEqual([]);
   });

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   hasSerializedFalseNullishSerializationCurrentSource,
+  rebuildSerializedFalseBroadFirstCharacterToolCall,
   rebuildSerializedFalseSiblingDoubleElseToolCall,
   rebuildSerializedFalseSemanticNarrowingToolCall,
 } from "./react-workspace-mutation-serialized-false-correction.js";
@@ -111,8 +112,166 @@ const baselineInlineCorrection = [
   `+${baselineInlineCondition}`,
   "*** End Patch",
 ].join("\n");
+const broadFirstCharacterInitialPredicate = "\t\t\t(value !== false || (name[0] == 'a' && name[0] == 'a'))";
+const broadFirstCharacterPredicate = "\t\t\t(value !== false || name[0] == 'a' || name[0] == 'd')";
+const broadFirstCharacterInitialSource = [
+  "\t\tif (typeof value == 'function') {",
+  "\t\t\t// never serialize functions as attribute values",
+  "\t\t} else if (",
+  "\t\t\tvalue != NULL &&",
+  broadFirstCharacterInitialPredicate,
+  "\t\t) {",
+  "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  "\t\t} else {",
+  "\t\t\tdom.removeAttribute(name);",
+  "\t\t}",
+].join("\n");
+const broadFirstCharacterInitialPatch = [
+  "*** Begin Patch",
+  `*** Update File: ${requiredPath}`,
+  "@@",
+  "-\t\t} else if (value != NULL && value !== false) {",
+  "+\t\t} else if (",
+  "+\t\t\tvalue != NULL &&",
+  `+${broadFirstCharacterInitialPredicate}`,
+  "+\t\t) {",
+  " \t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  "*** End Patch",
+].join("\n");
+const broadFirstCharacterCorrection = [
+  "*** Begin Patch",
+  `*** Update File: ${requiredPath}`,
+  "@@",
+  " \t\t} else if (",
+  " \t\t\tvalue != NULL &&",
+  `-${broadFirstCharacterInitialPredicate}`,
+  `+${broadFirstCharacterPredicate}`,
+  " \t\t) {",
+  "*** End Patch",
+].join("\n");
+const broadFirstCharacterBaselineCorrection = [
+  "*** Begin Patch",
+  `*** Update File: ${requiredPath}`,
+  "@@",
+  "-\t\t} else if (",
+  "-\t\t\tvalue != NULL &&",
+  `-${broadFirstCharacterInitialPredicate}`,
+  "-\t\t) {",
+  `+${baselineInlineCondition}`,
+  "*** End Patch",
+].join("\n");
 
 describe("serialized-false semantic-narrowing correction", () => {
+  it("rebuilds the frozen broad first-character correction from complete current source", () => {
+    const rebuilt = rebuildSerializedFalseBroadFirstCharacterToolCall({
+      toolCall: call(broadFirstCharacterCorrection),
+      messages: sourceMessages(broadFirstCharacterInitialSource),
+      taskText,
+      priorSuccessfulPatchInputs: [broadFirstCharacterInitialPatch],
+      requiredPaths: [requiredPath],
+    });
+
+    expect(JSON.parse(rebuilt!.function.arguments)).toEqual({
+      input: broadFirstCharacterBaselineCorrection,
+    });
+  });
+
+  it.each([
+    {
+      name: "unrelated task",
+      toolCall: call(broadFirstCharacterCorrection),
+      messages: sourceMessages(broadFirstCharacterInitialSource),
+      task: "Rename a variable with the smallest change.",
+      patches: [broadFirstCharacterInitialPatch],
+      paths: [requiredPath],
+    },
+    {
+      name: "multiple required paths",
+      toolCall: call(broadFirstCharacterCorrection),
+      messages: sourceMessages(broadFirstCharacterInitialSource),
+      task: taskText,
+      patches: [broadFirstCharacterInitialPatch],
+      paths: [requiredPath, "src/other.js"],
+    },
+    {
+      name: "unbound prior patch",
+      toolCall: call(broadFirstCharacterCorrection),
+      messages: sourceMessages(broadFirstCharacterInitialSource),
+      task: taskText,
+      patches: [broadFirstCharacterInitialPatch.replace(requiredPath, "src/other.js")],
+      paths: [requiredPath],
+    },
+    {
+      name: "non-contiguous prior patch shape",
+      toolCall: call(broadFirstCharacterCorrection),
+      messages: sourceMessages(broadFirstCharacterInitialSource),
+      task: taskText,
+      patches: [broadFirstCharacterInitialPatch.replace(
+        "+\t\t\tvalue != NULL &&",
+        "+\t\t\tconst unrelated = true;\n+\t\t\tvalue != NULL &&",
+      )],
+      paths: [requiredPath],
+    },
+    {
+      name: "newer truncated source",
+      toolCall: call(broadFirstCharacterCorrection),
+      messages: [
+        ...sourceMessages(broadFirstCharacterInitialSource),
+        ...sourceMessages(broadFirstCharacterInitialSource, true),
+      ],
+      task: taskText,
+      patches: [broadFirstCharacterInitialPatch],
+      paths: [requiredPath],
+    },
+    {
+      name: "different current source",
+      toolCall: call(broadFirstCharacterCorrection),
+      messages: sourceMessages(broadFirstCharacterInitialSource.replace(
+        "name[0] == 'a' && name[0] == 'a'",
+        "name[0] == 'a' && name[1] == 'r'",
+      )),
+      task: taskText,
+      patches: [broadFirstCharacterInitialPatch],
+      paths: [requiredPath],
+    },
+    {
+      name: "legal baseline correction",
+      toolCall: call(broadFirstCharacterCorrection.replace(
+        broadFirstCharacterPredicate,
+        "\t\t\t(value !== false || name[4] == '-')",
+      )),
+      messages: sourceMessages(broadFirstCharacterInitialSource),
+      task: taskText,
+      patches: [broadFirstCharacterInitialPatch],
+      paths: [requiredPath],
+    },
+    {
+      name: "non-contiguous correction context",
+      toolCall: call(broadFirstCharacterCorrection.replace(
+        " \t\t\tvalue != NULL &&",
+        " \t\t\tvalue != NULL &&\n context from another hunk",
+      )),
+      messages: sourceMessages(broadFirstCharacterInitialSource),
+      task: taskText,
+      patches: [broadFirstCharacterInitialPatch],
+      paths: [requiredPath],
+    },
+  ])("does not rebuild broad first-character correction with $name", ({
+    toolCall,
+    messages,
+    task,
+    patches,
+    paths,
+  }) => {
+    expect(rebuildSerializedFalseBroadFirstCharacterToolCall({
+      toolCall,
+      messages,
+      taskText: task,
+      priorSuccessfulPatchInputs: patches,
+      requiredPaths: paths,
+    })).toBeUndefined();
+  });
+
   it("rebuilds a direct sibling double-else correction as the source-derived baseline condition", () => {
     const rebuilt = rebuildSerializedFalseSiblingDoubleElseToolCall({
       toolCall: call(siblingDoubleElseCorrection),

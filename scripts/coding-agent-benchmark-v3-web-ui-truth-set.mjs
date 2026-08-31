@@ -74,6 +74,16 @@ export function validateCodingAgentBenchmarkWebUiTruthSet(truthSet) {
   const caseInputs = new Set();
   for (const testCase of truthSet.cases) validateTruthCase(testCase, caseIds, caseInputs);
   const hasCase = (predicate) => truthSet.cases.some(predicate);
+  const hasOrdinaryFalseCase = (attributeName) => hasCase((testCase) => (
+    testCase.attributeName === attributeName
+      && testCase.valueKind === "false"
+      && testCase.expected.operation === "remove"
+  ));
+  if (!hasOrdinaryFalseCase("align") || !hasOrdinaryFalseCase("draggable")) {
+    throw new Error(
+      "Benchmark v3 Web UI truth set requires ordinary a-prefix and d-prefix false witnesses.",
+    );
+  }
   if (!hasCase((testCase) => testCase.attributeName.startsWith("aria-")
       && testCase.valueKind === "false" && testCase.expected.operation === "set")
     || !hasCase((testCase) => testCase.attributeName.startsWith("data-")

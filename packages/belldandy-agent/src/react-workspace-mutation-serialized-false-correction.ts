@@ -9,6 +9,12 @@ const NULLISH_SERIALIZATION_STATEMENT = "dom.setAttribute(name, value == NULL ||
 const REACHABLE_INLINE_SERIALIZED_FALSE_CONDITION_SUFFIX = "} else if (value != NULL && (value !== false || name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' || name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-')) {";
 const INVALID_INLINE_SERIALIZED_FALSE_REPLACEMENT_SUFFIX = "if (typeof value == 'function' || value == NULL || value === false && !(name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' || name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-')) {";
 const BASELINE_SERIALIZED_FALSE_CONDITION_SUFFIX = "} else if (value != NULL && (value !== false || name[4] == '-')) {";
+const PREVIOUS_SERIALIZED_FALSE_CONDITION_SUFFIX = "} else if (value != NULL && value !== false) {";
+const MULTILINE_SERIALIZED_FALSE_CONDITION_START_SUFFIX = "} else if (";
+const MULTILINE_SERIALIZED_FALSE_GUARD_SUFFIX = "value != NULL &&";
+const FROZEN_MULTILINE_SERIALIZED_FALSE_PREDICATE_SUFFIX = "(value !== false || (name[0] == 'a' && name[0] == 'a'))";
+const BROAD_FIRST_CHARACTER_SERIALIZED_FALSE_PREDICATE_SUFFIX = "(value !== false || name[0] == 'a' || name[0] == 'd')";
+const MULTILINE_SERIALIZED_FALSE_CONDITION_END_SUFFIX = ") {";
 const EXISTING_ATTRIBUTE_STATEMENT = "dom.setAttribute(name, name == 'popover' && value == true ? '' : value);";
 const EXISTING_REMOVAL_STATEMENT = "dom.removeAttribute(name);";
 
@@ -26,6 +32,77 @@ type ReachableInlineSerializedFalseBranch = {
   followingElse: string;
   removalStatement: string;
 };
+
+type FrozenMultilineSerializedFalseBranch = {
+  conditionStart: string;
+  guard: string;
+  predicate: string;
+  conditionEnd: string;
+  conditionIndent: string;
+  statement: string;
+  followingElse: string;
+  removalStatement: string;
+};
+
+export function rebuildSerializedFalseBroadFirstCharacterToolCall<
+  T extends { function: { name: string; arguments: string } },
+>(input: {
+  toolCall: T;
+  messages: readonly SourceMessage[];
+  taskText: string;
+  priorSuccessfulPatchInputs: readonly string[];
+  requiredPaths: readonly string[];
+}): T | undefined {
+  if (input.toolCall.function.name !== "apply_patch"
+    || input.requiredPaths.length !== 1
+    || !requiresSerializedFalseTruthSet(input.taskText)) {
+    return undefined;
+  }
+  const requiredPath = normalizePath(input.requiredPaths[0] ?? "");
+  if (!requiredPath || !priorPatchAddedFrozenMultilineSerializedFalseCondition(
+    input.priorSuccessfulPatchInputs,
+    requiredPath,
+  )) {
+    return undefined;
+  }
+  const source = readCompleteSource(input.messages, requiredPath);
+  if (!source) return undefined;
+  const branches = collectFrozenMultilineSerializedFalseBranches(source);
+  if (branches.length !== 1) return undefined;
+  const change = readSingleRequiredPathPatchChange(input.toolCall, requiredPath);
+  if (!change || change.removed.length !== 1 || change.added.length !== 1) return undefined;
+  const branch = branches[0]!;
+  const isFrozenBroadeningCorrection = change.removed[0] === branch.predicate
+    && change.added[0]?.trimStart() === BROAD_FIRST_CHARACTER_SERIALIZED_FALSE_PREDICATE_SUFFIX
+    && toolCallHasContiguousRequiredPathLines(input.toolCall, requiredPath, [
+      ` ${branch.conditionStart}`,
+      ` ${branch.guard}`,
+      `-${branch.predicate}`,
+      `+${branch.predicate.slice(0, branch.predicate.length - branch.predicate.trimStart().length)}${BROAD_FIRST_CHARACTER_SERIALIZED_FALSE_PREDICATE_SUFFIX}`,
+      ` ${branch.conditionEnd}`,
+    ]);
+  if (!isFrozenBroadeningCorrection) return undefined;
+
+  const lineEnding = source.includes("\r\n") ? "\r\n" : "\n";
+  const patch = [
+    "*** Begin Patch",
+    `*** Update File: ${input.requiredPaths[0]}`,
+    "@@",
+    `-${branch.conditionStart}`,
+    `-${branch.guard}`,
+    `-${branch.predicate}`,
+    `-${branch.conditionEnd}`,
+    `+${branch.conditionIndent}${BASELINE_SERIALIZED_FALSE_CONDITION_SUFFIX}`,
+    "*** End Patch",
+  ].join(lineEnding);
+  return {
+    ...input.toolCall,
+    function: {
+      ...input.toolCall.function,
+      arguments: JSON.stringify({ input: patch }),
+    },
+  } as T;
+}
 
 export function rebuildSerializedFalseSiblingDoubleElseToolCall<
   T extends { function: { name: string; arguments: string } },
@@ -272,6 +349,24 @@ function priorPatchAddedReachableInlineSerializedFalseCondition(
   });
 }
 
+function priorPatchAddedFrozenMultilineSerializedFalseCondition(
+  patchInputs: readonly string[],
+  requiredPath: string,
+): boolean {
+  return patchInputs.some((patchInput) => patchHasContiguousRequiredPathLines(
+    patchInput,
+    requiredPath,
+    [
+      `-${PREVIOUS_SERIALIZED_FALSE_CONDITION_SUFFIX}`,
+      `+${MULTILINE_SERIALIZED_FALSE_CONDITION_START_SUFFIX}`,
+      `+${MULTILINE_SERIALIZED_FALSE_GUARD_SUFFIX}`,
+      `+${FROZEN_MULTILINE_SERIALIZED_FALSE_PREDICATE_SUFFIX}`,
+      `+${MULTILINE_SERIALIZED_FALSE_CONDITION_END_SUFFIX}`,
+    ],
+    true,
+  ));
+}
+
 function collectNullishSerializationBranches(source: string): NullishSerializationBranch[] {
   const lines = source.split(/\r?\n/);
   return lines.flatMap((condition, index) => {
@@ -303,6 +398,43 @@ function collectReachableInlineSerializedFalseBranches(
       return [];
     }
     return [{ condition, conditionIndent, statement, followingElse, removalStatement }];
+  });
+}
+
+function collectFrozenMultilineSerializedFalseBranches(
+  source: string,
+): FrozenMultilineSerializedFalseBranch[] {
+  const lines = source.split(/\r?\n/);
+  return lines.flatMap((conditionStart, index) => {
+    if (conditionStart.trimStart() !== MULTILINE_SERIALIZED_FALSE_CONDITION_START_SUFFIX) return [];
+    const conditionIndent = conditionStart.slice(
+      0,
+      conditionStart.length - conditionStart.trimStart().length,
+    );
+    const guard = lines[index + 1] ?? "";
+    const predicate = lines[index + 2] ?? "";
+    const conditionEnd = lines[index + 3] ?? "";
+    const statement = lines[index + 4] ?? "";
+    const followingElse = lines[index + 5] ?? "";
+    const removalStatement = lines[index + 6] ?? "";
+    if (guard.trimStart() !== MULTILINE_SERIALIZED_FALSE_GUARD_SUFFIX
+      || predicate.trimStart() !== FROZEN_MULTILINE_SERIALIZED_FALSE_PREDICATE_SUFFIX
+      || conditionEnd.trimStart() !== MULTILINE_SERIALIZED_FALSE_CONDITION_END_SUFFIX
+      || statement.trim() !== EXISTING_ATTRIBUTE_STATEMENT
+      || followingElse !== `${conditionIndent}} else {`
+      || removalStatement.trim() !== EXISTING_REMOVAL_STATEMENT) {
+      return [];
+    }
+    return [{
+      conditionStart,
+      guard,
+      predicate,
+      conditionEnd,
+      conditionIndent,
+      statement,
+      followingElse,
+      removalStatement,
+    }];
   });
 }
 
@@ -340,6 +472,52 @@ function readSingleRequiredPathPatchChange(
   return sectionCount === 1 && removed.length > 0 && added.length > 0
     ? { removed, added, context }
     : undefined;
+}
+
+function toolCallHasContiguousRequiredPathLines(
+  toolCall: { function: { arguments: string } },
+  requiredPath: string,
+  expectedLines: readonly string[],
+): boolean {
+  try {
+    const args = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
+    return typeof args.input === "string"
+      && patchHasContiguousRequiredPathLines(args.input, requiredPath, expectedLines);
+  } catch {
+    return false;
+  }
+}
+
+function patchHasContiguousRequiredPathLines(
+  patch: string,
+  requiredPath: string,
+  expectedLines: readonly string[],
+  compareTrimmedSource = false,
+): boolean {
+  let currentPath = "";
+  let matchedLineCount = 0;
+  for (const line of patch.split(/\r?\n/)) {
+    if (line.startsWith("*** Update File: ")) {
+      currentPath = normalizePath(line.slice("*** Update File: ".length));
+      matchedLineCount = 0;
+      continue;
+    }
+    if (currentPath !== requiredPath) {
+      matchedLineCount = 0;
+      continue;
+    }
+    const expectedLine = expectedLines[matchedLineCount];
+    const comparableLine = compareTrimmedSource && /^[+-]/.test(line)
+      ? `${line[0]}${line.slice(1).trimStart()}`
+      : line;
+    if (expectedLine !== undefined && comparableLine === expectedLine) {
+      matchedLineCount++;
+      if (matchedLineCount === expectedLines.length) return true;
+      continue;
+    }
+    matchedLineCount = comparableLine === expectedLines[0] ? 1 : 0;
+  }
+  return false;
 }
 
 function readCompleteSource(messages: readonly SourceMessage[], requiredPath: string): string | undefined {

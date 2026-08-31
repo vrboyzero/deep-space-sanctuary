@@ -814,6 +814,8 @@ describe("coding agent benchmark v3 fixture providers", () => {
     expect(visibleTest).toContain("aria-hidden");
     expect(visibleTest).toContain("data-state");
     expect(visibleTest).toContain("title");
+    expect(visibleTest).toContain("align");
+    expect(visibleTest).toContain("draggable");
     expect(visibleTest).toContain("value: null");
     expect(visibleTest).toContain("value: undefined");
     await fs.writeFile(path.join(uiFixture.workspace, "src", "diff", "props.js"), propsSource, "utf-8");
@@ -856,6 +858,32 @@ describe("coding agent benchmark v3 fixture providers", () => {
     expect(equivalentUiEvaluation).toMatchObject({
       status: "passed",
       evaluation: { taskCompleted: true, testsPassed: true, patchAccepted: true },
+    });
+
+    const broadFirstCharacterSource = propsSource.replace(
+      "value != NULL && (value !== false || name[4] == '-')",
+      "value != NULL && (value !== false || name[0] == 'a' || name[0] == 'd')",
+    );
+    await fs.writeFile(
+      path.join(uiFixture.workspace, "src", "diff", "props.js"),
+      broadFirstCharacterSource,
+      "utf-8",
+    );
+    const broadFirstCharacterEvaluation = await uiProvider.evaluate({
+      task: uiFixture.task,
+      workspace: uiFixture.workspace,
+      runnerExitCode: 0,
+      result: { summary: "Preserved only the frozen aria and data attribute behavior." },
+    });
+    expect(broadFirstCharacterEvaluation).toMatchObject({
+      status: "failed",
+      failureCategory: "product_workflow",
+      evaluation: {
+        taskCompleted: false,
+        testsPassed: false,
+        patchAccepted: false,
+        regressionCount: 1,
+      },
     });
 
     const failedVisibleTestEvaluation = await uiProvider.evaluate({
