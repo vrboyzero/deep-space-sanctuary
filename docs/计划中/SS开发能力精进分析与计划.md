@@ -4570,6 +4570,42 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：本次 WSL2 已全绿，但计划的连续候选入口要求可信双平台代表；直接把历史 Windows 成功与当前 WSL2 成功拼接会掩盖中间 correction 代码变化，直接启动新付费 run 又可能重复已有证据。
 - **当前还缺的关键闭环**：Windows 通过 artifact 的精确 source identity、其与 `e1f8aaa` 的行为相关 diff、truth/evaluator/fixture SHA 及最终 patch 语义一致性；在只读审计给出可追溯结论前，不宣称双平台全绿，不启动完整矩阵、连续候选、最终复算或 P2-C。
 
+#### P0 Web 双平台边界审计实现结论：Windows 冻结 patch 当前合同兼容但 identity 不等价（2026-08-31）
+
+##### 已完成内容
+
+1. **最近可信 Windows pass 与当前 identity 只读比对**：
+   - 最近可信 Windows artifact=`artifacts/p0-web-current-source-473271d-preact-windows-formal-r1`，source commit=`473271d047457f169f2338ae8640698090f54d5b`，run=`real-web-ui-regression-windows-a1-1788143619446`，report/patch SHA-256=`c4f7698e29176902462183f1dc66736764482b58cc1ba0912c5882910fe64a37` / `ffce0ae5a8b5330a603182a3e60011f8f29d538342b2a1ce05195ed26787ab48`；
+   - 从该 commit 到 `e1f8aaa1e9525b45fb3c981e8975a7ab09c8d5be` 有 `11` 个行为相关代码提交，涉及 `18` 个相关文件、约 `+4646/-29`，覆盖 Agent correction、truth/validator 与 Windows/WSL launcher；
+   - 旧/current truth SHA-256=`3b47532d1a7b99f0f91c5fda6ebc31b9e1d058871c4824c0ac13f905554956f3` / `5bec7096e20999f045951770ea77ae4a1d7f83e40e1dc0435ae61c265d198ca8`，case=`6/9`；仅 fixture owner 与 lockfile 相同，manifest、truth owner、双 launcher 与 Agent correction 均不等价。
+
+2. **旧 Windows patch 的零模型当前合同 replay**：
+   - 在 `tmp/p0-web-windows-equivalence-e1f8aaa-r1` 以当前 9-case truth/evaluator 生成 source-derived fixture，并只读应用冻结 Windows patch；replay script SHA-256=`860c486cb1fb1fef6518fcfe0acb9f404a87deeb108bd885d5eac9968e87eace`；
+   - evaluator tests/taskCompleted/patchAccepted=`true/true/true`，regression/diagnostic=`0/0`，changed path 仅 `src/diff/props.js`；Provider calls/cost=`0/$0`；
+   - replay 只证明旧 patch 对当前可观察合同仍然兼容，不能证明旧 Formal 在 `e1f8aaa` 的 source、truth、launcher 或 Agent 路径上实际执行，因此不得替代同 identity Windows Formal。
+
+3. **审计 receipt 与写后安全复核**：
+   - receipt=`tmp/p0-web-windows-equivalence-e1f8aaa-r1/audit.json`，decision=`insufficient_for_cross_identity_dual_platform_evidence`，SHA-256=`85cc4021dfee35e09e5922aa51bc7c3700edaff9f90b7ec98d4d5b2ce65ddeac`；
+   - 写后限定扫描 regular/excluded=`303/2`，symlink/unreadable/env/key signature=`0/0/0/0`；写 receipt 前精确 Provider key hit=`0`，replay/task process=`0`；
+   - 本环节未读取或回显凭证正文、未执行模型调用、未修改冻结 artifact、未重跑任何 Formal。
+
+4. **效果**：
+   - 明确区分“当前合同行为兼容”与“同 source/truth/launcher identity 的真实平台证据”，阻止把跨 identity replay 错报为双平台全绿；
+   - `e1f8aaa` 继续保持仅 WSL2 Formal 全绿边界，Windows 侧仍需全新的 native Gate 与唯一未执行 Formal；
+   - 技术债决策=`fix_now`：以 `e1f8aaa` 建立 Windows-native dry-run/prepare-only/Formal 证据链；历史 Windows 与全部既有 Formal 继续永久冻结。
+
+##### 验证结果
+
+- audit receipt、旧/current identity、truth/manifest/owner/launcher/lockfile SHA 与行为相关 diff 已交叉复核；
+- 当前 evaluator 零模型 replay=`true/true/true`、regression=`0`，但 formal/source/truth identity equivalence 均为 `false`；
+- 写后 bounded metadata scan 与任务进程归零通过，Provider 调用/新增费用=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：为 `e1f8aaa` 建立全新 Windows-native 零凭证 dry-run，完成 runtime env 回收、限定敏感扫描与端口/任务进程归零后先回写；随后再做独立 prepare-only。
+- **为什么先做它**：历史 patch replay 已能证明合同兼容，却不能证明当前 Agent correction 与 launcher 在 Windows 真实路径可达；零凭证 dry-run 是最低成本且失败关闭的第一道 native Gate。
+- **当前还缺的关键闭环**：同 identity Windows-native dry-run、prepare-only 与唯一 Formal；只有各 Gate 逐项全绿、完整预留后 Stage 0D=`49.93681787 RMB < 80 RMB` 时才允许执行该 identity 尚未运行的一次 Windows Formal，之后才可宣称双平台代表并进入连续候选/P2-C。
+
 ## 实施计划进度表
 
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
@@ -4579,7 +4615,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
 | P0：Benchmark truth set / evaluator 对齐 | P0 | **`ar*` 反例 zero-cost 对齐已完成** | truth set 现为 9 witness，新增 `archive=false → remove`，SHA=`5bec7096…`；冻结 narrow-prefix source replay 失败关闭，truth/fixture/evaluator=`22/22` | - | 保持 truth set、prompt、fixture、visible test 与 evaluator 单一版本绑定；任何 SHA/Schema/任务合同漂移均失败关闭 |
-| P0：Web mutation/correction 稳定化 | P0 | **`e1f8aaa` WSL2 evaluator 全绿并冻结，待 Windows source-equivalence 只读审计** | run=`1788184598620`；evaluator=`true/true/true`、regression=`0`；Tool=`7/7`，initial/correction=`fac8e7ee…/2092a56e…`；usage=`8/8`、cost=`$0.00424924`；cleanup/scan/端口/进程/env 全绿 | `Windows evidence 审计 + 双平台边界结论，约 0.05-0.1 人日` | 先只读核对最近可信 Windows pass 与 `e1f8aaa` 的 correction/truth/evaluator/fixture/launcher/lockfile 等价性并回写；证据不足则保持仅 WSL2 结论，禁止重跑任何 Formal或直接启动矩阵，双平台闭合后才进入连续候选/P2-C |
+| P0：Web mutation/correction 稳定化 | P0 | **`e1f8aaa` WSL2 全绿；历史 Windows 仅合同兼容、identity 不等价** | WSL2 run=`1788184598620` evaluator=`true/true/true`；Windows `473271d` patch 以当前 9-case evaluator replay=`true/true/true`，但 source/truth/formal equivalence=`false/false/false`；audit SHA=`85cc4021…` | `Windows-native dry-run + prepare-only + 至多 1 次 Formal，约 0.15-0.25 人日` | 为 `e1f8aaa` 建立全新 Windows-native Gate；每环节回写，且仅在费用/identity/snapshot/敏感值/资源 Gate 全绿后执行其唯一 Windows Formal；历史 Formal 禁止重跑，双平台闭合后才进入连续候选/P2-C |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |
