@@ -126,6 +126,7 @@ import {
   ReActRunBudgetTracker,
   type ReActRunAbortController,
 } from "./react-run-budget.js";
+import { rebuildSerializedFalseSemanticNarrowingToolCall } from "./react-workspace-mutation-serialized-false-correction.js";
 import {
   buildReactFinalizationRequest,
   REACT_FINALIZATION_INPUT_SAFETY_FACTOR,
@@ -4552,10 +4553,30 @@ export class ToolEnabledAgent implements BelldandyAgent {
               requiredPaths: workspaceMutationCallRequiredPaths,
             })
             : undefined;
+          const rebuiltSerializedFalseToolCall = workspaceMutationObjectiveInputCorrectionCall
+            ? rebuildSerializedFalseSemanticNarrowingToolCall({
+              toolCall: constrainedMutationToolCall,
+              messages: mutationRecoverySourceMessages,
+              taskText: input.text,
+              priorSuccessfulPatchInputs: successfulWorkspaceMutationPatchInputs,
+              requiredPaths: workspaceMutationCallRequiredPaths,
+            })
+            : undefined;
           const validatedMutationToolCall = rebuiltClosingDelimiterToolCall
+            ?? rebuiltSerializedFalseToolCall
             ?? constrainedMutationToolCall;
+          const semanticValidationToolCall = rebuiltSerializedFalseToolCall
+            ? validatedMutationToolCall
+            : constrainedMutationToolCall;
           if (rebuiltClosingDelimiterToolCall) {
             logWarn("[workspace-mutation] rebuilt trusted deletion-only closing-delimiter correction", {
+              requiredPathCount: workspaceMutationCallRequiredPaths.length,
+              conversationId: input.conversationId,
+              agentId: resolvedAgentId,
+            });
+          }
+          if (rebuiltSerializedFalseToolCall) {
+            logWarn("[workspace-mutation] rebuilt trusted serialized-false semantic-narrowing correction", {
               requiredPathCount: workspaceMutationCallRequiredPaths.length,
               conversationId: input.conversationId,
               agentId: resolvedAgentId,
@@ -4688,7 +4709,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             );
           const nonReachabilitySerializedFalseDataPredicateCorrection = workspaceMutationObjectiveReviewCall
             && hasNonReachabilitySerializedFalseDataPredicateCorrectionHunks(
-              constrainedMutationToolCall,
+              semanticValidationToolCall,
               mutationRecoverySourceMessages,
               workspaceMutationCallRequiredPaths,
               successfulWorkspaceMutationPatchInputs,
@@ -4696,7 +4717,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             );
           const nonReachabilitySerializedFalseParentGuardCorrection = workspaceMutationObjectiveReviewCall
             && hasNonReachabilitySerializedFalseParentGuardCorrectionHunks(
-              constrainedMutationToolCall,
+              semanticValidationToolCall,
               mutationRecoverySourceMessages,
               workspaceMutationCallRequiredPaths,
               successfulWorkspaceMutationPatchInputs,
@@ -4704,7 +4725,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             );
           const nonDataCoverageSerializedFalseSiblingCorrection = workspaceMutationObjectiveReviewCall
             && hasNonDataCoverageSerializedFalseSiblingCorrectionHunks(
-              constrainedMutationToolCall,
+              semanticValidationToolCall,
               mutationRecoverySourceMessages,
               workspaceMutationCallRequiredPaths,
               successfulWorkspaceMutationPatchInputs,
@@ -4727,12 +4748,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
           if (workspaceMutationObjectiveReviewCall
             && ((hasDisjointSmallestChangeCorrectionHunks(
-                constrainedMutationToolCall,
+                semanticValidationToolCall,
                 successfulWorkspaceMutationPatchInputs,
                 input.text,
               ) && !repeatedCurrentSourceParentGuard)
               || hasExpandedSmallestChangeCorrectionHunks(
-                constrainedMutationToolCall,
+                semanticValidationToolCall,
                 successfulWorkspaceMutationPatchInputs,
                 input.text,
               )

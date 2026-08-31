@@ -3642,6 +3642,152 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：当前 Green 发生在开发 worktree；只有 committed clean identity 的真实 Windows Gateway→WSL runner dry-run 才能证明 endpoint、token、workspace、snapshot 与 cleanup 在完整进程边界上共同成立，并阻止再次用付费 Formal 探索本地路由问题。
 - **当前还缺的关键闭环**：新 identity 的 clean Gate、WSL dry-run 必须真实穿透 Gateway 且仅因无凭证停止、Formal prepare-only 全绿；之后才可按完整 `$0.10` 预算评估一次新的 WSL2 Formal。双平台全绿前继续禁止完整矩阵、连续候选、最终复算和 P2-C。
 
+#### P0 Web Gate 实现结论：`0c24b6c0` WSL2 clean 与新 endpoint 零凭证穿透（2026-08-31）
+
+##### 已完成内容
+
+1. **`0c24b6c0` ext4 committed clean 工程 Gate**：
+   - harness=`/home/vrboyzero/ss-p0-web-wsl-endpoint-cfb933a-clean` 已前进并精确绑定 `0c24b6c07eb2d6217884fb67219cf7d76df2425e`，harness 与 frozen Preact source 均保持 clean；
+   - frozen offline install=`494 resolved / 493 reused / 0 downloaded / 494 added`；完整 workspace build、`verify:coding-benchmark`、`verify:coding-ci` 与 launcher/contract 定向测试=`51/51` 全部通过；
+   - Agent 单 worker 串行全包=`720 passed / 1 skipped`；本环节未调用 Provider、费用=`$0`。
+
+2. **WSL2 新 endpoint 零凭证 dry-run**：
+   - artifact=`artifacts/p0-web-wsl-endpoint-0c24b6c-dry-run-r1`，run=`real-web-ui-regression-wsl2-linux-a1-1788147536327`，report SHA-256=`0971f98bb78c088e2117c8c23bbbdcdb15dc28fc9916a98f11a44b461eda78a`；
+   - source/harness 均为 clean exact `0c24b6c0`，contract/snapshot preflight=`passed/passed`，Gateway endpoint=`172.27.128.1:28965`，port/auth ready=`12,586/12,595 ms`，Gateway stderr=`0 bytes`；
+   - diagnostics 为 `API Key or configuration missing.`，不再出现 `ECONNREFUSED`；这证明 WSL runner 已真实穿透 Windows Gateway，并只因零凭证按预期停止；
+   - status/failure=`failed/product_workflow` 是零凭证预期结果，events/trace/patch=`0/0/0`、usage=`not_reached`，未调用 Provider、未产生费用。
+
+3. **env、安全与资源收尾**：
+   - runtime `.env/.env.local` 已逐个通过绝对路径 containment、常规文件、非 reparse point、长度与 SHA-256 校验后送入 Windows 回收站，removed/remaining=`2/0`；cleanup log SHA-256=`c19e43294647c17ed122125fb7ff91dc1c10e923c74d98f058c9cd446b2ec66e`；
+   - 限定五根扫描只覆盖 ext4 harness Git tracked files、本轮 artifact/input/fixture/runtime，并排除 `.git/node_modules/dist`；regular/excluded=`3,285/2`，symlink/unreadable/env/Provider key/repository input leakage=`0/0/0/0/0`；scan SHA-256=`c2ef6eb301cd5694edfc78faf5d75acf6e2634673965ada28419ee4899c14f50`；
+   - Gateway 端口 `28965` 与本任务进程残留均为 `0`；仓库根 `.env/.env.local` 未进入清理目标。
+
+4. **效果**：
+   - `c17d806` Formal 暴露的 WSL2 loopback 路由缺口已在新的 committed clean identity 上通过真实跨宿主 dry-run 闭合；
+   - Gateway bind 仍限于 Windows loopback 或本机 WSL 私有 adapter，没有开放 WLAN/LAN，也没有放宽模型、retry、turn/token、费用、truth set 或 evaluator 合同；
+   - clean、合同、Agent、snapshot、跨宿主 endpoint、token 传递、env 回收与敏感扫描均已闭合，当前只开放零 Provider 的 Formal prepare-only。
+
+##### 验证结果
+
+- TypeScript workspace 编译无错误；Agent=`720 passed / 1 skipped`，launcher/contract=`51/51`，benchmark/CI verifier 全绿；
+- WSL2 dry-run 双 preflight 通过，diagnostics 仅为缺失 Provider 配置，不含 `ECONNREFUSED`，证明 Windows Gateway→WSL runner 真实连通；
+- runtime env 回收、限定敏感扫描、端口与任务进程收敛全部通过，本轮 Provider 调用/新增费用=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：对 `0c24b6c0` 执行不启动 Gateway、runner 或 Provider 的 WSL2 Formal prepare-only，重新核验 exact identity、空目标、snapshot、端口/进程、凭证隔离以及 `deepseek-v4-flash`、retry=`0`、`12 turns / 24,000 tokens / $0.10` 与总费用窗口；全部通过后才执行该 identity 唯一一次 WSL2 Formal。
+- **为什么先做它**：跨宿主连通已由零凭证路径证明，但付费前仍必须独立确认调用参数、凭证边界、费用守卫和无残留状态，避免将本地装配错误带入不可重跑的 Formal。
+- **当前还缺的关键闭环**：Formal prepare-only 全绿，以及唯一 WSL2 Formal 的合法 `run.completed`、tests/taskCompleted/patchAccepted=`true/true/true`、regression=`0`、usage/cost completeness、snapshot、安全与资源收尾；闭合前不启动完整矩阵、连续候选、最终复算或 P2-C。
+
+#### P0 Web Gate 实现结论：`0c24b6c0` WSL2 Formal prepare-only（2026-08-31）
+
+##### 已完成内容
+
+1. **Formal input 与 snapshot 绑定**：
+   - Formal repository input SHA-256=`a6eea60131a8c016aa0a1449d7fecb666d8dbc378fdd256fe75ab8d86208223c`，唯一绑定本轮有效 dry-run receipt；receipt SHA-256=`25ddb7d6c090fd0ea2ece3d6cbd4866b30af30943d07d773b907f26a417a289d`；
+   - ext4 harness/source=`0c24b6c07eb2d6217884fb67219cf7d76df2425e` 且 clean，Preact=`6bb827251ac7111234b293cac013a0a67c2ca8b2` 且 clean；
+   - 在目标 WSL2 发行版内调用仓库同一 snapshot preflight owner，recorded/evaluated=`passed/passed`，manifest/source/license/cache/network 五项全部通过。
+
+2. **调用、凭证与费用边界**：
+   - model=`deepseek-v4-flash`、Provider retry=`0`、`12 turns / 24,000 tokens / $0.10`，高峰价 cache-read/input/output=`$0.0125/$0.375/$1.125 per 1M tokens`；
+   - Provider key 只进入 Windows Gateway child env，不进入 Gateway/WSL 参数或 WSL env；临时 auth token 不进入参数，只通过 child env 与 `WSLENV` 转交；
+   - 费用窗口=`$3.39700988 -> $3.49700988`，Stage 0D 当前=`48.80082179 RMB`，完整预留后=`49.60082179 RMB < 80 RMB`。
+
+3. **空目标与零调用确认**：
+   - endpoint=`172.27.128.1:28975`，Formal artifact/fixture/runtime 均不存在，端口关闭；Gateway/benchmark spawned=`false/false`；
+   - r2 prepare-only receipt SHA-256=`ab8d1d9d89e43987fec7daeb243a183dc37a569d7f2ce43dc07429b6048b868e`；
+   - 前两次本地 prepare 尝试分别因 manifest 预算字段读取错误、Windows UNC cache identity 与 Git 中文路径转义在启动前失败，均未启动 Gateway/runner/Provider、未创建 Formal 目标、费用=`$0`；r2 改由公共 budget resolver、目标 WSL preflight owner 与 UTF-8 Git path 后通过。
+
+4. **效果**：
+   - Formal 所需 source、snapshot、endpoint、模型、重试、预算、凭证、token、费用和空目标合同均已在零 Provider 条件下独立闭合；
+   - 当前只开放 `0c24b6c0` 的唯一一次 WSL2 Formal；无论结果如何均永久冻结，不重跑该 identity。
+
+##### 验证结果
+
+- prepare-only snapshot 五项、identity、child boundary、空目标、端口和费用守卫全部通过；
+- Gateway/runner/Provider 调用=`0/0/0`，新增费用=`$0`；
+- Formal artifact/fixture/runtime 仍不存在，未修改或重跑历史 Formal。
+
+##### 后续计划
+
+- **下一步准备做什么**：最后复核端口与仅能绑定本任务的 `node/rg/shell` 进程后，执行 `0c24b6c0` 唯一 WSL2 Formal；随后无论成败永久冻结并完成 evaluator、usage/cost、post-run snapshot、env 回收、限定敏感扫描及端口/进程收尾。
+- **为什么先做它**：所有零模型前置已闭合，只有一次真实 Provider 路径能验证 Windows 已通过的 mutation/correction 行为在 WSL2 LF/ext4 环境中是否同样成立。
+- **当前还缺的关键闭环**：唯一 Formal 的合法终态、tests/taskCompleted/patchAccepted、regression、usage/cost、安全与资源证据；成功后才允许评估完整矩阵/连续候选，失败则冻结并回到零模型诊断。
+
+#### P0 Web Formal 实现结论：`0c24b6c0` 唯一 WSL2 Formal 冻结失败与安全费用收尾（2026-08-31）
+
+##### 已完成内容
+
+1. **唯一 WSL2 Formal 执行并永久冻结**：
+   - artifact=`artifacts/p0-web-wsl-endpoint-0c24b6c-formal-r1`，run=`real-web-ui-regression-wsl2-linux-a1-1788148591589`，report SHA-256=`0e74a2015c3736a37a81c0b194c36157a43545491b3021bc6059ca319e654337`；
+   - status/failure=`failed/product_workflow`、CLI exit=`4`，唯一且末尾终态=`run.failed`；tests/patchAccepted/taskCompleted=`true/true/false`、regression/manual intervention=`0/0`，changed path 仅 `src/diff/props.js`；
+   - 初始 patch 通过 visible test 与 machine evaluator，但条件 `value === false && (name[0] == 'a' || name[0] == 'd') && name.indexOf('-') > 0` 会把普通 `a-*` / `d-*` 属性也序列化为 `false`，post-write review 正确要求缩窄到 `aria-*` / `data-*` 语义；
+   - 唯一 input-correction 的 removal context 被截断在 `&& `，`apply_patch` 以 `input_error` 失败并耗尽一次 correction 边界；`result.json=null`、缺少最终 summary 与 taskCompleted=`false` 均是该失败的后续症状，不是 evaluator 错误。
+
+2. **Provider usage 与费用闭环**：
+   - model/provider calls=`6/6`，input/output=`14,515/924`，usage=`provider_reported/complete`，实际新增费用=`$0.00360583`；
+   - Stage 0D 累计 observed cost=`$3.40061571`，按本轮汇率口径为 `48.82966843 RMB`；再完整预留一次 `$0.10` 后=`49.62966843 RMB < 80 RMB`；
+   - 未提高 Provider retry、turn/token、timeout 或单 run 费用上限，未切换模型；该 `0c24b6c0` Formal 永久冻结，禁止重跑。
+
+3. **env、敏感值、snapshot 与资源收尾**：
+   - runtime `.env/.env.local` 已逐个校验 containment、常规文件、非 reparse point、长度和 SHA-256 后送入 Windows 回收站，removed/remaining=`2/0`；cleanup log SHA-256=`f34ddf26ab4f6efd7968cb26d265624061f807c3a1a68a5f25cc28ab6d42cebc`；
+   - 限定五根扫描只覆盖 ext4 harness tracked files、本轮 artifact/input/fixture/runtime，并排除 `.git/node_modules/dist`；regular/excluded=`3,602/2`，symlink/unreadable/env/Provider key/repository input leakage=`0/0/0/0/0`；scan SHA-256=`0310419fcb168c09afe7f2eafa36d9c8078bea214350008c16ab5e0140887dd3`；
+   - post-run snapshot 的 manifest/source/license/cache/network 五项全部通过，SHA-256=`a698afea3502676f2650c0291e921ee21b3a22373fb6f18cb01bd50274ff41ee`；harness 与 Preact snapshot clean；
+   - Gateway port/auth ready=`12,219/12,228 ms`、stderr=`0 bytes`，端口、Windows/WSL 本任务进程和 runtime env 残留=`0/0/0/0`；仓库根 `.env/.env.local` 未进入清理目标。
+
+4. **效果**：
+   - WSL2 endpoint、snapshot、模型路由、Provider usage/cost、安全与资源边界均已真实闭合，失败范围收敛到 post-write input-correction 的截断 patch 上下文；
+   - 该结果保留 tests 与 patchAccepted 的正面证据，同时不把缺失终态 summary 误报为任务成功；
+   - 双平台 Web mutation/correction 仍未全绿，不启动完整矩阵、连续候选、最终复算或 P2-C。
+
+##### 验证结果
+
+- Formal report、events、status、patch 与 diagnostics 交叉复核一致，只有一个末尾 `run.failed`，无 `run.completed`；
+- visible test 与 machine evaluator 通过，patch accepted、regression=`0`，但 correction `apply_patch` 明确以 `input_error` 失败，任务未完成；
+- usage/cost completeness、post-run snapshot、env 回收、限定敏感扫描、端口和任务进程收敛全部通过。
+
+##### 后续计划
+
+- **下一步准备做什么**：在零模型条件下把该 Formal 的 truncated correction 事件固化为纯函数和 ToolAgent 调用链回归，确定性地从最新完整 current source 重建最小语义缩窄 patch；随后提交形成新 identity 并重新执行完整 clean Gate、零凭证 dry-run 与 Formal prepare-only。
+- **为什么先做它**：跨宿主基础设施已闭合，继续付费无法修复已知的本地 deterministic input shape；先在公共执行 seam 失败关闭陈旧/截断证据，能避免再次消耗唯一 Formal 探索同类输入错误。
+- **当前还缺的关键闭环**：新 identity 必须通过 build、Agent 全包、benchmark/CI 合同、WSL2 零凭证穿透、安全资源收尾与 prepare-only；这些 Gate 全绿后才可评估该新 identity 的唯一 WSL2 Formal。
+
+#### P0 Web Fix 实现结论：serialized-false semantic-narrowing correction 确定性重建（2026-08-31）
+
+##### 已完成内容
+
+1. **`react-workspace-mutation-serialized-false-correction.ts` 新建**：
+   - 仅在唯一 post-write input-correction、tool=`apply_patch`、单 required path、任务明确 smallest change 与 `aria-*` / `data-*` false 语义时进入候选重建；
+   - 要求 prior successful patch 曾在同一路径加入 Formal 中精确的 broad condition，且最新同路径 source evidence 必须完整、未截断并只出现一个精确候选；更新的截断或非法 evidence 会失败关闭，不回退陈旧完整内容；
+   - 从 current source 确定性生成只替换该条件的 patch：`value === false && name[4] == '-'`，不读取 workspace、不执行 Tool，也不增加 Provider 调用或 retry。
+
+2. **`tool-agent.ts` 接入**：
+   - 在既有 objective input-correction seam 调用重建 helper，重建结果继续经过 required-path、patch 原子性、冗余/反转/扩张、serialized-false 可达性与最小变更 validator；
+   - 不放宽一次 correction 限制、allowed Tool、required changed paths、run budget、模型、Provider retry、truth set 或 evaluator；
+   - 原始 Provider correction 不满足全部可信条件时保持原有失败关闭行为。
+
+3. **纯函数与 ToolAgent 回归测试新增**：
+   - 纯函数覆盖 Formal 截断输入的精确重建，以及 unrelated task、多 required path、截断/陈旧 source、不同 predicate、未绑定 prior mutation 的负例；
+   - ToolAgent 调用链重放 initial broad patch→完整复读→truncated input-correction→确定性重建→再次复读→合法 final 的完整六次模型边界；
+   - 断言执行的第二个 patch 是 source-derived 单行替换，原始 malformed correction 从未进入 Tool executor。
+
+4. **效果**：
+   - 同一失败形状不再因 removal context 截断而消耗唯一 correction 后直接终止；
+   - `aria-*` 与 `data-*` 的 false 保留，普通 false 仍移除，null/undefined 行为不扩张；
+   - 修复限定在已冻结 Formal 的精确任务、历史 mutation 和最新 source identity 交集内，其他任务与 correction 保持原行为。
+
+##### 验证结果
+
+- TypeScript workspace 编译无错误；Agent 全包=`728 passed / 1 skipped`，benchmark/CI verifier 通过；
+- serialized-false 新增/定向测试=`8/8`，workspace-mutation 回归切片=`181/181`；
+- `corepack pnpm build`、`verify:coding-benchmark`、`verify:coding-ci` 与 `git diff --check` 通过；全部为零 Provider 验证，新增费用=`$0`，临时 `[DEBUG-ss-formal-correction]` instrumentation 匹配数=`0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：提交源码、测试、project map 与本实现结论形成新 committed identity；让既有 ext4 clean harness 前进到该 identity，执行 frozen offline install、完整 build、Agent 全包、benchmark/CI 与 launcher 合同 Gate，再运行新 artifact/runtime 的零凭证 WSL2 dry-run、env 安全回收、限定扫描和 Formal prepare-only。
+- **为什么先做它**：当前 Green 仍来自开发 worktree；只有新 commit 的 clean ext4/Linux 进程边界能证明确定性重建、完整复读、跨宿主 Gateway 与 snapshot/cleanup 合同可以共同成立。
+- **当前还缺的关键闭环**：新 identity 的全部零模型 Gate 与 prepare-only；全部通过后才评估其唯一 WSL2 Formal，禁止重跑 `0c24b6c0` 或任何历史 Formal。
+
 ## 实施计划进度表
 
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
@@ -3651,7 +3797,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
 | P0：Benchmark truth set / evaluator 对齐 | P0 | **已完成 zero-cost 对齐** | `coding-agent-benchmark-web-ui-truth-set/v1`、6 个正负 witness、SHA/LF 绑定、v2 fixture/evaluator、实际 Red=`1`/Green=`0` replay；定向 `20/20`、benchmark/CI/build Gate 全绿 | - | 保持 truth set、prompt、fixture、visible test 与 evaluator 单一版本绑定；任何 SHA/Schema/任务合同漂移均失败关闭 |
-| P0：Web mutation/correction 稳定化 | P0 | **Windows Formal 已冻结全绿；`c17d806` WSL2 路由失败已冻结，新 endpoint 修复待 clean Gate** | WSL Formal=`ECONNREFUSED 127.0.0.1`、Provider=`0/$0`；default-route endpoint、受限 WSL adapter bind、WSL→Gateway 探针 TDD Green，build、Agent=`720 passed / 1 skipped`、合同=`51/51` | `新 identity clean/dry-run/prepare-only + 唯一 Formal，约 0.25-0.5 人日` | 先证明新 committed identity 的 WSL dry-run 真实穿透 Gateway；全绿后才评估一次新 Formal，双平台全绿前不启动完整矩阵、连续候选、最终复算或 P2-C |
+| P0：Web mutation/correction 稳定化 | P0 | **Windows Formal 已冻结全绿；`0c24b6c0` WSL2 product failure 已冻结；确定性 correction 修复待新 identity clean Gate** | `0c24b6c0` Formal tests/patchAccepted=`true/true`，因 truncated correction `input_error` 终止；修复后 Agent=`728 passed / 1 skipped`、mutation=`181/181`、build/benchmark/CI 全绿 | `新 identity clean/dry-run/prepare-only + 唯一 Formal，约 0.25-0.5 人日` | 先提交并证明 clean ext4、WSL dry-run 与 prepare-only 全绿；只开放新 identity 唯一 Formal，禁止重跑历史 Formal；双平台全绿前不启动完整矩阵、连续候选、最终复算或 P2-C |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |
