@@ -2,7 +2,7 @@
 
 > 当前版本：精简维护版
 >
-> 评估日期：2026-08-17；最新进度复核：2026-08-31
+> 评估日期：2026-08-17；最新进度复核：2026-09-01
 >
 > 横向评估基线：`5b36691d9aba6d9286cf43e912d91b0170bbef0d`
 >
@@ -35,6 +35,7 @@
 | --- | ---: | --- |
 | SS 内部硬 Gate | **9.1/10**（原始加权 `9.065`） | corrected v2 `72/72`、12 类各 `6/6`、测试 `60/60`、patch `18/18`、regression=`0`、Windows/WSL2 各 `36/36` 及工程 Gate 通过；属于 cross-revision successor projection，不替代单一 HEAD 原生 aggregate |
 | 横向产品评分 | **9.1/10**（原始加权 `9.135`） | 当前源码已覆盖主要产品化工作流；真实任务完成率和 patch 接受率继续限制上限 |
+| P2-C candidate #1 | **未评分（`not_eligible`）** | `e1f8aaa` 双平台 Web 代表只能形成同 identity 的 `2/144` partial aggregate；完整候选尚未建立，且仓库尚无把 aggregate 映射为七维实得分与原始加权的权威 evaluator，禁止人工补分 |
 
 最近完整的纯 `deepseek-v4-flash` identity `edd1c8779d928879c1d3e0669f725c79fd0ebf97`，已完成单一 HEAD、Windows/WSL2 原生矩阵 `144/144`：
 
@@ -49,11 +50,11 @@
 
 矩阵分层为 A=`72/72`、B=`12/48`、C=`23/24`。`138/138` 个触达 Provider 的 run 均声明并解析为 flash。离线重算已把原始 `37` 个失败稳定分类为 required-mutation recovery `30`、length `5`、schema `2`、unknown `0`。
 
-P1-A1/A2、P1-B、P1-C、P2-A、P2-B 均已有源码和测试证据。当前真正未闭合的是：
+P1-A1/A2、P1-B、P1-C、P2-A、P2-B 均已有源码和测试证据；P0 Web truth set/evaluator 已对齐，`e1f8aaa` 也已形成同 identity 双平台外部代表。当前真正未闭合的是：
 
-- Web mutation/correction 在真实模型调用中的稳定性；
-- benchmark truth set、visible test 与 evaluator 对同一任务行为的定义是否一致；
-- 多个失败形状的可重复改善，而非单个代表任务成功；
+- 其余 B 层失败形状的可重复改善，而非把 Web 单任务成功外推到完整分母；
+- C 层 `system.parallel-read-isolation` 的历史 `5/6` 缺口；
+- P2-C candidate qualification/七维评分的权威机器 owner；
 - P2-C 两个连续冻结候选及原始加权 `>=9.500` 的最终证据。
 
 ### 1.3 9.5 目标
@@ -101,11 +102,11 @@ Git/交付    9.4
 1. 不继续扩功能面，优先提升复杂真实任务的编辑/测试稳定性。
 2. `2977780` required-mutation 双平台代表已关闭，但不从历史分母移除失败，也不外推为 `37` 项整体改善。
 3. 所有已执行 formal 均永久冻结；不重跑，也不为失败 identity 启动 WSL2。当前完整重点清单与禁止范围见第 6.4 节。
-4. `4a7516d` Windows formal 已永久冻结为 `failed/product_workflow`，evaluator=`false/false/false`，不启动 WSL2；其 artifact、usage/cost、snapshot、env、敏感值与资源收尾均已闭合。
+4. `e1f8aaa` Windows/WSL2 Web formal 已永久冻结为 evaluator=`true/true/true`、regression=`0` 的同 identity 双平台代表；它只关闭 P0 Web 入口，不自动外推完整矩阵。
 5. 正式批准 Go 受控 canary 满足 9.5 第二后端 Gate；Go production rollout 独立延期，不改变目标向量、当前评分或历史矩阵。
-6. `4a7516d` 已证明 precedence grouping correction 能被实际执行，但模型生成的新 ternary 又将 outer predicate 收窄为首字符 `a`，使 `data-*` serialized-false 分支不可达；冻结 visible test=`5/6`，唯一失败为 `data-false`。
-7. P0 Web 外部 correction 未闭合前，不启动 WSL2、完整矩阵、candidate v4 或 P2-C。
-8. Go canary 已正式满足第二后端 Gate，但它不是当前 9.5 阻塞；`4a7516d` 的 ternary predicate、完整 current source 和第二次 correction 已在公共 Agent seam 完成零费用 Red/Green，下一步提交本轮 5 个文件形成新 clean identity。
+6. 两份 `e1f8aaa` report 的 canonical manifest、source/harness commit、lockfile 与 worktree content identity 一致；生产聚合器可将其合并为 `partial 2/144, missing=142`，物理 CRLF/LF 差异不构成 identity 漂移。
+7. P2-C candidate #1 当前为 `not_eligible/unscored`：没有完整 `144/144` 原生 aggregate，也没有权威七维 candidate evaluator；内部 `9.065` 与横向 `9.135` 均保持不变，不以人工分数、单任务或跨 revision projection 补齐。
+8. 恢复开发后先补 candidate qualification/score evaluator 的版本化输入输出、维度映射和失败关闭测试，再做 candidate runner 零模型 Gate；本轮复核回写后按用户要求暂停，不启动付费矩阵。
 
 ## 2. 范围、方法与完成边界
 
@@ -1045,10 +1046,10 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 ### 6.4 冻结与禁止范围
 
-- 所有已执行 formal 永久冻结。重点包括 `2977780` 双平台，以及 `d6d7367`、`d01030a`、`8cee589`、`09b5498`、`cb01ccd`、`abe40b1`、`dd6b85b`、`c124741`、`fe49d51`、`18feb22`、`1f06c48`、`ac21fd6`、`f2f7a15`、`3c9b86e`、`d9f021c`、`0213d01`、`ec3f72a`、`fcd7a32`、`82d25a7`、`50669cc`、`155ed5f`、`f92f880`、`4563426`、`69cff2e`、`2f2c05a`、`71b4a88`、`86f405f2`、`2b3638d`、`1466122`、`1bdb48e`、`71016f5`、`d0f53f1`、`6b9ac09`、`fc2d496`、`11a6edc`、`4a7516d` Windows；更早冻结 identity 清单见 `archive-04`。
+- 所有已执行 formal 永久冻结。重点包括 `2977780` 与 `e1f8aaa` 双平台，以及 `d6d7367`、`d01030a`、`8cee589`、`09b5498`、`cb01ccd`、`abe40b1`、`dd6b85b`、`c124741`、`fe49d51`、`18feb22`、`1f06c48`、`ac21fd6`、`f2f7a15`、`3c9b86e`、`d9f021c`、`0213d01`、`ec3f72a`、`fcd7a32`、`82d25a7`、`50669cc`、`155ed5f`、`f92f880`、`4563426`、`69cff2e`、`2f2c05a`、`71b4a88`、`86f405f2`、`2b3638d`、`1466122`、`1bdb48e`、`71016f5`、`d0f53f1`、`6b9ac09`、`fc2d496`、`11a6edc`、`4a7516d` Windows；更早冻结 identity 清单见 `archive-04`。
 - 不重跑上述 dry-run/formal，不为失败的 Web identity 启动 WSL2。
 - 不增加模型 turn/token、Provider retry 或单 run 费用；不使用调价前旧单价。
-- 未获得新证据前不启动完整矩阵或 candidate v4；前序 Gate 未通过前不启动 P2-C。
+- candidate qualification/七维评分 owner 与 runner 零模型 readiness 未闭合前不启动完整付费矩阵；不得用 `e1f8aaa` 的 `2/144` partial 替代候选。
 - 不 push、不公开发布、不执行生产操作。
 
 ## 7. 风险与技术债裁决
@@ -1084,6 +1085,7 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 | final review 与实际源码/测试不一致 | `fix_now` | `f2f7a15`、`3c9b86e` 与 `fcd7a32` 均曾在实际失败时声称完成；`f92f880` 则在两次 correction 输入失败后正确以 error 终止且 `result.json=null`。evaluator 持续正确失败关闭；当前本地源码 guard 仍待新 identity 外部复核 |
 | semantic-delta correction 外部有效性 | `fix_now` | 直接 objective correction 已外部执行，但没有收缩前一 mutation且未通过 evaluator；bounded input-correction 仍是本地闭合，整体结果未闭合 |
 | required-mutation 其余失败改善范围 | `split_task` | 按失败形状验证，不把 `2977780` 代表外推为全部改善 |
+| P2-C candidate qualification/七维评分 owner 缺失 | `fix_now` | `scorecard.json` 只冻结目标向量、矩阵与 Gate，aggregate 只负责 identity/coverage/artifact 重建；恢复后先新增版本化 qualification report/schema 与机器 evaluator，未完成前禁止付费候选矩阵和人工补分 |
 | 两个连续候选 9.5 证据 | `split_task` | 前序 Gate 关闭后独立进入 P2-C |
 | C# 生产接入、Go production rollout | `defer` | Go canary 已正式满足 9.5 第二后端 Gate；production 仍需真实需求、许可、安全分发、观察窗口和独立 Gate，且不阻断当前 9.5 |
 | verification 外键、人工 responder 和完整时间线 | `defer` | authoritative owner 出现前保持 `incomplete`，不猜测 |
@@ -1096,25 +1098,24 @@ node .\node_modules\vitest\vitest.mjs run <test-files> --reporter verbose
 
 ### 8.1 估算结论
 
-readiness 零模型诊断与 phase-aware structured-output 合同均已获得外部闭环；`71b4a88` 进一步证明 tool-only input-correction 与无工具 fail-closed 已在真实 Provider 路径生效，但初始字符位置谓词扩大了普通 false 行为，后续 correction 又只重复当前源码块。达到 9.5 仍按 **9-14 人日工程工作 + 两个连续候选的观察窗口** 管理；该估算保留新失败形状、下一 identity 外部复核和连续候选不确定性，不把局部安全关闭线性换算成分数。
+P0 Web truth/evaluator 与 correction 已在 `e1f8aaa` 同 identity 双平台外部闭合；当前剩余工作转为 candidate qualification owner、完整矩阵和两个连续候选。达到 9.5 按 **5-7.5 人日工程工作 + 两个连续候选的观察窗口** 管理；该估算不把 `2/144` 代表结果线性换算成分数，也不预设完整矩阵必然通过。
 
 该估算不是把分数从 9.1 线性“补 0.4”；主要工作是用真实矩阵证明编辑/测试稳定性提升，并完成两个连续候选。拆分如下：
 
 | 工作包 | 乐观工作量 | 完成条件 |
 | --- | ---: | --- |
-| structured/phase-aware/input-correction TDD 与本地 Gate | **已完成** | 直接 objective correction 已获外部执行证据；context-only retry、disjoint/expanded/exact-reversal guard 的 red/green、owner/Agent、build、benchmark/CI 合同全绿 |
-| Web semantic review/correction 外部闭环 | `2-4 人日` | phase-aware structured-output 已外部闭合，早期遮蔽 guard 所在 identity 已运行但目标分支未被触发；补齐 null-guard/correction 重建保护后，唯一新 identity formal 同时通过最小 patch、evaluator、终态、usage/cost、敏感值和零残留 |
-| 其余失败形状的代表性改善证据 | `1-2 人日` | 至少覆盖 length/schema 与 Web correction，不以单样本外推 B/C 层 |
-| 已知 Web 失败族复核与必要小修 | `2-2.5 人日` | false witness、最小 correction、final review 与 structured output 不再出现已冻结失败形状 |
+| P0 Web truth/correction 与双平台代表 | **已完成** | `e1f8aaa` Windows/WSL2 evaluator 全绿、usage/cost、安全与资源闭合；所有 Formal 永久冻结 |
+| candidate qualification/七维评分 owner | `0.5-1 人日` | 版本化 schema/report 明确七维映射、原始加权、A/B/C 与全部硬 Gate；缺字段、partial、identity 漂移和跨 revision 均失败关闭 |
+| candidate runner 零模型 readiness | `0.5-1 人日` | 单一 identity、四仓 snapshot、双平台 harness、Docker/OCI/Chrome、费用和断点续跑边界全部形成 receipt；不得重跑冻结 Formal |
 | 首个完整候选、归因和必要小修 | `2-3 人日` | 单一 HEAD 完整矩阵可复算，达到目标向量和全部硬 Gate |
 | 第二个连续候选与最终复核 | `2-2.5 人日` | 连续候选原始加权均 `>=9.500`，账单/资源/文档闭环 |
-| **剩余合计** | **约 `9-14 人日`** | 不含观察等待和后续新增失败族返工 |
+| **剩余合计** | **约 `5-7.5 人日`** | 不含观察等待、费用授权等待和候选失败后的新增返工 |
 
 ### 8.2 估算边界与关键不确定性
 
 - **不包含**：C# Spike/生产化、Go production rollout、公开发布、生产部署、依赖主版本升级和竞品付费同场测试。
 - **最大不确定性**：B=`12/48`、C=`23/24` 的真实改善幅度。单个 Web 或 required-mutation canary 成功不足以把横向编辑/测试分从 `8.8` 提升到目标 `9.6`。
-- **费用约束**：本次 formal 的 Stage 0D 最坏累计守卫为 `48.98015803 RMB`，实际 Provider cost=`$0.00285860`，仍低于 `50 RMB`；每个新 formal/候选前仍需重算守卫，可能触线时先暂停申请授权，不能用工程估算替代费用 Gate。
+- **费用约束**：累计 observed=`$3.44041929`，Stage 0D 当前=`49.14809707 RMB`；再完整预留单次 `$0.10` 后=`49.94809707 RMB < 80 RMB`。每个新调用前仍须重新计算，达到或可能突破 `80 RMB` 时暂停申请授权，不能用工程估算替代费用 Gate。
 - **日历时间**：观察窗口未固定为自然日，本估算只计算人工工程量；至少要完成两个连续冻结候选，实际历时取决于矩阵运行、Provider 可用性和外部账单核对。
 
 达到 9.5 的判定以证据为准：如果两个候选未达到目标向量，即使已投入上述人日，也不能宣称完成。
@@ -1158,21 +1159,20 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 ### 9.5 当前真正卡住的地方
 
 - 大部分基础能力已经有源码、测试和双平台证据，当前瓶颈不是继续增加功能，而是复杂编辑/测试任务的稳定完成率。
-- benchmark truth set 与 evaluator 尚未完全对齐：当前 fixture/visible test 主要覆盖 `aria-hidden=false` 正例，普通属性 `false` 负例、`data-*`、`null/missing` 等行为没有以同一版本化 truth set 完整表达；因此本地 Green 不能直接证明 evaluator 会接受。
-- `2977780` 已经证明一个 required-mutation 代表任务可以在 Windows/WSL2 双平台完成，但不能推断其余失败都已改善。
-- 最近一次产生产品工作流证据的 Web formal `fcd7a32` 中，构建、费用、敏感值和资源清理均正常；第二次修改也确实把 broad 分支收窄到 aria，但代码所在位置已经只会接收到 `false` 或空值，分支自身却仍要求“不等于 false”，所以目标行为永远走不到。最终说明错误地声称测试通过，检查程序正确拒绝。
-- 现有执行前保护已经能拦截完全绕开、扩大重写、精确反转、删除 prior 约束放宽行为，以及当前有证据的 false 正例不可达 correction；正确的显式 false 分支、aria 析取旁路、小范围收缩、多个既有小改动的联合修正和其他文件独立补漏仍放行。
-- `69cff2e` 与 `2f2c05a` 都只恢复原始 guard，因 exact reversal 被正确拒绝。`71b4a88` 已不再把无工具成功摘要误判为完成，也生成了不同 patch，但字符位置条件会同时放行 aria 和普通 false 属性；后续 correction 又没有形成真实代码变化，系统因此主动失败关闭。clean、零凭证、Provider usage、env/资源均正常，但不能替代 patch/evaluator 成功。当前第一阻塞是先把 truth set、visible test 和 evaluator 对齐，第二阻塞才是新 identity 上真实复杂任务稳定通过；闭合前不启动完整付费矩阵、candidate v4 或 P2-C，也不宣称达到 9.5。
+- P0 Web truth set、visible test 与 evaluator 已对齐；`e1f8aaa` 在 Windows/WSL2 同 identity 下均通过，但这只是一个 B 层任务各一次的代表证据。
+- 最近完整原生矩阵仍是 `edd1c87`：A=`72/72`，B=`12/48`，C=`23/24`。B 成功率、测试、patch 与 regression 均未达到硬 Gate，四个 required repository ecosystem 的成功率也都低于 `90%`；C 的历史缺口是 parallel-read `5/6`。
+- 两份 `e1f8aaa` 冻结报告可由生产聚合器合并，但结果仅为 `partial 2/144, missing=142`，报告明确不能用于 product comparison；它们不会覆盖历史失败，也不是 candidate #1 的完整分数。
+- 当前仓库只定义“9.5 要达到什么目标”，还没有把完整 aggregate 机器化换算为七维实得分、原始加权和最终 qualification verdict 的权威 owner。因此 candidate #1 必须保持 `not_eligible/unscored`，内部与横向评分仍为 `9.1`，不能人工补成 `9.5`。
 
 ### 9.6 费用与发布边界
 
-当前一般费用守卫约为 `34.16 RMB`，Stage 0D 最坏累计守卫约为 `48.24 RMB`；若未来再预留一次完整 formal 则约为 `49.04 RMB`，仍低于 `50 RMB` 授权上限但已经接近边界。每次新的付费 formal 或候选运行前都必须重新核算，达到或可能突破上限前停止；本轮已按用户要求暂停，已冻结的失败版本不会重跑，也不会提高模型预算或 retry。
+累计 observed=`$3.44041929`，Stage 0D 当前=`49.14809707 RMB`；若再完整预留一次 `$0.10` 调用则为 `49.94809707 RMB < 80 RMB`。每次新的付费 formal 或候选运行前都必须重新核算，达到或可能突破 `80 RMB` 前停止；本轮复核没有调用 Provider，文档回写后按用户要求暂停，已冻结版本不会重跑，也不会提高模型预算或 retry。
 
 需要调用模型时固定使用 `deepseek-v4-flash`；开发与测试中新生成的 `.env` / `.env.local` 已获持续清理授权，按 containment、文件属性、非 reparse point 与 SHA-256 校验后送入 Windows 回收站并记录 cleanup log，无需再次申请。Go canary 只表示“第二套独立代码理解能力已经受控验证”，不表示 Go 已进入生产默认路径。C# 生产接入、自动安装/restore、自动 merge/release/deploy、公开发布和生产环境操作均不属于当前 9.5 范围。
 
 ### 9.7 下一步
 
-`71b4a88` 的唯一 Windows formal 已执行、失败并永久冻结，不重跑也不启动对应 WSL2。用户恢复后先冻结旧证据并审计/版本化 truth set，补齐正反 witness、`data-*`、`null/missing` 行为，让本地测试与 evaluator 使用完全相同的任务文本；随后再做错误字符位置子集和 context-only correction 的 red/green。新 identity 的零模型 Gate 和唯一 Windows formal 都通过后，才观察真实复杂任务的连续成功，再进入完整矩阵和两个连续冻结候选。Go canary 继续满足第二后端 Gate，但不改变上述顺序；费用数字本轮不调整。
+本次 P2-C 复核与文档回写后按用户要求暂停。恢复后第一步不是启动付费矩阵，而是新增 candidate qualification/七维评分的版本化 schema、机器 evaluator 与 fail-closed 测试；随后建立 candidate runner 零模型 receipt，明确新 clean identity、冻结 Formal 的不重跑策略和完整 `144/144` 输入。只有 candidate #1 与 candidate #2 都形成完整原生 aggregate、七维不低于目标且原始加权 `>=9.500`，才可宣称达到 9.5。
 
 ## 10. 历史实施结论（非进度真源）
 
@@ -4725,6 +4725,49 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：P0 Web 双平台代表已闭合，下一阶段目标从“修复单一失败形状”切换为“证明连续候选原始加权 `>=9.500`”；必须先冻结评分输入和运行集合，避免把已通过的单任务证据直接外推或无边界重跑矩阵。
 - **当前还缺的关键闭环**：两个连续候选的同一评分合同、原始加权与各维/硬 Gate、完整必要平台证据及观察窗口；在 candidate readiness 明确前不启动新付费矩阵，不重跑任何冻结 Formal。
 
+#### P2-C readiness 实现结论：candidate #1 复核评分与失败关闭（2026-09-01）
+
+##### 已完成内容
+
+1. **`scorecard.json`、v3 contract 与 aggregate owner 只读复核**：
+   - 权威目标固定为七维 `9.5 / 9.6 / 9.4 / 9.5 / 9.6 / 9.5 / 9.4`、权重 `15/20/15/15/15/10/10`，目标向量原始加权=`9.510`、最低门槛=`9.500`；
+   - 每个候选必须是单一 source/harness identity 的 `24 tasks × 2 platforms × 3 attempts = 144` 原生 aggregate，A/B/C=`72/48/24`，并独立满足 layer Gate 与不可补偿 hard Gate；
+   - `scripts/coding-agent-benchmark-v3-contract.mjs` 只校验目标/阈值，`scripts/aggregate-coding-agent-benchmark.mjs` 只校验 identity、coverage、report/artifact retention 与离线重建；仓库不存在从 aggregate 产出七维实得分、原始加权和 qualification verdict 的权威机器 owner。
+
+2. **`edd1c87` 最近完整原生矩阵复算**：
+   - artifact=`artifacts/p0-native-edd1c87/aggregate`，source/harness=`edd1c8779d928879c1d3e0669f725c79fd0ebf97`，完整 coverage=`144/144`、Windows/WSL2=`53/72` / `54/72`、selected infrastructure error=`0`；
+   - A=`72/72` 通过；B success=`12/48=25%`、test=`17/48=35.42%`、patch=`2/36=5.56%`、regression=`31`，分别未达 `>=92% / >=95% / >=95% / 0`；TypeScript/Go/JavaScript/Web 四个 repository ecosystem success 分别为 `0/12`、`0/12`、`6/12`、`6/12`，均未达 `>=90%`；
+   - C=`23/24`，唯一缺口为 `system.parallel-read-isolation=5/6`。因此该完整矩阵明确不满足 P2-C layer Gate；它是历史基线，不是 candidate #1，也不能产出合格七维分数。
+
+3. **`e1f8aaa` 双平台冻结证据 identity 与覆盖复核**：
+   - WSL2/Windows report 的 canonical manifest SHA-256 均为 `ecfdb6fb89ebe7c7e17f41ada5582bde41d03d48886e92228de594714abd3897`，source/harness commit 均为 `e1f8aaa1e9525b45fb3c981e8975a7ab09c8d5be`，lockfile/worktree content SHA-256 均为 `844c0021f1c9135214c913636fd6ed6f9232593883bd5b6289f7ade51d2b7d2b` / `e35a92f90f1ce0689fd92ba71516c3c1312f1f5083a93ba2f979992176c00752`；
+   - WSL2/Windows manifest 的物理字节 SHA-256 分别为 `ecfdb6fb89ebe7c7e17f41ada5582bde41d03d48886e92228de594714abd3897` / `a1aa0ed2409b23261e27bfeda0fd950e7b11aaf1dc72cce0e6603a80a70895a8`，差异仅为 LF/CRLF；生产 canonical hash 相同且 `--ignore-space-at-eol` diff=`0`，不存在跨平台 identity 分裂；
+   - 生产 aggregator dry-run 返回 `partial 2/144, missing=142`，两份 report 均为 `status=partial`、`eligibleForProductComparison=false`。它们只证明 Web 代表任务双平台通过，不构成完整 candidate。
+
+4. **复核评分、风险与闭合边界**：
+   - 当前已发布评分不变：内部硬 Gate=`9.1/10`（`9.065`），横向产品评分=`9.1/10`（`9.135`）；P2-C candidate #1=`not_eligible/unscored`，七维实得分与原始加权均不得填值，9.5 最终结论为“未达到”；
+   - 风险等级为高：若先跑付费矩阵再人工定义维度映射，可能产生不可复算评分、跨 revision 补分或 partial 被误称 candidate。可行性为高，现有 scorecard、aggregate 和冻结 artifact 可作为输入，关键前置是补齐唯一 qualification owner；
+   - 技术债裁决为 `fix_now`：恢复后预计 `0.5-1 人日` 新增版本化 qualification schema/report、七维映射与 fail-closed evaluator；P2-C 总剩余仍按 `5-7.5 人日 + 两个候选观察窗口` 管理；
+   - 本环节包含合同/identity/coverage/Gate/评分复核与文档回写；明确排除 Provider 调用、新 candidate 运行、历史 Formal 重跑、push、发布和生产操作。完成标准是给出可复算的资格结论且不伪造数值，本环节已满足。
+
+5. **效果**：
+   - 把“P0 Web 双平台代表通过”与“P2-C 完整候选达标”明确分离，避免 `2/144` 外推；
+   - 确认 CRLF/LF 只影响 manifest 物理字节，不影响生产 canonical identity；
+   - 在缺少权威评分 owner 时稳定失败关闭，保留真实 `9.1` 评分和 9.5 未达成结论。
+
+##### 验证结果
+
+- TypeScript workspace 编译无错误：本轮未修改源码，沿用 `e1f8aaa` 同 identity 已冻结的完整 build/`verify:build` 证据；本环节定向合同与 aggregate 测试 `18/18` 通过，随后以正式入口执行 `verify:coding-benchmark` 通过；
+- `artifacts/p0-native-edd1c87/aggregate` 离线重建验证通过：`completed 144 run(s)`；
+- 两份 `e1f8aaa` report 经生产 aggregator 合并验证为 `partial 2/144, missing=142`，identity 未漂移且明确不可评分；
+- 本环节 Provider calls/cost=`0/$0`，未创建 runtime `.env/.env.local`，未重跑任何冻结 Formal。
+
+##### 后续计划
+
+- **下一步准备做什么**：恢复开发后先在 aggregate 公共输出 seam 新增版本化 candidate qualification/七维评分 evaluator，按 Red/Green 覆盖完整成功、partial、identity 漂移、Gate 不达标、缺 trace/usage/敏感/残留 owner 与未知维度映射；随后再建立 candidate runner 的零模型 receipt。
+- **为什么先做它**：这是把 `144` 项原始 evidence 变成可审计七维分数和最终 verdict 的唯一缺失 owner；先运行付费矩阵会留下“有数据但没有稳定评分合同”的不可闭环结果。
+- **当前还缺的关键闭环**：权威维度映射、C critical/other system 归属、全部 hard-Gate 指标 owner、candidate #1 新 clean identity 与完整 `144/144`，以及其后的第二个连续候选。本轮在此暂停，不启动付费矩阵。
+
 ## 实施计划进度表
 
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
@@ -4742,4 +4785,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **P0 入口已满足，待 candidate #1 readiness** | `e1f8aaa` Web post-fix 同 identity 双平台外部代表已闭合；连续候选尚未运行 | `5-7.5 人日 + 观察窗口` | 先只读冻结评分合同、候选 identity、最小运行集合与 Gate；再证明两个连续候选原始加权 `>=9.500`、各维及全部硬 Gate 通过 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **复核完成；candidate #1 `not_eligible/unscored`，按用户要求暂停** | 目标合同=`9.510`；`edd1c87` 完整矩阵因 B/C Gate 失败不合格；`e1f8aaa` identity 可合并但仅 `2/144`；七维 qualification owner 缺失，当前评分保持 `9.1` | `5-7.5 人日 + 观察窗口` | 恢复后先 `fix_now` 补机器评分 owner 与零模型 runner Gate；再以完整单一 identity `144/144` 证明两个连续候选原始加权 `>=9.500`、各维及全部硬 Gate 通过 |
