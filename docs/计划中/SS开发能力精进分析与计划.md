@@ -4232,6 +4232,78 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：Windows 工作树的行为与 evaluator 已共同 Green，但下一次不可重跑 Formal 必须绑定 committed-clean identity，并先证明 LF/ext4、snapshot、跨宿主 endpoint、凭证隔离与资源收敛没有漂移。
 - **当前还缺的关键闭环**：新 identity 的 clean/ext4 工程 Gate、有效零凭证 dry-run、env 回收、限定扫描与 prepare-only；全部全绿后才评估该 identity 唯一 WSL2 Formal，继续禁止重跑 `b0af1a5` 或任何历史 Formal、完整矩阵、连续候选、最终复算与 P2-C。
 
+#### P0 Web Formal 实现结论：`bb9bcb9` WSL2 initial semantic no-op 失败并冻结（2026-08-31）
+
+##### 已完成内容
+
+1. **`prepare-only.json` 写入与独立写后 Gate**：
+   - 绑定 Windows/ext4 harness commit=`bb9bcb97539133369f97f6da80c0a2ca34612717`、Preact commit=`6bb827251ac7111234b293cac013a0a67c2ca8b2` 与 truth-set SHA-256=`5bec7096e20999f045951770ea77ae4a1d7f83e40e1dc0435ae61c265d198ca8`；
+   - receipt SHA-256=`17a0e2298ba411d2a3a60cfacfce638c994b5563fe4fceba10cf9f547d260010`，repository input、dry-run report、snapshot preflight/receipt SHA-256 分别为 `f76b3b2d8e85abedf819faa25ebecf928359c31549a8b4686d50ed75c0c95732`、`8a113eab33506a13d0dcf9234671415a58d117986177dfdbc4feae9b559fb095`、`bf047642ef69c686aee7d1229e3d007f8869c3b437130c5c178ea4c435270bec`、`25ddb7d6c090fd0ea2ece3d6cbd4866b30af30943d07d773b907f26a417a289d`；
+   - 三方 clean、Formal 三目标为空、`.env.local` 为 workspace 内常规非 reparse 文件、endpoint `172.27.128.1:29115` 双端关闭、任务/扫描进程与 child-boundary 全绿；费用预留=`49.81797187 RMB < 80 RMB`。
+
+2. **唯一 WSL2 Formal 执行并永久冻结**：
+   - artifact=`artifacts/p0-web-narrow-ar-prefix-bb9bcb9-formal-r1`，run=`real-web-ui-regression-wsl2-linux-a1-1788168671203`，report SHA-256=`92f2e9aff2b3ce3976742e423f7cd34522c1b924e57eb6a58d3573b05a41d33f`；
+   - launcher exit=`0`，CLI exit=`4`，events=`1..15` 连续且唯一末尾终态=`run.failed`；machine evaluator tests/taskCompleted/patchAccepted=`false/false/false`，regression/manual intervention=`1/0`，changed paths=`0`；
+   - 首个 `apply_patch` 把 function guard 与原 `value != NULL && value !== false` condition 原样 remove/add，第二个 `apply_patch` 把同一组六行 aria/data 注释原样 remove/add；两次均以 `input_error` 拒绝，未产生 workspace mutation；
+   - usage=`provider_reported/complete`，model calls=`4/4`，input/output=`11,962/603`，本次费用=`$0.00279772`，累计 observed=`$3.42695136`。
+
+3. **安全收尾与证据冻结**：
+   - snapshot 五项与 post-run preflight 全绿；runtime `.env/.env.local` 以固定 SHA-256 完成 containment、常规文件、非 reparse 校验后送入 Windows 回收站，removed/remaining=`2/0`，可恢复；
+   - 最终限定扫描 tracked/regular/excluded=`2,655/951/2`，symlink/unreadable/env/key/input leakage=`0/0/0/0/0`；Windows/WSL listener、Formal-bound 进程与 runtime env 残留=`0/0/0`，ext4 harness 保持 clean；
+   - cleanup/scan SHA-256=`cda7a0149c4bc162239b7932cf5801cc02ef479468916c5e86aafe1924706269` / `7cb951b33d39e9a331e181b29edaf2b2cd72d6765c0b8ce27529d9ea5a62507b`。
+
+4. **效果**：
+   - `bb9bcb9` 证明 narrow-prefix correction guard 不会把无实际变化的首次 mutation 误记为成功，失败稳定归类为 `product_workflow` 而非 infrastructure；
+   - 失败边界收缩到 mutation-only recovery 的 initial semantic no-op，现有 post-write correction guard 尚未覆盖该阶段；
+   - 技术债决策=`fix_now`：以冻结首个 no-op patch 和完整 current source 做零模型 TDD；该 Formal 与全部历史 Formal继续禁止重跑。
+
+##### 验证结果
+
+- Formal source/harness identity、双 preflight、model route、usage completeness、event/trace/artifact contract、费用守卫与安全收尾均独立复核；
+- `changes.patch` 为空，两个 no-op patch 均在 Tool executor 内原子失败，没有污染 Preact snapshot；
+- Stage 0D 当前=`49.04035363 RMB`，再完整预留后=`49.84035363 RMB < 80 RMB`；本 identity 已永久冻结，不得以同一 artifact 或新 artifact 重跑。
+
+##### 后续计划
+
+- **下一步准备做什么**：在公共 `ToolEnabledAgent.run()` seam 重放冻结首个 no-op patch，先取得 Red，再把严格绑定的 source-derived baseline patch 接到首次 mutation recovery，补齐负例和完整零模型回归。
+- **为什么先做它**：首个 no-op 是当前 run 在 mutation 前的最早阻塞点；先修它会使第二个 comment no-op 不再可达，也避免把 detector 扩张为任意 JavaScript no-op 修复器。
+- **当前还缺的关键闭环**：initial no-op 公共 seam Red/Green、对抗性失败关闭、Agent/build/合同回归、新 committed-clean identity，以及后续 ext4/dry-run/prepare-only；全部全绿前禁止新付费 Formal和完整矩阵。
+
+#### P0 Web Fix 实现结论：initial semantic no-op recovery baseline 重建（2026-08-31）
+
+##### 已完成内容
+
+1. **`react-workspace-mutation-serialized-false-correction.ts` 扩展**：
+   - 新增 `rebuildSerializedFalseInitialNoOpToolCall`，精确识别冻结首个 function guard + serialized-false condition 原样 remove/add hunk；
+   - 仅在完整 truth-set 任务、单 required path、零 prior successful patch、最新完整未截断 source、唯一完整原始 attribute/removal branch 与连续冻结 hunk 全部成立时触发；
+   - 从 current source 只生成 `value != NULL && (value !== false || name[4] == '-')` condition replacement，不改 statement、注释或 sibling control flow。
+
+2. **`tool-agent.ts` recovery 接线**：
+   - 只在 `workspaceMutationRecoveryCall` 的 Tool 执行前调用 initial no-op rebuilder，并纳入既有 semantic validation；post-write correction、普通 Tool call 和已有 prior successful patch 的路径不受影响；
+   - 重建成功后 executor 只接收 source-derived baseline patch，随后继续 bounded read-after-write、objective review 与 structured final；冻结 Provider no-op patch 零执行。
+
+3. **测试与项目导航更新**：
+   - 公共 `ToolEnabledAgent.run()` seam 复刻 Formal 的 source、task 与首个 no-op patch；Red 证实 no-op 连续两次进入 executor 并终止，Green 断言只执行一次 baseline patch并完成 final；
+   - 纯函数字节级正例与负例覆盖 unrelated task、多 required path、已有 successful patch、最新 source 截断、source branch 漂移及真实 condition change；
+   - `docs/project-map.md` 同步记录 initial semantic no-op recovery owner 与零 prior patch 边界。
+
+4. **效果**：
+   - 冻结首个 no-op 在 Tool executor 前被最小基线 condition 替换，第二个 comment no-op 不再进入可达路径；
+   - aria/data false 被序列化，普通 false 与全部 nullish 值移除，行为继续绑定 9-witness truth set；
+   - 本修复 Provider 调用=`0`、新增费用=`$0`；技术债决策=`record_only`，不扩张为通用 JavaScript no-op detector，也不处理已不可达的第二个 comment no-op。
+
+##### 验证结果
+
+- 公共 seam Red=`1 failed / 4 passed`，Green=`5/5`；纯函数与公共 seam 对抗性定向=`63/63`；
+- workspace-mutation 扩大回归=`233/233`，Agent 全包=`785 passed / 1 skipped`；
+- TypeScript workspace 编译无错误；`corepack pnpm build`（含 `verify:build`）、`verify:coding-benchmark`、`verify:coding-ci`、WSL launcher=`11/11` 与 `git diff --check` 全部通过。
+
+##### 后续计划
+
+- **下一步准备做什么**：提交 source、测试、project map 与本文形成新 committed identity；随后建立或前进 ext4 clean harness，执行 frozen offline install、完整 build、Agent 全包、benchmark/CI、WSL launcher、零凭证 dry-run、安全收尾与 Formal prepare-only。
+- **为什么先做它**：当前 Green 来自有开发改动的 Windows worktree；下一次不可重跑 Formal 必须绑定全新 committed-clean identity，并重新证明 LF/ext4、snapshot、endpoint、凭证隔离和资源收敛未漂移。
+- **当前还缺的关键闭环**：新 identity 的 committed-clean/ext4 工程 Gate、有效 dry-run 与 prepare-only；全部前置全绿后才允许一次唯一 WSL2 Formal，继续禁止重跑 `bb9bcb9` 及所有历史 Formal、完整矩阵、连续候选、最终复算与 P2-C。
+
 ## 实施计划进度表
 
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
@@ -4241,7 +4313,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
 | P0：Benchmark truth set / evaluator 对齐 | P0 | **`ar*` 反例 zero-cost 对齐已完成** | truth set 现为 9 witness，新增 `archive=false → remove`，SHA=`5bec7096…`；冻结 narrow-prefix source replay 失败关闭，truth/fixture/evaluator=`22/22` | - | 保持 truth set、prompt、fixture、visible test 与 evaluator 单一版本绑定；任何 SHA/Schema/任务合同漂移均失败关闭 |
-| P0：Web mutation/correction 稳定化 | P0 | **narrow-prefix zero-cost Red/Green 已完成；待新 identity clean Gate** | `b0af1a5` 已冻结；公共 seam 只执行 initial 与 source-derived baseline patch，Provider narrow-prefix patch 零执行；定向=`74/74`、workspace-mutation=`230/230`、Agent=`777/1`、build/合同全绿 | `commit + clean/ext4/dry-run/prepare-only + 唯一 Formal，约 0.2-0.4 人日` | 提交新 identity 后执行全部零模型 Gate；全部前置全绿才评估一次唯一 WSL2 Formal，禁止重跑历史 Formal，可信双平台全绿前不启动完整矩阵、连续候选、最终复算或 P2-C |
+| P0：Web mutation/correction 稳定化 | P0 | **`bb9bcb9` initial no-op 已冻结；zero-cost recovery Red/Green 已完成，待新 identity clean Gate** | Formal report=`92f2e9af…`，machine=`false/false/false`、changed paths=`0`；公共 seam 只执行 source-derived baseline patch，Red=`1/4`、定向=`63/63`、workspace-mutation=`233/233`、Agent=`785/1`、build/合同全绿 | `commit + clean/ext4/dry-run/prepare-only + 唯一 Formal，约 0.2-0.4 人日` | 提交新 identity 后执行全部零模型 Gate；全部前置全绿才评估一次唯一 WSL2 Formal，禁止重跑 `bb9bcb9` 及历史 Formal，可信双平台全绿前不启动完整矩阵、连续候选、最终复算或 P2-C |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |

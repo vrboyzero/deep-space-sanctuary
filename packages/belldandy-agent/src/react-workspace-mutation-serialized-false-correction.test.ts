@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   hasSerializedFalseNullishSerializationCurrentSource,
   rebuildSerializedFalseBroadFirstCharacterToolCall,
+  rebuildSerializedFalseInitialNoOpToolCall,
   rebuildSerializedFalseNarrowArPrefixToolCall,
   rebuildSerializedFalseNestedUnreachableToolCall,
   rebuildSerializedFalseSiblingDoubleElseToolCall,
@@ -282,8 +283,118 @@ const narrowPrefixBaselineCorrection = [
   "+\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
   "*** End Patch",
 ].join("\n");
+const initialSerializedFalseSource = [
+  "\t\tif (typeof value == 'function') {",
+  "\t\t\t// never serialize functions as attribute values",
+  "\t\t} else if (value != NULL && value !== false) {",
+  "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  "\t\t} else {",
+  "\t\t\tdom.removeAttribute(name);",
+  "\t\t}",
+].join("\n");
+const initialSerializedFalseNoOpPatch = [
+  "*** Begin Patch",
+  `*** Update File: ${requiredPath}`,
+  "@@",
+  "-\t\tif (typeof value == 'function') {",
+  "+\t\tif (typeof value == 'function') {",
+  " \t\t\t// never serialize functions as attribute values",
+  "-\t\t} else if (value != NULL && value !== false) {",
+  "+\t\t} else if (value != NULL && value !== false) {",
+  " \t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  " \t\t} else {",
+  " \t\t\tdom.removeAttribute(name);",
+  "*** End Patch",
+].join("\n");
+const initialSerializedFalseBaselinePatch = [
+  "*** Begin Patch",
+  `*** Update File: ${requiredPath}`,
+  "@@",
+  "-\t\t} else if (value != NULL && value !== false) {",
+  `+${baselineInlineCondition}`,
+  "*** End Patch",
+].join("\n");
 
 describe("serialized-false semantic-narrowing correction", () => {
+  it("rebuilds the frozen initial semantic no-op from complete current source", () => {
+    const rebuilt = rebuildSerializedFalseInitialNoOpToolCall({
+      toolCall: call(initialSerializedFalseNoOpPatch),
+      messages: sourceMessages(initialSerializedFalseSource),
+      taskText,
+      priorSuccessfulPatchInputs: [],
+      requiredPaths: [requiredPath],
+    });
+
+    expect(JSON.parse(rebuilt!.function.arguments)).toEqual({
+      input: initialSerializedFalseBaselinePatch,
+    });
+  });
+
+  it.each([
+    {
+      name: "unrelated task",
+      task: "Rename a variable with the smallest change.",
+      messages: sourceMessages(initialSerializedFalseSource),
+      patches: [] as string[],
+      paths: [requiredPath],
+      patch: initialSerializedFalseNoOpPatch,
+    },
+    {
+      name: "multiple required paths",
+      task: taskText,
+      messages: sourceMessages(initialSerializedFalseSource),
+      patches: [] as string[],
+      paths: [requiredPath, "src/other.js"],
+      patch: initialSerializedFalseNoOpPatch,
+    },
+    {
+      name: "a prior successful patch",
+      task: taskText,
+      messages: sourceMessages(initialSerializedFalseSource),
+      patches: ["*** Begin Patch\n*** Update File: src/other.js\n@@\n-old\n+new\n*** End Patch"],
+      paths: [requiredPath],
+      patch: initialSerializedFalseNoOpPatch,
+    },
+    {
+      name: "newer truncated source",
+      task: taskText,
+      messages: [
+        ...sourceMessages(initialSerializedFalseSource),
+        ...sourceMessages(initialSerializedFalseSource, true),
+      ],
+      patches: [] as string[],
+      paths: [requiredPath],
+      patch: initialSerializedFalseNoOpPatch,
+    },
+    {
+      name: "source branch drift",
+      task: taskText,
+      messages: sourceMessages(initialSerializedFalseSource.replace("dom.removeAttribute(name);", "dom.removeAttribute(otherName);")),
+      patches: [] as string[],
+      paths: [requiredPath],
+      patch: initialSerializedFalseNoOpPatch,
+    },
+    {
+      name: "an actual condition change",
+      task: taskText,
+      messages: sourceMessages(initialSerializedFalseSource),
+      patches: [] as string[],
+      paths: [requiredPath],
+      patch: initialSerializedFalseNoOpPatch.replace(
+        "+\t\t} else if (value != NULL && value !== false) {",
+        `+${baselineInlineCondition}`,
+      ),
+    },
+  ])("does not rebuild the initial no-op with $name", ({ task, messages, patches, paths, patch }) => {
+    expect(rebuildSerializedFalseInitialNoOpToolCall({
+      toolCall: call(patch),
+      messages,
+      taskText: task,
+      priorSuccessfulPatchInputs: patches,
+      requiredPaths: paths,
+    })).toBeUndefined();
+  });
+
   it("rebuilds the frozen narrow ar-prefix correction from complete current source", () => {
     const rebuilt = rebuildSerializedFalseNarrowArPrefixToolCall({
       toolCall: call(narrowArPrefixCorrection),

@@ -594,6 +594,150 @@ describe("ToolEnabledAgent serialized-false correction", () => {
     expect(items).toContainEqual({ type: "final", text: successfulSummary });
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
+
+  it("rebuilds the frozen formal's initial semantic no-op as the baseline condition", async () => {
+    const requiredPath = "src/diff/props.js";
+    const currentCondition = "\t\t} else if (value != NULL && value !== false) {";
+    const baselineCondition = "\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {";
+    const attributeStatement = "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);";
+    const noOpPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-\t\tif (typeof value == 'function') {",
+      "+\t\tif (typeof value == 'function') {",
+      " \t\t\t// never serialize functions as attribute values",
+      `-${currentCondition}`,
+      `+${currentCondition}`,
+      ` ${attributeStatement}`,
+      " \t\t} else {",
+      " \t\t\tdom.removeAttribute(name);",
+      "*** End Patch",
+    ].join("\n");
+    const expectedPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${currentCondition}`,
+      `+${baselineCondition}`,
+      "*** End Patch",
+    ].join("\n");
+    const sourceAroundCondition = [
+      "\t\tif (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      "__CONDITION__",
+      attributeStatement,
+      "\t\t} else {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t}",
+    ].join("\n");
+    const currentSource = sourceAroundCondition.replace("__CONDITION__", currentCondition);
+    const correctedSource = sourceAroundCondition.replace("__CONDITION__", baselineCondition);
+    const successfulSummary = '{"summary":"preserved the complete serialized-false truth set"}';
+    const task = "Fix the frozen browser-facing regression in the real web project. Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, and remove every attribute with null or undefined values. Make the smallest change in src/diff/props.js and pass the supplied deterministic checks.";
+    const requests: Array<Record<string, any>> = [];
+    const executedPatches: string[] = [];
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const instruction = String(body.messages?.[0]?.content ?? "");
+      if (instruction.includes("Post-mutation verification phase")) {
+        return response(modelToolCall(`read-${requests.length}`, "file_read", {
+          path: requiredPath,
+          limit: 1_048_576,
+        }));
+      }
+      if (instruction.includes("Post-mutation objective review phase")) {
+        return response({
+          choices: [{ finish_reason: "stop", message: { content: successfulSummary } }],
+          usage: { prompt_tokens: 300, completion_tokens: 30 },
+        });
+      }
+      if (instruction.includes("Mutation-only recovery phase")
+        || instruction.includes("Atomic input correction phase")) {
+        return response(modelToolCall(`formal-no-op-${requests.length}`, "apply_patch", {
+          input: noOpPatch,
+        }));
+      }
+      return response(modelToolCall("read-current-source", "file_read", {
+        path: requiredPath,
+        limit: 1_048_576,
+      }));
+    });
+
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: requiredPath,
+            truncated: false,
+            content: executedPatches.includes(expectedPatch) ? correctedSource : currentSource,
+          }),
+          durationMs: 1,
+        };
+      }
+      const patch = String(request.arguments?.input ?? "");
+      executedPatches.push(patch);
+      return patch === expectedPatch
+        ? {
+            id: request.id,
+            name: request.name,
+            success: true,
+            output: "Patch applied successfully",
+            metadata: {
+              workspaceMutation: { schemaVersion: 1, changedPaths: [requiredPath] },
+            },
+            durationMs: 1,
+          }
+        : {
+            id: request.id,
+            name: request.name,
+            success: false,
+            output: "",
+            error: `[${requiredPath}] Update File 未产生任何实际内容变化或路径变化`,
+            failureKind: "input_error" as const,
+            metadata: {
+              repairAction: "apply_patch_input_invalid",
+            },
+            durationMs: 1,
+          };
+    });
+    const agent = createAgent(execute);
+
+    const items = await collect(agent.run({
+      conversationId: "conv-formal-initial-semantic-no-op-serialized-false",
+      text: task,
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths: [requiredPath],
+          toolLoopIterationBudget: 6,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === successfulSummary
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(requests.some((request) => String(request.messages?.[0]?.content ?? "")
+      .includes("Mutation-only recovery phase"))).toBe(true);
+    expect(executedPatches).toEqual([expectedPatch]);
+    expect(executedPatches).not.toContain(noOpPatch);
+    expect(items).toContainEqual({ type: "final", text: successfulSummary });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
 });
 
 function createAgent(execute: ReturnType<typeof vi.fn>): ToolEnabledAgent {

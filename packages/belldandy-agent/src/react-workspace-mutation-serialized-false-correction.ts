@@ -22,6 +22,8 @@ const NESTED_SERIALIZED_FALSE_STATEMENT = "dom.setAttribute(name, String(value))
 const INITIAL_NARROW_PREFIX_SERIALIZED_FALSE_CONDITION_SUFFIX = "} else if (value === false && (name[0] == 'a' && name[1] == 'r' || name[0] == 'd' && name[1] == 'a')) {";
 const NARROW_AR_PREFIX_SERIALIZED_FALSE_CONDITION_SUFFIX = "} else if (value === false && (name[0] == 'a' && name[1] == 'r' || name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-')) {";
 const SERIALIZED_FALSE_LITERAL_STATEMENT = "dom.setAttribute(name, 'false');";
+const FUNCTION_ATTRIBUTE_GUARD_SUFFIX = "if (typeof value == 'function') {";
+const FUNCTION_ATTRIBUTE_COMMENT = "// never serialize functions as attribute values";
 const EXISTING_ATTRIBUTE_STATEMENT = "dom.setAttribute(name, name == 'popover' && value == true ? '' : value);";
 const EXISTING_REMOVAL_STATEMENT = "dom.removeAttribute(name);";
 
@@ -76,6 +78,78 @@ type NarrowPrefixSerializedFalseBranch = {
   conditionIndent: string;
   statementIndent: string;
 };
+
+type InitialSerializedFalseBranch = {
+  functionGuard: string;
+  comment: string;
+  condition: string;
+  statement: string;
+  followingElse: string;
+  removalStatement: string;
+  branchEnd: string;
+  conditionIndent: string;
+};
+
+export function rebuildSerializedFalseInitialNoOpToolCall<
+  T extends { function: { name: string; arguments: string } },
+>(input: {
+  toolCall: T;
+  messages: readonly SourceMessage[];
+  taskText: string;
+  priorSuccessfulPatchInputs: readonly string[];
+  requiredPaths: readonly string[];
+}): T | undefined {
+  if (input.toolCall.function.name !== "apply_patch"
+    || input.requiredPaths.length !== 1
+    || input.priorSuccessfulPatchInputs.length !== 0
+    || !requiresSerializedFalseTruthSet(input.taskText)) {
+    return undefined;
+  }
+  const requiredPath = normalizePath(input.requiredPaths[0] ?? "");
+  if (!requiredPath) return undefined;
+  const source = readCompleteSource(input.messages, requiredPath);
+  if (!source) return undefined;
+  const branches = collectInitialSerializedFalseBranches(source);
+  if (branches.length !== 1) return undefined;
+  const branch = branches[0]!;
+  const change = readSingleRequiredPathPatchChange(input.toolCall, requiredPath);
+  if (!change
+    || change.removed.length !== 2
+    || change.added.length !== 2
+    || change.removed[0] !== branch.functionGuard
+    || change.added[0] !== branch.functionGuard
+    || change.removed[1] !== branch.condition
+    || change.added[1] !== branch.condition
+    || !toolCallHasContiguousRequiredPathLines(input.toolCall, requiredPath, [
+      `-${branch.functionGuard}`,
+      `+${branch.functionGuard}`,
+      ` ${branch.comment}`,
+      `-${branch.condition}`,
+      `+${branch.condition}`,
+      ` ${branch.statement}`,
+      ` ${branch.followingElse}`,
+      ` ${branch.removalStatement}`,
+    ])) {
+    return undefined;
+  }
+
+  const lineEnding = source.includes("\r\n") ? "\r\n" : "\n";
+  const patch = [
+    "*** Begin Patch",
+    `*** Update File: ${input.requiredPaths[0]}`,
+    "@@",
+    `-${branch.condition}`,
+    `+${branch.conditionIndent}${BASELINE_SERIALIZED_FALSE_CONDITION_SUFFIX}`,
+    "*** End Patch",
+  ].join(lineEnding);
+  return {
+    ...input.toolCall,
+    function: {
+      ...input.toolCall.function,
+      arguments: JSON.stringify({ input: patch }),
+    },
+  } as T;
+}
 
 export function rebuildSerializedFalseNarrowArPrefixToolCall<
   T extends { function: { name: string; arguments: string } },
@@ -732,6 +806,42 @@ function collectNarrowPrefixSerializedFalseBranches(
       branchEnd,
       conditionIndent,
       statementIndent,
+    }];
+  });
+}
+
+function collectInitialSerializedFalseBranches(source: string): InitialSerializedFalseBranch[] {
+  const lines = source.split(/\r?\n/);
+  return lines.flatMap((functionGuard, index) => {
+    if (functionGuard.trimStart() !== FUNCTION_ATTRIBUTE_GUARD_SUFFIX) return [];
+    const conditionIndent = functionGuard.slice(
+      0,
+      functionGuard.length - functionGuard.trimStart().length,
+    );
+    const statementIndent = `${conditionIndent}\t`;
+    const comment = lines[index + 1] ?? "";
+    const condition = lines[index + 2] ?? "";
+    const statement = lines[index + 3] ?? "";
+    const followingElse = lines[index + 4] ?? "";
+    const removalStatement = lines[index + 5] ?? "";
+    const branchEnd = lines[index + 6] ?? "";
+    if (comment !== `${statementIndent}${FUNCTION_ATTRIBUTE_COMMENT}`
+      || condition !== `${conditionIndent}${PREVIOUS_SERIALIZED_FALSE_CONDITION_SUFFIX}`
+      || statement !== `${statementIndent}${EXISTING_ATTRIBUTE_STATEMENT}`
+      || followingElse !== `${conditionIndent}} else {`
+      || removalStatement !== `${statementIndent}${EXISTING_REMOVAL_STATEMENT}`
+      || branchEnd !== `${conditionIndent}}`) {
+      return [];
+    }
+    return [{
+      functionGuard,
+      comment,
+      condition,
+      statement,
+      followingElse,
+      removalStatement,
+      branchEnd,
+      conditionIndent,
     }];
   });
 }
