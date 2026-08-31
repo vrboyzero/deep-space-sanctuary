@@ -4642,6 +4642,47 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：零凭证路径已闭合，但唯一 Windows Formal 还需要证明真实凭证只进入受控 Gateway child、不会进入参数/receipt，并确认 `$3.43900939 + $0.10` 的费用窗口仍在授权内。
 - **当前还缺的关键闭环**：Windows-native prepare-only receipt 与其写后敏感扫描；只有全部 Gate 全绿且完整预留后 Stage 0D=`49.93681787 RMB < 80 RMB`，才允许执行 `e1f8aaa` 尚未运行的一次 Windows Formal。
 
+#### P0 Web Gate 实现结论：`e1f8aaa` Windows-native Formal prepare-only（2026-08-31）
+
+##### 已完成内容
+
+1. **全新 Formal 目标与 identity Gate**：
+   - input/fixture/runtime/artifact 固定为 `tmp/p0-web-closing-delimiter-e1f8aaa-windows-formal-r1-input`、`tmp/p0-web-closing-delimiter-e1f8aaa-windows-formal-r1-fixture`、`tmp/p0-web-closing-delimiter-e1f8aaa-windows-formal-r1-runtime` 与 `artifacts/p0-web-closing-delimiter-e1f8aaa-windows-formal-r1`；prepare-only 前后三个运行目标均不存在；
+   - Windows harness=`e1f8aaa1e9525b45fb3c981e8975a7ab09c8d5be`、Preact=`6bb827251ac7111234b293cac013a0a67c2ca8b2` 且均 clean；Windows docs checkpoint=`5d530dcc184c4ff495e6e6c695aa5a276a2562c5`，相对 `e1f8aaa` 的代码路径 diff=`0`；
+   - repository input SHA-256=`400481856b13b9a80baa10f95861ed78c8704d54c104e22e818eb19ede575105`，truth-set SHA-256=`5bec7096e20999f045951770ea77ae4a1d7f83e40e1dc0435ae61c265d198ca8`，Windows lockfile working-tree SHA-256=`9c8b34e3bba7f7a4e085149c420df216e78827e5f509c928c6318ccd11b785ac`。
+
+2. **Provider child-boundary 与固定合同审计**：
+   - 仓库原生 `buildWindowsBenchmarkInvocation()` 构造真实 Windows-native 调用形状，但 Gateway/benchmark spawned=`false/false`、Provider called=`false`；
+   - Provider key configured=`true`，只进入受控 Gateway 与 benchmark child env；launcher process、Gateway/benchmark args 均不含 key 或 provider env path；临时 auth token 只进入两个 child env，未进入参数；
+   - Provider/model/retry=`openai/deepseek-v4-flash/0`，budget=`12 turns / 24,000 tokens / $0.10`，pricing cache/input/output=`0.0125/0.375/1.125 USD per 1M`；prior/max cost=`$3.43900939/$3.53900939` 精确进入 benchmark args。
+
+3. **snapshot、费用与资源 Gate**：
+   - Windows dry-run snapshot recorded/evaluated 均为 `passed`，manifest binding/source identity/license/dependency cache/execution network 五项全绿；preflight/receipt SHA-256=`bf047642ef69c686aee7d1229e3d007f8869c3b437130c5c178ea4c435270bec` / `23e4b031d0401342ea55973a83f12103eae0341d3c734402427b4a9816d9cb1b`；
+   - 仓库原生 budget resolver 返回 observed/remaining/max=`$3.43900939/$0.10/$3.53900939`；Stage 0D 当前/完整预留后=`49.13681787/49.93681787 RMB < 80 RMB`；
+   - receipt 前 r2 bounded scan tracked/regular=`2656/23`，写后 scan=`2656/25`；symlink/unreadable/env/exact key/input leakage 均为 `0`，SHA-256=`efbdae1815f8cc5a178c416a9ac3e4c0ccbc0e8a259dc2572045a75f431a1f3a` / `f0a83da6a7caa6a066d3e5e2237e5474c916f0b0d006936e38a52efefbd833f7`；写后实际 regular=`26`，其余敏感项仍为 `0`；port `29255`、非探针任务进程、runtime env=`0/0/0`。
+
+4. **prepare-only receipt 与失败关闭边界**：
+   - receipt=`tmp/p0-web-closing-delimiter-e1f8aaa-windows-formal-r1-input/prepare-only.json`，SHA-256=`2087c504e9993f26fb70d31de28b88e49194610f2f6de73adce55d060f05d601`；prepare script SHA-256=`c2aba35a70ee8341cbbbc6a02a912e48a3c4b60f1dd445df5867bafcf16f9331`；
+   - 首次只读进程探针因内嵌 PowerShell 语句缺少分隔符而退出；receipt 未写、Formal 目标未创建、端口未监听、Provider 未调用。失败 stderr SHA-256=`a36127207b090d1e74b9e1bff30e44c91415df37a17134a83f0bde9258a9372f`；改用换行分隔后探针返回 `0`；
+   - 后续进程汇总的 `1-2` 个匹配均经 PID/父链展开确认是当前只读探针自身，排除当前祖先链后的真实残留=`0`；未停止任何归属不明进程。
+
+5. **效果**：
+   - `e1f8aaa` 唯一 Windows-native Formal 的 exact identity、snapshot、child-boundary、空目标、端口与费用前置已形成可审计 receipt；
+   - 真实凭证已配置但 prepare-only 全程未 spawn、未调用 Provider、未产生费用，也未把凭证写入参数或证据；
+   - 只有 receipt 与写后 Gate 保持成立时，才开放一次该 identity Windows Formal；任何漂移均失败关闭。
+
+##### 验证结果
+
+- TypeScript workspace 编译无错误；本 identity 的完整 Windows build、`verify:build` 与既有 Windows/ext4 Agent=`805 passed / 1 skipped`、四文件=`157/157` 证据保持有效；
+- repository snapshot 五项、child-boundary、model/retry/budget/pricing、费用 resolver 与 prepare-only targets 全部通过；
+- receipt 写后 exact-value 扫描、三方 clean、代码路径 diff、三目标为空、端口、非探针任务进程与 runtime env 均复核通过。
+
+##### 后续计划
+
+- **下一步准备做什么**：以 receipt=`2087c504…`、Windows loopback endpoint=`127.0.0.1:29255` 执行 `e1f8aaa` 唯一一次 Windows-native Formal；无论成败立即永久冻结，核验 evaluator、usage/cost、snapshot、Tool 序列与 patch，并完成 runtime env 回收、限定扫描和资源收敛后先回写。
+- **为什么先做它**：同 identity 的 Windows-native 零凭证与付费前安全 Gate 已闭合；当前唯一缺失的是修复在 Windows 真实模型工作流中的外部结果，历史跨 identity replay 不能替代该证据。
+- **当前还缺的关键闭环**：唯一 Windows Formal 的合法终态、machine evaluator、完整 provider-reported usage/cost、变更最小性与运行后敏感值/零残留；只有它与已冻结 WSL2 全绿证据同时可信，才能宣称双平台代表并进入连续候选/P2-C。
+
 ## 实施计划进度表
 
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
@@ -4651,7 +4692,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
 | P0：Benchmark truth set / evaluator 对齐 | P0 | **`ar*` 反例 zero-cost 对齐已完成** | truth set 现为 9 witness，新增 `archive=false → remove`，SHA=`5bec7096…`；冻结 narrow-prefix source replay 失败关闭，truth/fixture/evaluator=`22/22` | - | 保持 truth set、prompt、fixture、visible test 与 evaluator 单一版本绑定；任何 SHA/Schema/任务合同漂移均失败关闭 |
-| P0：Web mutation/correction 稳定化 | P0 | **`e1f8aaa` WSL2 全绿；Windows-native dry-run 全绿，待 prepare-only** | WSL2 evaluator=`true/true/true`；Windows dry-run run=`1788188823417` 按预期 `failed/product_workflow`、credentials/provider calls/cost=`false/0/$0`，snapshot/env/scan/端口/进程全绿；历史 Windows 仅合同兼容 | `Windows prepare-only + 至多 1 次 Formal，约 0.1-0.2 人日` | 先建立 Windows Formal child-boundary/identity/snapshot/费用 prepare-only 并回写；仅全绿时执行其唯一 Formal，历史 Formal 禁止重跑，双平台闭合后才进入连续候选/P2-C |
+| P0：Web mutation/correction 稳定化 | P0 | **`e1f8aaa` WSL2 全绿；Windows dry-run/prepare-only 全绿，待唯一 Formal** | WSL2 evaluator=`true/true/true`；Windows dry-run run=`1788188823417` 零 Provider；prepare receipt=`2087c504…`，identity/snapshot/child-boundary/费用/scan/端口/进程全绿 | `至多 1 次 Windows Formal + 冻结审计，约 0.05-0.1 人日` | 以 `127.0.0.1:29255` 执行唯一 Windows Formal并永久冻结；历史 Formal 禁止重跑，双平台闭合后才进入连续候选/P2-C |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |
