@@ -3510,6 +3510,50 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：Gate 证据已全绿，先固化本轮进度可以避免 Formal 中断时丢失 clean Gate、dry-run、费用和安全边界；docs-only 提交必须先证明不改变已验证代码面，才能复用已有工程 Gate。
 - **当前还缺的关键闭环**：唯一 Windows Formal 必须形成唯一合法 `run.completed`、tests/taskCompleted/patchAccepted=`true/true/true`、regression=`0`、usage=`provider_reported/complete`，并完成 snapshot、env、敏感扫描、端口和进程收尾；否则冻结该 identity 且不启动对应 WSL2。
 
+#### P0 Web Formal 实现结论：`473271d` Windows current-source correction 成功并冻结（2026-08-31）
+
+##### 已完成内容
+
+1. **docs-only source-equivalent identity 与最终工程 Gate**：
+   - 提交 `473271d047457f169f2338ae8640698090f54d5b` 仅修改本文；相对 `7a2c9b1` 的 source、Agent、lockfile、benchmark/CI contract 与 Windows launcher Git 内容完全等价；
+   - detached worktree=`tmp/p0-web-current-source-473271d-clean`，frozen offline install=`493 resolved / 492 reused / 0 downloaded / 493 added`；
+   - `corepack pnpm build` 通过，source/harness 在 Formal 前均为 clean exact `473271d`，Preact source=`6bb827251ac7111234b293cac013a0a67c2ca8b2` 且 clean。
+
+2. **唯一 Windows Formal 执行并永久冻结**：
+   - artifact=`artifacts/p0-web-current-source-473271d-preact-windows-formal-r1`，run=`real-web-ui-regression-windows-a1-1788143619446`，report SHA-256=`c4f7698e29176902462183f1dc66736764482b58cc1ba0912c5882910fe64a37`；
+   - status=`passed`，唯一 terminal=`run.completed` 且为最后事件；tests/taskCompleted/patchAccepted=`true/true/true`，regression/manual intervention=`0/0`；
+   - changed path 仅 `src/diff/props.js`，patch 将 `null/undefined` 与 `false` 分离：aria/data 的 `false` 序列化为字符串，普通属性的 `false` 仍移除；`git diff --check` 通过；
+   - 该 Windows Formal 已永久冻结，禁止重跑；未修改或重跑 `190f8bd` 及其他历史 Formal artifact。
+
+3. **终态、usage 与费用证据**：
+   - Coding CI CLI exit=`0`，event/trace/capability/model route/artifact/workspace-change 合同全部为 `true`，双 preflight=`passed/passed`，diagnostics=`0 bytes`；
+   - model/provider calls=`7/7`，input/output=`12,381/1,217`，usage=`provider_reported/complete`，实际 cost=`$0.00327442`；
+   - 累计 observed cost=`$3.39700988`，Stage 0D 当前=`48.80082179 RMB`，下一次完整 `$0.10` 预留后=`49.60082179 RMB < 80 RMB`；
+   - patch/events/trace/result SHA-256=`ffce0ae5a8b5330a603182a3e60011f8f29d538342b2a1ce05195ed26787ab48/53f95c0d6c5a05eb451e0e89a9d651da1e2f37cf9c1100d661f749f64cd4f3ae/463d04e3e12e3612deed982eb1378b4cd05877d51060f23c7517906b52462cf7/3efa84376c1143c9f53ee8854f6ecb2bfd0f1f8e4fc620b216db59d4d8835e69`。
+
+4. **snapshot、安全与资源收尾**：
+   - post-run frozen Preact source 仍为 `6bb827251ac7111234b293cac013a0a67c2ca8b2` 且 clean，snapshot receipt SHA-256=`23e4b031d0401342ea55973a83f12103eae0341d3c734402427b4a9816d9cb1b`，post-run snapshot preflight=`passed`；
+   - runtime `.env/.env.local` 已逐个通过 containment、常规文件、非 reparse point、长度和 SHA-256 校验后送入 Windows 回收站，removed/remaining=`2/0`；cleanup log SHA-256=`78291145ac117656aa8460521e0799c7aedbc0c2711f1a676fead4ed4b73c612`；
+   - 限定五根敏感扫描 regular/excluded=`3,601/2`，symlink/unreadable/skipped env/Provider key/repository input/env=`0/0/0/0/0/0`；scan SHA-256=`df2be4a9f9b788c41c574c19939e7497cb74382abc8a401ff4913401344f592d`；
+   - Gateway port/auth ready=`11,229/11,237 ms`，stderr=`0 bytes`，端口 `28925`、本任务 Node/rg 残留=`0/0/0`。
+
+5. **效果**：
+   - `190f8bd` 暴露的 closing-delimiter correction validation 失败形状已在新 source-equivalent identity 的真实 Provider 路径中闭合，且没有放宽 unlisted-path 或普通 invalid patch 的 failure-closed 边界；
+   - Windows 代表已形成 current-source mutation/correction 的外部通过证据，但单平台单样本不外推为完整矩阵或连续候选改善；
+   - 对应 WSL2 现可进入零模型 Gate、零凭证 dry-run 与 prepare-only，只有这些前置全部通过才开放一次 WSL2 Formal。
+
+##### 验证结果
+
+- TypeScript workspace 编译无错误；同一代码 identity 的 Agent=`720 passed / 1 skipped`、benchmark/CI contract 与 Windows clean/dry-run/prepare-only Gate 全绿；
+- Windows Formal 唯一 `run.completed`，tests/taskCompleted/patchAccepted=`true/true/true`，regression=`0`，usage/cost=`provider_reported/complete`；
+- 单文件 patch、snapshot、env 回收、限定敏感扫描、端口与任务进程收敛全部通过；该 Formal 已永久冻结。
+
+##### 后续计划
+
+- **下一步准备做什么**：以同一 source-equivalent identity 建立 WSL2 clean harness，依次执行 frozen offline install、完整 build、Agent/合同或等价零模型 Gate、零凭证 dry-run、安全清理、限定敏感扫描与 Formal prepare-only；全绿后只执行唯一 WSL2 Formal。
+- **为什么先做它**：Windows 已闭合，双平台代表仍缺对应 WSL2 证据；先重建 WSL2 的本地、snapshot、launcher、凭证和费用前置，可以避免把平台装配问题误记为模型或产品失败。
+- **当前还缺的关键闭环**：同 identity WSL2 的唯一合法 `run.completed`、tests/taskCompleted/patchAccepted=`true/true/true`、regression=`0`、usage/cost、安全与资源收尾；其后才允许完整矩阵、连续候选、最终复算和 P2-C，当前不宣称达到 `9.5`。
+
 ## 实施计划进度表
 
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
@@ -3519,7 +3563,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
 | P0：Benchmark truth set / evaluator 对齐 | P0 | **已完成 zero-cost 对齐** | `coding-agent-benchmark-web-ui-truth-set/v1`、6 个正负 witness、SHA/LF 绑定、v2 fixture/evaluator、实际 Red=`1`/Green=`0` replay；定向 `20/20`、benchmark/CI/build Gate 全绿 | - | 保持 truth set、prompt、fixture、visible test 与 evaluator 单一版本绑定；任何 SHA/Schema/任务合同漂移均失败关闭 |
-| P0：Web mutation/correction 稳定化 | P0 | **`7a2c9b1` clean/dry-run/prepare-only Gate 全绿；待唯一 Windows Formal** | `190f8bd` 永久冻结；新 identity build、Agent=`720 passed / 1 skipped`、合同、双 preflight、readiness、env/敏感值/资源和 `$3.39373546 -> $3.49373546` 费用 Gate 全绿，Provider=`0` | `Windows Formal 与安全收尾，约 0.1-0.25 人日` | 先提交 docs-only source-equivalent identity，再执行唯一 Windows Formal；Windows evaluator=`true/true/true` 且 regression=`0` 前不启动 WSL2、完整矩阵、连续候选、最终复算或 P2-C |
+| P0：Web mutation/correction 稳定化 | P0 | **`473271d` Windows Formal 全绿并冻结；待对应 WSL2** | `190f8bd` 永久冻结；新 Windows 唯一 `run.completed`，tests/taskCompleted/patchAccepted=`true/true/true`、regression=`0`、usage complete，env/敏感值/资源全绿；累计 `$3.39700988` | `WSL2 Gate + 唯一 Formal，约 0.25 人日` | 先完成同 identity WSL2 clean/零凭证/prepare-only Gate；WSL2 全绿前不启动完整矩阵、连续候选、最终复算或 P2-C |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |
