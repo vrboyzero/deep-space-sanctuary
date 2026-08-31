@@ -4683,6 +4683,48 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：同 identity 的 Windows-native 零凭证与付费前安全 Gate 已闭合；当前唯一缺失的是修复在 Windows 真实模型工作流中的外部结果，历史跨 identity replay 不能替代该证据。
 - **当前还缺的关键闭环**：唯一 Windows Formal 的合法终态、machine evaluator、完整 provider-reported usage/cost、变更最小性与运行后敏感值/零残留；只有它与已冻结 WSL2 全绿证据同时可信，才能宣称双平台代表并进入连续候选/P2-C。
 
+#### P0 Web Formal 实现结论：`e1f8aaa` Windows-native 全绿并形成同 identity 双平台代表（2026-08-31）
+
+##### 已完成内容
+
+1. **唯一 Windows-native Formal 执行并永久冻结**：
+   - artifact=`artifacts/p0-web-closing-delimiter-e1f8aaa-windows-formal-r1`，run=`real-web-ui-regression-windows-a1-1788191062384`，report SHA-256=`dde88fdfbe27ab236915bfacad24b8e2eaa3d8347e7b5a1a0c781b120ee39b0e`；
+   - launcher/Coding CI exit=`0/0`，events=`1..17` 连续，唯一 terminal=`run.completed` 且为最后事件；status=`passed`、failure category=`none`；
+   - machine evaluator tests/taskCompleted/patchAccepted=`true/true/true`，regression/manual intervention=`0/0`；冻结 fixture 的 visible test 独立复跑=`9/9`；该 Formal 已永久冻结，禁止重跑。
+
+2. **真实 Tool 序列、原始 mutation envelope 与最小变更证据**：
+   - 4 次 Tool 依次为 `list_files → file_read(full source) → apply_patch(initial) → file_read(full source)`，全部成功；raw `apply_patch` input SHA-256=`7176a2aa5a425bbe29035c03c7cb5d29a3cae491d2f7419ff1d508d2e8ffa318`；
+   - Windows Provider 的 initial patch 已满足当前 9-case truth，最终摘要为 `No correction required.`；未触发 WSL2 冻结路径中的 deletion-only correction，不把“平台通过”误述为“Windows correction guard 被触发”；
+   - changed path 仅 `src/diff/props.js`，最终 patch=`1 file / 1 hunk / +19 -2`，SHA-256=`ab74596871e05bc60da337a787db0164aaa31ea3a7e6046a1964d382d9ef622c`；aria/data false 被序列化，普通 false、null、undefined 被移除。
+
+3. **终态、usage 与费用证据**：
+   - Coding CI event/capability/model route/trace/artifact/workspace-change 合同全部通过；model calls=`4/4` 均有 Provider usage，usage status=`provider_reported/complete`；
+   - input/output=`7,407/599`，duration=`7,871 ms`，本次费用=`$0.0014099`；累计 observed=`$3.44041929`；
+   - 按既有 `8 CNY/USD` 守卫换算，本次=`0.0112792 RMB`，Stage 0D 当前=`49.14809707 RMB < 80 RMB`；再完整预留后=`49.94809707 RMB < 80 RMB`。
+
+4. **snapshot、artifact 与安全收尾**：
+   - Windows harness=`e1f8aaa1e9525b45fb3c981e8975a7ab09c8d5be`、Preact=`6bb827251ac7111234b293cac013a0a67c2ca8b2` 且均 clean；repository snapshot manifest binding/source identity/license/dependency cache/execution network 五项均为 `passed`；
+   - events/trace/result SHA-256=`1dc298773705d0a36d83e8c405be246b009fe28fece05faaa1b6aaf3de45c0d1` / `f6f57865240b932d54895cc1ff3a9752fb4c35c26810ce206b428c0692dfb75d` / `ff83f53e9b7c0397c8ea4483b728da6e8de89b444660ac7d3dd54fe044ca81cd`；snapshot preflight/receipt SHA-256=`bf047642ef69c686aee7d1229e3d007f8869c3b437130c5c178ea4c435270bec` / `23e4b031d0401342ea55973a83f12103eae0341d3c734402427b4a9816d9cb1b`；
+   - runtime `.env/.env.local` 经 containment、常规文件、非 reparse 与固定 SHA 核验后送入 Windows 回收站，removed/remaining=`2/0`、可恢复；cleanup SHA-256=`6619cad0832244fe0d8badc880a77309b48ad181344afe6f3f5a8d95475db921`；
+   - bounded scan tracked/regular/excluded=`2656/959/2`，symlink/unreadable/env/exact key/input leakage=`0/0/0/0/0`，scan SHA-256=`ff784f30dd18a9fc494803b6db97472a99b9f37644f781b289e1b87452238483`；写后 regular=`960`，其余计数继续为 `0`；port `29255`、非探针任务进程、runtime env=`0/0/0`。
+
+5. **效果**：
+   - 同一 committed-clean `e1f8aaa`、同一 9-case truth、同一 Preact snapshot 已同时获得 Windows-native 与 WSL2 machine evaluator 全绿外部证据，P0 Web 双平台代表闭合；
+   - WSL2 run 真实经过 deletion-only correction，Windows run 的 initial mutation 直接合法，两条不同 Provider 路径均在公共 Agent guard 与 evaluator 合同下完成，未扩大 changed path；
+   - 本结论只闭合 P0 Web 代表，不自动外推为完整矩阵或最终 9.5；Windows/WSL2 本 identity 及全部历史 Formal 继续永久冻结。
+
+##### 验证结果
+
+- TypeScript workspace 编译无错误；同 identity Windows/ext4 Agent=`805 passed / 1 skipped`、四文件=`157/157`、完整 build、`verify:build`、benchmark/CI 与 launcher 合同证据保持有效；
+- Windows machine evaluator=`true/true/true`、regression=`0`，visible test=`9/9`；WSL2 已冻结 evaluator=`true/true/true`、regression=`0`，双平台 source/truth/snapshot identity 一致；
+- 4 次 Tool 全成功、4/4 Provider calls usage 完整、单文件最终 patch 被接受；env 回收、exact-value 限定扫描、端口/任务进程/runtime env 零残留全部通过。
+
+##### 后续计划
+
+- **下一步准备做什么**：只读提取 P2-C 连续候选的评分合同、候选 identity、双平台/矩阵运行边界和完成 Gate，建立 candidate #1 的零模型 readiness；完成并回写后，才决定最小必要的候选运行集合。
+- **为什么先做它**：P0 Web 双平台代表已闭合，下一阶段目标从“修复单一失败形状”切换为“证明连续候选原始加权 `>=9.500`”；必须先冻结评分输入和运行集合，避免把已通过的单任务证据直接外推或无边界重跑矩阵。
+- **当前还缺的关键闭环**：两个连续候选的同一评分合同、原始加权与各维/硬 Gate、完整必要平台证据及观察窗口；在 candidate readiness 明确前不启动新付费矩阵，不重跑任何冻结 Formal。
+
 ## 实施计划进度表
 
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
@@ -4692,7 +4734,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
 | P0：Benchmark truth set / evaluator 对齐 | P0 | **`ar*` 反例 zero-cost 对齐已完成** | truth set 现为 9 witness，新增 `archive=false → remove`，SHA=`5bec7096…`；冻结 narrow-prefix source replay 失败关闭，truth/fixture/evaluator=`22/22` | - | 保持 truth set、prompt、fixture、visible test 与 evaluator 单一版本绑定；任何 SHA/Schema/任务合同漂移均失败关闭 |
-| P0：Web mutation/correction 稳定化 | P0 | **`e1f8aaa` WSL2 全绿；Windows dry-run/prepare-only 全绿，待唯一 Formal** | WSL2 evaluator=`true/true/true`；Windows dry-run run=`1788188823417` 零 Provider；prepare receipt=`2087c504…`，identity/snapshot/child-boundary/费用/scan/端口/进程全绿 | `至多 1 次 Windows Formal + 冻结审计，约 0.05-0.1 人日` | 以 `127.0.0.1:29255` 执行唯一 Windows Formal并永久冻结；历史 Formal 禁止重跑，双平台闭合后才进入连续候选/P2-C |
+| P0：Web mutation/correction 稳定化 | P0 | **已完成并冻结同 identity 双平台代表** | `e1f8aaa` WSL2 run=`1788184598620`、Windows run=`1788191062384` 均 evaluator=`true/true/true`、regression=`0`；WSL2 correction 与 Windows direct-valid mutation 两路径全绿，usage/snapshot/env/scan/端口/进程完备 | - | 两个 Formal 与全部历史 Formal 永久冻结；不外推为完整矩阵，转入 P2-C 连续候选 readiness |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |
@@ -4700,4 +4742,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **未启动** | Web post-fix 真实通过代表与连续候选证据仍缺 | `5-7.5 人日 + 观察窗口` | P0 Web 外部闭环后，两个连续候选原始加权 `>=9.500`、各维及全部硬 Gate 通过 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **P0 入口已满足，待 candidate #1 readiness** | `e1f8aaa` Web post-fix 同 identity 双平台外部代表已闭合；连续候选尚未运行 | `5-7.5 人日 + 观察窗口` | 先只读冻结评分合同、候选 identity、最小运行集合与 Gate；再证明两个连续候选原始加权 `>=9.500`、各维及全部硬 Gate 通过 |
