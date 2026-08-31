@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   hasSerializedFalseNullishSerializationCurrentSource,
   rebuildSerializedFalseBroadFirstCharacterToolCall,
+  rebuildSerializedFalseNestedUnreachableToolCall,
   rebuildSerializedFalseSiblingDoubleElseToolCall,
   rebuildSerializedFalseSemanticNarrowingToolCall,
 } from "./react-workspace-mutation-serialized-false-correction.js";
@@ -160,8 +161,195 @@ const broadFirstCharacterBaselineCorrection = [
   `+${baselineInlineCondition}`,
   "*** End Patch",
 ].join("\n");
+const nestedRemovalCondition = "\t\t} else if (value == NULL || value === false) {";
+const nestedPrefixCondition = "\t\t\tif (name.slice(0, 5) == 'aria-' || name.slice(0, 5) == 'data-') {";
+const nestedUnreachableCondition = "\t\t\tif (value === false && (name.slice(0, 5) == 'aria-' || name.slice(0, 5) == 'data-')) {";
+const nestedSerializationStatement = "\t\t\t\tdom.setAttribute(name, String(value));";
+const nestedFallbackStatement = "\t\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);";
+const nestedInitialSource = [
+  "\t\tif (typeof value == 'function') {",
+  "\t\t\t// never serialize functions as attribute values",
+  nestedRemovalCondition,
+  "\t\t\tdom.removeAttribute(name);",
+  "\t\t} else {",
+  nestedPrefixCondition,
+  nestedSerializationStatement,
+  "\t\t\t} else {",
+  nestedFallbackStatement,
+  "\t\t\t}",
+  "\t\t}",
+].join("\n");
+const nestedInitialPatch = [
+  "*** Begin Patch",
+  `*** Update File: ${requiredPath}`,
+  "@@",
+  "-\t\t} else if (value != NULL && value !== false) {",
+  "-\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  `+${nestedRemovalCondition}`,
+  "+\t\t\tdom.removeAttribute(name);",
+  " \t\t} else {",
+  "-\t\t\tdom.removeAttribute(name);",
+  `+${nestedPrefixCondition}`,
+  `+${nestedSerializationStatement}`,
+  "+\t\t\t} else {",
+  `+${nestedFallbackStatement}`,
+  "+\t\t\t}",
+  " \t\t}",
+  "*** End Patch",
+].join("\n");
+const nestedUnreachableCorrection = [
+  "*** Begin Patch",
+  `*** Update File: ${requiredPath}`,
+  "@@",
+  " \t\t} else if (value == NULL || value === false) {",
+  " \t\t\tdom.removeAttribute(name);",
+  " \t\t} else {",
+  `-${nestedPrefixCondition}`,
+  `+${nestedUnreachableCondition}`,
+  ` ${nestedSerializationStatement}`,
+  "*** End Patch",
+].join("\n");
+const nestedBaselineCorrection = [
+  "*** Begin Patch",
+  `*** Update File: ${requiredPath}`,
+  "@@",
+  `-${nestedRemovalCondition}`,
+  "-\t\t\tdom.removeAttribute(name);",
+  "-\t\t} else {",
+  `-${nestedPrefixCondition}`,
+  `-${nestedSerializationStatement}`,
+  "-\t\t\t} else {",
+  `-${nestedFallbackStatement}`,
+  "-\t\t\t}",
+  `+${baselineInlineCondition}`,
+  "+\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  "*** End Patch",
+].join("\n");
 
 describe("serialized-false semantic-narrowing correction", () => {
+  it("rebuilds the frozen nested unreachable-false correction from complete current source", () => {
+    const rebuilt = rebuildSerializedFalseNestedUnreachableToolCall({
+      toolCall: call(nestedUnreachableCorrection),
+      messages: sourceMessages(nestedInitialSource),
+      taskText,
+      priorSuccessfulPatchInputs: [nestedInitialPatch],
+      requiredPaths: [requiredPath],
+    });
+
+    expect(JSON.parse(rebuilt!.function.arguments)).toEqual({
+      input: nestedBaselineCorrection,
+    });
+  });
+
+  it.each([
+    {
+      name: "unrelated task",
+      task: "Rename a variable with the smallest change.",
+      messages: sourceMessages(nestedInitialSource),
+      patches: [nestedInitialPatch],
+      paths: [requiredPath],
+      correction: nestedUnreachableCorrection,
+    },
+    {
+      name: "multiple required paths",
+      task: taskText,
+      messages: sourceMessages(nestedInitialSource),
+      patches: [nestedInitialPatch],
+      paths: [requiredPath, "src/other.js"],
+      correction: nestedUnreachableCorrection,
+    },
+    {
+      name: "unbound prior patch",
+      task: taskText,
+      messages: sourceMessages(nestedInitialSource),
+      patches: [nestedInitialPatch.replace(requiredPath, "src/other.js")],
+      paths: [requiredPath],
+      correction: nestedUnreachableCorrection,
+    },
+    {
+      name: "non-contiguous prior patch",
+      task: taskText,
+      messages: sourceMessages(nestedInitialSource),
+      patches: [nestedInitialPatch.replace(
+        `+${nestedSerializationStatement}`,
+        `+${nestedSerializationStatement}\n+\t\t\tconst unrelated = true;`,
+      )],
+      paths: [requiredPath],
+      correction: nestedUnreachableCorrection,
+    },
+    {
+      name: "newer truncated source",
+      task: taskText,
+      messages: [
+        ...sourceMessages(nestedInitialSource),
+        ...sourceMessages(nestedInitialSource, true),
+      ],
+      patches: [nestedInitialPatch],
+      paths: [requiredPath],
+      correction: nestedUnreachableCorrection,
+    },
+    {
+      name: "source drift",
+      task: taskText,
+      messages: sourceMessages(nestedInitialSource.replace("String(value)", "'false'")),
+      patches: [nestedInitialPatch],
+      paths: [requiredPath],
+      correction: nestedUnreachableCorrection,
+    },
+    {
+      name: "outer control-flow drift",
+      task: taskText,
+      messages: sourceMessages(`${nestedInitialSource.slice(0, -4)}\t\t} else {`),
+      patches: [nestedInitialPatch],
+      paths: [requiredPath],
+      correction: nestedUnreachableCorrection,
+    },
+    {
+      name: "duplicate matching branch",
+      task: taskText,
+      messages: sourceMessages(`${nestedInitialSource}\n${nestedInitialSource}`),
+      patches: [nestedInitialPatch],
+      paths: [requiredPath],
+      correction: nestedUnreachableCorrection,
+    },
+    {
+      name: "legal baseline correction",
+      task: taskText,
+      messages: sourceMessages(nestedInitialSource),
+      patches: [nestedInitialPatch],
+      paths: [requiredPath],
+      correction: nestedUnreachableCorrection.replace(
+        nestedUnreachableCondition,
+        baselineInlineCondition,
+      ),
+    },
+    {
+      name: "non-contiguous correction context",
+      task: taskText,
+      messages: sourceMessages(nestedInitialSource),
+      patches: [nestedInitialPatch],
+      paths: [requiredPath],
+      correction: nestedUnreachableCorrection.replace(
+        " \t\t\tdom.removeAttribute(name);",
+        " \t\t\tdom.removeAttribute(name);\n unrelated context",
+      ),
+    },
+  ])("does not rebuild nested unreachable correction with $name", ({
+    task,
+    messages,
+    patches,
+    paths,
+    correction,
+  }) => {
+    expect(rebuildSerializedFalseNestedUnreachableToolCall({
+      toolCall: call(correction),
+      messages,
+      taskText: task,
+      priorSuccessfulPatchInputs: patches,
+      requiredPaths: paths,
+    })).toBeUndefined();
+  });
+
   it("rebuilds the frozen broad first-character correction from complete current source", () => {
     const rebuilt = rebuildSerializedFalseBroadFirstCharacterToolCall({
       toolCall: call(broadFirstCharacterCorrection),

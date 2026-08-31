@@ -129,6 +129,7 @@ import {
 import {
   hasSerializedFalseNullishSerializationCurrentSource,
   rebuildSerializedFalseBroadFirstCharacterToolCall,
+  rebuildSerializedFalseNestedUnreachableToolCall,
   rebuildSerializedFalseSiblingDoubleElseToolCall,
   rebuildSerializedFalseSemanticNarrowingToolCall,
 } from "./react-workspace-mutation-serialized-false-correction.js";
@@ -4594,6 +4595,16 @@ export class ToolEnabledAgent implements BelldandyAgent {
               requiredPaths: workspaceMutationCallRequiredPaths,
             })
             : undefined;
+          const rebuiltSerializedFalseNestedUnreachableToolCall = workspaceMutationObjectiveReviewCall
+            && !workspaceMutationObjectiveInputCorrectionCall
+            ? rebuildSerializedFalseNestedUnreachableToolCall({
+              toolCall: constrainedMutationToolCall,
+              messages: mutationRecoverySourceMessages,
+              taskText: input.text,
+              priorSuccessfulPatchInputs: successfulWorkspaceMutationPatchInputs,
+              requiredPaths: workspaceMutationCallRequiredPaths,
+            })
+            : undefined;
           const rebuiltSerializedFalseBroadFirstCharacterToolCall = workspaceMutationObjectiveReviewCall
             && !workspaceMutationObjectiveInputCorrectionCall
             ? rebuildSerializedFalseBroadFirstCharacterToolCall({
@@ -4607,10 +4618,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
           const validatedMutationToolCall = rebuiltClosingDelimiterToolCall
             ?? rebuiltSerializedFalseToolCall
             ?? rebuiltSerializedFalseSiblingDoubleElseToolCall
+            ?? rebuiltSerializedFalseNestedUnreachableToolCall
             ?? rebuiltSerializedFalseBroadFirstCharacterToolCall
             ?? constrainedMutationToolCall;
           const semanticValidationToolCall = rebuiltSerializedFalseToolCall
             || rebuiltSerializedFalseSiblingDoubleElseToolCall
+            || rebuiltSerializedFalseNestedUnreachableToolCall
             || rebuiltSerializedFalseBroadFirstCharacterToolCall
             ? validatedMutationToolCall
             : constrainedMutationToolCall;
@@ -4630,6 +4643,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
           if (rebuiltSerializedFalseSiblingDoubleElseToolCall) {
             logWarn("[workspace-mutation] rebuilt trusted sibling double-else correction as baseline serialized-false condition", {
+              requiredPathCount: workspaceMutationCallRequiredPaths.length,
+              conversationId: input.conversationId,
+              agentId: resolvedAgentId,
+            });
+          }
+          if (rebuiltSerializedFalseNestedUnreachableToolCall) {
+            logWarn("[workspace-mutation] rebuilt trusted nested unreachable-false correction as baseline serialized-false condition", {
               requiredPathCount: workspaceMutationCallRequiredPaths.length,
               conversationId: input.conversationId,
               agentId: resolvedAgentId,
