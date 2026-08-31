@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./model-request-transport.js", () => ({
@@ -735,6 +737,215 @@ describe("ToolEnabledAgent serialized-false correction", () => {
       .includes("Mutation-only recovery phase"))).toBe(true);
     expect(executedPatches).toEqual([expectedPatch]);
     expect(executedPatches).not.toContain(noOpPatch);
+    expect(items).toContainEqual({ type: "final", text: successfulSummary });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("rebuilds the frozen post-write placeholder correction from the current source", async () => {
+    const requiredPath = "src/diff/props.js";
+    const commentLines = [
+      "\t\t// aria- and data- attributes have no boolean representation.",
+      "\t\t// A `false` value is different from the attribute not being",
+      "\t\t// present, so we can't remove it. For non-boolean aria",
+      "\t\t// attributes we could treat false as a removal, but the",
+      "\t\t// amount of exceptions would cost too many bytes. On top of",
+      "\t\t// that other frameworks generally stringify `false`.",
+    ];
+    const ariaCondition = "\t\tif (name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') {";
+    const dataCondition = "\t\t} else if (name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-') {";
+    const currentCondition = "\t\t} else if (value != NULL && value !== false) {";
+    const baselineCondition = "\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {";
+    const attributeStatement = "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);";
+    const nestedAttributeStatement = `\t${attributeStatement}`;
+    const initialPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-\t\tif (typeof value == 'function') {",
+      ...commentLines.map((line) => `+${line}`),
+      `+${ariaCondition}`,
+      "+\t\t\tif (typeof value == 'function') {",
+      "+\t\t\t\t// never serialize functions as attribute values",
+      "+\t\t\t} else if (value != NULL) {",
+      `+${nestedAttributeStatement}`,
+      "+\t\t\t} else {",
+      "+\t\t\t\tdom.removeAttribute(name);",
+      "+\t\t\t}",
+      `+${dataCondition}`,
+      "+\t\t\tif (typeof value == 'function') {",
+      "+\t\t\t\t// never serialize functions as attribute values",
+      "+\t\t\t} else if (value != NULL) {",
+      `+${nestedAttributeStatement}`,
+      "+\t\t\t} else {",
+      "+\t\t\t\tdom.removeAttribute(name);",
+      "+\t\t\t}",
+      "+\t\t} else if (typeof value == 'function') {",
+      " \t\t\t// never serialize functions as attribute values",
+      ` ${currentCondition}`,
+      ` ${attributeStatement}`,
+      "*** End Patch",
+      "",
+    ].join("\n");
+    const placeholderCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      ...commentLines.map((line) => `-${line}`),
+      "+\t\tif (value == NULL && name in dom) { ... }",
+      "*** End Patch",
+    ].join("\n");
+    const expectedCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${ariaCondition}`,
+      "-\t\t\tif (typeof value == 'function') {",
+      "-\t\t\t\t// never serialize functions as attribute values",
+      "-\t\t\t} else if (value != NULL) {",
+      `-${nestedAttributeStatement}`,
+      "-\t\t\t} else {",
+      "-\t\t\t\tdom.removeAttribute(name);",
+      "-\t\t\t}",
+      `-${dataCondition}`,
+      "-\t\t\tif (typeof value == 'function') {",
+      "-\t\t\t\t// never serialize functions as attribute values",
+      "-\t\t\t} else if (value != NULL) {",
+      `-${nestedAttributeStatement}`,
+      "-\t\t\t} else {",
+      "-\t\t\t\tdom.removeAttribute(name);",
+      "-\t\t\t}",
+      "-\t\t} else if (typeof value == 'function') {",
+      "+\t\tif (typeof value == 'function') {",
+      " \t\t\t// never serialize functions as attribute values",
+      `-${currentCondition}`,
+      `+${baselineCondition}`,
+      ` ${attributeStatement}`,
+      "*** End Patch",
+    ].join("\n");
+    const postInitialSource = [
+      ...commentLines,
+      ariaCondition,
+      "\t\t\tif (typeof value == 'function') {",
+      "\t\t\t\t// never serialize functions as attribute values",
+      "\t\t\t} else if (value != NULL) {",
+      nestedAttributeStatement,
+      "\t\t\t} else {",
+      "\t\t\t\tdom.removeAttribute(name);",
+      "\t\t\t}",
+      dataCondition,
+      "\t\t\tif (typeof value == 'function') {",
+      "\t\t\t\t// never serialize functions as attribute values",
+      "\t\t\t} else if (value != NULL) {",
+      nestedAttributeStatement,
+      "\t\t\t} else {",
+      "\t\t\t\tdom.removeAttribute(name);",
+      "\t\t\t}",
+      "\t\t} else if (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      currentCondition,
+      attributeStatement,
+      "\t\t} else {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t}",
+    ].join("\n");
+    const correctedSource = [
+      ...commentLines,
+      "\t\tif (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      baselineCondition,
+      attributeStatement,
+      "\t\t} else {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t}",
+    ].join("\n");
+    const successfulSummary = '{"summary":"preserved the complete serialized-false truth set"}';
+    const task = "Fix the frozen browser-facing regression in the real web project. Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, and remove every attribute with null or undefined values. Make the smallest change in src/diff/props.js and pass the supplied deterministic checks.";
+    const requests: Array<Record<string, any>> = [];
+    const executedPatches: string[] = [];
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const instruction = String(body.messages?.[0]?.content ?? "");
+      if (instruction.includes("Post-mutation verification phase")) {
+        return response(modelToolCall(`read-${requests.length}`, "file_read", {
+          path: requiredPath,
+          limit: 1_048_576,
+        }));
+      }
+      if (instruction.includes("Post-mutation final objective review phase")) {
+        return response({
+          choices: [{ finish_reason: "stop", message: { content: successfulSummary } }],
+          usage: { prompt_tokens: 300, completion_tokens: 30 },
+        });
+      }
+      if (instruction.includes("Post-mutation objective review phase")) {
+        return response(modelToolCall("formal-placeholder-correction", "apply_patch", {
+          input: placeholderCorrection,
+        }));
+      }
+      return response(modelToolCall("formal-initial-real-mutation", "apply_patch", {
+        input: initialPatch,
+      }));
+    });
+
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: requiredPath,
+            truncated: false,
+            content: executedPatches.includes(expectedCorrection) ? correctedSource : postInitialSource,
+          }),
+          durationMs: 1,
+        };
+      }
+      executedPatches.push(String(request.arguments?.input ?? ""));
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: [requiredPath] },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent(execute);
+
+    const items = await collect(agent.run({
+      conversationId: "conv-formal-post-write-placeholder-serialized-false",
+      text: task,
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths: [requiredPath],
+          toolLoopIterationBudget: 6,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === successfulSummary
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(createHash("sha256").update(initialPatch).digest("hex"))
+      .toBe("cf7b30d41b7e36bbc139bc1c437817a8afc1f469626181c8aafa0bd4c1addc15");
+    expect(createHash("sha256").update(placeholderCorrection).digest("hex"))
+      .toBe("d3368bfd5072c55f2336300ac57d922af6b61e00f9193bbdc8d294da8f1ad7f0");
+    expect(executedPatches).toEqual([initialPatch, expectedCorrection]);
+    expect(executedPatches).not.toContain(placeholderCorrection);
     expect(items).toContainEqual({ type: "final", text: successfulSummary });
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });

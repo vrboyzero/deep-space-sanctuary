@@ -6,6 +6,7 @@ import {
   rebuildSerializedFalseInitialNoOpToolCall,
   rebuildSerializedFalseNarrowArPrefixToolCall,
   rebuildSerializedFalseNestedUnreachableToolCall,
+  rebuildSerializedFalsePlaceholderCorrectionToolCall,
   rebuildSerializedFalseSiblingDoubleElseToolCall,
   rebuildSerializedFalseSemanticNarrowingToolCall,
 } from "./react-workspace-mutation-serialized-false-correction.js";
@@ -314,8 +315,228 @@ const initialSerializedFalseBaselinePatch = [
   `+${baselineInlineCondition}`,
   "*** End Patch",
 ].join("\n");
+const postWriteCommentLines = [
+  "\t\t// aria- and data- attributes have no boolean representation.",
+  "\t\t// A `false` value is different from the attribute not being",
+  "\t\t// present, so we can't remove it. For non-boolean aria",
+  "\t\t// attributes we could treat false as a removal, but the",
+  "\t\t// amount of exceptions would cost too many bytes. On top of",
+  "\t\t// that other frameworks generally stringify `false`.",
+];
+const postWriteAriaCondition = "\t\tif (name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') {";
+const postWriteDataCondition = "\t\t} else if (name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-') {";
+const postWriteSiblingSource = [
+  ...postWriteCommentLines,
+  postWriteAriaCondition,
+  "\t\t\tif (typeof value == 'function') {",
+  "\t\t\t\t// never serialize functions as attribute values",
+  "\t\t\t} else if (value != NULL) {",
+  "\t\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  "\t\t\t} else {",
+  "\t\t\t\tdom.removeAttribute(name);",
+  "\t\t\t}",
+  postWriteDataCondition,
+  "\t\t\tif (typeof value == 'function') {",
+  "\t\t\t\t// never serialize functions as attribute values",
+  "\t\t\t} else if (value != NULL) {",
+  "\t\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  "\t\t\t} else {",
+  "\t\t\t\tdom.removeAttribute(name);",
+  "\t\t\t}",
+  "\t\t} else if (typeof value == 'function') {",
+  "\t\t\t// never serialize functions as attribute values",
+  "\t\t} else if (value != NULL && value !== false) {",
+  "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  "\t\t} else {",
+  "\t\t\tdom.removeAttribute(name);",
+  "\t\t}",
+].join("\n");
+const postWriteInitialPatch = [
+  "*** Begin Patch",
+  `*** Update File: ${requiredPath}`,
+  "@@",
+  "-\t\tif (typeof value == 'function') {",
+  ...postWriteCommentLines.map((line) => `+${line}`),
+  `+${postWriteAriaCondition}`,
+  "+\t\t\tif (typeof value == 'function') {",
+  "+\t\t\t\t// never serialize functions as attribute values",
+  "+\t\t\t} else if (value != NULL) {",
+  "+\t\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  "+\t\t\t} else {",
+  "+\t\t\t\tdom.removeAttribute(name);",
+  "+\t\t\t}",
+  `+${postWriteDataCondition}`,
+  "+\t\t\tif (typeof value == 'function') {",
+  "+\t\t\t\t// never serialize functions as attribute values",
+  "+\t\t\t} else if (value != NULL) {",
+  "+\t\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  "+\t\t\t} else {",
+  "+\t\t\t\tdom.removeAttribute(name);",
+  "+\t\t\t}",
+  "+\t\t} else if (typeof value == 'function') {",
+  " \t\t\t// never serialize functions as attribute values",
+  " \t\t} else if (value != NULL && value !== false) {",
+  " \t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  "*** End Patch",
+  "",
+].join("\n");
+const postWritePlaceholderCorrection = [
+  "*** Begin Patch",
+  `*** Update File: ${requiredPath}`,
+  "@@",
+  ...postWriteCommentLines.map((line) => `-${line}`),
+  "+\t\tif (value == NULL && name in dom) { ... }",
+  "*** End Patch",
+].join("\n");
+const postWriteBaselineCorrection = [
+  "*** Begin Patch",
+  `*** Update File: ${requiredPath}`,
+  "@@",
+  `-${postWriteAriaCondition}`,
+  "-\t\t\tif (typeof value == 'function') {",
+  "-\t\t\t\t// never serialize functions as attribute values",
+  "-\t\t\t} else if (value != NULL) {",
+  "-\t\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  "-\t\t\t} else {",
+  "-\t\t\t\tdom.removeAttribute(name);",
+  "-\t\t\t}",
+  `-${postWriteDataCondition}`,
+  "-\t\t\tif (typeof value == 'function') {",
+  "-\t\t\t\t// never serialize functions as attribute values",
+  "-\t\t\t} else if (value != NULL) {",
+  "-\t\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  "-\t\t\t} else {",
+  "-\t\t\t\tdom.removeAttribute(name);",
+  "-\t\t\t}",
+  "-\t\t} else if (typeof value == 'function') {",
+  "+\t\tif (typeof value == 'function') {",
+  " \t\t\t// never serialize functions as attribute values",
+  "-\t\t} else if (value != NULL && value !== false) {",
+  `+${baselineInlineCondition}`,
+  " \t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  "*** End Patch",
+].join("\n");
 
 describe("serialized-false semantic-narrowing correction", () => {
+  it("rebuilds the frozen placeholder correction from complete post-write source", () => {
+    const rebuilt = rebuildSerializedFalsePlaceholderCorrectionToolCall({
+      toolCall: call(postWritePlaceholderCorrection),
+      messages: sourceMessages(postWriteSiblingSource),
+      taskText,
+      priorSuccessfulPatchInputs: [postWriteInitialPatch],
+      requiredPaths: [requiredPath],
+    });
+
+    expect(JSON.parse(rebuilt!.function.arguments)).toEqual({
+      input: postWriteBaselineCorrection,
+    });
+  });
+
+  it.each([
+    {
+      name: "unrelated task",
+      task: "Replace a comment with the smallest change.",
+      messages: sourceMessages(postWriteSiblingSource),
+      patches: [postWriteInitialPatch],
+      paths: [requiredPath],
+      correction: postWritePlaceholderCorrection,
+    },
+    {
+      name: "multiple required paths",
+      task: taskText,
+      messages: sourceMessages(postWriteSiblingSource),
+      patches: [postWriteInitialPatch],
+      paths: [requiredPath, "src/other.js"],
+      correction: postWritePlaceholderCorrection,
+    },
+    {
+      name: "no prior patch",
+      task: taskText,
+      messages: sourceMessages(postWriteSiblingSource),
+      patches: [] as string[],
+      paths: [requiredPath],
+      correction: postWritePlaceholderCorrection,
+    },
+    {
+      name: "multiple prior patches",
+      task: taskText,
+      messages: sourceMessages(postWriteSiblingSource),
+      patches: [postWriteInitialPatch, postWriteInitialPatch],
+      paths: [requiredPath],
+      correction: postWritePlaceholderCorrection,
+    },
+    {
+      name: "unbound prior patch",
+      task: taskText,
+      messages: sourceMessages(postWriteSiblingSource),
+      patches: [postWriteInitialPatch.replace(requiredPath, "src/other.js")],
+      paths: [requiredPath],
+      correction: postWritePlaceholderCorrection,
+    },
+    {
+      name: "prior patch with another changed path",
+      task: taskText,
+      messages: sourceMessages(postWriteSiblingSource),
+      patches: [postWriteInitialPatch.replace(
+        "*** End Patch",
+        "*** Update File: src/other.js\n@@\n-old\n+new\n*** End Patch",
+      )],
+      paths: [requiredPath],
+      correction: postWritePlaceholderCorrection,
+    },
+    {
+      name: "newer truncated source",
+      task: taskText,
+      messages: [
+        ...sourceMessages(postWriteSiblingSource),
+        ...sourceMessages(postWriteSiblingSource, true),
+      ],
+      patches: [postWriteInitialPatch],
+      paths: [requiredPath],
+      correction: postWritePlaceholderCorrection,
+    },
+    {
+      name: "drifted source branch",
+      task: taskText,
+      messages: sourceMessages(postWriteSiblingSource.replace(
+        "dom.removeAttribute(name);",
+        "dom.removeAttribute(otherName);",
+      )),
+      patches: [postWriteInitialPatch],
+      paths: [requiredPath],
+      correction: postWritePlaceholderCorrection,
+    },
+    {
+      name: "legal correction",
+      task: taskText,
+      messages: sourceMessages(postWriteSiblingSource),
+      patches: [postWriteInitialPatch],
+      paths: [requiredPath],
+      correction: [
+        "*** Begin Patch",
+        `*** Update File: ${requiredPath}`,
+        "@@",
+        `-${postWriteAriaCondition}`,
+        `+${baselineInlineCondition}`,
+        "*** End Patch",
+      ].join("\n"),
+    },
+  ])("does not rebuild the placeholder correction with $name", ({
+    task,
+    messages,
+    patches,
+    paths,
+    correction,
+  }) => {
+    expect(rebuildSerializedFalsePlaceholderCorrectionToolCall({
+      toolCall: call(correction),
+      messages,
+      taskText: task,
+      priorSuccessfulPatchInputs: patches,
+      requiredPaths: paths,
+    })).toBeUndefined();
+  });
+
   it("rebuilds the frozen initial semantic no-op from complete current source", () => {
     const rebuilt = rebuildSerializedFalseInitialNoOpToolCall({
       toolCall: call(initialSerializedFalseNoOpPatch),
