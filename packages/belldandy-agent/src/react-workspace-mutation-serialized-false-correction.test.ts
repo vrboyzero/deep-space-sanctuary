@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   hasSerializedFalseNullishSerializationCurrentSource,
+  rebuildSerializedFalseSiblingDoubleElseToolCall,
   rebuildSerializedFalseSemanticNarrowingToolCall,
 } from "./react-workspace-mutation-serialized-false-correction.js";
 
@@ -69,8 +70,132 @@ const nullishSerializationPatch = [
   " \t\t} else if (value != NULL && value !== false) {",
   "*** End Patch",
 ].join("\n");
+const reachableInlineCondition = "\t\t} else if (value != NULL && (value !== false || name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' || name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-')) {";
+const reachableInlineSource = [
+  "\t\tif (typeof value == 'function') {",
+  "\t\t\t// never serialize functions as attribute values",
+  reachableInlineCondition,
+  "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  "\t\t} else {",
+  "\t\t\tdom.removeAttribute(name);",
+  "\t\t}",
+].join("\n");
+const reachableInlinePatch = [
+  "*** Begin Patch",
+  `*** Update File: ${requiredPath}`,
+  "@@",
+  "-\t\t} else if (value != NULL && value !== false) {",
+  `+${reachableInlineCondition}`,
+  " \t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  "*** End Patch",
+].join("\n");
+const siblingDoubleElseCorrection = [
+  "*** Begin Patch",
+  `*** Update File: ${requiredPath}`,
+  "@@",
+  "-\t\tif (typeof value == 'function') {",
+  "-\t\t\t// never serialize functions as attribute values",
+  `-${reachableInlineCondition}`,
+  "+\t\tif (typeof value == 'function' || value == NULL || value === false && !(name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' || name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-')) {",
+  "+\t\t\t// functions, null, undefined are never serialized; false removes ordinary attributes",
+  "+\t\t} else {",
+  " \t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  "*** End Patch",
+].join("\n");
+const baselineInlineCondition = "\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {";
+const baselineInlineCorrection = [
+  "*** Begin Patch",
+  `*** Update File: ${requiredPath}`,
+  "@@",
+  `-${reachableInlineCondition}`,
+  `+${baselineInlineCondition}`,
+  "*** End Patch",
+].join("\n");
 
 describe("serialized-false semantic-narrowing correction", () => {
+  it("rebuilds a direct sibling double-else correction as the source-derived baseline condition", () => {
+    const rebuilt = rebuildSerializedFalseSiblingDoubleElseToolCall({
+      toolCall: call(siblingDoubleElseCorrection),
+      messages: sourceMessages(reachableInlineSource),
+      taskText,
+      priorSuccessfulPatchInputs: [reachableInlinePatch],
+      requiredPaths: [requiredPath],
+    });
+
+    expect(JSON.parse(rebuilt!.function.arguments)).toEqual({ input: baselineInlineCorrection });
+  });
+
+  it.each([
+    {
+      name: "unrelated task",
+      toolCall: call(siblingDoubleElseCorrection),
+      messages: sourceMessages(reachableInlineSource),
+      task: "Rename a variable with the smallest change.",
+      patches: [reachableInlinePatch],
+      paths: [requiredPath],
+    },
+    {
+      name: "multiple required paths",
+      toolCall: call(siblingDoubleElseCorrection),
+      messages: sourceMessages(reachableInlineSource),
+      task: taskText,
+      patches: [reachableInlinePatch],
+      paths: [requiredPath, "src/other.js"],
+    },
+    {
+      name: "unbound prior patch",
+      toolCall: call(siblingDoubleElseCorrection),
+      messages: sourceMessages(reachableInlineSource),
+      task: taskText,
+      patches: [reachableInlinePatch.replace(requiredPath, "src/other.js")],
+      paths: [requiredPath],
+    },
+    {
+      name: "newer truncated source",
+      toolCall: call(siblingDoubleElseCorrection),
+      messages: [
+        ...sourceMessages(reachableInlineSource),
+        ...sourceMessages(reachableInlineSource, true),
+      ],
+      task: taskText,
+      patches: [reachableInlinePatch],
+      paths: [requiredPath],
+    },
+    {
+      name: "different current source",
+      toolCall: call(siblingDoubleElseCorrection),
+      messages: sourceMessages(reachableInlineSource.replace("name[4] == '-'", "name[5] == '-'")),
+      task: taskText,
+      patches: [reachableInlinePatch],
+      paths: [requiredPath],
+    },
+    {
+      name: "correction removes the following sibling else",
+      toolCall: call(siblingDoubleElseCorrection.replace(
+        " \t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+        " \t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);\n-\t\t} else {\n-\t\t\tdom.removeAttribute(name);",
+      )),
+      messages: sourceMessages(reachableInlineSource),
+      task: taskText,
+      patches: [reachableInlinePatch],
+      paths: [requiredPath],
+    },
+  ])("does not rebuild sibling double-else with $name", ({
+    toolCall,
+    messages,
+    task,
+    patches,
+    paths,
+  }) => {
+    expect(rebuildSerializedFalseSiblingDoubleElseToolCall({
+      toolCall,
+      messages,
+      taskText: task,
+      priorSuccessfulPatchInputs: patches,
+      requiredPaths: paths,
+    })).toBeUndefined();
+  });
+
   it("detects the frozen nullish serialization branch only from bound complete current source", () => {
     expect(hasSerializedFalseNullishSerializationCurrentSource(
       sourceMessages(nullishSerializationSource),

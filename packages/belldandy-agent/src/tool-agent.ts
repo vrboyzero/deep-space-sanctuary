@@ -128,6 +128,7 @@ import {
 } from "./react-run-budget.js";
 import {
   hasSerializedFalseNullishSerializationCurrentSource,
+  rebuildSerializedFalseSiblingDoubleElseToolCall,
   rebuildSerializedFalseSemanticNarrowingToolCall,
 } from "./react-workspace-mutation-serialized-false-correction.js";
 import {
@@ -4582,10 +4583,22 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 : undefined,
             })
             : undefined;
+          const rebuiltSerializedFalseSiblingDoubleElseToolCall = workspaceMutationObjectiveReviewCall
+            && !workspaceMutationObjectiveInputCorrectionCall
+            ? rebuildSerializedFalseSiblingDoubleElseToolCall({
+              toolCall: constrainedMutationToolCall,
+              messages: mutationRecoverySourceMessages,
+              taskText: input.text,
+              priorSuccessfulPatchInputs: successfulWorkspaceMutationPatchInputs,
+              requiredPaths: workspaceMutationCallRequiredPaths,
+            })
+            : undefined;
           const validatedMutationToolCall = rebuiltClosingDelimiterToolCall
             ?? rebuiltSerializedFalseToolCall
+            ?? rebuiltSerializedFalseSiblingDoubleElseToolCall
             ?? constrainedMutationToolCall;
           const semanticValidationToolCall = rebuiltSerializedFalseToolCall
+            || rebuiltSerializedFalseSiblingDoubleElseToolCall
             ? validatedMutationToolCall
             : constrainedMutationToolCall;
           if (rebuiltClosingDelimiterToolCall) {
@@ -4597,6 +4610,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
           if (rebuiltSerializedFalseToolCall) {
             logWarn("[workspace-mutation] rebuilt trusted serialized-false semantic-narrowing correction", {
+              requiredPathCount: workspaceMutationCallRequiredPaths.length,
+              conversationId: input.conversationId,
+              agentId: resolvedAgentId,
+            });
+          }
+          if (rebuiltSerializedFalseSiblingDoubleElseToolCall) {
+            logWarn("[workspace-mutation] rebuilt trusted sibling double-else correction as baseline serialized-false condition", {
               requiredPathCount: workspaceMutationCallRequiredPaths.length,
               conversationId: input.conversationId,
               agentId: resolvedAgentId,
