@@ -4487,6 +4487,47 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：新 identity 的代码与 dry-run Gate 已闭合，但不可重跑 Formal 仍需在真实凭证已配置的前提下证明凭证只在受控 Provider child 边界注入，且运行目标、端口、进程和费用上限没有复用或漂移。
 - **当前还缺的关键闭环**：provider child-boundary audit 与完整 prepare-only receipt；仅当全部前置全绿且 `priorObservedCostUsd=3.43476015`、完整预留后 Stage 0D=`49.90282395 RMB < 80 RMB`，才允许执行一次新 identity WSL2 Formal。`947dd54` 及所有历史 Formal 继续永久冻结。
 
+#### P0 Web Gate 实现结论：`e1f8aaa` WSL2 Formal prepare-only（2026-08-31）
+
+##### 已完成内容
+
+1. **全新 Formal 目标与三方 identity 复核**：
+   - input/fixture/runtime/artifact 固定为 `tmp/p0-web-closing-delimiter-e1f8aaa-formal-r1-input`、`tmp/p0-web-closing-delimiter-e1f8aaa-formal-r1-fixture`、`tmp/p0-web-closing-delimiter-e1f8aaa-formal-r1-runtime` 与 `artifacts/p0-web-closing-delimiter-e1f8aaa-formal-r1`；prepare-only 前后三个运行目标均不存在；
+   - Windows checkpoint=`6013198a86076def9602b2d4f4648a63ccd2ecf5` 且相对 `e1f8aaa` 的 `packages/apps/scripts/benchmarks` 等代码路径 diff=`0`；ext4 harness=`e1f8aaa1e9525b45fb3c981e8975a7ab09c8d5be`，Preact=`6bb827251ac7111234b293cac013a0a67c2ca8b2`，三方均 clean；
+   - `findmnt` 确认 harness 与 Preact 均位于 `/dev/sdd` 的 `ext4`；repository input SHA-256=`f76b3b2d8e85abedf819faa25ebecf928359c31549a8b4686d50ed75c0c95732`，WSL 原生 loader 返回 repository=`preact`、count=`1`。
+
+2. **Provider child-boundary 与固定合同审计**：
+   - prepare-only 通过仓库原生 `buildWindowsBenchmarkInvocation()` / `buildWslBenchmarkInvocation()` 构造真实调用形状，但 gateway/benchmark spawned=`false/false`、Provider called=`false`；
+   - Provider key configured=`true`，只进入受控 Windows Gateway child env；launcher process、Gateway/benchmark args、WSL args/env 均不含 key，`provider-env-file` 路径也不进入这些 args/env；临时 auth token 只经 child env/`WSLENV` 转交且不进入参数；
+   - Provider/model/retry=`openai/deepseek-v4-flash/0`，budget=`12 turns / 24,000 tokens / $0.10`，pricing cache/input/output=`0.0125/0.375/1.125 USD per 1M`，prior/max cost=`$3.43476015/$3.53476015` 均由调用构造与 WSL runner 精确复核。
+
+3. **snapshot、费用、敏感值与资源 Gate**：
+   - 本轮 dry-run 的 repository snapshot receipt/preflight 原件复核通过，五项 manifest binding/source identity/license/dependency cache/execution network 均为 `passed`，preflight SHA-256=`bf047642ef69c686aee7d1229e3d007f8869c3b437130c5c178ea4c435270bec`；
+   - 仓库原生 budget resolver 返回 observed/remaining/max=`$3.43476015/$0.10/$3.53476015`；Stage 0D 当前/完整预留后=`49.10282395/49.90282395 RMB < 80 RMB`；
+   - 写后 bounded scan tracked/regular/excluded=`2656/640/2`，symlink/unreadable/env/key/input leakage=`0/0/0/0/0`；endpoint=`172.27.128.1:29215` 双端 listener=`0/0`，task-bound process/workspace scanner/runtime env=`0/0/0`。
+
+4. **prepare-only receipt 与校验边界**：
+   - receipt=`tmp/p0-web-closing-delimiter-e1f8aaa-formal-r1-input/prepare-only.json`，SHA-256=`5ac81d176f9fa655142e2914e658ce0804fc2de046074487b15258b15c8bb482`；child-boundary、目标为空、identity、snapshot、费用与资源字段合同全部通过；
+   - 一次 Windows 侧 repository loader 只读探针将 Linux `/home/...` 错误解析为 Windows `E:\\home\\...` 并在读取阶段退出；未 spawn、未创建 Formal 目标、未调用 Provider。随后改由实际 WSL runner 的同一 loader 校验通过，配置未改写；
+   - 本环节未执行付费 Formal、未重跑任何冻结 Formal，也未读取或回显凭证正文。
+
+5. **效果**：
+   - `e1f8aaa` 唯一新 WSL2 Formal 的 committed-clean、snapshot、child-boundary、空目标、endpoint 与费用前置已形成可审计 receipt；
+   - 真实凭证已配置但仍未越过受控 Gateway child 边界，prepare-only 全程 Provider calls/cost=`0/$0`；
+   - 只有本 receipt 和写后 Gate 保持成立时，才开放一次该 identity Formal；任何漂移均失败关闭。
+
+##### 验证结果
+
+- TypeScript workspace 编译无错误；前序 Windows/ext4 Agent 均为 `805 passed / 1 skipped`，四文件 `157/157`，build、独立 verifier、benchmark/CI 合同与 WSL launcher `11/11` 保持通过；
+- repository input 在 WSL 原生 loader 中通过，snapshot 五项、child-boundary 25 字段、prepare-only targets 8 字段与费用 resolver 全部通过；
+- receipt 写后敏感扫描、三方 clean、代码路径 diff、三目标为空、双端 listener、任务进程、workspace scanner 与 runtime env 均复核通过。
+
+##### 后续计划
+
+- **下一步准备做什么**：以 receipt=`5ac81d17…` 和 endpoint=`172.27.128.1:29215` 执行 `e1f8aaa` 唯一一次 WSL2 Formal；无论成败立即永久冻结，核验 evaluator、usage/cost、snapshot、Tool 序列与 patch，并完成 env 回收、限定扫描和资源收敛后先回写结果。
+- **为什么先做它**：所有零模型与付费前安全 Gate 已闭合；现在唯一缺失的是修复在真实模型工作流中的外部结果，继续增加本地 guard 已不能替代该证据。
+- **当前还缺的关键闭环**：唯一 Formal 的合法终态、machine evaluator tests/taskCompleted/patchAccepted、完整 provider-reported usage/cost、变更最小性以及 Formal 后敏感值与零残留；结果可信双平台全绿前仍禁止完整矩阵、连续候选、最终复算与 P2-C。
+
 ## 实施计划进度表
 
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
@@ -4496,7 +4537,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
 | P0：Benchmark truth set / evaluator 对齐 | P0 | **`ar*` 反例 zero-cost 对齐已完成** | truth set 现为 9 witness，新增 `archive=false → remove`，SHA=`5bec7096…`；冻结 narrow-prefix source replay 失败关闭，truth/fixture/evaluator=`22/22` | - | 保持 truth set、prompt、fixture、visible test 与 evaluator 单一版本绑定；任何 SHA/Schema/任务合同漂移均失败关闭 |
-| P0：Web mutation/correction 稳定化 | P0 | **`e1f8aaa` Windows/ext4 工程 Gate 与零凭证 dry-run 已闭合，待 Formal prepare-only** | 原始 call 6 envelope 缺失记 `record_only`；公共 seam=`2/2`、四文件=`157/157`、Windows/ext4 Agent=`805/1`；offline install=`0 downloaded`；dry-run Provider calls/cost=`0/$0`，env/扫描/端口/进程零残留 | `prepare-only + 唯一 Formal + 冻结收尾，约 0.1-0.3 人日` | 先完成 provider child-boundary audit、Formal 空目标/identity/端口/进程/snapshot/费用 Gate 并回写；全部前置全绿且预留后 `<80 RMB` 才运行一次新 identity Formal，禁止重跑 `947dd54`、`806cc63` 及所有历史 Formal，可信双平台全绿前不启动完整矩阵、连续候选、最终复算或 P2-C |
+| P0：Web mutation/correction 稳定化 | P0 | **`e1f8aaa` Windows/ext4/dry-run/prepare-only 全绿，唯一 WSL2 Formal 已开放但尚未执行** | receipt=`5ac81d17…`；child-boundary 全绿；snapshot 五项 passed；endpoint=`172.27.128.1:29215`；prior/max=`$3.43476015/$3.53476015`，预留后=`49.90282395 RMB`；三目标/端口/进程/env 均为 0 | `唯一 Formal + 冻结核验与安全收尾，约 0.1-0.2 人日` | 只执行一次 `e1f8aaa` WSL2 Formal，无论成败永久冻结并立即回写 evaluator、usage/cost、Tool/patch、env 回收与零残留；禁止重跑任何 Formal，可信双平台全绿前不启动完整矩阵、连续候选、最终复算或 P2-C |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |
