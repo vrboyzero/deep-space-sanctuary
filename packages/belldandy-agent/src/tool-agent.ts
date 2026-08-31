@@ -126,7 +126,10 @@ import {
   ReActRunBudgetTracker,
   type ReActRunAbortController,
 } from "./react-run-budget.js";
-import { rebuildSerializedFalseSemanticNarrowingToolCall } from "./react-workspace-mutation-serialized-false-correction.js";
+import {
+  hasSerializedFalseNullishSerializationCurrentSource,
+  rebuildSerializedFalseSemanticNarrowingToolCall,
+} from "./react-workspace-mutation-serialized-false-correction.js";
 import {
   buildReactFinalizationRequest,
   REACT_FINALIZATION_INPUT_SAFETY_FACTOR,
@@ -4159,6 +4162,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
               input.text,
               successfulWorkspaceMutationPatchInputs,
             );
+          const serializedFalseNullishSerialization = workspaceMutationObjectiveReviewCall
+            && hasSerializedFalseNullishSerializationCurrentSource(
+              mutationRecoverySourceMessages,
+              input.text,
+              successfulWorkspaceMutationPatchInputs,
+              requiredChangedPaths,
+            );
           const unreachableSerializedFalseWitness = workspaceMutationObjectiveReviewCall
             && hasUnreachableSerializedFalseWitnessCurrentSource(
               mutationRecoverySourceMessages,
@@ -4195,6 +4205,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             if (!objectiveValidation.ok) {
               const canCorrectDeterministicObjectiveFailure = !workspaceMutationObjectiveInputCorrectionCall
                 && (noopSerializedFalseRemovalBranch
+                  || serializedFalseNullishSerialization
                   || priorPatchAdjacentDuplicateClosingDelimiter
                   || incompleteSerializedFalseSiblingDataCoverage)
                 && !workspaceMutationObjectiveCorrectionAttempted
@@ -4204,6 +4215,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 workspaceMutationObjectiveInputCorrectionPending = true;
                 workspaceMutationObjectiveInputCorrectionReason = priorPatchAdjacentDuplicateClosingDelimiter
                   ? "closing_delimiter_requires_deletion_only"
+                  : serializedFalseNullishSerialization
+                  ? "serialized_false_nullish_serialization_requires_atomic_repair"
                   : noopSerializedFalseRemovalBranch
                   ? "serialized_false_removal_requires_atomic_repair"
                   : incompleteSerializedFalseSiblingDataCoverage
@@ -4255,6 +4268,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           if (objectiveReviewReturnedFinalOutput
             && !workspaceMutationObjectiveInputCorrectionCall
             && (noopSerializedFalseRemovalBranch
+              || serializedFalseNullishSerialization
               || unreachableSerializedFalseWitness
               || incompleteSerializedFalseSiblingDataCoverage
               || unpreservedSerializedFalseWitness)) {
@@ -4265,6 +4279,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
               workspaceMutationObjectiveInputCorrectionPending = true;
               workspaceMutationObjectiveInputCorrectionReason = priorPatchAdjacentDuplicateClosingDelimiter
                 ? "closing_delimiter_requires_deletion_only"
+                : serializedFalseNullishSerialization
+                ? "serialized_false_nullish_serialization_requires_atomic_repair"
                 : noopSerializedFalseRemovalBranch
                 ? "serialized_false_removal_requires_atomic_repair"
                 : unreachableSerializedFalseParentGuard
@@ -4560,6 +4576,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
               taskText: input.text,
               priorSuccessfulPatchInputs: successfulWorkspaceMutationPatchInputs,
               requiredPaths: workspaceMutationCallRequiredPaths,
+              correctionReason: workspaceMutationObjectiveInputCorrectionCallReason === "serialized_false_nullish_serialization_requires_atomic_repair"
+                || workspaceMutationObjectiveInputCorrectionCallReason === "smallest_change_requires_semantic_narrowing"
+                ? workspaceMutationObjectiveInputCorrectionCallReason
+                : undefined,
             })
             : undefined;
           const validatedMutationToolCall = rebuiltClosingDelimiterToolCall

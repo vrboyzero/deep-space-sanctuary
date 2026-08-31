@@ -4,6 +4,35 @@ type SourceMessage = {
 };
 
 const BROAD_SERIALIZED_FALSE_CONDITION = /^(?<indent>[ \t]*)}\s*else\s+if\s*\(value\s*===\s*false\s*&&\s*\(name\[0\]\s*==\s*'a'\s*\|\|\s*name\[0\]\s*==\s*'d'\)\s*&&\s*name\.indexOf\('-'\)\s*>\s*0\)\s*\{\s*$/;
+const NULLISH_SERIALIZATION_CONDITION_SUFFIX = "} else if ((name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') || (name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-')) {";
+const NULLISH_SERIALIZATION_STATEMENT = "dom.setAttribute(name, value == NULL || value === false ? String(value) : value);";
+
+type NullishSerializationBranch = {
+  condition: string;
+  conditionIndent: string;
+  statement: string;
+  statementIndent: string;
+};
+
+export function hasSerializedFalseNullishSerializationCurrentSource(
+  messages: readonly SourceMessage[],
+  taskText: string,
+  priorSuccessfulPatchInputs: readonly string[],
+  requiredPaths: readonly string[],
+): boolean {
+  if (requiredPaths.length !== 1 || !requiresSerializedFalseTruthSet(taskText)) {
+    return false;
+  }
+  const requiredPath = normalizePath(requiredPaths[0] ?? "");
+  if (!requiredPath || !priorPatchAddedNullishSerializationBranch(
+    priorSuccessfulPatchInputs,
+    requiredPath,
+  )) {
+    return false;
+  }
+  const source = readCompleteSource(messages, requiredPath);
+  return source !== undefined && collectNullishSerializationBranches(source).length === 1;
+}
 
 export function rebuildSerializedFalseSemanticNarrowingToolCall<
   T extends { function: { name: string; arguments: string } },
@@ -13,6 +42,10 @@ export function rebuildSerializedFalseSemanticNarrowingToolCall<
   taskText: string;
   priorSuccessfulPatchInputs: readonly string[];
   requiredPaths: readonly string[];
+  correctionReason:
+    | "smallest_change_requires_semantic_narrowing"
+    | "serialized_false_nullish_serialization_requires_atomic_repair"
+    | undefined;
 }): T | undefined {
   if (input.toolCall.function.name !== "apply_patch"
     || input.requiredPaths.length !== 1
@@ -21,16 +54,47 @@ export function rebuildSerializedFalseSemanticNarrowingToolCall<
   }
 
   const requiredPath = normalizePath(input.requiredPaths[0] ?? "");
-  if (!requiredPath || !priorPatchAddedBroadSerializedFalseCondition(
+  const priorPatchAddedBroadCondition = priorPatchAddedBroadSerializedFalseCondition(
     input.priorSuccessfulPatchInputs,
     requiredPath,
-  )) {
-    return undefined;
-  }
+  );
+  const priorPatchAddedNullishBranch = priorPatchAddedNullishSerializationBranch(
+    input.priorSuccessfulPatchInputs,
+    requiredPath,
+  );
+  if (!requiredPath
+    || (input.correctionReason === "serialized_false_nullish_serialization_requires_atomic_repair"
+      ? !priorPatchAddedNullishBranch
+      : !priorPatchAddedBroadCondition)) return undefined;
 
   const source = readCompleteSource(input.messages, requiredPath);
   if (!source) return undefined;
   const lineEnding = source.includes("\r\n") ? "\r\n" : "\n";
+  const nullishBranches = collectNullishSerializationBranches(source);
+  if (input.correctionReason === "serialized_false_nullish_serialization_requires_atomic_repair"
+    && requiresSerializedFalseTruthSet(input.taskText)
+    && priorPatchAddedNullishBranch
+    && nullishBranches.length === 1) {
+    const branch = nullishBranches[0]!;
+    const patch = [
+      "*** Begin Patch",
+      `*** Update File: ${input.requiredPaths[0]}`,
+      "@@",
+      `-${branch.condition}`,
+      `+${branch.conditionIndent}} else if (value === false && name[4] == '-') {`,
+      `-${branch.statement}`,
+      `+${branch.statementIndent}dom.setAttribute(name, 'false');`,
+      "*** End Patch",
+    ].join(lineEnding);
+    return {
+      ...input.toolCall,
+      function: {
+        ...input.toolCall.function,
+        arguments: JSON.stringify({ input: patch }),
+      },
+    } as T;
+  }
+
   const matchingLines = source.split(/\r?\n/).flatMap((line) => (
     BROAD_SERIALIZED_FALSE_CONDITION.test(line) ? [line] : []
   ));
@@ -66,6 +130,15 @@ function requiresSerializedFalseSemanticNarrowing(taskText: string): boolean {
     && /\bdata-\*/i.test(taskText);
 }
 
+function requiresSerializedFalseTruthSet(taskText: string): boolean {
+  const normalizedTask = taskText.replace(/\s+/g, " ");
+  return requiresSerializedFalseSemanticNarrowing(taskText)
+    && (/\bremove\b.{0,80}\bordinary\b.{0,80}\bfalse\b/i.test(normalizedTask)
+      || /\bfalse\b.{0,80}\bordinary\b.{0,80}\bremove\b/i.test(normalizedTask))
+    && (/\bremove\b.{0,80}\bnull\b.{0,40}\bundefined\b/i.test(normalizedTask)
+      || /\bnull\b.{0,40}\bundefined\b.{0,80}\bremove\b/i.test(normalizedTask));
+}
+
 function priorPatchAddedBroadSerializedFalseCondition(
   patchInputs: readonly string[],
   requiredPath: string,
@@ -84,6 +157,43 @@ function priorPatchAddedBroadSerializedFalseCondition(
       }
     }
     return false;
+  });
+}
+
+function priorPatchAddedNullishSerializationBranch(
+  patchInputs: readonly string[],
+  requiredPath: string,
+): boolean {
+  return patchInputs.some((patchInput) => {
+    let currentPath = "";
+    let addedCondition = false;
+    let addedStatement = false;
+    for (const line of patchInput.split(/\r?\n/)) {
+      if (line.startsWith("*** Update File: ")) {
+        currentPath = normalizePath(line.slice("*** Update File: ".length));
+        continue;
+      }
+      if (currentPath !== requiredPath || !line.startsWith("+")) continue;
+      const addedLine = line.slice(1);
+      addedCondition ||= addedLine.trimStart() === NULLISH_SERIALIZATION_CONDITION_SUFFIX;
+      addedStatement ||= addedLine.trim() === NULLISH_SERIALIZATION_STATEMENT;
+    }
+    return addedCondition && addedStatement;
+  });
+}
+
+function collectNullishSerializationBranches(source: string): NullishSerializationBranch[] {
+  const lines = source.split(/\r?\n/);
+  return lines.flatMap((condition, index) => {
+    if (condition.trimStart() !== NULLISH_SERIALIZATION_CONDITION_SUFFIX) return [];
+    const statement = lines[index + 1] ?? "";
+    if (statement.trim() !== NULLISH_SERIALIZATION_STATEMENT) return [];
+    return [{
+      condition,
+      conditionIndent: condition.slice(0, condition.length - condition.trimStart().length),
+      statement,
+      statementIndent: statement.slice(0, statement.length - statement.trimStart().length),
+    }];
   });
 }
 

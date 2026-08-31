@@ -286,6 +286,151 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("routes a full-length review of nullish aria/data serialization to one source-derived correction", async () => {
+    const requiredPath = "src/diff/props.js";
+    const badCondition = "\t\t} else if ((name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') || (name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-')) {";
+    const badStatement = "\t\t\tdom.setAttribute(name, value == NULL || value === false ? String(value) : value);";
+    const fixedCondition = "\t\t} else if (value === false && name[4] == '-') {";
+    const fixedStatement = "\t\t\tdom.setAttribute(name, 'false');";
+    const initialPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "+\t\t// aria- and data- attributes have no boolean representation, so a",
+      "+\t\t// false value is serialized as the string \"false\". Ordinary",
+      "+\t\t// attributes with false, null, or undefined values are removed.",
+      " \t\tif (typeof value == 'function') {",
+      " \t\t\t// never serialize functions as attribute values",
+      `+${badCondition}`,
+      `+${badStatement}`,
+      " \t\t} else if (value != NULL && value !== false) {",
+      "*** End Patch",
+    ].join("\n");
+    const correctionPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${badCondition}`,
+      `+${fixedCondition}`,
+      `-${badStatement}`,
+      `+${fixedStatement}`,
+      "*** End Patch",
+    ].join("\n");
+    const postInitialSource = [
+      "\t\t// aria- and data- attributes have no boolean representation, so a",
+      "\t\t// false value is serialized as the string \"false\". Ordinary",
+      "\t\t// attributes with false, null, or undefined values are removed.",
+      "\t\tif (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      badCondition,
+      badStatement,
+      "\t\t} else if (value != NULL && value !== false) {",
+      "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+      "\t\t} else {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t}",
+    ].join("\n");
+    const postCorrectionSource = postInitialSource
+      .replace(badCondition, fixedCondition)
+      .replace(badStatement, fixedStatement);
+    const task = "Fix the frozen browser-facing regression in the real web project. Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, and remove every attribute with null or undefined values. Make the smallest change in src/diff/props.js and pass the supplied deterministic checks.";
+    const successfulSummary = '{"summary":"corrected and verified"}';
+    const requests: Array<Record<string, any>> = [];
+    const executedPatches: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const instruction = String(body.messages?.[0]?.content ?? "");
+      if (instruction.includes("Post-mutation verification phase")) {
+        return jsonResponse(modelToolCall(`read-${requests.length}`, "file_read", {
+          path: requiredPath,
+          limit: 1_048_576,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation objective correction input retry phase")) {
+        return jsonResponse(modelToolCall("malformed-nullish-repair", "apply_patch", {
+          input: "*** Begin Patch\n*** Update File: src/diff/props.js\n@@\n-old\n+new\n*** End Patch",
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation final objective review phase")) {
+        return jsonResponse({
+          choices: [{ finish_reason: "stop", message: { content: successfulSummary } }],
+          usage: { prompt_tokens: 300, completion_tokens: 30 },
+        });
+      }
+      if (instruction.includes("Post-mutation objective review phase")
+        || instruction.includes("Post-mutation objective review output repair phase")) {
+        return jsonResponse({
+          choices: [{
+            finish_reason: "length",
+            message: { content: "The current branch incorrectly stringifies null and undefined. ".repeat(64) },
+          }],
+          usage: { prompt_tokens: 1_700, completion_tokens: 1_024 },
+        });
+      }
+      return jsonResponse(modelToolCall("patch-nullish-serialization", "apply_patch", {
+        input: initialPatch,
+      }, 300, 60));
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        const source = executedPatches.includes(correctionPatch)
+          ? postCorrectionSource
+          : postInitialSource;
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({ path: requiredPath, truncated: false, content: source }),
+          durationMs: 1,
+        };
+      }
+      executedPatches.push(String(request.arguments?.input ?? ""));
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: { workspaceMutation: { schemaVersion: 1, changedPaths: [requiredPath] } },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent(execute);
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-nullish-serialization-review",
+      text: task,
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths: [requiredPath],
+          toolLoopIterationBudget: 6,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === successfulSummary
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(executedPatches).toEqual([initialPatch, correctionPatch]);
+    expect(requests).toHaveLength(6);
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "complete current source proves that the aria/data subset branch serializes null or undefined",
+    );
+    expect(requests.some((request) => String(request.messages?.[0]?.content ?? "")
+      .includes("Post-mutation objective review output repair phase"))).toBe(false);
+    expect(items).toContainEqual({ type: "final", text: successfulSummary });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it.each([
     ["non-atomic changes", "non-atomic"],
     ["an incorrect ordinary-false predicate", "incorrect-predicate"],

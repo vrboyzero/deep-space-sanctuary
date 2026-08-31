@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { rebuildSerializedFalseSemanticNarrowingToolCall } from "./react-workspace-mutation-serialized-false-correction.js";
+import {
+  hasSerializedFalseNullishSerializationCurrentSource,
+  rebuildSerializedFalseSemanticNarrowingToolCall,
+} from "./react-workspace-mutation-serialized-false-correction.js";
 
 const requiredPath = "src/diff/props.js";
 const taskText = "Fix the frozen browser-facing regression in the real web project. Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, and remove every attribute with null or undefined values. Make the smallest change in src/diff/props.js and pass the supplied deterministic checks.";
@@ -36,8 +39,118 @@ const malformedCorrection = [
   "+\t\t} else if (value === false && name[4] == '-') {",
   "*** End Patch",
 ].join("\n");
+const nullishSerializationCondition = "\t\t} else if ((name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') || (name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-')) {";
+const nullishSerializationStatement = "\t\t\tdom.setAttribute(name, value == NULL || value === false ? String(value) : value);";
+const nullishSerializationSource = [
+  "\t\t// aria- and data- attributes have no boolean representation, so a",
+  "\t\t// false value is serialized as the string \"false\". Ordinary",
+  "\t\t// attributes with false, null, or undefined values are removed.",
+  "\t\tif (typeof value == 'function') {",
+  "\t\t\t// never serialize functions as attribute values",
+  nullishSerializationCondition,
+  nullishSerializationStatement,
+  "\t\t} else if (value != NULL && value !== false) {",
+  "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  "\t\t} else {",
+  "\t\t\tdom.removeAttribute(name);",
+  "\t\t}",
+].join("\n");
+const nullishSerializationPatch = [
+  "*** Begin Patch",
+  `*** Update File: ${requiredPath}`,
+  "@@",
+  "+\t\t// aria- and data- attributes have no boolean representation, so a",
+  "+\t\t// false value is serialized as the string \"false\". Ordinary",
+  "+\t\t// attributes with false, null, or undefined values are removed.",
+  " \t\tif (typeof value == 'function') {",
+  " \t\t\t// never serialize functions as attribute values",
+  `+${nullishSerializationCondition}`,
+  `+${nullishSerializationStatement}`,
+  " \t\t} else if (value != NULL && value !== false) {",
+  "*** End Patch",
+].join("\n");
 
 describe("serialized-false semantic-narrowing correction", () => {
+  it("detects the frozen nullish serialization branch only from bound complete current source", () => {
+    expect(hasSerializedFalseNullishSerializationCurrentSource(
+      sourceMessages(nullishSerializationSource),
+      taskText,
+      [nullishSerializationPatch],
+      [requiredPath],
+    )).toBe(true);
+    expect(hasSerializedFalseNullishSerializationCurrentSource(
+      [
+        ...sourceMessages(nullishSerializationSource),
+        ...sourceMessages(nullishSerializationSource, true),
+      ],
+      taskText,
+      [nullishSerializationPatch],
+      [requiredPath],
+    )).toBe(false);
+  });
+
+  it.each([
+    {
+      name: "unrelated task",
+      task: "Rename a variable with the smallest change.",
+      patches: [nullishSerializationPatch],
+      paths: [requiredPath],
+      source: nullishSerializationSource,
+    },
+    {
+      name: "multiple required paths",
+      task: taskText,
+      patches: [nullishSerializationPatch],
+      paths: [requiredPath, "src/other.js"],
+      source: nullishSerializationSource,
+    },
+    {
+      name: "unbound prior patch",
+      task: taskText,
+      patches: [nullishSerializationPatch.replace(requiredPath, "src/other.js")],
+      paths: [requiredPath],
+      source: nullishSerializationSource,
+    },
+    {
+      name: "different current source",
+      task: taskText,
+      patches: [nullishSerializationPatch],
+      paths: [requiredPath],
+      source: nullishSerializationSource.replace("String(value)", "'false'"),
+    },
+  ])("does not detect nullish serialization with $name", ({ task, patches, paths, source }) => {
+    expect(hasSerializedFalseNullishSerializationCurrentSource(
+      sourceMessages(source),
+      task,
+      patches,
+      paths,
+    )).toBe(false);
+  });
+
+  it("rebuilds the frozen nullish serialization branch as one atomic condition-and-statement replacement", () => {
+    const rebuilt = rebuildSerializedFalseSemanticNarrowingToolCall({
+      toolCall: call("*** Begin Patch\n*** Update File: src/diff/props.js\n@@\n-old\n+new\n*** End Patch"),
+      messages: sourceMessages(nullishSerializationSource),
+      taskText,
+      priorSuccessfulPatchInputs: [nullishSerializationPatch],
+      requiredPaths: [requiredPath],
+      correctionReason: "serialized_false_nullish_serialization_requires_atomic_repair",
+    });
+
+    expect(JSON.parse(rebuilt!.function.arguments)).toEqual({
+      input: [
+        "*** Begin Patch",
+        `*** Update File: ${requiredPath}`,
+        "@@",
+        `-${nullishSerializationCondition}`,
+        "+\t\t} else if (value === false && name[4] == '-') {",
+        `-${nullishSerializationStatement}`,
+        "+\t\t\tdom.setAttribute(name, 'false');",
+        "*** End Patch",
+      ].join("\n"),
+    });
+  });
+
   it("rebuilds the frozen formal input-error as one source-derived condition replacement", () => {
     const toolCall = call(malformedCorrection);
 
@@ -47,6 +160,7 @@ describe("serialized-false semantic-narrowing correction", () => {
       taskText,
       priorSuccessfulPatchInputs: [initialPatch],
       requiredPaths: [requiredPath],
+      correctionReason: "smallest_change_requires_semantic_narrowing",
     });
 
     expect(rebuilt).not.toBe(toolCall);
@@ -111,7 +225,19 @@ describe("serialized-false semantic-narrowing correction", () => {
   ])("does not rebuild $name", (input) => {
     expect(rebuildSerializedFalseSemanticNarrowingToolCall({
       toolCall: call(malformedCorrection),
+      correctionReason: "smallest_change_requires_semantic_narrowing",
       ...input,
+    })).toBeUndefined();
+  });
+
+  it("does not rebuild a nullish branch for the older semantic-narrowing reason", () => {
+    expect(rebuildSerializedFalseSemanticNarrowingToolCall({
+      toolCall: call("*** Begin Patch\n*** Update File: src/diff/props.js\n@@\n-old\n+new\n*** End Patch"),
+      messages: sourceMessages(nullishSerializationSource),
+      taskText,
+      priorSuccessfulPatchInputs: [nullishSerializationPatch],
+      requiredPaths: [requiredPath],
+      correctionReason: "smallest_change_requires_semantic_narrowing",
     })).toBeUndefined();
   });
 });
