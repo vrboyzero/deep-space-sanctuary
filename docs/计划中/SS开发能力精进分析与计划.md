@@ -4528,6 +4528,48 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：所有零模型与付费前安全 Gate 已闭合；现在唯一缺失的是修复在真实模型工作流中的外部结果，继续增加本地 guard 已不能替代该证据。
 - **当前还缺的关键闭环**：唯一 Formal 的合法终态、machine evaluator tests/taskCompleted/patchAccepted、完整 provider-reported usage/cost、变更最小性以及 Formal 后敏感值与零残留；结果可信双平台全绿前仍禁止完整矩阵、连续候选、最终复算与 P2-C。
 
+#### P0 Web Formal 实现结论：`e1f8aaa` WSL2 closing-delimiter correction 全绿并冻结（2026-08-31）
+
+##### 已完成内容
+
+1. **唯一 WSL2 Formal 执行并永久冻结**：
+   - artifact=`artifacts/p0-web-closing-delimiter-e1f8aaa-formal-r1`，run=`real-web-ui-regression-wsl2-linux-a1-1788184598620`，report SHA-256=`ff0e45d669b8f91092ae88664e1e62ccbd6703af093351776647995658f1f14b`；
+   - launcher/Coding CI exit=`0/0`，events=`1..33` 连续，唯一 terminal=`run.completed` 且为最后事件；status=`passed`、failure category=`none`；
+   - machine evaluator tests/taskCompleted/patchAccepted=`true/true/true`，regression/manual intervention=`0/0`；该 Formal 已永久冻结，禁止重跑。
+
+2. **真实 correction Tool 序列与最小变更证据**：
+   - 7 次 Tool 依次为 `list_files → file_read(source) → file_read(test) → apply_patch(initial) → file_read(full source) → apply_patch(deletion-only correction) → file_read(final source)`，全部成功；
+   - initial/correction input SHA-256=`fac8e7eed823e17ac4b005e927a04ab2e3940e856433a34512995936306ce9c0` / `2092a56eaa6e980cb7f129e7b22fbf4c05ee6f3c36abc9e071bbd31e0707ee0d`；第二次 `apply_patch` 精确删除 initial whole-branch mutation 多出的 closing delimiter；
+   - changed path 仅 `src/diff/props.js`，最终 patch=`1 file / 1 hunk / +11 -5`，SHA-256=`71f43a43ec71087e4693ef487b2538fea1a0ef0dddba4b8a8f29cd85c9e667eb`；冻结 visible test 与 machine evaluator 同时接受 aria/data false 序列化、ordinary false 与 null/undefined 删除行为。
+
+3. **终态、usage 与费用证据**：
+   - Coding CI event/trace/capability/model route/artifact/workspace-change 合同全部通过；model calls=`8/8` 均有 Provider usage，usage status=`provider_reported/complete`；
+   - input/output=`17,645/1,030`，duration=`21,144 ms`，本次费用=`$0.00424924`；累计 observed=`$3.43900939`；
+   - 按既有 `8 CNY/USD` 守卫换算，本次=`0.03399392 RMB`，Stage 0D 当前=`49.13681787 RMB < 80 RMB`。
+
+4. **snapshot、artifact 与安全收尾**：
+   - harness/source 均为 clean exact `e1f8aaa1e9525b45fb3c981e8975a7ab09c8d5be`，lockfile SHA-256=`844c0021f1c9135214c913636fd6ed6f9232593883bd5b6289f7ade51d2b7d2b`；Preact=`6bb827251ac7111234b293cac013a0a67c2ca8b2` 且 clean；
+   - repository snapshot manifest binding/source identity/license/dependency cache/execution network 五项均为 `passed`；events/trace/result SHA-256=`bc36ea86cd0bc650eab009dfadda7c3d01b7faaef5ed4c3d2ef2625a8eca1db9` / `3df8fd2c221007b2e0e01ad43572ae8298d5dc41ff6628c9f31f7f93a3d3f7f3` / `aec6c25639d64e0187ac05c2f81408f1ef2e5fb55d588db1aa82810f299b55fd`；
+   - runtime `.env/.env.local` 经 containment、普通文件、非 reparse 与固定 SHA 核验后送入 Windows 回收站，removed/remaining=`2/0`、可恢复；cleanup SHA-256=`15fdd1b2256949495752483101703108021e18fc0bdb18e498d6ff7813853e7f`；
+   - scan receipt SHA-256=`689d37282b50f9f349328a3a13e990901c22fdfc21860af778826c885cfff5c4`；写后 bounded scan tracked/regular/excluded=`2656/953/2`，symlink/unreadable/env/key/input leakage=`0/0/0/0/0`；Windows/WSL listener、Formal-bound process、workspace scanner、runtime env=`0/0/0/0/0`。
+
+5. **效果**：
+   - 冻结 `947dd54` 暴露的“whole-branch initial mutation 留下额外 closing delimiter，随后 correction 未执行”失败形状，已在新 committed-clean ext4 identity 的真实 Provider 路径中通过 source-derived deletion-only correction 闭合；
+   - correction 后完成完整 source 复读、唯一终态与冻结 evaluator，且没有扩大 changed path 或绕过 snapshot、usage、费用和敏感值边界；
+   - 本结论只证明 `e1f8aaa` 的 WSL2 外部通过；尚未把其他 identity 的 Windows 通过证据自动归并为同 identity 双平台全绿，也未启动完整矩阵、连续候选、最终复算或 P2-C。
+
+##### 验证结果
+
+- TypeScript workspace 编译无错误；同一代码 identity 的 Windows/ext4 Agent 均为 `805 passed / 1 skipped`，四文件回归 `157/157`，build、独立 verifier、benchmark/CI 合同与 WSL launcher `11/11` 均通过；
+- 唯一 WSL2 Formal machine evaluator=`true/true/true`、regression=`0`，7 次 Tool 全成功，8/8 Provider calls usage 完整，单文件最终 patch 被接受；
+- snapshot 五项、env 回收、写后限定敏感扫描、三方 clean、双端端口、任务进程、workspace scanner 与 runtime env 收尾全部通过。
+
+##### 后续计划
+
+- **下一步准备做什么**：只读审计最近一次可信 Windows Web evaluator 全绿 artifact 与 `e1f8aaa` 在 Agent correction、benchmark truth/fixture/evaluator、launcher 和 lockfile 上的代码等价性，明确能否形成跨 identity 的 source-equivalent 双平台代表，或仍必须保留“仅 WSL2 新证据”边界；审计完成后先回写再决定是否进入下一阶段。
+- **为什么先做它**：本次 WSL2 已全绿，但计划的连续候选入口要求可信双平台代表；直接把历史 Windows 成功与当前 WSL2 成功拼接会掩盖中间 correction 代码变化，直接启动新付费 run 又可能重复已有证据。
+- **当前还缺的关键闭环**：Windows 通过 artifact 的精确 source identity、其与 `e1f8aaa` 的行为相关 diff、truth/evaluator/fixture SHA 及最终 patch 语义一致性；在只读审计给出可追溯结论前，不宣称双平台全绿，不启动完整矩阵、连续候选、最终复算或 P2-C。
+
 ## 实施计划进度表
 
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
@@ -4537,7 +4579,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P0：Benchmark v3 与失败分类 | P0 | **矩阵/分类已完成，外部改善未闭合** | 单一 HEAD `144/144`；A/B/C=`72/12/23`，`107 passed + 37 product_workflow failed`，unknown=`0` | 纳入下两项 | 保留失败分母，以新冻结证据证明真实 uplift |
 | P0：required-mutation 双平台代表 | P0 | **已完成并冻结** | `2977780` Windows/WSL2 三文件、evaluator、终态、snapshot、usage/cost、敏感值和零残留全绿 | - | 禁止重跑；不外推为其余失败全部改善 |
 | P0：Benchmark truth set / evaluator 对齐 | P0 | **`ar*` 反例 zero-cost 对齐已完成** | truth set 现为 9 witness，新增 `archive=false → remove`，SHA=`5bec7096…`；冻结 narrow-prefix source replay 失败关闭，truth/fixture/evaluator=`22/22` | - | 保持 truth set、prompt、fixture、visible test 与 evaluator 单一版本绑定；任何 SHA/Schema/任务合同漂移均失败关闭 |
-| P0：Web mutation/correction 稳定化 | P0 | **`e1f8aaa` Windows/ext4/dry-run/prepare-only 全绿，唯一 WSL2 Formal 已开放但尚未执行** | receipt=`5ac81d17…`；child-boundary 全绿；snapshot 五项 passed；endpoint=`172.27.128.1:29215`；prior/max=`$3.43476015/$3.53476015`，预留后=`49.90282395 RMB`；三目标/端口/进程/env 均为 0 | `唯一 Formal + 冻结核验与安全收尾，约 0.1-0.2 人日` | 只执行一次 `e1f8aaa` WSL2 Formal，无论成败永久冻结并立即回写 evaluator、usage/cost、Tool/patch、env 回收与零残留；禁止重跑任何 Formal，可信双平台全绿前不启动完整矩阵、连续候选、最终复算或 P2-C |
+| P0：Web mutation/correction 稳定化 | P0 | **`e1f8aaa` WSL2 evaluator 全绿并冻结，待 Windows source-equivalence 只读审计** | run=`1788184598620`；evaluator=`true/true/true`、regression=`0`；Tool=`7/7`，initial/correction=`fac8e7ee…/2092a56e…`；usage=`8/8`、cost=`$0.00424924`；cleanup/scan/端口/进程/env 全绿 | `Windows evidence 审计 + 双平台边界结论，约 0.05-0.1 人日` | 先只读核对最近可信 Windows pass 与 `e1f8aaa` 的 correction/truth/evaluator/fixture/launcher/lockfile 等价性并回写；证据不足则保持仅 WSL2 结论，禁止重跑任何 Formal或直接启动矩阵，双平台闭合后才进入连续候选/P2-C |
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | **已完成** | truth `14/14`、precision/recall=`1/1`、resource soak 和 attempt 12 通过 | - | 真实仓绝对 uplift 继续由 P0/P2-C 证明 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | **已完成 canary** | OCI truth `10/10`、双平台 comparator 通过；`goCanaryEligible=true`、`productionEligible=false` | - | canary 正式满足 9.5 第二后端 Gate；production 另行 rollout，不阻断 9.5 |
 | P1-A3：C# 条件接入 | 条件 | **延期** | 当前无阻断 9.5 的真实需求 | Spike `2-3 人日`；生产另 `6-10 人日` | 不计入当前 9.5 剩余量 |
