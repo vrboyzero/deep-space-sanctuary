@@ -2966,6 +2966,201 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("rebuilds a narrow ar-prefix correction as the source-derived baseline condition", async () => {
+    const requiredPath = "src/diff/props.js";
+    const originalCondition = "\t\t} else if (value != NULL && value !== false) {";
+    const baselineCondition = "\t\t} else if (value != NULL && (value !== false || name[4] == '-')) {";
+    const attributeStatement = "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);";
+    const initialPrefixCondition = "\t\t} else if (value === false && (name[0] == 'a' && name[1] == 'r' || name[0] == 'd' && name[1] == 'a')) {";
+    const narrowPrefixCondition = "\t\t} else if (value === false && (name[0] == 'a' && name[1] == 'r' || name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-')) {";
+    const initialPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-\t\tif (typeof value == 'function') {",
+      "-\t\t\t// never serialize functions as attribute values",
+      `-${originalCondition}`,
+      `-${attributeStatement}`,
+      "-\t\t} else {",
+      "-\t\t\tdom.removeAttribute(name);",
+      "-\t\t}",
+      "+\t\tif (typeof value == 'function') {",
+      "+\t\t\t// never serialize functions as attribute values",
+      `+${originalCondition}`,
+      `+${attributeStatement}`,
+      `+${initialPrefixCondition}`,
+      "+\t\t\tdom.setAttribute(name, 'false');",
+      "+\t\t} else {",
+      "+\t\t\tdom.removeAttribute(name);",
+      "+\t\t}",
+      "*** End Patch",
+    ].join("\n");
+    const malformedCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      ` ${originalCondition}`,
+      ` ${attributeStatement}`,
+      ` ${initialPrefixCondition}`,
+      " \t\t\tdom.setAttribute(name, 'false');",
+      "+\t\t} else if (value === false) {",
+      "+\t\t\tdom.removeAttribute(name);",
+      " \t\t}",
+      "*** End Patch",
+    ].join("\n");
+    const narrowPrefixCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${initialPrefixCondition}`,
+      `+${narrowPrefixCondition}`,
+      "*** End Patch",
+    ].join("\n");
+    const baselineCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${originalCondition}`,
+      `-${attributeStatement}`,
+      `-${initialPrefixCondition}`,
+      "-\t\t\tdom.setAttribute(name, 'false');",
+      `+${baselineCondition}`,
+      `+${attributeStatement}`,
+      "*** End Patch",
+    ].join("\n");
+    const postInitialSource = [
+      "export function setProperty(dom, name, value) {",
+      "\tif (name == 'style') {",
+      "\t\tdom.style.cssText = value;",
+      "\t} else {",
+      "\t\tif (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      originalCondition,
+      attributeStatement,
+      initialPrefixCondition,
+      "\t\t\tdom.setAttribute(name, 'false');",
+      "\t\t} else {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t}",
+      "\t}",
+      "}",
+    ].join("\n");
+    const postBaselineSource = postInitialSource.replace(
+      [
+        originalCondition,
+        attributeStatement,
+        initialPrefixCondition,
+        "\t\t\tdom.setAttribute(name, 'false');",
+      ].join("\n"),
+      [baselineCondition, attributeStatement].join("\n"),
+    );
+    const task = "Fix the frozen browser-facing regression in the real web project. Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, and remove every attribute with null or undefined values. Make the smallest change in src/diff/props.js and pass the supplied deterministic checks.";
+    const successfulSummary = '{"summary":"Verified aria/data false serialization and ordinary/nullish removal."}';
+    const requests: Array<Record<string, any>> = [];
+    const executedPatches: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const instruction = String(body.messages?.[0]?.content ?? "");
+      if (instruction.includes("Post-mutation verification phase")) {
+        return jsonResponse(modelToolCall(`read-${requests.length}`, "file_read", {
+          path: requiredPath,
+          limit: 1_048_576,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation objective correction input retry phase")) {
+        return jsonResponse(modelToolCall("narrow-prefix", "apply_patch", {
+          input: narrowPrefixCorrection,
+        }, 300, 60));
+      }
+      if (instruction.includes("Post-mutation final objective review phase")) {
+        return jsonResponse({
+          choices: [{ finish_reason: "stop", message: { content: successfulSummary } }],
+          usage: { prompt_tokens: 300, completion_tokens: 30 },
+        });
+      }
+      if (instruction.includes("Post-mutation objective review phase")) {
+        return jsonResponse(modelToolCall("malformed-sibling", "apply_patch", {
+          input: malformedCorrection,
+        }, 300, 60));
+      }
+      return jsonResponse(modelToolCall("initial-prefix", "apply_patch", {
+        input: initialPatch,
+      }, 300, 60));
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "apply_patch") {
+        const patchInput = String(request.arguments?.input ?? "");
+        if (patchInput === malformedCorrection) {
+          return {
+            id: request.id,
+            name: request.name,
+            success: false,
+            output: "",
+            error: "Failed to find expected lines",
+            failureKind: "input_error" as const,
+            metadata: { repairAction: "apply_patch_input_invalid" },
+            durationMs: 1,
+          };
+        }
+        executedPatches.push(patchInput);
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: "Patch applied successfully",
+          metadata: {
+            workspaceMutation: { schemaVersion: 1, changedPaths: [requiredPath] },
+          },
+          durationMs: 1,
+        };
+      }
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: JSON.stringify({
+          path: requiredPath,
+          size: postInitialSource.length,
+          truncated: false,
+          content: executedPatches.includes(baselineCorrection)
+            ? postBaselineSource
+            : postInitialSource,
+        }),
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent(execute);
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-narrow-ar-prefix",
+      text: task,
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths: [requiredPath],
+          toolLoopIterationBudget: 6,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === successfulSummary
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(executedPatches).toEqual([initialPatch, baselineCorrection]);
+    expect(executedPatches).not.toContain(narrowPrefixCorrection);
+    expect(items).toContainEqual({ type: "final", text: successfulSummary });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("fails closed when a repeated-source retry leaves invalid unreachable false control flow", async () => {
     const requiredPath = "src/diff/props.js";
     const originalCondition = "\t\t} else if (value != NULL && value !== false) {";

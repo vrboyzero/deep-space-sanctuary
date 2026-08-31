@@ -34,6 +34,12 @@
       "expected": { "operation": "remove" }
     },
     {
+      "id": "ordinary-ar-prefix-false",
+      "attributeName": "archive",
+      "valueKind": "false",
+      "expected": { "operation": "remove" }
+    },
+    {
       "id": "ordinary-d-prefix-false",
       "attributeName": "draggable",
       "valueKind": "false",

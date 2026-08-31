@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   hasSerializedFalseNullishSerializationCurrentSource,
   rebuildSerializedFalseBroadFirstCharacterToolCall,
+  rebuildSerializedFalseNarrowArPrefixToolCall,
   rebuildSerializedFalseNestedUnreachableToolCall,
   rebuildSerializedFalseSiblingDoubleElseToolCall,
   rebuildSerializedFalseSemanticNarrowingToolCall,
@@ -225,8 +226,176 @@ const nestedBaselineCorrection = [
   "+\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
   "*** End Patch",
 ].join("\n");
+const narrowPrefixPrimaryCondition = "\t\t} else if (value != NULL && value !== false) {";
+const narrowPrefixInitialCondition = "\t\t} else if (value === false && (name[0] == 'a' && name[1] == 'r' || name[0] == 'd' && name[1] == 'a')) {";
+const narrowArPrefixCondition = "\t\t} else if (value === false && (name[0] == 'a' && name[1] == 'r' || name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-')) {";
+const narrowPrefixSource = [
+  "\t\tif (typeof value == 'function') {",
+  "\t\t\t// never serialize functions as attribute values",
+  narrowPrefixPrimaryCondition,
+  "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  narrowPrefixInitialCondition,
+  "\t\t\tdom.setAttribute(name, 'false');",
+  "\t\t} else {",
+  "\t\t\tdom.removeAttribute(name);",
+  "\t\t}",
+].join("\n");
+const narrowPrefixInitialPatch = [
+  "*** Begin Patch",
+  `*** Update File: ${requiredPath}`,
+  "@@",
+  "-\t\tif (typeof value == 'function') {",
+  "-\t\t\t// never serialize functions as attribute values",
+  `-${narrowPrefixPrimaryCondition}`,
+  "-\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  "-\t\t} else {",
+  "-\t\t\tdom.removeAttribute(name);",
+  "-\t\t}",
+  "+\t\tif (typeof value == 'function') {",
+  "+\t\t\t// never serialize functions as attribute values",
+  `+${narrowPrefixPrimaryCondition}`,
+  "+\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  `+${narrowPrefixInitialCondition}`,
+  "+\t\t\tdom.setAttribute(name, 'false');",
+  "+\t\t} else {",
+  "+\t\t\tdom.removeAttribute(name);",
+  "+\t\t}",
+  "*** End Patch",
+].join("\n");
+const narrowArPrefixCorrection = [
+  "*** Begin Patch",
+  `*** Update File: ${requiredPath}`,
+  "@@",
+  `-${narrowPrefixInitialCondition}`,
+  `+${narrowArPrefixCondition}`,
+  "*** End Patch",
+].join("\n");
+const narrowPrefixBaselineCorrection = [
+  "*** Begin Patch",
+  `*** Update File: ${requiredPath}`,
+  "@@",
+  `-${narrowPrefixPrimaryCondition}`,
+  "-\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  `-${narrowPrefixInitialCondition}`,
+  "-\t\t\tdom.setAttribute(name, 'false');",
+  `+${baselineInlineCondition}`,
+  "+\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  "*** End Patch",
+].join("\n");
 
 describe("serialized-false semantic-narrowing correction", () => {
+  it("rebuilds the frozen narrow ar-prefix correction from complete current source", () => {
+    const rebuilt = rebuildSerializedFalseNarrowArPrefixToolCall({
+      toolCall: call(narrowArPrefixCorrection),
+      messages: sourceMessages(narrowPrefixSource),
+      taskText,
+      priorSuccessfulPatchInputs: [narrowPrefixInitialPatch],
+      requiredPaths: [requiredPath],
+    });
+
+    expect(JSON.parse(rebuilt!.function.arguments)).toEqual({
+      input: narrowPrefixBaselineCorrection,
+    });
+  });
+
+  it.each([
+    {
+      name: "unrelated task",
+      task: "Rename a variable with the smallest change.",
+      messages: sourceMessages(narrowPrefixSource),
+      patches: [narrowPrefixInitialPatch],
+      paths: [requiredPath],
+      correction: narrowArPrefixCorrection,
+    },
+    {
+      name: "multiple required paths",
+      task: taskText,
+      messages: sourceMessages(narrowPrefixSource),
+      patches: [narrowPrefixInitialPatch],
+      paths: [requiredPath, "src/other.js"],
+      correction: narrowArPrefixCorrection,
+    },
+    {
+      name: "unbound prior patch",
+      task: taskText,
+      messages: sourceMessages(narrowPrefixSource),
+      patches: [narrowPrefixInitialPatch.replace(requiredPath, "src/other.js")],
+      paths: [requiredPath],
+      correction: narrowArPrefixCorrection,
+    },
+    {
+      name: "non-contiguous prior patch",
+      task: taskText,
+      messages: sourceMessages(narrowPrefixSource),
+      patches: [narrowPrefixInitialPatch.replace(
+        `+${narrowPrefixInitialCondition}`,
+        "+\t\t\tconst unrelated = true;\n" + `+${narrowPrefixInitialCondition}`,
+      )],
+      paths: [requiredPath],
+      correction: narrowArPrefixCorrection,
+    },
+    {
+      name: "newer truncated source",
+      task: taskText,
+      messages: [
+        ...sourceMessages(narrowPrefixSource),
+        ...sourceMessages(narrowPrefixSource, true),
+      ],
+      patches: [narrowPrefixInitialPatch],
+      paths: [requiredPath],
+      correction: narrowArPrefixCorrection,
+    },
+    {
+      name: "source drift",
+      task: taskText,
+      messages: sourceMessages(narrowPrefixSource.replace("'false'", "String(value)")),
+      patches: [narrowPrefixInitialPatch],
+      paths: [requiredPath],
+      correction: narrowArPrefixCorrection,
+    },
+    {
+      name: "duplicate matching branch",
+      task: taskText,
+      messages: sourceMessages(`${narrowPrefixSource}\n${narrowPrefixSource}`),
+      patches: [narrowPrefixInitialPatch],
+      paths: [requiredPath],
+      correction: narrowArPrefixCorrection,
+    },
+    {
+      name: "legal baseline correction",
+      task: taskText,
+      messages: sourceMessages(narrowPrefixSource),
+      patches: [narrowPrefixInitialPatch],
+      paths: [requiredPath],
+      correction: narrowArPrefixCorrection.replace(narrowArPrefixCondition, baselineInlineCondition),
+    },
+    {
+      name: "non-contiguous correction context",
+      task: taskText,
+      messages: sourceMessages(narrowPrefixSource),
+      patches: [narrowPrefixInitialPatch],
+      paths: [requiredPath],
+      correction: narrowArPrefixCorrection.replace(
+        `-${narrowPrefixInitialCondition}`,
+        `-${narrowPrefixInitialCondition}\n unrelated context`,
+      ),
+    },
+  ])("does not rebuild narrow ar-prefix correction with $name", ({
+    task,
+    messages,
+    patches,
+    paths,
+    correction,
+  }) => {
+    expect(rebuildSerializedFalseNarrowArPrefixToolCall({
+      toolCall: call(correction),
+      messages,
+      taskText: task,
+      priorSuccessfulPatchInputs: patches,
+      requiredPaths: paths,
+    })).toBeUndefined();
+  });
+
   it("rebuilds the frozen nested unreachable-false correction from complete current source", () => {
     const rebuilt = rebuildSerializedFalseNestedUnreachableToolCall({
       toolCall: call(nestedUnreachableCorrection),

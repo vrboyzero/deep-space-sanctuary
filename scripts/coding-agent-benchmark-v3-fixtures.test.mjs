@@ -815,6 +815,7 @@ describe("coding agent benchmark v3 fixture providers", () => {
     expect(visibleTest).toContain("data-state");
     expect(visibleTest).toContain("title");
     expect(visibleTest).toContain("align");
+    expect(visibleTest).toContain("archive");
     expect(visibleTest).toContain("draggable");
     expect(visibleTest).toContain("value: null");
     expect(visibleTest).toContain("value: undefined");
@@ -876,6 +877,32 @@ describe("coding agent benchmark v3 fixture providers", () => {
       result: { summary: "Preserved only the frozen aria and data attribute behavior." },
     });
     expect(broadFirstCharacterEvaluation).toMatchObject({
+      status: "failed",
+      failureCategory: "product_workflow",
+      evaluation: {
+        taskCompleted: false,
+        testsPassed: false,
+        patchAccepted: false,
+        regressionCount: 1,
+      },
+    });
+
+    const narrowArPrefixSource = propsSource.replace(
+      "value != NULL && (value !== false || name[4] == '-')",
+      "value != NULL && (value !== false || name[0] == 'a' && name[1] == 'r' || name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-')",
+    );
+    await fs.writeFile(
+      path.join(uiFixture.workspace, "src", "diff", "props.js"),
+      narrowArPrefixSource,
+      "utf-8",
+    );
+    const narrowArPrefixEvaluation = await uiProvider.evaluate({
+      task: uiFixture.task,
+      workspace: uiFixture.workspace,
+      runnerExitCode: 0,
+      result: { summary: "Preserved aria and data false serialization without ordinary false values." },
+    });
+    expect(narrowArPrefixEvaluation).toMatchObject({
       status: "failed",
       failureCategory: "product_workflow",
       evaluation: {

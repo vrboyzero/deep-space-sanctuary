@@ -84,6 +84,11 @@ export function validateCodingAgentBenchmarkWebUiTruthSet(truthSet) {
       "Benchmark v3 Web UI truth set requires ordinary a-prefix and d-prefix false witnesses.",
     );
   }
+  if (!hasOrdinaryFalseCase("archive")) {
+    throw new Error(
+      "Benchmark v3 Web UI truth set requires an ordinary ar-prefix false witness.",
+    );
+  }
   if (!hasCase((testCase) => testCase.attributeName.startsWith("aria-")
       && testCase.valueKind === "false" && testCase.expected.operation === "set")
     || !hasCase((testCase) => testCase.attributeName.startsWith("data-")

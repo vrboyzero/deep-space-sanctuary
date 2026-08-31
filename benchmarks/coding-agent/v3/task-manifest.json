@@ -488,7 +488,7 @@
       "truthSet": {
         "id": "real-web-ui-regression-v1",
         "path": "benchmarks/coding-agent/v3/real-web-ui-regression-truth-set.json",
-        "sha256": "2e3ecc08873dfca9a0f2593429734105e92b5f1113b594e1e5af754c3ccabbb8"
+        "sha256": "5bec7096e20999f045951770ea77ae4a1d7f83e40e1dc0435ae61c265d198ca8"
       },
       "acceptance": {
         "testCommands": [{ "command": "npm exec --offline -- vitest run --config vitest.benchmark-v3.config.mjs test/shared/benchmark-v3-ui-regression.test.js", "expectedExitCode": 0 }],

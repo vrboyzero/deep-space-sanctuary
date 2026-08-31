@@ -316,6 +316,20 @@ describe("coding agent benchmark repository contract", () => {
     );
   });
 
+  it("requires an ordinary ar-prefix false witness", async () => {
+    const truthSet = JSON.parse(await fs.readFile(path.join(
+      workspaceRoot,
+      "benchmarks/coding-agent/v3/real-web-ui-regression-truth-set.json",
+    ), "utf-8"));
+    truthSet.cases = truthSet.cases.filter((testCase) => (
+      testCase.id !== "ordinary-ar-prefix-false"
+    ));
+
+    expect(() => validateCodingAgentBenchmarkWebUiTruthSet(truthSet)).toThrow(
+      /ordinary ar-prefix false witness/i,
+    );
+  });
+
   it("keeps the manifest, schemas, documentation, scripts, and cross-platform gate aligned", async () => {
     await expect(collectCodingAgentBenchmarkContractFailures({ workspaceRoot })).resolves.toEqual([]);
   });
