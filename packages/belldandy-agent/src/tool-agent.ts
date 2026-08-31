@@ -170,6 +170,7 @@ import {
   inspectWorkspaceMutationPatchHunks,
   isCompleteWorkspaceMutationVerificationReadResult,
   normalizeWorkspaceMutationRecoveryToolCall,
+  rebuildClosingDelimiterDeletionOnlyToolCall,
   retainActionableWorkspaceMutationPatchSections,
   retainMissingWorkspaceMutationPatchSections,
   selectWorkspaceMutationNavigationToolDefinitions,
@@ -2927,6 +2928,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
         let workspaceMutationVerificationRequest: WorkspaceMutationVerificationRequest | undefined;
         let workspaceMutationObjectiveReviewCall = false;
         let workspaceMutationObjectiveInputCorrectionCall = false;
+        let workspaceMutationObjectiveInputCorrectionCallReason: WorkspaceMutationObjectiveInputCorrectionReason | undefined;
         let workspaceMutationObjectiveOutputRepairCall = false;
         let workspaceMutationObjectiveReviewRequest: WorkspaceMutationRecoveryRequest | undefined;
         let workspaceMutationFinalizationCall = false;
@@ -3209,6 +3211,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
             ) / REACT_FINALIZATION_INPUT_SAFETY_FACTOR),
           );
           workspaceMutationObjectiveInputCorrectionCall = workspaceMutationObjectiveInputCorrectionPending;
+          workspaceMutationObjectiveInputCorrectionCallReason = workspaceMutationObjectiveInputCorrectionCall
+            ? workspaceMutationObjectiveInputCorrectionReason
+            : undefined;
           workspaceMutationObjectiveOutputRepairCall = workspaceMutationObjectiveOutputRepairPending;
           const candidate = workspaceMutationObjectiveInputCorrectionCall
             ? buildWorkspaceMutationObjectiveInputCorrectionRequest({
@@ -4533,16 +4538,39 @@ export class ToolEnabledAgent implements BelldandyAgent {
               agentId: resolvedAgentId,
             });
           }
-          const patchDiagnostics = inspectWorkspaceMutationPatchHunks(constrainedMutationToolCall);
+          const rebuiltClosingDelimiterToolCall = workspaceMutationObjectiveInputCorrectionCall
+            && workspaceMutationObjectiveInputCorrectionCallReason === "closing_delimiter_requires_deletion_only"
+            && !hasOnlyWorkspaceMutationPatchPaths(
+              constrainedMutationToolCall,
+              workspaceMutationCallRequiredPaths,
+            )
+            ? rebuildClosingDelimiterDeletionOnlyToolCall({
+              toolCall: constrainedMutationToolCall,
+              messages: mutationRecoverySourceMessages,
+              taskText: input.text,
+              priorSuccessfulPatchInputs: successfulWorkspaceMutationPatchInputs,
+              requiredPaths: workspaceMutationCallRequiredPaths,
+            })
+            : undefined;
+          const validatedMutationToolCall = rebuiltClosingDelimiterToolCall
+            ?? constrainedMutationToolCall;
+          if (rebuiltClosingDelimiterToolCall) {
+            logWarn("[workspace-mutation] rebuilt trusted deletion-only closing-delimiter correction", {
+              requiredPathCount: workspaceMutationCallRequiredPaths.length,
+              conversationId: input.conversationId,
+              agentId: resolvedAgentId,
+            });
+          }
+          const patchDiagnostics = inspectWorkspaceMutationPatchHunks(validatedMutationToolCall);
           const patchPreservationDiagnostics = patchDiagnostics?.contextOnlyHunkCount
-            ? inspectContextOnlyWorkspaceMutationPatchPreservation(constrainedMutationToolCall)
+            ? inspectContextOnlyWorkspaceMutationPatchPreservation(validatedMutationToolCall)
             : undefined;
           const actionableMutationToolCall = patchPreservationDiagnostics?.canPreserve === false
             && (patchPreservationDiagnostics.rejectionReason === "non_actionable_update_section"
               || patchPreservationDiagnostics.rejectionReason === "duplicate_update_path")
             && !workspaceMutationContinuationCall
             ? retainActionableWorkspaceMutationPatchSections(
-              constrainedMutationToolCall,
+              validatedMutationToolCall,
               workspaceMutationCallRequiredPaths,
             )
             : undefined;
@@ -4554,7 +4582,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
           if (workspaceMutationObjectiveReviewCall
             && !hasOnlyWorkspaceMutationPatchPaths(
-              constrainedMutationToolCall,
+              validatedMutationToolCall,
               workspaceMutationCallRequiredPaths,
             )) {
             const canCorrectObjectiveInputFailure = !workspaceMutationObjectiveInputCorrectionCall
@@ -4587,7 +4615,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             );
           if (workspaceMutationObjectiveReviewCall
             && hasRedundantWorkspaceMutationPatchHunks(
-              constrainedMutationToolCall,
+              validatedMutationToolCall,
               mutationRecoverySourceMessages,
               workspaceMutationCallRequiredPaths,
             )) {
@@ -4618,25 +4646,25 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
           const revertedSmallestChangeCorrection = workspaceMutationObjectiveReviewCall
             && hasRevertedSmallestChangeCorrectionHunks(
-              constrainedMutationToolCall,
+              validatedMutationToolCall,
               successfulWorkspaceMutationPatchInputs,
               input.text,
             );
           const broadenedSmallestChangeCorrection = workspaceMutationObjectiveReviewCall
             && hasBroadenedSmallestChangeCorrectionHunks(
-              constrainedMutationToolCall,
+              validatedMutationToolCall,
               successfulWorkspaceMutationPatchInputs,
               input.text,
             );
           const excludedFalseWitnessSmallestChangeCorrection = workspaceMutationObjectiveReviewCall
             && hasExcludedFalseWitnessSmallestChangeCorrectionHunks(
-              constrainedMutationToolCall,
+              validatedMutationToolCall,
               successfulWorkspaceMutationPatchInputs,
               input.text,
             );
           const nonDeletionOnlyClosingDelimiterCorrection = workspaceMutationObjectiveReviewCall
             && hasNonDeletionOnlyClosingDelimiterCorrectionHunks(
-              constrainedMutationToolCall,
+              validatedMutationToolCall,
               mutationRecoverySourceMessages,
               workspaceMutationCallRequiredPaths,
               successfulWorkspaceMutationPatchInputs,
@@ -4644,7 +4672,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             );
           const nonAtomicSerializedFalseRemovalCorrection = workspaceMutationObjectiveReviewCall
             && hasNonAtomicSerializedFalseRemovalCorrectionHunks(
-              constrainedMutationToolCall,
+              validatedMutationToolCall,
               mutationRecoverySourceMessages,
               workspaceMutationCallRequiredPaths,
               successfulWorkspaceMutationPatchInputs,
@@ -4652,7 +4680,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             );
           const nonGroupingSerializedFalsePrecedenceCorrection = workspaceMutationObjectiveReviewCall
             && hasNonGroupingSerializedFalsePrecedenceCorrectionHunks(
-              constrainedMutationToolCall,
+              validatedMutationToolCall,
               mutationRecoverySourceMessages,
               workspaceMutationCallRequiredPaths,
               successfulWorkspaceMutationPatchInputs,
@@ -4781,7 +4809,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             );
             return;
           }
-          toolCalls = [actionableMutationToolCall ?? constrainedMutationToolCall];
+          toolCalls = [actionableMutationToolCall ?? validatedMutationToolCall];
           if (workspaceMutationObjectiveReviewCall) {
             workspaceMutationObjectiveCorrectionAttempted = true;
           }

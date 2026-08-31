@@ -2,7 +2,12 @@ import { estimateTokens, type TokenEstimateOptions } from "./tokenizer.js";
 import {
   buildClosingDelimiterDeletionOnlyCorrectionInstruction,
   collectAdjacentDuplicateClosingDelimiterEvidenceContexts,
+  rebuildClosingDelimiterDeletionOnlyToolCall as rebuildTrustedClosingDelimiterDeletionOnlyToolCall,
 } from "./react-workspace-mutation-objective-correction.js";
+import {
+  branchReceivesFalseExcludedByPreviousSibling,
+  readSiblingBranchBody,
+} from "./react-workspace-mutation-serialized-false.js";
 
 export const WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE = 4_096;
 export const WORKSPACE_MUTATION_RECOVERY_MIN_OUTPUT_TOKEN_RESERVE = 1_024;
@@ -1417,6 +1422,9 @@ export function hasUnpreservedSerializedFalseWitnessCurrentSource(
       const hasNullGuard = /\bvalue\s*!=\s*NULL\b/.test(line);
       const hasFalseGuard = /\bvalue\s*!==?\s*false\b/.test(line);
       if (hasNullGuard === hasFalseGuard) return false;
+      if (hasNullGuard && branchReceivesFalseExcludedByPreviousSibling(lines, index)) {
+        return false;
+      }
       const branchWindow = lines.slice(index, index + 4).join("\n");
       return /\.setAttribute\s*\(/.test(branchWindow);
     });
@@ -1948,26 +1956,6 @@ function consumesFalseWitnessInElseIf(line: string): boolean {
   ).test(line);
 }
 
-function readSiblingBranchBody(lines: readonly string[], branchIndex: number): string[] {
-  const indent = /^([ \t]*)/.exec(lines[branchIndex] ?? "")?.[1] ?? "";
-  const body: string[] = [];
-  for (let index = branchIndex + 1; index < lines.length; index += 1) {
-    const line = lines[index] ?? "";
-    if (!line.trim()) {
-      body.push(line);
-      continue;
-    }
-    if (line.startsWith(indent)) {
-      const remainder = line.slice(indent.length);
-      if (!/^[ \t]/.test(remainder) && /^}\s*(?:else\b|$)/.test(remainder)) {
-        break;
-      }
-    }
-    body.push(line);
-  }
-  return body;
-}
-
 function hasElseIfAfterUnconditionalElse(lines: readonly string[]): boolean {
   return lines.some((line, branchIndex) => {
     const match = /^([ \t]*)}\s*else\s*{\s*$/.exec(line);
@@ -2020,6 +2008,49 @@ export function hasPriorPatchAdjacentDuplicateClosingDelimiterCurrentSource(
     return lines.some((line, index) => (
       addedClosingDelimiters.has(line) && lines[index + 1] === line
     ));
+  });
+}
+
+export function rebuildClosingDelimiterDeletionOnlyToolCall<
+  T extends WorkspaceMutationNavigationToolCall,
+>(input: {
+  toolCall: T;
+  messages: readonly WorkspaceMutationSourceMessage[];
+  taskText: string;
+  priorSuccessfulPatchInputs: readonly string[];
+  requiredPaths: readonly string[];
+}): T | undefined {
+  if (input.toolCall.function.name !== "apply_patch"
+    || input.requiredPaths.length !== 1
+    || !hasPriorPatchAdjacentDuplicateClosingDelimiterCurrentSource(
+      input.messages,
+      input.taskText,
+      input.priorSuccessfulPatchInputs,
+    )) {
+    return undefined;
+  }
+  const requiredPath = input.requiredPaths[0] ?? "";
+  const requiredPathIdentity = normalizeSourcePath(requiredPath);
+  const priorGuardPaths = collectPriorSerializedFalseGuardPaths(
+    input.priorSuccessfulPatchInputs,
+  );
+  if (priorGuardPaths.length !== 1 || priorGuardPaths[0] !== requiredPathIdentity) {
+    return undefined;
+  }
+
+  const addedClosingDelimiters = new Set(input.priorSuccessfulPatchInputs.flatMap((patchInput) => (
+    (collectWorkspaceMutationPatchLineChanges(patchInput) ?? [])
+      .filter((change) => change.path === requiredPathIdentity)
+      .flatMap((change) => collectEffectiveWorkspaceMutationPatchLines(change).added)
+      .filter((line) => /^\s*}\s*;?\s*$/.test(line))
+  )));
+  return rebuildTrustedClosingDelimiterDeletionOnlyToolCall({
+    toolCall: input.toolCall,
+    requiredPath,
+    requiredPathIdentity,
+    priorGuardPaths,
+    addedClosingDelimiters: [...addedClosingDelimiters],
+    sources: readLatestWorkspaceMutationSourceEvidence(input.messages, [requiredPath]),
   });
 }
 
@@ -2185,13 +2216,19 @@ export function hasUnreachableSerializedFalseWitnessCurrentSource(
     const hasReachableSerializedFalseBranch = lines.some((line, index) => {
       const body = readSiblingBranchBody(lines, index);
       if (branchDirectlyPreservesSerializedFalsePrefixes(line, body)) return true;
+      const receivesPreviouslyExcludedFalse = branchReceivesFalseExcludedByPreviousSibling(
+        lines,
+        index,
+      );
       if (!/\bvalue\s*(?:===?|!==?)\s*false\b/.test(line)
-        && !/\bfalse\s*(?:===?|!==?)\s*value\b/.test(line)) {
+        && !/\bfalse\s*(?:===?|!==?)\s*value\b/.test(line)
+        && !receivesPreviouslyExcludedFalse) {
         return false;
       }
       const admitsFalse = /\bvalue\s*===?\s*false\b/.test(line)
         || /\bfalse\s*===?\s*value\b/.test(line)
-        || (/\bvalue\s*!==?\s*false\b/.test(line) && line.includes("||"));
+        || (/\bvalue\s*!==?\s*false\b/.test(line) && line.includes("||"))
+        || receivesPreviouslyExcludedFalse;
       return admitsFalse
         && branchPreservesSerializedFalseSubset(line, body);
     });

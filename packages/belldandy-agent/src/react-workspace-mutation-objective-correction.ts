@@ -33,3 +33,56 @@ export function collectAdjacentDuplicateClosingDelimiterEvidenceContexts(
   }
   return [];
 }
+
+export function rebuildClosingDelimiterDeletionOnlyToolCall<
+  T extends { function: { name: string; arguments: string } },
+>(input: {
+  toolCall: T;
+  requiredPath: string;
+  requiredPathIdentity: string;
+  priorGuardPaths: readonly string[];
+  addedClosingDelimiters: readonly string[];
+  sources: readonly string[];
+}): T | undefined {
+  if (input.toolCall.function.name !== "apply_patch"
+    || input.priorGuardPaths.length !== 1
+    || input.priorGuardPaths[0] !== input.requiredPathIdentity
+    || input.addedClosingDelimiters.length !== 1
+    || input.sources.length !== 1) {
+    return undefined;
+  }
+
+  const addedDelimiter = input.addedClosingDelimiters[0] ?? "";
+  const source = input.sources[0] ?? "";
+  const lineEnding = source.includes("\r\n") ? "\r\n" : "\n";
+  const lines = source.split(/\r?\n/);
+  const duplicateIndices = lines.flatMap((line, index) => (
+    line === addedDelimiter && lines[index + 1] === addedDelimiter ? [index] : []
+  ));
+  if (duplicateIndices.length !== 1) return undefined;
+  const duplicateIndex = duplicateIndices[0] ?? -1;
+  if (duplicateIndex < 3 || duplicateIndex + 3 > lines.length) return undefined;
+
+  const sourceContext = lines.slice(duplicateIndex - 2, duplicateIndex + 4);
+  if (sourceContext.length !== 6) return undefined;
+  const contextFingerprint = sourceContext.join("\n");
+  const normalizedSource = lines.join("\n");
+  if (normalizedSource.indexOf(contextFingerprint) !== normalizedSource.lastIndexOf(contextFingerprint)) {
+    return undefined;
+  }
+
+  const patch = [
+    "*** Begin Patch",
+    `*** Update File: ${input.requiredPath}`,
+    "@@",
+    ...sourceContext.map((line, index) => `${index === 3 ? "-" : " "}${line}`),
+    "*** End Patch",
+  ].join(lineEnding);
+  return {
+    ...input.toolCall,
+    function: {
+      ...input.toolCall.function,
+      arguments: JSON.stringify({ input: patch }),
+    },
+  } as T;
+}

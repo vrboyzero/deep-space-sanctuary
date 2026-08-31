@@ -28,6 +28,7 @@ import {
   hasUnreachableSerializedFalseDataPredicateCurrentSource,
   hasUnreachableSerializedFalseParentGuardCurrentSource,
   hasUnreachableSerializedFalseWitnessCurrentSource,
+  hasUnpreservedSerializedFalseWitnessCurrentSource,
   inspectContextOnlyWorkspaceMutationPatchPreservation,
   inspectWorkspaceMutationPatchHunks,
   normalizeWorkspaceMutationRecoveryToolCall,
@@ -1115,11 +1116,29 @@ describe("ReAct workspace mutation recovery", () => {
       "\t\t\tdom.removeAttribute(name);",
       "\t\t}",
     ].join("\n");
+    const reachableFallbackSource = [
+      "\t\t} else if (value != NULL && value !== false) {",
+      "\t\t\tdom.setAttribute(name, value);",
+      "\t\t} else if (value != NULL && (name.startsWith('aria-') || name.startsWith('data-'))) {",
+      "\t\t\tdom.setAttribute(name, String(value));",
+      "\t\t} else {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t}",
+    ].join("\n");
     const unreachableSource = [
       "\t\t} else if (value != NULL && value !== false) {",
       "\t\t\tdom.setAttribute(name, value);",
       "\t\t} else if (value === false) {",
       "\t\t\tdom.removeAttribute(name);",
+      "\t\t} else {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t}",
+    ].join("\n");
+    const unpreservedSubsetSource = [
+      "\t\t} else if (typeof value == 'string') {",
+      "\t\t\tdom.setAttribute(name, value);",
+      "\t\t} else if (value != NULL && (name.startsWith('aria-') || name.startsWith('data-'))) {",
+      "\t\t\tdom.setAttribute(name, String(value));",
       "\t\t} else {",
       "\t\t\tdom.removeAttribute(name);",
       "\t\t}",
@@ -1131,7 +1150,22 @@ describe("ReAct workspace mutation recovery", () => {
       [priorPatch],
     )).toBe(false);
     expect(hasUnreachableSerializedFalseWitnessCurrentSource(
+      sourceEvidence(reachableFallbackSource),
+      task,
+      [priorPatch],
+    )).toBe(false);
+    expect(hasUnreachableSerializedFalseWitnessCurrentSource(
       sourceEvidence(unreachableSource),
+      task,
+      [priorPatch],
+    )).toBe(true);
+    expect(hasUnpreservedSerializedFalseWitnessCurrentSource(
+      sourceEvidence(reachableFallbackSource),
+      task,
+      [priorPatch],
+    )).toBe(false);
+    expect(hasUnpreservedSerializedFalseWitnessCurrentSource(
+      sourceEvidence(unpreservedSubsetSource),
       task,
       [priorPatch],
     )).toBe(true);
