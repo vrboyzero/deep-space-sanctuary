@@ -2,7 +2,7 @@
 
 > 当前版本：精简维护版
 >
-> 评估日期：2026-08-17；最新进度复核：2026-09-01
+> 评估日期：2026-08-17；最新进度复核：2026-09-02
 >
 > 横向评估基线：`5b36691d9aba6d9286cf43e912d91b0170bbef0d`
 >
@@ -121,6 +121,32 @@ Git/交付    9.4
 - A 级：当前源码、测试、可复算 artifact 和实际命令；
 - B 级：官方文档、release、固定 commit 或本地固定源码快照；
 - C 级：旧计划、推断或未实测行为。
+
+归档 `SS开发能力精进分析与计划-01/-02` 冻结的七维观察范围如下；后续版本压缩了文字，但没有废止该口径：
+
+| 维度 | 权重 | 主要观察点 |
+| --- | ---: | --- |
+| 上下文/检索 | 15% | 项目规则、上下文诊断、搜索、分段读取、symbol/reference、freshness 与大型仓导航 |
+| 编辑/测试 | 20% | 确定性编辑、patch、冲突检测、测试计划、失败诊断、验证证据与回归控制 |
+| CLI/TUI | 15% | 交互工作流、PTY/job、审批、diff、任务状态、可达性与跨平台稳定性 |
+| 安全/恢复 | 15% | policy、sandbox、不可代理审批、审计、资源回收、断线/重启与副作用对账 |
+| 会话/长任务 | 15% | resume、steer、cancel、Goal/Workflow/Subtask、后台任务、并行隔离与预算 |
+| Headless/生态 | 10% | JSON/JSONL、Schema、SDK/MCP/CI、能力协商、错误分类、观测与第三方可接入性 |
+| Git/交付 | 10% | dirty worktree、diff/review、worktree 生命周期、本地提交、远端分权与恢复 |
+
+评分语义锚点同样沿用归档定义：
+
+- `9.0`：关键工作流已经具备生产级闭环，但仍有明确覆盖或成熟度缺口；
+- `9.5`：能力广泛、稳定、默认可用，并在异常路径和多入口上有较强产品化；
+- `10.0`：具有同口径实测、跨平台/跨项目泛化和长期稳定证据；当前没有任何产品满足这一证据标准。
+
+计分与证据约束为：
+
+1. 原始加权分按 `sum(七维实得分 × 对应权重)` 计算，权重合计为 `1.00`；一位小数“发布分”只用于展示，P2-C 必须用未四舍五入的原始加权判断 `>=9.500`。
+2. A 级证据可支撑 SS 当前能力和内部 Gate；B 级证据可支撑竞品机制存在与成熟度判断；C 级证据只作背景，不能单独支撑加分。Beta/experimental/App-only 或未同口径实测的能力必须降权或保持未验证。
+3. 历史横向七维分属于按“加分依据 / 主要扣分”形成的证据化专家评估，不是把 task/test/patch 成功率线性缩放到 `0-10` 的公式；归档没有定义诸如 `B success=94% → 编辑/测试=9.6` 的换算表。
+4. 归档 P2-C 明确要求建立独立 scorecard schema、维度依据和不可被加权分覆盖的 hard Gate，并由 Benchmark v3、语言/平台/故障矩阵、真实消费者和完整 scorecard 复算；但没有给出 24 个任务到七维的完整映射或 hard-Gate 指标 owner。C 层并非把四个任务拆为 critical/other 两组：现有 `system-scenario/system-evidence` 已把每个 C run 的安全、恢复、workspace containment、重复副作用、敏感值和资源不变量定义为 `100%` critical Gate，24 个 C run 的总体成功率再适用 `>=90%` 门槛。
+5. 因此，在上述映射和 owner 形成版本化合同前，candidate qualification 只能对 coverage、identity、layer/hard Gate 做失败关闭；不得自行发明百分比换算、人工补齐七维实得分，或把 `not_eligible` / partial aggregate 输出为数值总分。
 
 SS 内部评分误差约 `+/-0.15`，横向评分约 `+/-0.3`。横向评分衡量产品化机制和可验证性，不是同场模型能力排名：
 
@@ -4766,9 +4792,6354 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 
 - **下一步准备做什么**：恢复开发后先在 aggregate 公共输出 seam 新增版本化 candidate qualification/七维评分 evaluator，按 Red/Green 覆盖完整成功、partial、identity 漂移、Gate 不达标、缺 trace/usage/敏感/残留 owner 与未知维度映射；随后再建立 candidate runner 的零模型 receipt。
 - **为什么先做它**：这是把 `144` 项原始 evidence 变成可审计七维分数和最终 verdict 的唯一缺失 owner；先运行付费矩阵会留下“有数据但没有稳定评分合同”的不可闭环结果。
-- **当前还缺的关键闭环**：权威维度映射、C critical/other system 归属、全部 hard-Gate 指标 owner、candidate #1 新 clean identity 与完整 `144/144`，以及其后的第二个连续候选。本轮在此暂停，不启动付费矩阵。
+- **当前还缺的关键闭环**：权威维度映射、全部 hard-Gate 指标 owner、candidate #1 新 clean identity 与完整 `144/144`，以及其后的第二个连续候选。不启动付费矩阵。
+
+#### P2-C 评分机制归档审计实现结论：恢复七维语义锚点与机器评分边界（2026-09-01）
+
+##### 已完成内容
+
+1. **`docs/archive/SS项目优化实施方案计划v2-1` 至 `v2-6` 只读复核**：
+   - 六版文档定义的是工程优化证据等级 `E1-E4`、P0-P3 优先级、性能/安全/行为/交付 Gate 与无阈值基准，不包含 P2-C 七维 `0-10` 计分、task→dimension 映射或 candidate qualification 公式；
+   - 其中 `ToolEnabledAgent.run()` strict-local-mock 基准为当前零模型测试 seam 提供历史依据，但不能作为七维实得分换算规则。
+
+2. **`docs/archive/SS开发能力精进分析与计划-01` 至 `-04` 只读复核**：
+   - `-01/-02` 明确定义七维权重与主要观察点，以及 `9.0 / 9.5 / 10.0` 的定性评分锚点；同时以“加分依据 / 主要扣分”记录人工横向分，并规定 A/B/C 证据的可计分边界；
+   - `-03/-04` 延续目标向量、权重、证据等级、原始加权与 P2-C hard Gate；归档 P2-C 明确要求新增独立 scorecard schema、维度依据和不可补偿 hard Gate；
+   - 十份归档均未定义 benchmark 百分比到七维分数的线性换算、24 项任务的完整七维归属或全部 hard-Gate 指标 owner；C Gate 的现有源码语义由后续 owner 审计补充确认。
+
+3. **`SS开发能力精进分析与计划.md` 评分说明补回**：
+   - 恢复七维观察范围、`9.0 / 9.5 / 10.0` 语义锚点、原始加权公式、发布分展示边界和证据等级用法；
+   - 明确历史七维分属于证据化专家评估，不是 task/test/patch 百分比的机械缩放；
+   - 固定 P2-C 失败关闭边界：版本化映射与 owner 缺失时只能输出 `not_eligible/unscored`，不得人工补分或把 partial aggregate 变成数值总分。
+
+4. **效果**：
+   - 纠正“归档没有评分机制说明”的过度结论：归档确有评分语义、观察范围、加权与达标规则；
+   - 同时保留真实缺口：归档没有候选实得分的机器生成算法，后续 evaluator 必须显式版本化证据映射并对缺失项失败关闭；
+   - 当前内部 `9.065`、横向 `9.135` 与 candidate #1 `not_eligible/unscored` 均不变，本环节不重算或改写任何历史评分。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节只修改计划文档，不涉及 TypeScript 源码；
+- `10` 份指定归档逐份完成只读检索，其中 `4` 份能力计划确认评分说明、`6` 份优化计划确认仅含工程证据/Gate；
+- 当前计划 diff 仅新增评分机制说明和本实现结论，未修改冻结 artifact、scorecard、测试、Provider 配置或运行结果；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：先在 aggregate 公共输出 seam 为 partial aggregate 新增版本化 qualification report，按 Red/Green 固定 `not_eligible/unscored` 及 missing evidence；再扩展完整 aggregate 的 layer/hard-Gate 负例。
+- **为什么先做它**：归档已证明不能从成功率自行换算七维分；先固化最小失败关闭输出，可以在不发明实得分公式的前提下建立唯一机器 owner。
+- **当前还缺的关键闭环**：完整 task→dimension evidence mapping、trace/usage/敏感/残留的 authoritative candidate 字段，以及全部 Gate 通过时如何授予版本化维度分；这些闭合前不得输出 qualified 数值分或启动付费 candidate。
+
+#### P2-C qualification owner 实现结论：partial aggregate 失败关闭首切片（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-qualification.mjs` 新建**：
+   - 提供 `qualifyCodingAgentBenchmarkCandidate({ aggregateRoot })` 公共 interface，输入完整 aggregate 目录，内部先复用现有离线 artifact 重建验证，再加载冻结 v3 scorecard；
+   - partial v3 aggregate 输出版本化 `coding-agent-benchmark-candidate-qualification/v1` report；
+   - 七维 `score` 与 `rawWeighted` 均保持 `null/unscored`，并以 `incomplete_matrix` 返回 expected/collected/missing 精确覆盖，不调用模型、不自行换算分数。
+
+2. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 通过生产 aggregator 生成真实 v3 partial 目录，再从 qualification 公共 seam 验证调用方可见行为；
+   - RED 首轮因公共模块不存在稳定失败；最小实现后转 GREEN；
+   - 测试不调用内部 helper、不 mock 自有模块，保留 aggregate 离线重建、artifact retention 与 identity 校验路径。
+
+3. **效果**：
+   - `2/144` 或其他 partial evidence 现在具备唯一机器可读的 `not_eligible/unscored` 结论形状；
+   - 缺失覆盖不能再由调用方误解释为零分、目标分或可发布候选；
+   - qualification 复杂度收敛在一个深模块后，后续 layer/hard Gate、维度映射和 CLI 只需扩展同一 interface。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片只新增/修改 `.mjs`，尚未执行 workspace build；完整 qualification 合同闭合后统一执行并回写；
+- 定向 Vitest `11/11` 通过（含 `1` 个新增 partial qualification 公共 seam 测试）；
+- 首轮 RED=`ERR_MODULE_NOT_FOUND`，GREEN 后 partial aggregate 精确返回 expected/collected/missing=`144/1/143`、七维与原始加权全为 `null/unscored`；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：新增完整 `144/144` aggregate 的失败关闭负例，要求维度映射与 hard-Gate owner 未声明时仍为 `not_eligible/unscored`，并精确列出缺失合同；随后再逐项版本化补齐 owner。
+- **为什么先做它**：coverage 完整只证明执行分母闭合，不代表七维分数或 hard Gate 可计算；先锁定该负例能阻止“全绿 fixture 自动等于 9.5”的错误捷径。
+- **当前还缺的关键闭环**：scorecard 中尚无维度 evidence mapping 和 trace/usage/候选全局敏感扫描/资源 sweep owner；完整 aggregate 仍不能产生数值分或 qualified verdict。
+
+#### P2-C qualification owner 实现结论：完整 aggregate 缺合同负例（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 经生产 aggregator 构造同 source/harness identity、完整 `24 × 2 × 3 = 144` 的 v3 aggregate；
+   - 固定即使 144 个 fixture run 全部通过，只要 qualification evidence 合同尚未声明，就不能生成七维实得分或原始加权；
+   - RED 首轮精确命中 `Completed candidate qualification is not implemented yet.`，证明完整 coverage 路径尚无机器 verdict。
+
+2. **`scripts/coding-agent-candidate-qualification.mjs` 扩展**：
+   - 完整 aggregate 现返回版本化 `not_eligible/unscored`，coverage=`144/144`、missing=`0`；
+   - `qualification_contract_incomplete` 精确列出 `dimension_evidence_mapping` 与 `hard_gate_metric_owners`；C Gate 复用既有 system evidence 语义，不新增虚构分类；
+   - 七维与原始加权继续全部为 `null/unscored`，没有因全绿 fixture 自动授予目标分。
+
+3. **效果**：
+   - 明确分离“矩阵完整”与“评分证据合同完整”，关闭把完整 coverage 等同为 9.5 的捷径；
+   - 调用方得到稳定、可诊断、可逐项闭合的缺口列表，不再依赖占位异常文本；
+   - 后续可按同一公共 interface 逐项接入现有 evidence owner，未闭合项继续失败关闭。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片仅修改 `.mjs`，完整 qualification 合同闭合后统一执行 workspace build；
+- 定向 Vitest `12/12` 通过（累计 `2` 个 qualification 公共 seam 测试）；
+- 完整 fixture aggregate 离线重建、144 个 retained run/artifact 校验通过，最终稳定输出 `not_eligible/unscored`；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：只读盘点 v3 run/report/aggregate 的现有权威字段与 artifact，形成 hard-Gate metric owner 清单；先为已存在的 owner 建立版本化声明，对缺失 owner 保持 `incomplete`，不复制或猜测指标。
+- **为什么先做它**：hard Gate 是不可补偿条件，必须先知道每项数据由谁产生、是否已进入 aggregate，才能安全设计维度映射和授分规则。
+- **当前还缺的关键闭环**：trace completeness、Provider usage completeness、候选全局敏感扫描与 orphan resource sweep 的 owner 仍待版本化；七维 evidence mapping 仍未版本化。
+
+#### P2-C qualification owner 实现结论：hard-Gate producer 与 C Gate 语义审计（2026-09-01）
+
+##### 已完成内容
+
+1. **v3 run/report/aggregate owner 只读追踪**：
+   - matrix coverage、单一 source/harness identity、cross-revision 禁止、missing report/artifact 与 selected infrastructure error 已由生产 aggregator 和 report summary 直接拥有；
+   - retained `events.jsonl` 是 trace sequence、binding、唯一终态、trace projection 与终态 usage completeness 的权威 producer，现有 `validateAgentRunEvents()`、`projectCodingRunTraceEvents()`、`validateCodingRunTraceEvents()` 可离线重放；
+   - `usage.observation` 只提供 Provider cost/观测摘要，不能替代终态 usage completeness。
+
+2. **C 层 system evidence 语义确认**：
+   - `system-scenario.schema.json` 为每个 C run 固定 run/platform binding、workspace containment、zero sensitive/orphan/duplicate side effect 五项 invariant；
+   - `coding-agent-benchmark-v3-fixtures.mjs` 的现有 evaluator 要求 evidence status=`passed`、三项 count=`0` 并验证各场景 observation；这就是 `criticalGateRateMinimum=1` 的 producer；
+   - `otherSystemSuccessRateMinimum=0.90` 作用于 24 个 C run 的总体成功率，不需要也不允许再造四任务 critical/other 分类表。
+
+3. **冻结完整 aggregate 实证盘点**：
+   - `edd1c87` report usage observation=`132 provider_reported / 6 unavailable / 6 not_reached`；对应终态 usage completeness=`132 complete / 12 incomplete`，旧基线明确无法通过 usage hard Gate；
+   - 24 份 C `system-evidence` 均为 evidence passed，sensitive/orphan/duplicate 合计=`0/0/0`；C run 仍为 `23/24`，体现 critical invariant 与总体任务成功是两个独立 Gate；
+   - C evidence 只覆盖 C 层，不能替代整个 candidate 的全局敏感扫描和资源 sweep。
+
+4. **当前 qualification 缺口修正**：
+   - 从缺合同列表移除错误的 `system_gate_classification`；
+   - 当前仅保留 `dimension_evidence_mapping` 与 `hard_gate_metric_owners` 两类真实缺口；
+   - 计划正文同步修正 C Gate 语义，避免后续新增重复真源。
+
+5. **效果**：
+   - hard Gate 数据流被拆成可复算 aggregate owner、retained event owner、C system evidence owner 和待新增 candidate receipt owner；
+   - 防止把费用摘要误当 usage completeness，或把 C 层局部零敏感/零残留外推到完整 candidate；
+   - 下一实现可只增加版本化 owner 引用与全局 receipt，不改写历史 run/report schema。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节只读审计并调整 `.mjs` 缺口常量/测试期望，完整合同回归后统一执行 workspace build；
+- `144` 个 retained event stream、`144` 个 run manifest 与 `24` 份 C system evidence 均完成只读统计；未修改冻结 artifact；
+- 移除错误的 `system_gate_classification` 缺口后已重新执行 `node .\\node_modules\\vitest\\vitest.mjs run scripts\\aggregate-coding-agent-benchmark.test.mjs --reporter verbose`，定向回归 `12/12` 通过；partial/完整缺合同仍均为 `not_eligible/unscored`，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在 v3 scorecard 中增加版本化 `qualificationEvidence` owner 声明，先绑定 aggregate、event stream 与 C system evidence；为尚不存在的 candidate global receipt 显式声明 required owner，并用 Red/Green 固定缺 receipt 时的失败关闭。
+- **为什么先做它**：owner 声明是 qualification 重放证据的路由表；先冻结生产者和范围，才能在不修改历史 artifact 的前提下精确判断哪些 Gate 可复算、哪些必须等待新 candidate runner。
+- **当前还缺的关键闭环**：candidate global receipt schema/runner、七维 evidence mapping，以及 scorecard/schema/contract/CLI 的完整接线；这些闭合前继续不输出数值分。
+
+#### P2-C qualification owner 实现结论：版本化 evidence-owner 合同（2026-09-01）
+
+##### 已完成内容
+
+1. **`benchmarks/coding-agent/v3/scorecard.json` 与 `scorecard.schema.json` 扩展**：
+   - 新增 `coding-agent-benchmark-qualification-evidence/v1` 合同，显式声明 verified aggregate、全量 retained run events、C 层 system evidence 与 required candidate-global receipt 四类 source；
+   - 将 coverage/identity/infrastructure owner 绑定到 aggregate，将 trace 与终态 Provider usage completeness 绑定到 run events；
+   - 将 C critical invariant 绑定到 system evidence，将候选全局敏感扫描与 orphan resource sweep 绑定到尚待生成的 candidate-global receipt。
+
+2. **`scripts/coding-agent-benchmark-v3-contract.mjs` 与 `coding-agent-benchmark-v3.test.mjs` 扩展**：
+   - scorecard loader 现在对完整 owner 路由做语义等值验证，任一指标改绑或字段漂移均失败关闭；
+   - RED 先以公开 `loadCodingAgentBenchmarkScorecardV3()` seam 证明 `qualificationEvidence` 缺失；最小 GREEN 后同时覆盖调用方可见合同、drift 负例与 JSON Schema；
+   - owner 只描述证据来源和作用域，不在 scorecard 中复制 evaluator 实现或发明百分比到七维分数的换算。
+
+3. **效果**：
+   - hard/layer Gate 现在拥有版本化路由表，可区分现有可离线重放证据与必须由新候选生成的全局 receipt；
+   - 关闭把 `usage.observation` 当作终态 usage completeness、或把 24 个 C run 的局部证据外推为整个 candidate 全局扫描的错误路径；
+   - qualification 下一切片可精确返回 `candidate_global_receipt_missing`，无需继续使用笼统的 `hard_gate_metric_owners` 缺口。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片仅修改 JSON/MJS，尚未执行 workspace build；qualification 合同全部接线后统一执行；
+- v3 scorecard/Schema 定向测试 `8/8` 通过（含 evidence-owner 公共合同与 owner drift 负例）；仓库 benchmark 合同测试 `11/11` 通过；
+- `corepack pnpm verify:coding-benchmark` 通过，v1/v2/v3 manifests、schemas、docs 与 platform gates 对齐；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：通过 qualification 公共 seam 先写完整 candidate 缺 `candidate-global-receipt.json` 的 RED，再最小实现精确 `candidate_global_receipt_missing` blocker；随后为 receipt 建立独立 fail-closed schema。
+- **为什么先做它**：scorecard 已将敏感扫描和资源 sweep 绑定到 required receipt；先固定缺失行为，能够在尚未实现 runner 时证明历史 aggregate 与 fixture 不能被误判合格。
+- **当前还缺的关键闭环**：candidate-global receipt 的 schema/producer 与 hash binding、run event/C evidence 离线语义重放、七维 evidence mapping 和数值授分仍未闭合。
+
+#### P2-C qualification owner 实现结论：candidate-global receipt 缺失负例（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 将完整 `144/144` aggregate 的下一失败点固定为 required `candidate-global-receipt.json` 缺失；
+   - RED 证明旧实现仍返回笼统 `qualification_contract_incomplete`，随后从同一公开 qualification seam 转为精确 blocker；
+   - 断言 receipt 路径和 schema version 均来自 scorecard owner，避免测试或调用方复制常量。
+
+2. **`scripts/coding-agent-candidate-qualification.mjs` 扩展**：
+   - coverage 完整后按 `qualificationEvidence.sources.candidateGlobalReceipt` 检查 required receipt；
+   - 文件缺失时返回 `candidate_global_receipt_missing`、声明路径及 `coding-agent-benchmark-candidate-global-receipt/v1`，七维与原始加权继续为 `null/unscored`；
+   - partial aggregate 仍先返回精确 coverage 缺口，不被后置 receipt 要求遮蔽；已有 hard-Gate owner 不再被错误报告为缺失合同。
+
+3. **效果**：
+   - 历史完整 aggregate 和仅有 run-level C evidence 的 fixture 均不能绕过候选全局敏感扫描/资源 sweep；
+   - blocker 已从抽象合同缺口收敛为 runner 可直接生产的具体 artifact；
+   - qualification 仍不读取伪 receipt、不授分，下一环节可先建立 fail-closed schema 与 binding。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片仅修改 `.mjs`，尚未执行 workspace build；完整 qualification 接线后统一执行；
+- 定向聚合/qualification Vitest `12/12` 通过（含 partial 优先级与完整 candidate receipt 缺失负例）；
+- RED 的唯一失败为预期 blocker 不匹配，GREEN 后完整 fixture 稳定返回 receipt path/schema version；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：只读复用仓库现有 sensitive scan、process/resource sweep 和 receipt binding 模式，先定义 `candidate-global-receipt` 的最小 JSON Schema 与公共 qualification 非法 receipt 负例，再实现解析/绑定校验。
+- **为什么先做它**：只检查路径存在会允许空文件、目录或与 aggregate 无关的旧 receipt 通过；必须先锁定结构与 identity/hash binding，才能接 runner producer。
+- **当前还缺的关键闭环**：receipt 的权威字段、producer 与 scan scope，run events/C evidence 离线重放，七维 evidence mapping 和数值授分仍未闭合。
+
+#### P2-C qualification owner 实现结论：candidate-global receipt 封闭 Schema（2026-09-01）
+
+##### 已完成内容
+
+1. **`benchmarks/coding-agent/v3/candidate-global-receipt.schema.json` 新建**：
+   - 定义 `coding-agent-benchmark-candidate-global-receipt/v1`，要求绑定 aggregate 的 manifest/report/index SHA-256 及 clean source/harness identity；
+   - sensitive scan 固定为 candidate declared roots、link 只计数不跟随、真实值精确非回显匹配，并只记录 root/常规文件/不可读/link/命中计数；
+   - resource sweep 固定按顺序覆盖 `windows-native` 与 `wsl2-linux`，记录 candidate-owned listener、进程、runtime marker、runtime env 和 orphan 计数，不记录 PID、token、端口或敏感正文。
+
+2. **`scripts/coding-agent-benchmark-v3.test.mjs` 扩展**：
+   - RED 以公共 artifact Schema seam 证明 receipt Schema 文件缺失；
+   - GREEN 验证合法 receipt 可编译/通过，且额外 `sensitiveValue` 字段因 `additionalProperties=false` 失败关闭；
+   - 保留 scorecard owner、manifest/run/report/schema 既有合同测试不变。
+
+3. **效果**：
+   - candidate 全局 Gate 不再依赖计划文字或零散手工日志，形成可供 runner 生产、qualification 消费的最小机器合同；
+   - C 层 run-level evidence 与 candidate-global receipt 的作用域明确分离；
+   - receipt 不允许写入敏感值正文，且必须同时证明双平台资源 sweep，单平台材料不能伪装完整候选。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片只新增 JSON Schema 并修改 `.mjs` 测试，尚未执行 workspace build；
+- v3 合同 Vitest `8/8` 通过（含 `1` 个新增 candidate-global receipt Schema 合法/额外字段负例）；
+- RED 唯一失败为 `candidate-global-receipt.schema.json` 不存在；GREEN 后既有七项与新 Schema 项全部通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：让 qualification 读取 receipt 并在同一公共 seam 对 JSON/Schema、aggregate SHA/identity binding 和 Gate 计数依次失败关闭；先写非法 receipt RED，再补最小验证实现。
+- **为什么先做它**：Schema 文件本身不会约束运行时；qualification 必须拒绝空文件、目录、陈旧 receipt 和非零敏感/资源结果，才能把该 artifact 变成真实 owner。
+- **当前还缺的关键闭环**：receipt runtime validator 与 runner producer、run events/C evidence 离线重放、七维 evidence mapping、qualification report Schema/CLI 和完整回归仍未闭合。
+
+#### P2-C qualification owner 实现结论：candidate-global receipt runtime Schema 校验（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-qualification.mjs` 扩展**：
+   - receipt 现在必须是 `<=1 MiB` 的常规文件，目录、超限文件、非法 JSON 或 Schema 不匹配均不能进入后续 qualification；
+   - 复用 Core `compileOutputSchema()` 校验公共 `candidate-global-receipt.schema.json`，不另写宽松字段解析器；
+   - 对候选证据错误只返回受控 `candidate_global_receipt_invalid/schema_validation_failed`，不回显 Ajv path、文件正文或潜在敏感值。
+
+2. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 通过生产 aggregator 建立完整 `144/144` aggregate 并写入 `{}` receipt；
+   - RED 证明旧实现只检查存在性并错误继续到维度合同缺口；GREEN 后从同一 qualification 公共 seam 精确失败关闭；
+   - 缺 receipt 与 partial coverage 的既有优先级测试保持通过。
+
+3. **效果**：
+   - candidate-global receipt 已从“约定文件名”升级为运行时强制的封闭合同；
+   - 空文件、伪 JSON、目录和超大文件不能冒充全局扫描证据；
+   - 本切片仍不接受任何 receipt 为合格，只把下一失败点推进到 aggregate binding。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：qualification 通过 TS 源码复用 Core validator，完整接线后需用 workspace build/实际 CLI 再验证；
+- 定向聚合/qualification Vitest `13/13` 通过（新增 `1` 个非法 receipt Schema 负例）；
+- RED 的唯一失败为旧 `qualification_contract_incomplete` blocker，GREEN 后稳定返回受控 `schema_validation_failed`；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：生成 Schema 合法但绑定其他 aggregate 的 receipt，先以 RED 固定 `aggregate_binding_mismatch`，再比较 manifest/report/index SHA 与 source/harness identity。
+- **为什么先做它**：结构合法不代表证据属于当前 candidate；hash 和 identity binding 是阻止陈旧或跨 revision receipt 被复用的关键边界。
+- **当前还缺的关键闭环**：aggregate binding、非零 hard-Gate 判定、receipt producer、events/C evidence 离线重放、维度 mapping、report Schema/CLI 与完整回归。
+
+#### P2-C qualification owner 实现结论：candidate-global receipt aggregate binding（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-qualification.mjs` 扩展**：
+   - receipt 必须匹配当前 verified aggregate 的 manifest SHA、report SHA 与 index SHA；
+   - source/harness identity 以完整对象等值绑定 commit、clean 状态、lockfile SHA 与 worktree content SHA；
+   - 任一不匹配返回 `aggregate_binding_mismatch`，只列字段名，不回显当前或 receipt 中的实际 hash/identity。
+
+2. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 构造一份通过公共 Schema、扫描和双平台 sweep 均为零，但五项 binding 全部指向其他候选的 receipt；
+   - RED 证明旧实现错误放行到维度合同缺口；GREEN 后精确列出 manifest/report/index/source/harness 五个 mismatch；
+   - partial、missing receipt 和 Schema invalid 三条既有路径继续从同一公共 seam 通过。
+
+3. **效果**：
+   - 陈旧、跨 revision 或从其他 candidate 复制的 receipt 不能被当前 aggregate 复用；
+   - index SHA 将 receipt 同时绑定到 coverage、source report 列表和 aggregate 统计，而不只绑定 benchmark report；
+   - qualification 的下一失败点已推进到 receipt hard-Gate 计数，仍未授予维度分。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片仅修改 `.mjs`，完整接线后统一执行 workspace build；
+- 定向聚合/qualification Vitest `14/14` 通过（新增 `1` 个 Schema-valid 跨 aggregate receipt 负例）；
+- RED 的唯一失败为陈旧 receipt 被放行；GREEN 后五个 mismatch 字段顺序稳定，实际 hash 未进入输出；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：用 binding 正确但 `findingCount` 与双平台 `orphanResourceCount` 非零的 receipt 写 RED，固定不可补偿 hard-Gate blocker，再实现按 scorecard maximum 判定。
+- **为什么先做它**：receipt 结构和归属正确仍不代表候选安全；敏感命中或孤儿资源必须在维度评分前阻断，不能由加权分补偿。
+- **当前还缺的关键闭环**：非零 Gate 与 sweep 语义一致性、receipt producer、events/C evidence 重放、维度 mapping、qualification report Schema/CLI 和完整回归。
+
+#### P2-C qualification owner 实现结论：candidate-global 不可补偿 hard Gate（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-qualification.mjs` 扩展**：
+   - receipt 通过 Schema 与 aggregate binding 后，按 scorecard 的 `sensitiveFindingCountMaximum` 和 `orphanResourceCountMaximum` 判定；
+   - 双平台 orphan 计数在 candidate 级求和，任一 observed 超过 maximum 即返回 `candidate_global_hard_gate_failed`；
+   - blocker 仅包含 Gate id、observed 与 maximum，七维与原始加权继续保持 `null/unscored`。
+
+2. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 生成与当前 aggregate 完全绑定、Schema 合法的 receipt，再注入 `findingCount=1` 与 Windows `orphanResourceCount=1`；
+   - RED 证明旧实现错误继续到维度合同缺口；GREEN 后两个 hard Gate 按固定顺序同时报告；
+   - partial、missing、Schema invalid 与 cross-aggregate receipt 路径均保持通过。
+
+3. **效果**：
+   - 敏感命中和孤儿资源已成为不可被七维加权补偿的机器 Gate；
+   - candidate-global evidence 的结构、归属和结果三层校验均已进入同一 qualification seam；
+   - 全零 receipt 仍只推进到后续证据合同，不会因本环节自动产生数值分。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片仅修改 `.mjs`，完整接线后统一执行 workspace build；
+- 定向聚合/qualification Vitest `15/15` 通过（新增 `1` 个双 hard-Gate 非零负例）；
+- RED 的唯一失败为非零 Gate 被放行；GREEN 后精确返回 observed/maximum=`1/0` 两项，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：先固定 resource sweep 零状态一致性负例，拒绝“任一 listener/process/marker/env 残留非零但 orphan 汇总为零”；然后新增从 verified aggregate 派生 binding 的 receipt producer seam。
+- **为什么先做它**：当前 hard Gate 读取 `orphanResourceCount`，若 receipt 内细分计数与汇总矛盾，单靠 Schema 无法发现；先关闭该绕过路径再接 runner producer。
+- **当前还缺的关键闭环**：resource sweep 语义一致性、receipt producer/真实扫描接线、events/C evidence 重放、维度 mapping、report Schema/CLI 与完整回归。
+
+#### P2-C qualification owner 实现结论：resource sweep 语义一致性（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-qualification.mjs` 扩展**：
+   - 对每个平台求和 listener、owned process、runtime marker 与 runtime env 四类残留；
+   - 任一细分残留非零但 `orphanResourceCount=0` 时，返回 `candidate_global_receipt_invalid/resource_sweep_inconsistent`；
+   - 输出只列不一致平台，不回显 PID、端口、marker 路径或 env 内容；真实 `orphanResourceCount>0` 仍由不可补偿 hard Gate 处理。
+
+2. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 构造 binding 正确、Schema 合法且仅 Windows `remainingOwnedProcessCount=1`、汇总 orphan 伪报为零的 receipt；
+   - RED 证明旧实现将自相矛盾证据放行到维度合同缺口；GREEN 后精确返回 `platforms=[windows-native]`；
+   - 真实非零 orphan、敏感命中、cross-aggregate、Schema invalid、missing 与 partial 路径均保持通过。
+
+3. **效果**：
+   - producer 不能通过只篡改 orphan 汇总隐藏可观察资源残留；
+   - “证据自相矛盾”与“候选真实 hard Gate 失败”形成不同 blocker，便于 runner 诊断；
+   - receipt consumer 的结构、binding、内部一致性和非零 Gate 四层防线已闭合。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片仅修改 `.mjs`，完整接线后统一执行 workspace build；
+- 定向聚合/qualification Vitest `16/16` 通过（新增 `1` 个 resource sweep 汇总绕过负例）；
+- RED 唯一失败为不一致 receipt 被放行；GREEN 后稳定返回受控 reason/platform，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：新增 receipt producer 公共 seam，从 verified aggregate 自动派生 manifest/report/index SHA 与 source/harness identity，只接受已完成的非敏感 scan/sweep 计数并写入此前不存在的目标。
+- **为什么先做它**：当前测试与未来 runner 若自行拼 binding，容易产生第二套 hash/identity 逻辑；producer 应复用 aggregate verifier，集中 containment、Schema 与不可覆盖约束。
+- **当前还缺的关键闭环**：真实 scan/sweep adapter、receipt producer、events/C evidence 离线重放、维度 mapping、qualification report Schema/CLI 和完整回归。
+
+#### P2-C qualification owner 实现结论：candidate-global receipt producer seam（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-qualification.mjs` 扩展**：
+   - 新增 `writeCodingAgentCandidateGlobalReceipt({ aggregateRoot, generatedAt, sensitiveScan, resourceSweeps })` 公共 interface；
+   - producer 先离线重建 verified v3 aggregate，并只接受完整 coverage，再自动派生 manifest/report/index SHA 与 source/harness identity；
+   - 调用方只提供非敏感扫描/资源计数；整份 receipt 复用公共 Schema 校验后，以 `wx` 写入固定 `candidate-global-receipt.json`，不覆盖已有证据。
+
+2. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 通过生产 aggregator 建立完整 `144/144` aggregate，再从 producer 公共 seam 生成全零 receipt；
+   - RED 唯一失败为公开导出不存在；最小 GREEN 后验证返回对象、磁盘序列化和自动 binding 完全一致；
+   - 生成后立即从 qualification 公共 seam 重放，确认 receipt 通过本层 Gate 后仍只返回 `dimension_evidence_mapping` 缺口，不自动授分。
+
+3. **效果**：
+   - runner 不再需要自行复制 aggregate hash/identity 逻辑，receipt 生产与消费共用唯一 binding 语义；
+   - partial/cross-revision/被篡改 aggregate 会在 producer 写文件前由既有 verifier 阻断；
+   - receipt producer 只装配已完成的非敏感结果，本切片不冒充真实 scan/sweep adapter，也不触达模型或 Provider。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：producer 为 `.mjs` 并复用 TS source validator，CLI/build 接线后统一执行 workspace build；
+- 定向聚合/qualification Vitest `17/17` 通过（新增 `1` 个 producer→consumer 正向公共 seam 测试）；
+- RED=`writeCodingAgentCandidateGlobalReceipt is not a function`；GREEN 后 receipt binding 与独立测试复算一致，最终仍为 `not_eligible/unscored`；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：补 producer 对 partial aggregate 和既有目标拒绝覆盖的负例；随后复用 `validateAgentRunEvents()`、trace projection/validator 和终态 usage completeness，对 144 份 retained `events.jsonl` 做离线重放。
+- **为什么先做它**：先锁定 producer 不会为不完整矩阵或已有证据重复写入，再把 qualification 推进到下一个 hard-Gate owner；events 是 trace/usage 的唯一权威来源。
+- **当前还缺的关键闭环**：真实 scan/sweep adapter、producer runner 接线、events/C evidence 重放、维度 mapping、qualification report Schema/CLI 与完整回归。
+
+#### P2-C qualification owner 实现结论：receipt producer 防误用负例（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - partial v3 aggregate 调用 producer 时必须在任何 receipt 写入前以 `complete aggregate` 失败；
+   - 完整 aggregate 首次写入成功后，第二次调用必须返回 `EEXIST`；
+   - 第二次失败后重新读取磁盘，首份 receipt 字节保持不变，证明 producer 不覆盖、不局部改写既有证据。
+
+2. **`scripts/coding-agent-candidate-qualification.mjs` 既有 producer 行为复核**：
+   - verified coverage Gate 位于 Schema 装配与写入之前；
+   - 固定目标采用 exclusive create，天然满足本环节 partial/覆盖负例，无需增加第二套状态检查；
+   - 本环节为接口回归补强，生产实现无需额外修改。
+
+3. **效果**：
+   - 不完整 candidate 不能生成看似正式的全局 receipt；
+   - 已冻结或人工复核中的 receipt 不会被 runner 重跑静默替换；
+   - producer seam 的正向、partial 和重复写三条核心行为闭合，可进入下一 evidence owner。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本环节仅新增 `.mjs` 测试，完整接线后统一执行 workspace build；
+- 定向聚合/qualification Vitest `18/18` 通过（新增 `1` 个同时覆盖 partial 与拒绝覆盖的负例）；
+- partial 目标文件保持不存在；重复写返回 `EEXIST` 且首份 receipt 序列化未变；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：从 qualification 公共 seam 重放每个 run 的 retained `events.jsonl`，先将非法 JSONL/缺终态/usage incomplete 聚合为 trace/usage hard-Gate blocker，再补真实最小 events fixture 的正向路径。
+- **为什么先做它**：scorecard 已明确 trace 与 usage owner 是 run events；当前聚合 fixture 的占位文本能作为首个精确负例，先证明 receipt 全绿仍不能绕过终态证据。
+- **当前还缺的关键闭环**：events validator 的 candidate 聚合输出与正向 fixture、C evidence 重放、真实 scan/sweep runner adapter、维度 mapping、report Schema/CLI 与完整回归。
+
+#### P2-C qualification owner 实现结论：retained events 非法流 hard Gate（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-qualification.mjs` 扩展**：
+   - 全局 receipt 通过后逐 run 读取 retained `events.jsonl`，复用 `validateAgentRunEvents()` 的 JSONL/event sequence、binding、唯一终态、capability handshake 与终态 usage 合同；
+   - event contract 成功后继续调用 `projectCodingRunTraceEvents()` 与 `validateCodingRunTraceEvents()`；
+   - JSONL/event contract 不可信时同时计入 trace 与 usage 不完整；合法事件流中的 usage incomplete 只计 usage，trace projection/validation 失败只计 trace。
+
+2. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 调整**：
+   - producer→consumer 正向 receipt 测试继续使用聚合 fixture 中真实保留的 144 份占位 `events.jsonl`；
+   - RED 证明旧实现错误跳过 events 并直接返回维度 mapping 缺口；
+   - GREEN 后精确返回 `incompleteTraceCountMaximum=144/0` 与 `incompleteProviderUsageCountMaximum=144/0`，不暴露逐 run event 正文。
+
+3. **效果**：
+   - candidate-global receipt 全绿不再能绕过每个 run 的 trace/usage 终态证据；
+   - `usage.observation` 仍不作为 completeness owner，只有终态 event payload 的 usage 声明参与 Gate；
+   - 任何非法 JSONL、序列/binding 漂移、缺/重复终态或 capability 缺失均失败关闭且保持七维未评分。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：qualification 通过 TS source 导入 Core event/trace contract，完整 CLI 接线后需由 workspace build 与实际入口再次验证；
+- 定向聚合/qualification Vitest `18/18` 通过；本切片复用现有 producer→consumer 测试，不增加横向 fixture 数量；
+- RED 唯一失败为旧 `dimension_evidence_mapping` blocker；GREEN 后 144 份非法 retained stream 精确聚合为 trace/usage=`144/144`，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：构造最小生产合同合法的 run.started/prompt/agent/terminal 事件流，先证明 trace 完整但终态 usage incomplete 只触发 usage Gate；再将 usage 改为 complete，推进到 C evidence owner。
+- **为什么先做它**：当前非法流同时失败两个 Gate，尚不能证明 evaluator 正确区分 trace 完整与 usage 完整；分离负例是避免 Gate 计数耦合的关键回归。
+- **当前还缺的关键闭环**：合法 events 正向/usage 分离、C evidence 重放、真实 scan/sweep runner adapter、维度 mapping、qualification report Schema/CLI 与完整回归。
+
+#### P2-C qualification owner 实现结论：合法 trace 与 usage incomplete 分离（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 为 v3 aggregate fixture 增加可选 artifact 内容提供器，只在本测试覆盖 `events`，其余 artifact retention 路径不变；
+   - 生成生产合同合法的最小 `run.started + run.completed` JSONL；`run.started` 由真实 projector 派生 run/prompt/agent trace，终态 usage 固定为 `incomplete/usage_not_reported`；
+   - 完整 `144/144` aggregate 与全零 candidate receipt 通过后，只断言 `incompleteProviderUsageCountMaximum=144/0`，trace Gate 不得出现。
+
+2. **`scripts/coding-agent-candidate-qualification.mjs` 既有重放语义复核**：
+   - event contract 可接受合法但 usage incomplete 的终态声明；
+   - trace projection/validation 对同一事件流全部通过，因此 trace observed=`0`；
+   - usage completeness 独立读取终态 status，并精确聚合为 `144`，无需修改生产实现。
+
+3. **效果**：
+   - trace 完整与 Provider usage 完整不再被实现或测试耦合为同一状态；
+   - 合法失败/中断 run 可保留可信 trace，同时仍因 usage 缺失阻止 candidate；
+   - 为下一步全绿 events 后进入 C evidence owner 提供稳定正向基线。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本环节只扩展 `.mjs` fixture/test，完整 CLI 接线后统一执行 workspace build；
+- 定向聚合/qualification Vitest `19/19` 通过（新增 `1` 个合法 trace + usage incomplete 分离测试）；
+- 144 份 trace 全部通过、usage incomplete 精确为 `144`，输出中没有 trace Gate；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：先只读核对冻结真实 aggregate 中 benchmark runId 与 event binding 的实际关系；若已有可验证 binding，则写跨 run 绑定负例；随后把 fixture usage 改为 complete，推进到 C system evidence 重放。
+- **为什么先做它**：event validator 当前保证流内 binding 一致，但 candidate evaluator 还需确认 retained stream 确实属于对应 benchmark run；必须先以真实 artifact 关系为依据，不能从测试命名自行假设。
+- **当前还缺的关键闭环**：run↔event binding（待实证）、C evidence 重放、真实 scan/sweep runner adapter、维度 mapping、qualification report Schema/CLI 与完整回归。
+
+#### P2-C qualification owner 实现结论：benchmark run 与 Gateway event binding 审计（2026-09-01）
+
+##### 已完成内容
+
+1. **冻结 `edd1c87` aggregate 只读审计**：
+   - `144/144` benchmark `runId` 均不等于 `events.jsonl` 的 `binding.agentRunId`；前者是 benchmark attempt 标识，后者是 Gateway run UUID，禁止直接强制相等；
+   - 144 个 `agentRunId` 与 144 个 `conversationId` 各自唯一，生产 event validator 已保证每条流内 binding 不漂移；
+   - run manifest/report 不保存 Gateway UUID；同 run 的事件中 benchmark `runId` 只出现在 `binding.conversationId`，但现有合同没有声明 conversationId 的命名/包含规则。
+
+2. **跨对象 binding 裁决**：
+   - 技术债决策=`split_task`：后续 runner/事件合同应增加显式 `benchmarkRunId` 或等效结构化 binding，再由 qualification 校验；
+   - 本轮不把历史 conversationId 字符串包含关系提升为新硬合同，不以测试 fixture 命名规则替代生产 Schema；
+   - 当前继续依赖 aggregate 对 artifact path/run directory 的 containment、retention 与离线重建，以及 event stream 内部 binding/唯一终态校验。
+
+3. **效果**：
+   - 避免错误要求 `benchmark runId == agentRunId` 导致全部冻结证据和未来正常 Gateway UUID 被误拒；
+   - 明确现有可信边界与真实合同缺口，不把偶然字符串约定伪装成权威 owner；
+   - 不阻断当前 C evidence 与 layer Gate 的离线重放开发。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节仅只读审计与文档回写，不涉及源码；
+- `edd1c87` 的 144 份 event stream 完成 binding 统计：runId/agentRunId 相等=`0/144`，unique agentRunId/conversationId=`144/144`；
+- A/B/C 各抽样 run manifest 与声明 artifact 复核，未发现显式 benchmarkRunId→agentRunId 字段；未修改或重跑冻结 Formal，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：保持跨对象 binding 缺口为 `split_task`，用 complete usage 的合法 events 将 trace/usage Gate 全绿，再复用现有 C system evidence evaluator 语义接入 `criticalGateRateMinimum`。
+- **为什么先做它**：C evidence 已有版本化 scenario/evidence 合同与成熟 evaluator；优先闭合现有 owner，比先扩展 run/event Schema 更能推进 P2-C qualification 主路径。
+- **当前还缺的关键闭环**：C evidence 离线重放、aggregate/layer Gate、真实 scan/sweep runner adapter、显式 benchmarkRunId event binding、维度 mapping、report Schema/CLI 与完整回归。
+
+#### P2-C qualification owner 实现结论：C critical system evidence 离线重放（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-benchmark-v3-fixtures.mjs` interface 提升**：
+   - 将既有私有 `validateSystemEvidence()` 原样提升为公共 `validateCodingAgentBenchmarkV3SystemEvidence()`；
+   - 原 system provider 也改为调用该公共 interface，四类场景的 Schema、task/generator/fixture/run/platform binding、零敏感/孤儿/重复副作用与 observation 不变量仍只有一个实现；
+   - 没有复制或放宽 browser、parallel-read、parallel-write、restart-delivery 的 evaluator 规则。
+
+2. **`scripts/coding-agent-candidate-qualification.mjs` 扩展**：
+   - trace/usage Gate 全绿后，只读取 24 个 C run 声明的 `systemEvidence` artifact；
+   - 每份 evidence 通过公共 validator 后计入 numerator，非法 JSON、binding 漂移或任一语义失败均保持未通过；
+   - 按 scorecard `criticalGateRateMinimum=1` 输出 numerator/denominator/observed/minimum，不回显 evidence 正文或逐项诊断。
+
+3. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 构造 144 份 complete usage 合法 events 与全零 candidate receipt，同时保留 24 份占位 system evidence；
+   - RED 证明旧实现错误跳到维度 mapping；GREEN 后精确返回 C critical=`0/24=0 < 1`；
+   - trace/usage 不再出现在 blocker 中，证明 evidence owner 顺序和失败归因独立。
+
+4. **效果**：
+   - C critical Gate 已从 scorecard 阈值变成可离线复算的机器 Gate；
+   - qualification 与运行时 system provider 共用同一深模块 interface，后续修正规则不会产生两套真源；
+   - 非法/占位 evidence 无法因 run 自身 status=`passed` 被误判为 critical invariant 通过。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` interface，完整 CLI 接线后统一执行 workspace build；
+- 定向聚合/qualification Vitest `20/20` 通过；v3 fixture + qualification 相邻回归 `31/31` 通过；
+- 24 份占位 evidence 精确聚合为 `0/24`，公共化后既有四类生成/evaluator 测试全部通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：用公共 validator 可接受的四类合法 evidence 覆盖 24 个 C run，先让 critical Gate 全绿；随后按 aggregate run/evaluation 计算 C 总成功率和 A/B 全部 layer Gate。
+- **为什么先做它**：必须先证明 C critical 的正向路径，才能区分“系统不变量失败”和“任务总体成功率不足”；A/B/C aggregate Gate 应在维度 mapping 前全部闭合。
+- **当前还缺的关键闭环**：C 合法 evidence 正向、A/B/C layer Gate、真实 scan/sweep runner adapter、显式 event binding、维度 mapping、report Schema/CLI 与完整回归。
+
+#### P2-C qualification owner 实现结论：C critical 正向与 A 层 Gate（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 复用公共 system-evidence validator 已接受的四类证据形状，并按每个实际 `runId`、`platform` 生成 24 份合法 C evidence；
+   - 144 份 retained events 均使用合法 trace 与 complete Provider usage，全局 receipt 保持敏感命中/孤儿资源为零；
+   - 只将一个 A run 固定为 `product_workflow` 失败，RED 精确证明旧实现越过 C critical 后错误直达维度 mapping 缺口。
+
+2. **`scripts/coding-agent-candidate-qualification.mjs` 扩展**：
+   - C critical=`24/24` 后按 manifest 的 `layer=A` 选择 72 个 run；
+   - 只以 aggregate 中 `run.status=passed` 计入 A numerator，并按 scorecard `requiredPassedExecutions=72` 失败关闭；
+   - blocker 输出 A=`71/72`、observed=`71`、minimum=`72`，七维与原始加权仍保持 `null/unscored`。
+
+3. **效果**：
+   - 四类 C critical evidence 的正向路径已经闭合，不再只有非法证据负例；
+   - C 系统不变量与 A 层执行成功数分别由各自 owner 计算，合法 C evidence 不能补偿 A 失败；
+   - qualification 已推进到 aggregate layer Gate，尚未建立维度 mapping 时仍不会人工授分。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` qualification/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 RED 为旧 `qualification_contract_incomplete`，最小 GREEN 后 A Gate 精确返回 `71/72`；
+- 聚合/qualification Vitest `21/21` 全部通过（新增 `1` 个合法 C evidence + A Gate 公共 seam 测试）；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：以全部 A/C 通过为基线，逐项接入 B success、四个 required language ecosystem success、适用 test、适用 patch 与 regression Gate；随后接入 C 总成功率。
+- **为什么先做它**：scorecard 已把这些指标的 owner 固定为 verified aggregate；先用真实 manifest/run evaluation 分母闭合 layer Gate，才能安全推进七维 evidence mapping。
+- **当前还缺的关键闭环**：B/C aggregate Gate、aggregate infrastructure hard Gate、真实 scan/sweep runner adapter、显式 event binding、维度 mapping、report Schema/CLI 与完整回归。
+
+#### P2-C qualification owner 实现结论：B 层总成功率 Gate（2026-09-01）
+
+##### 已完成内容
+
+1. **冻结 `edd1c87` aggregate 与 v3 manifest 只读复算**：
+   - B 层固定为 8 个 task × 双平台 × 3 次=`48` 个 run，冻结实绩 success=`12/48`；
+   - required ecosystem 由 manifest repository 的 `languageEcosystem` 派生，`javascript/web-mixed/go/typescript` 各自分母均为 `12`；
+   - B 层适用 test=`17/48`、适用 patch=`2/36`、regression=`31`；没有误用全局 summary 的 test=`77/108` 或 patch=`20/54`。
+
+2. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 在 A=`72/72`、C critical=`24/24`、全局 receipt 与 events 全绿的完整 aggregate 上，分别让四个 ecosystem 各失败一个 run；
+   - 构造 B success=`44/48=0.916666...`，同时每个 ecosystem 均为 `11/12=0.916666...`，明确只触发总成功率 `<0.92`；
+   - RED 精确证明旧实现遗漏 B aggregate Gate 并错误直达维度 mapping。
+
+3. **`scripts/coding-agent-candidate-qualification.mjs` 扩展**：
+   - 按 manifest 的 `layer=B` 选择 48 个 run，并只以 `run.status=passed` 计算 numerator；
+   - 按 scorecard `successRateMinimum=0.92` 失败关闭，输出 numerator/denominator/observed/minimum；
+   - 本切片不提前实现生态、test、patch、regression 或 C 总成功率，保持单一 Gate 的 Red/Green。
+
+4. **效果**：
+   - B 总成功率不再能被 A/C 成功或七维加权补偿；
+   - 分母由 manifest layer 归属与完整 aggregate 原生生成，不依赖任务名称前缀或人工常量 `48`；
+   - 冻结历史 `12/48` 会被同一公共 qualification seam 稳定拒绝。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片仅修改 `.mjs` qualification/test，最终接线后统一执行 workspace build；
+- 定向 RED 为旧 `qualification_contract_incomplete`；GREEN 后 B success 精确返回 `44/48 < 0.92`；
+- 聚合/qualification Vitest `22/22` 全部通过（新增 `1` 个 B success 公共 seam 测试）；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在 B 总成功率通过的基线上，让单一 required ecosystem 低于 `0.90`，接入每生态 success Gate；随后依次接入 test、patch 与 regression。
+- **为什么先做它**：总体 `>=0.92` 仍可能掩盖某个语言生态失败；scorecard 明确要求四个 required ecosystem 分别 `>=0.90`，必须独立输出可复算分母。
+- **当前还缺的关键闭环**：B 生态/test/patch/regression、C 总成功率、aggregate infrastructure hard Gate、真实 scan/sweep adapter、维度 mapping、report Schema/CLI 与完整回归。
+
+#### P2-C qualification owner 实现结论：B 层 required ecosystem Gate（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 在完整全绿基线上只让 TypeScript ecosystem 失败 `2` 个 run，保持 B 总体 success=`46/48=0.958333... >=0.92`；
+   - TypeScript 分组固定为 `10/12=0.833333... <0.90`，其余 ecosystem 保持 `12/12`；
+   - RED 证明总成功率通过仍会被旧实现错误放行到维度 mapping。
+
+2. **`scripts/coding-agent-candidate-qualification.mjs` 扩展**：
+   - 从 manifest `repositories[].languageEcosystem` 派生 required ecosystem 集合，并经 B task 的 `repositoryId` 关联每个 run；
+   - 按 manifest repository 顺序分别计算 numerator/denominator/observed，不从 task ID 猜测语言，也不硬编码四个生态名称；
+   - 任一分组低于 scorecard `requiredLanguageSuccessRateMinimum=0.90` 即返回独立 B layer blocker。
+
+3. **效果**：
+   - B 总体高成功率不能掩盖 TypeScript、JavaScript、Go 或 Web mixed 任一 required ecosystem 的集中失败；
+   - 未来 manifest 调整 repository/task 归属时，qualification 分组随版本化合同变化而重算；
+   - 当前冻结矩阵四生态 `6/12、6/12、0/12、0/12` 均会失败关闭，不被总体或维度加权补偿。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片仅修改 `.mjs` qualification/test，最终接线后统一执行 workspace build；
+- 定向 RED 为旧 `qualification_contract_incomplete`；GREEN 后 TypeScript ecosystem 精确返回 `10/12 < 0.90`；
+- 聚合/qualification Vitest `23/23` 全部通过（新增 `1` 个 required ecosystem 公共 seam 测试）；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：保持 B success 与四生态 success 全绿，只将 48 个 B run 中 3 个适用 test 设为失败，接入 `testPassRateMinimum=0.95`；随后接入仅 mutation run 适用的 patch Gate。
+- **为什么先做它**：test Gate 的权威分母是 B run 中 `evaluation.testsPassed != null` 的集合；必须锁定 `45/48 <0.95`，避免误用全局 test denominator。
+- **当前还缺的关键闭环**：B test/patch/regression、C 总成功率、aggregate infrastructure hard Gate、真实 scan/sweep adapter、维度 mapping、report Schema/CLI 与完整回归。
+
+#### P2-C qualification owner 实现结论：B 层适用 test Gate（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 在 A、B success/生态和 C critical 全绿的基线上保持 48 个 B run 全部 `status=passed`；
+   - 仅将其中 3 个 `evaluation.testsPassed` 设为 `false`，构造 test=`45/48=0.9375 <0.95`；
+   - RED 证明 task success 与 test pass 是独立合同，旧实现错误跳过 test Gate。
+
+2. **`scripts/coding-agent-candidate-qualification.mjs` 扩展**：
+   - 只从 48 个 B run 中选择 `evaluation.testsPassed !== null` 的适用集合；
+   - `true` 计入 numerator，适用集合长度作为 denominator，并按 scorecard `testPassRateMinimum=0.95` 失败关闭；
+   - 输出 B test 的 numerator/denominator/observed/minimum，不复用全局 report 的 test rate。
+
+3. **效果**：
+   - B run 即使 task status 全部通过，只要验证测试未达门槛，candidate 仍保持 `not_eligible/unscored`；
+   - test 分母限定在 B 层适用 evaluation，C 的 `null` 与 A 层测试不会污染 B Gate；
+   - 冻结历史 B test=`17/48` 会被同一 evaluator 稳定拒绝。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片仅修改 `.mjs` qualification/test，最终接线后统一执行 workspace build；
+- 定向 RED 为旧 `qualification_contract_incomplete`；GREEN 后 B test 精确返回 `45/48 <0.95`；
+- 聚合/qualification Vitest `24/24` 全部通过（新增 `1` 个适用 test 公共 seam 测试）；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：保持 B success/生态/test 全绿，只把两个 mutation run 的 `patchAccepted` 设为 `false`，按适用 mutation 分母 `34/36` 接入 patch Gate；随后接入 regression=`0` Gate。
+- **为什么先做它**：B 的 12 个 diagnosis run 明确 `patchAccepted=null`，不能进入 patch denominator；必须用 `patchAccepted !== null` 锁定 36 个 mutation run。
+- **当前还缺的关键闭环**：B patch/regression、C 总成功率、aggregate infrastructure hard Gate、真实 scan/sweep adapter、维度 mapping、report Schema/CLI 与完整回归。
+
+#### P2-C qualification owner 实现结论：B 层适用 patch Gate（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 校准与扩展**：
+   - 合成 v3 run 的 `patchAccepted` 改为只对 B 层且 `requiredChangedPaths` 非空的 mutation task 赋值，两个 diagnosis task 保持 `null`；
+   - 因此 patch 适用分母与冻结合同一致：6 个 mutation task × 双平台 × 3 次=`36`，而不是全部 B run 的 `48`；
+   - 只拒绝两个适用 patch，构造 `34/36=0.944444... <0.95`，RED 证明旧实现遗漏该 Gate。
+
+2. **`scripts/coding-agent-candidate-qualification.mjs` 扩展**：
+   - 只从 B run 中选择 `evaluation.patchAccepted !== null` 的适用集合；
+   - `true` 计入 numerator，并按 scorecard `patchAcceptanceRateMinimum=0.95` 失败关闭；
+   - 输出 B patch 的 numerator/denominator/observed/minimum，不让 diagnosis run 或 A/C evaluation 污染分母。
+
+3. **效果**：
+   - 诊断任务无需制造 patch，mutation 任务则必须达到独立 patch 接受率门槛；
+   - task/test 全绿不能补偿被 evaluator 拒绝的 patch；
+   - 冻结历史 B patch=`2/36` 会由同一公共 seam 稳定拒绝。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片仅修改 `.mjs` qualification/test，最终接线后统一执行 workspace build；
+- 定向 RED 为旧 `qualification_contract_incomplete`；GREEN 后 B patch 精确返回 `34/36 <0.95`；
+- 聚合/qualification Vitest `25/25` 全部通过（新增 `1` 个适用 patch 公共 seam 测试）；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：保持 B success/生态/test/patch 全绿，只设置一个 B regression，接入 `regressionCountMaximum=0`；随后接入 C 24-run 总成功率 `>=0.90`。
+- **为什么先做它**：regression 是不可由高成功率补偿的总数 Gate，且冻结历史 B regression=`31`；应在离开 B 层前单独闭合。
+- **当前还缺的关键闭环**：B regression、C 总成功率、aggregate infrastructure hard Gate、真实 scan/sweep adapter、维度 mapping、report Schema/CLI 与完整回归。
+
+#### P2-C qualification owner 实现结论：B 层 regression Gate（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 保持 B success、四生态 success、test 与 patch 均为全绿；
+   - 仅在一个 B run 上设置 `evaluation.regressionCount=1`；
+   - RED 证明全部比率通过时，旧实现仍会遗漏不可补偿的 regression 总数 Gate。
+
+2. **`scripts/coding-agent-candidate-qualification.mjs` 扩展**：
+   - 对全部 B run 的 `evaluation.regressionCount` 求和；
+   - 按 scorecard `regressionCountMaximum=0` 失败关闭，输出 observed/maximum；
+   - 不允许 success/test/patch 比率或后续七维加权抵消任何 retained regression。
+
+3. **效果**：
+   - B 层五类 Gate（总 success、每生态 success、test、patch、regression）已分别具有独立正/负路径；
+   - 冻结历史 B regression=`31` 会在进入维度 mapping 前稳定阻止 candidate；
+   - qualification 仍只消费 verified aggregate，不更改或重跑任何 Formal evidence。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片仅修改 `.mjs` qualification/test，最终接线后统一执行 workspace build；
+- 定向 RED 为旧 `qualification_contract_incomplete`；GREEN 后 B regression 精确返回 `1 > 0`；
+- 聚合/qualification Vitest `26/26` 全部通过（新增 `1` 个 regression 公共 seam 测试）；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：让 24 份 C critical evidence 全部合法，同时将 3 个 C run 标记为产品失败，接入 C 总成功率 `21/24 <0.90`；随后关闭 aggregate infrastructure hard Gate。
+- **为什么先做它**：C critical 证明每份系统证据的不变量，C 总 success 则证明 24 个系统任务的可观察完成结果；两者必须独立且均通过。
+- **当前还缺的关键闭环**：C 总成功率、aggregate infrastructure hard Gate、真实 scan/sweep adapter、维度 mapping、qualification report Schema/CLI 与完整回归。
+
+#### P2-C qualification owner 实现结论：C 层总体成功率 Gate（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 24 份 C system evidence 全部保持公共 validator 合法，critical Gate=`24/24`；
+   - 只将 3 个 C run 标记为 `product_workflow` 失败并保留其合法 critical evidence，构造总体 success=`21/24=0.875`；
+   - RED 证明 critical invariants 全绿不能代替 C task 的可观察完成结果。
+
+2. **`scripts/coding-agent-candidate-qualification.mjs` 扩展**：
+   - 对 manifest `layer=C` 的全部 24 个 run 按 `status=passed` 计算总体 success；
+   - 按 scorecard `otherSystemSuccessRateMinimum=0.90` 失败关闭，输出 numerator/denominator/observed/minimum；
+   - 字段名沿用冻结 scorecard，但 denominator 明确是全部 C run，不把四个 C task另拆为所谓 critical/other 子集。
+
+3. **效果**：
+   - C critical evidence 与 C aggregate success 已成为两条相互独立、均不可被加权补偿的 Gate；
+   - 合法安全/恢复/隔离证据不会掩盖任务本身失败，任务成功也不能绕过非法 critical evidence；
+   - 冻结历史 C=`23/24=0.958333...` 可通过总体 success，但其一份 critical evidence 缺口仍会由 `criticalGateRateMinimum=1` 独立拒绝。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片仅修改 `.mjs` qualification/test，最终接线后统一执行 workspace build；
+- 定向 RED 为旧 `qualification_contract_incomplete`；GREEN 后 C success 精确返回 `21/24 <0.90`；
+- 聚合/qualification Vitest `27/27` 全部通过（新增 `1` 个 C 总 success 公共 seam 测试）；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：只读确认 aggregate hard Gate 的现有字段 owner，先用完整 coverage 中一个 selected infrastructure error 接入 `selectedInfrastructureErrorCountMaximum=0`；再裁决 `missingReportCountMaximum` 是否已有可复算字段。
+- **为什么先做它**：layer Gate 已全部闭合，但基础设施错误不能作为普通失败进入比率后被门槛容忍；必须在任何 layer/维度判断前失败关闭。
+- **当前还缺的关键闭环**：aggregate infrastructure/missing-report hard Gate、真实 scan/sweep adapter、维度 mapping、qualification report Schema/CLI 与完整回归。
+
+#### P2-C qualification owner 实现结论：selected infrastructure error hard Gate（2026-09-01）
+
+##### 已完成内容
+
+1. **aggregate hard-Gate owner 只读审计**：
+   - `nativeAggregate`、`singleSourceIdentity` 与 `crossRevisionProjectionAllowed` 已由 v3 manifest 合同及 aggregate verifier 强制；
+   - 完整矩阵由 baseline index `coverage.missingRunKeys` 失败关闭，source/harness identity 与 retained source report/artifact 由 verifier 重建校验；
+   - `selectedInfrastructureErrorCount` 有明确 report owner：`summary.infrastructureErrorRunCount`，且由 144 个 run 的 `status=infrastructure_error` 重算。
+
+2. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 在完整 `144/144` 矩阵中只把一个 A run 标记为 `infrastructure_error/infrastructure`；
+   - RED 证明旧实现把该根因降格为 A=`71/72` layer failure；
+   - GREEN 后要求 aggregate hard Gate 在 receipt、events、C evidence 与所有 layer Gate 前返回 observed=`1`、maximum=`0`。
+
+3. **`scripts/coding-agent-candidate-qualification.mjs` 扩展**：
+   - 完整 coverage 后立即消费 verifier 可重建的 `report.summary.infrastructureErrorRunCount`；
+   - 超过 scorecard `selectedInfrastructureErrorCountMaximum=0` 时返回 `candidate_aggregate_hard_gate_failed`；
+   - 不把 selected infrastructure error 混入产品 success 分母，也不允许重跑、layer 比率或七维加权隐藏它。
+
+4. **效果**：
+   - selected infrastructure error 的真实归因和不可补偿优先级得到保留；
+   - 冻结历史 aggregate 的 infrastructure=`0` 可通过本 Gate，未来任一非零候选会在更昂贵的 evidence 重放前失败；
+   - 未修改或重跑任何 Formal，Provider 调用与费用均为零。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片仅修改 `.mjs` qualification/test，最终接线后统一执行 workspace build；
+- 定向 RED 实际返回 A=`71/72`；GREEN 后精确返回 selected infrastructure=`1>0`；
+- 聚合/qualification Vitest `28/28` 全部通过（新增 `1` 个 aggregate infrastructure 公共 seam 测试）；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：将 `missingReportCountMaximum` 的 owner 缺口显式失败关闭并记录为 `split_task`；随后实现真实 candidate-global sensitive scan/resource sweep adapter。
+- **为什么先做它**：当前 aggregate 没有 `missingReportCount` 或等价独立字段，只有 missing run coverage；直接映射会发明评分合同，必须先让全绿候选明确暴露该缺口。
+- **当前还缺的关键闭环**：aggregate missing-report metric、真实 scan/sweep adapter、维度 mapping、qualification report Schema/CLI 与完整回归。
+
+#### P2-C qualification owner 实现结论：missing-report metric 失败关闭（2026-09-01）
+
+##### 已完成内容
+
+1. **归档与当前 aggregate 合同只读审计**：
+   - 归档只规定“缺失报告阻止 9.5”，没有定义 `missingReportCount` 的生产字段、report identity 或聚合算法；
+   - 当前 baseline index 只有 `coverage.missingRunKeys` 与 retained `inputs[]`，前者表示缺失 run，后者由 verifier 校验已声明 source report，二者都不是独立的 missing-report metric；
+   - 技术债裁决=`split_task`：后续需在 runner/aggregate 合同中定义 expected report identity 与缺失计数，再由 qualification 消费。
+
+2. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 建立 coverage、receipt、events、C evidence、infrastructure 与全部 A/B/C layer Gate 均全绿的完整候选；
+   - RED 证明旧结果只列 `dimension_evidence_mapping`，会让调用方误以为 `missingReportCountMaximum` 已经得到机器验证；
+   - GREEN 后要求最终未闭合合同同时列出 `aggregate_missing_report_metric` 与 `dimension_evidence_mapping`。
+
+3. **`scripts/coding-agent-candidate-qualification.mjs` 调整**：
+   - 不把 `missingRunKeys=0`、retained source report 可读或完整 aggregate 擅自解释为 `missingReportCount=0`；
+   - 在所有已实现 Gate 全绿后显式返回 `aggregate_missing_report_metric` 缺口；
+   - 七维与原始加权继续保持 `null/unscored`，不存在无证据默认通过。
+
+4. **效果**：
+   - scorecard 声明但尚无 owner 的 hard Gate 不再被静默忽略；
+   - missing run、missing retained artifact 与 missing expected report 三种概念保持分离；
+   - 后续补合同前，任何候选即使其他 Gate 全绿也不会被输出为 eligible 或数值评分。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片仅修改 `.mjs` qualification/test，最终接线后统一执行 workspace build；
+- 定向 RED 仅缺 `aggregate_missing_report_metric`；GREEN 后两个未闭合合同按固定顺序返回；
+- 聚合/qualification Vitest `29/29` 全部通过（新增 `1` 个全绿候选失败关闭测试）；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：只读定位仓库已有的非回显敏感扫描和 Windows/WSL2 资源收敛实现，为 candidate-global receipt 建立真实 runner adapter；优先复用已有路径 containment、link policy 与 owned-resource 归属语义。
+- **为什么先做它**：receipt producer 目前只接受调用方提供的计数对象，尚不能证明这些计数来自真实扫描；复用既有实现可避免第二套敏感匹配或进程归属规则。
+- **当前还缺的关键闭环**：真实 scan/sweep adapter、aggregate missing-report metric、维度 mapping、qualification report Schema/CLI 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：真实非回显敏感扫描 seam（2026-09-01）
+
+##### 已完成内容
+
+1. **既有扫描/资源实现审计**：
+   - C system harness 只产生单 run 的敏感/孤儿计数，不能外推为完整 candidate；
+   - 历史 Formal 的候选级扫描与进程/端口清理主要由受控 PowerShell 操作留证，没有可直接导入的公共 module；
+   - 技术债决策=`fix_now`：建立独立 candidate-global evidence module，qualification 与 receipt producer 不复制扫描实现。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 新建**：
+   - 新增 `collectCodingAgentCandidateGlobalEvidence({ sensitiveRoots, sensitiveValues }, dependencies)` 公共 interface；
+   - 对显式 roots 做真实磁盘遍历，根必须是常规目录，内部 symlink/junction/reparse point 只计数、不跟随；
+   - 通过流式字节扫描精确敏感值，返回仅含 root/常规文件/unreadable/link/finding 聚合计数，不返回值、路径或命中文件名；
+   - 固定依次收集 `windows-native`、`wsl2-linux` 两个平台 resource sweep，具体系统 probe 作为边界 adapter 注入，下一切片接生产实现。
+
+3. **`scripts/coding-agent-candidate-evidence.test.mjs` 新建**：
+   - 临时 declared root 内放置一个安全文件、一个精确命中文件，以及指向根外敏感文件的目录 link；
+   - RED 为生产 module 不存在；GREEN 后 regular/link/finding=`2/1/1`，根外 link 内容没有被扫描；
+   - 序列化结果明确不含敏感值、命中文件名或根外文件名，并验证两个平台 probe 的固定顺序。
+
+4. **效果**：
+   - candidate-global receipt 的敏感计数开始由真实扫描产生，不再只能由调用方手填；
+   - link traversal 与敏感正文回显在公共 seam 内失败关闭；
+   - 扫描与 aggregate binding/receipt 写入各自保持单一职责，后续 CLI 可组合而无需复制逻辑。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片新增 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 Vitest `1/1` 通过（新增 `1` 个真实文件扫描、根外 link 与非回显测试）；
+- 本测试不调用 Provider、网络或真实系统资源命令，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：补扫描 root/link/重复或重叠 roots、跨 stream chunk 命中与不可读路径负例；随后接入 exact-owned Windows/WSL2 listener/process/runtime marker/env resource adapter。
+- **为什么先做它**：当前正向用例已证明核心扫描行为，但输入 containment、重复计数与流边界仍需锁定，才能让真实候选扫描结果可复算且不会漏报。
+- **当前还缺的关键闭环**：扫描负例、生产 resource sweep、receipt 一键 runner/CLI、aggregate missing-report metric、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：重叠扫描根失败关闭（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - 通过公共 `collectCodingAgentCandidateGlobalEvidence()` seam 同时声明父目录与其子目录；
+   - RED 证明旧实现会把子目录文件扫描两次并错误返回 `findingCount=2`；
+   - 固定该输入必须在扫描或资源 probe 前以 `roots overlap` 错误拒绝。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 修改**：
+   - 在 resolved root identity 去重后增加任意两 root 的双向 containment 校验；
+   - Windows 路径 identity 继续采用大小写不敏感比较，Linux 保持原生大小写语义；
+   - 只拒绝真实父子 containment，不把相邻同前缀目录误判为重叠。
+
+3. **效果**：
+   - 每个常规文件至多属于一个 declared scan root，不会因调用方重叠声明而重复累计敏感命中；
+   - 非法输入在执行双平台资源采集前失败关闭；
+   - 原有根外 link 不跟随、仅输出聚合计数和固定双平台顺序保持不变。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片仅修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 RED 精确显示 Promise 错误 resolved，且重复扫描得到 `findingCount=2`；GREEN 后重叠 roots 负例 `1/1` 通过；
+- candidate-global evidence Vitest `2/2` 全部通过（含既有真实扫描/链接/非回显回归）；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：补一个敏感值横跨默认 `64 KiB` read stream 分块边界的公共 seam 回归，再补 root 本身为 link 的失败关闭证据；随后审计不可读文件是否必须阻断 qualification。
+- **为什么先做它**：真实候选可能包含任意大小文件；只有证明 exact byte pattern 不会在流分块处漏报，聚合 `findingCount=0` 才具备安全含义。
+- **当前还缺的关键闭环**：stream boundary/root-link/unreadable 负例、生产 resource sweep、receipt 一键 runner/CLI、aggregate missing-report metric、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：流式分块边界精确命中（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - 构造一个敏感值从默认 `64 KiB` read stream 首块末尾前 3 字节开始、跨入下一块的真实二进制文件；
+   - 继续只通过公共 `collectCodingAgentCandidateGlobalEvidence()` seam 观察结果；
+   - 固定跨块 exact value 必须产生 `findingCount=1`，序列化 evidence 仍不得包含敏感正文。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 复核**：
+   - 现有 matcher 已保留 `maximumPatternLength - 1` 尾部窗口，并在 EOF 对剩余窗口完成一次扫描；
+   - 特征测试首次执行即通过，因此本切片不伪造 RED、不修改生产实现。
+
+3. **效果**：
+   - 敏感值不会因跨文件流分块而漏报；
+   - 聚合证据继续只暴露计数，不暴露敏感正文或文件名；
+   - 新增回归可防止后续流式扫描优化破坏跨块匹配。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片仅新增 `.mjs` Vitest，最终 CLI 接线后统一执行 workspace build；
+- 跨默认 stream chunk boundary 定向 Vitest `1/1` 通过，regular/unreadable/finding=`1/0/1`；
+- candidate-global evidence 当前累计 Vitest `3/3`；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：补 root 本身为 symlink/junction 的公共 seam 负例并跑 scanner 全文件；随后把 `unreadableFileCount > 0` 接成 qualification 的不可补偿 incomplete-scan Gate。
+- **为什么先做它**：内部 link 已证明不跟随，但 root link 若被接受会让调用方绕过 declared-root containment；而不可读文件若仍可 qualification，则 `findingCount=0` 不能证明完整扫描。
+- **当前还缺的关键闭环**：root-link/unreadable 失败关闭、生产 resource sweep、receipt 一键 runner/CLI、aggregate missing-report metric、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：声明根 link 失败关闭（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - 创建指向真实目录的 symlink/junction，并将 link 自身作为唯一 declared root；
+   - 通过公共 collector 固定该输入必须以 `roots must be regular directories` 拒绝；
+   - 与内部 link 正向用例共同区分“root link 拒绝”和“root 内 link 计数但不跟随”两种行为。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 复核**：
+   - 现有 root `lstat()` 已在任何目录递归和 resource probe 前识别 symbolic link/reparse point；
+   - 特征测试首次执行即通过，无需修改生产实现。
+
+3. **效果**：
+   - 调用方不能用 link 把声明扫描根重定向到另一个目录；
+   - 内部 link 仍只进入聚合计数而不跟随，root containment 语义保持清晰；
+   - 扫描输入与流边界回归已共同锁定，不输出路径或敏感正文。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片仅新增 `.mjs` Vitest，最终 CLI 接线后统一执行 workspace build；
+- root-link 定向 Vitest `1/1` 通过；
+- candidate-global evidence Vitest `4/4` 全部通过（真实扫描、重叠 roots、跨流分块与 root-link）；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在 qualification 公共 seam 构造 Schema 合法但 `unreadableFileCount=1` 的 candidate-global receipt，先证明当前错误放行，再增加 `sensitive_scan_incomplete` hard Gate。
+- **为什么先做它**：扫描器可以诚实记录无法读取的目录或文件，但只有 qualification 对非零 unreadable 失败关闭，`findingCount=0` 才能代表完整候选范围没有敏感命中。
+- **当前还缺的关键闭环**：unreadable qualification Gate、生产 resource sweep、receipt 一键 runner/CLI、aggregate missing-report metric、维度 mapping 与完整回归。
+
+#### P2-C qualification owner 实现结论：不完整敏感扫描失败关闭（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 构造 aggregate binding 与公共 Schema 均合法、`findingCount=0`，但 `unreadableFileCount=1` 的 candidate-global receipt；
+   - RED 证明旧 qualification 会错误越过 candidate-global 阶段，直到 `candidate_run_events_hard_gate_failed` 才停止；
+   - 固定该 receipt 必须优先返回 `candidate_global_receipt_invalid / sensitive_scan_incomplete` 与精确 unreadable 计数。
+
+2. **`scripts/coding-agent-candidate-qualification.mjs` 修改**：
+   - aggregate binding 校验通过后立即检查 `sensitiveScan.unreadableFileCount`；
+   - 任意非零值均按 receipt 语义不完整失败关闭，不进入资源、run-event、C evidence、layer Gate 或七维评分；
+   - `createReceiptInvalidReport()` 仅在该原因存在时附带 `unreadableFileCount`，不改变其他错误合同。
+
+3. **效果**：
+   - `findingCount=0` 只有在 declared roots 全部可读时才可能通过敏感 Gate；
+   - 调用方不能用“扫描完成但部分文件不可读”制造伪阴性候选证据；
+   - 七维与原始加权继续保持 `null/unscored`，该安全缺口不可被后续成功率补偿。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` qualification/test，最终接线后统一执行 workspace build；
+- 定向 RED 实际错误落到 `candidate_run_events_hard_gate_failed`；GREEN 后精确返回 `sensitive_scan_incomplete`、`unreadableFileCount=1`；
+- 聚合/qualification Vitest `30/30`、candidate-global evidence Vitest `4/4` 全部通过；既有 Ajv `date-time` format 警告不影响结果；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：定义 candidate-owned resource inventory 的最小输入合同，并先为 Windows/WSL2 exact-owned sweep adapter 写“只统计显式 listener/PID/runtime marker/env、拒绝平台或归属漂移”的公共 seam 负例。
+- **为什么先做它**：资源残留不能通过模糊命令行搜索猜归属；先固定 runner 交出的精确 inventory，系统 probe 才能只读复核同一候选拥有的资源并生成可审计计数。
+- **当前还缺的关键闭环**：生产 resource sweep、receipt 一键 runner/CLI、aggregate missing-report metric、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：exact-owned resource inventory 聚合 seam（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - 通过新公共 seam 提供显式 listener、PID、runtime marker 与 runtime env inventory；
+   - 系统边界 probe 只返回与四类 inventory 对应的存在性向量，fixture 中三项资源仍存在；
+   - 固定输出计数为 listener/process/marker/env=`1/1/1/0`、orphan=`3`，且序列化结果不含端口、PID或路径。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 扩展**：
+   - 新增 `collectCodingAgentCandidateOwnedResourceSweep({ platform, inventory }, { probeOwnedResources })` 公共 interface；
+   - 将系统探测隐藏在 adapter seam 后，只对显式 candidate-owned inventory 的布尔观察求和；
+   - 返回结构直接匹配 receipt 的 `candidate_owned_resources` 聚合字段，不返回原始资源标识。
+
+3. **效果**：
+   - 资源归属由 candidate runner 的精确 inventory 决定，不再依赖命令行关键字、工作区全文或进程名模糊搜索；
+   - adapter 可分别实现 Windows 与 WSL2 系统探测，而 qualification 只消费稳定聚合合同；
+   - 任一明确归属的残留都会计入 `orphanResourceCount`，但 receipt 不暴露本机细节。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 RED 为公共导出不存在；GREEN 后精确聚合 `1/1/1/0`、orphan=`3` 且标识零回显；
+- candidate-global evidence Vitest `5/5` 全部通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：为平台、inventory 唯一性与 probe 向量长度增加失败关闭负例，再实现 Windows-native 与 WSL2 的只读生产 probe adapter。
+- **为什么先做它**：如果 adapter 少返回一项、重复登记资源或错用平台，简单求和会产生伪零残留；必须先让 interface 精确验证“一项 inventory 对应一项观察”。
+- **当前还缺的关键闭环**：inventory/probe 合同、双平台生产 probe、receipt 一键 runner/CLI、aggregate missing-report metric、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：resource sweep 平台失败关闭（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - 以 `unknown-platform` 调用 candidate-owned resource sweep 公共 seam；
+   - RED 证明旧实现仍调用系统 probe，并生成未知平台的伪零残留 receipt；
+   - 固定非法平台必须在系统边界前拒绝，probe call count 保持 `0`。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 修改**：
+   - 复用固定 candidate 平台集合，仅允许 `windows-native` 与 `wsl2-linux`；
+   - 平台校验先于 adapter 查找和调用，不允许 adapter 默认分支掩盖平台漂移。
+
+3. **效果**：
+   - 每份 resource sweep 都能绑定到 receipt Schema 允许的两个实际运行平台之一；
+   - 未知平台不能被错误解释为“没有资源残留”；
+   - 正常显式 inventory 聚合和零标识回显行为保持不变。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 RED 返回 `unknown-platform` 的 completed/zero receipt；GREEN 后在 probe 前精确拒绝；
+- candidate-global evidence Vitest `6/6` 全部通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在公共 seam 让 probe 少返回一个 listener 观察，固定四类观察向量必须与 inventory 一一等长；随后分别锁定 inventory 标识合法性与唯一性。
+- **为什么先做它**：平台正确仍不足以证明完整探测；任何少报、多报或非布尔观察都可能把候选残留错误汇总为零。
+- **当前还缺的关键闭环**：inventory/observation 精确合同、双平台生产 probe、receipt 一键 runner/CLI、aggregate missing-report metric、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：resource observation 完整覆盖（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - inventory 显式登记两个 listener，系统 probe 只返回一个 listener 存在性观察；
+   - RED 证明旧实现仍生成 listener/orphan=`0/0` 的伪完整 receipt；
+   - 固定四类 observation 均必须与对应 inventory 一一等长。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 修改**：
+   - probe 返回后、任何计数前校验 `listeners/processIds/runtimeMarkers/runtimeEnvFiles` 四个字段均为数组；
+   - 每个 observation 数组长度必须精确等于对应 inventory 数组长度；
+   - 少报、多报或缺字段均整体拒绝，不进入聚合。
+
+3. **效果**：
+   - 每个 runner 登记的 candidate-owned 资源都必须得到一个系统存在性观察；
+   - adapter 不能通过省略条目把未知状态伪装成“不存在”；
+   - 正常平台校验、聚合计数与零标识回显保持不变。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 RED 对两个 listener 仅返回一个观察仍 resolved 为 orphan=`0`；GREEN 后以 observation/listeners length mismatch 精确拒绝；
+- candidate-global evidence Vitest `7/7` 全部通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：补 observation 中出现 `null` 等非布尔值的失败关闭；随后锁定 listener/PID/path inventory 的类型、范围、平台路径语义与去重。
+- **为什么先做它**：等长只能证明数量完整，不能证明每项确实得到 yes/no 结论；非布尔值若被静默按 false 汇总仍会制造伪零残留。
+- **当前还缺的关键闭环**：纯布尔 observation、inventory 合法性/唯一性、双平台生产 probe、runner/CLI、missing-report、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：resource observation 纯布尔合同（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - 为一个已登记 PID 返回等长但值为 `null` 的 observation；
+   - RED 证明旧求和逻辑把 `null` 静默当成 false，并生成 process/orphan=`0/0`；
+   - 固定四类 observation 的每一项都必须是严格 `true` 或 `false`。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 修改**：
+   - 在数组与长度校验后逐项检查布尔类型；
+   - 任意 `null`、字符串、数字或对象均在计数前失败关闭；
+   - 只有完整、等长、纯布尔 observation 才能生成 resource sweep。
+
+3. **效果**：
+   - “探测失败/未知”不能被隐式转换为“资源不存在”；
+   - exact-owned sweep 的零残留现在要求每个登记资源都有确定的否定观察；
+   - 返回 receipt 仍只含聚合计数，不泄漏 PID、端口或路径。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 RED 将 `processIds:[null]` 汇总为零；GREEN 后以 observation/processIds boolean 错误精确拒绝；
+- candidate-global evidence Vitest `8/8` 全部通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：按 listener、PID、runtime marker/env 三类依次建立 inventory 类型、范围、平台绝对路径与唯一性负例；随后接 Windows-native/WSL2 生产 probe。
+- **为什么先做它**：observation 合同已经失败关闭，但系统 probe 仍需可信标识；无效、相对或重复 inventory 会造成错误目标、重复计数或跨平台归属漂移。
+- **当前还缺的关键闭环**：inventory 合法性/唯一性、双平台生产 probe、runner/CLI、aggregate missing-report、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：listener inventory 合法性（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - 以 hostname `localhost` 和越界端口 `0` 构造非法 listener inventory；
+   - RED 证明旧实现已触碰系统 probe，随后才因 observation 长度不匹配失败；
+   - 固定 listener 输入必须在 probe 前拒绝，probe call count=`0`。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 修改**：
+   - listener 必须是对象，host 必须为精确 IPv4/IPv6，port 必须是 `1..65535` 的安全整数；
+   - 不接受需要 DNS/hosts 解析的 hostname，也不自动修复非法端口；
+   - 校验先于任何系统 adapter 调用。
+
+3. **效果**：
+   - production probe 只处理无歧义的网络 endpoint；
+   - 非法 listener 不能因 adapter 默认行为被解释为零残留；
+   - 正常 inventory 聚合与零标识回显保持不变。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 RED 先调用 probe、再返回 observation length 错误；GREEN 后以 listener IP/port 错误在 probe 前拒绝；
+- candidate-global evidence Vitest `9/9` 全部通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：补同一 IP/port 重复登记的失败关闭，再按正安全整数与唯一性锁定 PID inventory。
+- **为什么先做它**：合法 endpoint 仍可能重复出现；若不去重失败关闭，同一残留会被重复计数并破坏 receipt 的可复算性。
+- **当前还缺的关键闭环**：listener/PID/path 唯一性与合法性、双平台生产 probe、runner/CLI、missing-report、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：listener inventory 唯一性（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - 在同一平台 inventory 中登记两个完全相同的 `127.0.0.1:29255` endpoint；
+   - RED 证明旧实现仍触碰系统 probe，随后才因 observation 长度不匹配失败；
+   - 固定重复 listener 必须在 probe 前以 uniqueness 错误拒绝。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 修改**：
+   - 在 listener 合法性通过后，以精确 `[host, port]` 组合作为 identity；
+   - 同一 inventory 内出现重复 identity 时整体拒绝；
+   - 不引入 DNS、地址别名或模糊规范化，保持 runner 登记值可复算。
+
+3. **效果**：
+   - 同一网络残留不会因重复登记被重复计数；
+   - listener inventory 的合法性与唯一性均在系统边界前闭合；
+   - 正常 residual 聚合与 receipt 零标识输出保持不变。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 RED 仍调用 probe 后报 observation length；GREEN 后在 probe 前以 listeners unique 错误拒绝；
+- candidate-global evidence Vitest `10/10` 全部通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：锁定 PID inventory 必须为唯一正安全整数；随后处理 Windows/WSL2 runtime marker 与 env 的平台绝对路径及唯一性。
+- **为什么先做它**：生产进程 probe 必须只接收 runner 实际记录的精确 PID；`0`、负数、浮点或重复 PID 都可能导致错误探测或重复计数。
+- **当前还缺的关键闭环**：PID/path inventory 合同、双平台生产 probe、runner/CLI、aggregate missing-report、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：PID inventory 合法性（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - 以 `processIds:[0]` 构造不可归属的进程 inventory；
+   - RED 证明旧实现仍触碰系统 probe，随后才因 observation 长度不匹配失败；
+   - 固定非法 PID 必须在 probe 前拒绝，probe call count=`0`。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 修改**：
+   - `processIds` 必须是数组，每项必须为大于零的安全整数；
+   - `0`、负数、浮点、非数字和超出安全整数范围的值均不进入系统 adapter；
+   - 校验顺序保持平台 → listener → PID → probe。
+
+3. **效果**：
+   - production process probe 只处理 runner 明确记录的有效 PID；
+   - 无效 PID 不能被系统工具特殊解释或伪装成零残留；
+   - listener、observation 与敏感扫描合同保持不变。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 RED 先调用 probe、再返回 process observation length 错误；GREEN 后以 positive integer 错误在 probe 前拒绝；
+- candidate-global evidence Vitest `11/11` 全部通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：补重复 PID 在 probe 前失败关闭；随后锁定 Windows-native 与 WSL2 runtime marker/env 的平台绝对路径和唯一性。
+- **为什么先做它**：有效 PID 仍可能被重复登记；不拒绝重复项会让同一残留进程重复计数并破坏 receipt 的确定性。
+- **当前还缺的关键闭环**：PID 唯一性、平台 path inventory、双平台生产 probe、runner/CLI、missing-report、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：PID inventory 唯一性（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - 在同一 candidate inventory 中重复登记 PID `42421`；
+   - RED 证明旧实现仍触碰系统 probe，随后才因 observation 长度不匹配失败；
+   - 固定重复 PID 必须在 probe 前以 uniqueness 错误拒绝。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 修改**：
+   - PID 正安全整数校验后增加集合唯一性校验；
+   - 任一重复 PID 使整份 inventory 失败关闭，不自动去重或继续探测；
+   - 保持一个登记 PID 对应一个 observation、一个 residual 计数。
+
+3. **效果**：
+   - 同一残留进程不会重复贡献 `remainingOwnedProcessCount` 或 `orphanResourceCount`；
+   - PID inventory 已同时具备类型、范围、唯一性与 probe 前校验；
+   - 其他资源类别和敏感扫描行为不变。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 RED 仍调用 probe 后报 process observation length；GREEN 后在 probe 前以 processIds unique 错误拒绝；
+- candidate-global evidence Vitest `12/12` 全部通过，相关 diff whitespace check 通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：锁定 Windows-native runtime marker/env 必须为 Windows 绝对路径、WSL2 必须为 POSIX 绝对路径，且同类 identity 唯一；随后实现两个生产 probe adapter。
+- **为什么先做它**：路径存在性只能在所属平台内精确判断；相对路径或跨平台路径会依赖当前目录或被错误解释，无法形成可复算的 candidate-owned evidence。
+- **当前还缺的关键闭环**：平台 path inventory、双平台生产 probe、runner/CLI、aggregate missing-report、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：Windows runtime marker 绝对路径（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - 为 `windows-native` 提供相对 marker 路径 `candidate-runtime\\active.marker`；
+   - RED 证明旧实现触碰系统 probe，随后才因 observation 长度不匹配失败；
+   - 固定相对 Windows marker 必须在 probe 前拒绝。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 修改**：
+   - `windows-native.runtimeMarkers` 必须是非空字符串数组且每项满足 `path.win32.isAbsolute()`；
+   - 不使用宿主当前目录解析相对路径，也不接受 POSIX 路径冒充 Windows inventory；
+   - 校验位于系统 adapter 调用之前。
+
+3. **效果**：
+   - Windows marker 存在性探测不再依赖 runner 当前工作目录；
+   - 跨平台或相对 marker 不能被错误解释为零残留；
+   - listener、PID、observation 与扫描行为保持不变。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 RED 先调用 probe、再返回 runtimeMarkers observation length 错误；GREEN 后以 Windows absolute path 错误在 probe 前拒绝；
+- candidate-global evidence Vitest `13/13` 全部通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：锁定 `wsl2-linux.runtimeMarkers` 必须为 POSIX 绝对路径；随后对 Windows/WSL2 runtime env 应用同样的平台路径合同，并补同类路径唯一性。
+- **为什么先做它**：WSL2 probe 在目标发行版内部执行，Windows drive path 或相对路径都不能形成稳定、可复算的 Linux 文件 identity。
+- **当前还缺的关键闭环**：WSL2 marker、双平台 env/path 唯一性、生产 probe、runner/CLI、missing-report、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：WSL2 runtime marker 绝对路径（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - 为 `wsl2-linux` 提供 Windows drive marker 路径 `E:\\candidate-runtime\\active.marker`；
+   - RED 证明旧实现触碰系统 probe，随后才因 observation 长度不匹配失败；
+   - 固定非 POSIX 绝对路径必须在 WSL2 probe 前拒绝。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 修改**：
+   - `wsl2-linux.runtimeMarkers` 必须是非空字符串数组且每项满足 `path.posix.isAbsolute()`；
+   - 不把 Windows path 自动转换为 `/mnt/...`，保留 runner 声明 identity 的可审计性；
+   - Windows 与 WSL2 marker 校验按平台互斥执行。
+
+3. **效果**：
+   - WSL2 marker 存在性探测只针对目标 Linux 文件 identity；
+   - 相对路径和跨平台路径不能制造伪零残留；
+   - Windows marker、listener、PID 与 observation 合同保持稳定。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 RED 先调用 probe、再返回 runtimeMarkers observation length 错误；GREEN 后以 POSIX absolute path 错误在 probe 前拒绝；
+- candidate-global evidence Vitest `14/14` 全部通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：将平台绝对路径校验应用于 Windows/WSL2 runtime env，并补 marker/env 同类路径唯一性；随后开始生产 probe adapter。
+- **为什么先做它**：receipt 分开统计 marker 与 env，但两者都是平台文件 identity；必须使用同一失败关闭语义，避免 env 相对路径或重复项绕过资源收敛。
+- **当前还缺的关键闭环**：双平台 env/path 唯一性、生产 probe、runner/CLI、aggregate missing-report、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：Windows runtime env 绝对路径（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - 为 `windows-native` 提供相对 runtime env 路径 `candidate-runtime\\.env.local`；
+   - RED 证明旧实现触碰系统 probe，随后才因 observation 长度不匹配失败；
+   - 固定相对 env path 必须在 probe 前拒绝。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 修改**：
+   - 将既有 Windows 绝对路径校验应用到 `runtimeEnvFiles`；
+   - 只验证非空字符串与 `path.win32.isAbsolute()`，不读取文件或敏感正文；
+   - marker 与 env 继续作为两类独立计数，不混合语义。
+
+3. **效果**：
+   - Windows runtime env 存在性探测不依赖当前工作目录；
+   - 相对 env path 不能被系统 adapter 错误解释为零残留；
+   - env 正文始终不进入 probe interface、receipt 或测试输出。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 RED 先调用 probe、再返回 runtimeEnvFiles observation length 错误；GREEN 后以 Windows absolute path 错误在 probe 前拒绝；
+- candidate-global evidence Vitest `15/15` 全部通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：锁定 WSL2 runtime env 必须为 POSIX 绝对路径，再补 marker/env 同类路径唯一性；之后实现双平台只读生产 probe。
+- **为什么先做它**：Windows env 已与 marker 采用同一合同，WSL2 也必须对齐；随后唯一性才能确保一个文件只贡献一次 residual 计数。
+- **当前还缺的关键闭环**：WSL2 env/path 唯一性、生产 probe、runner/CLI、aggregate missing-report、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：WSL2 runtime env 绝对路径（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - 为 `wsl2-linux` 提供 Windows drive runtime env 路径 `E:\\candidate-runtime\\.env.local`；
+   - RED 证明旧实现触碰系统 probe，随后才因 observation 长度不匹配失败；
+   - 固定非 POSIX 绝对 env path 必须在 WSL2 probe 前拒绝。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 修改**：
+   - 将既有 WSL2 POSIX 绝对路径校验应用到 `runtimeEnvFiles`；
+   - 不自动执行 `wslpath` 或字符串转换，保持 runner 声明 identity 原样可审计；
+   - 只验证路径 identity，不读取 env 文件及其敏感正文。
+
+3. **效果**：
+   - Windows 与 WSL2 的 marker/env 均只能使用所属平台的绝对路径；
+   - 相对路径和跨平台路径均在系统 probe 前失败关闭；
+   - env 正文不会进入 adapter、receipt 或测试输出。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 RED 先调用 probe、再返回 runtimeEnvFiles observation length 错误；GREEN 后以 POSIX absolute path 错误在 probe 前拒绝；
+- candidate-global evidence Vitest `16/16` 全部通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：补 Windows 大小写不敏感、WSL2 大小写敏感的 marker/env 路径唯一性，并拒绝 marker/env 跨类别使用同一 identity；随后实现双平台只读生产 probe。
+- **为什么先做它**：绝对路径仍可能重复登记；同一文件若在一类或两类 inventory 中出现多次，会重复贡献 residual/orphan 并破坏 receipt 可复算性。
+- **当前还缺的关键闭环**：path 唯一性、生产 probe、runner/CLI、aggregate missing-report、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：Windows runtime path 唯一性（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - 在同一 Windows marker inventory 中登记仅盘符/文件名大小写不同的两个路径；
+   - RED 证明旧实现仍触碰系统 probe，随后才因 observation 长度不匹配失败；
+   - 固定 Windows 相同文件 identity 必须在 probe 前拒绝。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 修改**：
+   - Windows 绝对路径合法性通过后，以 `path.win32.normalize(path).toLowerCase()` 建立 identity；
+   - 同类 marker/env inventory 中 identity 重复时整体失败关闭；
+   - 不访问真实文件、不跟随 link，也不把大小写不敏感规则应用到 WSL2。
+
+3. **效果**：
+   - 同一 Windows marker 或 env 不会因大小写/分隔符表现差异重复贡献 residual/orphan；
+   - 路径唯一性在系统 probe 前完成，receipt 计数保持确定；
+   - WSL2 大小写敏感语义与其他资源合同保持不变。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 RED 对大小写变体仍调用 probe 后报 observation length；GREEN 后以 runtimeMarkers unique 错误在 probe 前拒绝；
+- candidate-global evidence Vitest `17/17` 全部通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：锁定 WSL2 同类路径按 POSIX 规范化后精确唯一、但大小写不同仍可作为不同 identity；随后拒绝 marker/env 跨类别复用同一文件。
+- **为什么先做它**：WSL2 文件系统通常大小写敏感，不能照搬 Windows identity；但 `.`/`..` 或重复斜杠规范化后的同一路径仍不得重复计数。
+- **当前还缺的关键闭环**：WSL2/cross-category path 唯一性、生产 probe、runner/CLI、aggregate missing-report、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：WSL2 runtime path 唯一性（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - 在同一 WSL2 marker inventory 中登记一个标准路径和包含 `./` 的等价路径；
+   - RED 证明旧实现仍触碰系统 probe，随后才因 observation 长度不匹配失败；
+   - 固定 POSIX 规范化后的重复 identity 必须在 probe 前拒绝。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 修改**：
+   - WSL2 绝对路径合法性通过后，以 `path.posix.normalize()` 建立 identity；
+   - 同类 marker/env identity 重复时整体失败关闭；
+   - identity 比较保持大小写敏感，不沿用 Windows 的 lowercase 规则。
+
+3. **效果**：
+   - `.`、`..` 或重复分隔符形成的同一 WSL2 文件不会重复贡献 residual/orphan；
+   - 大小写不同的 POSIX 路径仍按不同 Linux identity 处理；
+   - 双平台路径唯一性均在系统 probe 前闭合。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 RED 对 POSIX 等价路径仍调用 probe 后报 observation length；GREEN 后以 runtimeMarkers unique 错误在 probe 前拒绝；
+- candidate-global evidence Vitest `18/18` 全部通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：拒绝同一平台文件 identity 同时登记为 runtime marker 与 runtime env；完成 inventory 输入合同后，先实现 Windows-native 只读生产 probe。
+- **为什么先做它**：同类唯一仍允许跨类别重复；同一实际文件若同时贡献 marker 与 env 两个计数，会让 orphan 汇总不可复算。
+- **当前还缺的关键闭环**：cross-category path 唯一性、双平台生产 probe、runner/CLI、aggregate missing-report、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：runtime path 跨类别唯一性（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - 将同一 Windows 文件以大小写变体分别登记为 runtime marker 与 runtime env；
+   - RED 证明旧实现仍触碰系统 probe，随后才因 marker observation 长度不匹配失败；
+   - 固定 marker/env 两类文件 identity 必须互斥。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 修改**：
+   - 同类路径合法性与唯一性通过后，再比较 marker 与 env 两个 identity 集合；
+   - Windows 使用规范化且大小写不敏感 identity，WSL2 使用规范化且大小写敏感 identity；
+   - 任一交集均在 probe 前失败关闭，不读取文件、不自动改类或去重。
+
+3. **效果**：
+   - 同一实际文件最多贡献一个 marker 或 env residual 计数；
+   - listener、PID、marker、env 四类 inventory 的合法性与唯一性输入合同已闭合；
+   - resource sweep 仍只输出聚合计数，不输出资源标识或 env 正文。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 RED 对跨类别同一 Windows identity 仍调用 probe 后失败；GREEN 后以 marker/env distinct 错误在 probe 前拒绝；
+- candidate-global evidence Vitest `19/19` 全部通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：先实现 Windows-native 只读生产 probe 的 marker/env 文件存在性观察，并用真实临时文件验证“只判断 identity、不读正文”；随后接入 exact listener 与 PID 观察。
+- **为什么先做它**：inventory 输入合同已稳定；从文件存在性开始可以先证明生产 adapter 与零标识聚合正确组合，再逐项引入操作系统网络/进程表依赖。
+- **当前还缺的关键闭环**：Windows/WSL2 生产 probe、runner/CLI、aggregate missing-report、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：Windows runtime 文件生产 probe（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - 在真实临时目录创建含敏感 fixture 正文的 marker，并声明一个不存在的 env path；
+   - 通过公共 resource sweep seam 调用生产 probe，固定 marker/env=`1/0`、orphan=`1`；
+   - 断言序列化 sweep 不含 marker path 或文件正文。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 扩展**：
+   - 新增 `probeCodingAgentCandidateOwnedResources()` 生产 adapter；
+   - Windows marker/env 通过 `lstat` 只判断 exact path 是否存在，`ENOENT=false`，其他 I/O 错误直接失败关闭；
+   - 不打开、不读取文件，不跟随 link 目标，也不返回原始路径。
+
+3. **效果**：
+   - Windows marker/env residual 开始由真实系统观察产生，不再只依赖注入 fixture；
+   - “不存在”与“无法验证”保持分离，后者不会被伪装成 false；
+   - 生产 adapter 与零标识聚合 seam 已完成首个真实组合闭环。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 RED 为生产 adapter 导出不存在；GREEN 后真实 marker/env=`1/0`、orphan=`1`，路径与敏感正文零回显；
+- candidate-global evidence Vitest `20/20` 全部通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：从 Windows TCP 监听表只读快照中精确匹配已登记 IP/port，验证一个真实 loopback listener；随后从进程表精确匹配已登记 PID。
+- **为什么先做它**：通过监听表 membership 可避免主动连接触发被测服务 accept 副作用，同时不依赖命令行关键词猜资源归属。
+- **当前还缺的关键闭环**：Windows listener/PID、WSL2 production probe、runner/CLI、aggregate missing-report、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：Windows listener 生产 probe（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - 启动一个真实 `127.0.0.1` 临时 TCP listener，并把运行时分配的精确 endpoint 登记到 inventory；
+   - 通过公共 resource sweep seam 调用生产 probe，固定 listener/orphan=`1/1`；
+   - 断言 sweep 不含真实端口，测试结束后正常关闭 fixture listener。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 扩展**：
+   - inventory 非空时执行静态、无用户值插入的 PowerShell 只读查询，读取 `Get-NetTCPConnection -State Listen` 的结构化 `LocalAddress/LocalPort` 快照；
+   - 在 Node 内按已校验的精确 IP/port 做 membership，不主动连接 endpoint、不扫描命令行；
+   - 命令失败、JSON 非法或 row 类型异常均失败关闭，空 inventory 不启动 PowerShell。
+
+3. **效果**：
+   - Windows listener residual 由真实监听表证明，不会触发被测服务 accept 路径；
+   - 资源归属仍完全来自 runner 显式 inventory，不会把同端口的模糊任务或探针进程猜作 candidate-owned；
+   - endpoint 只用于 adapter 内部匹配，receipt 继续只输出聚合计数。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 RED 为 production adapter 返回空 listener observation，公共 seam 精确报长度不匹配；GREEN 后真实 loopback listener=`1`、orphan=`1` 且零端口回显；
+- candidate-global evidence Vitest `21/21` 全部通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：从 Windows 进程表只读快照中精确匹配 inventory PID，并用当前测试进程验证存在、用不可存在的安全整数验证不存在；随后开始 WSL2 production probe。
+- **为什么先做它**：Windows production probe 只剩 PID 类别；完成后四类资源可由同一系统快照/文件存在性 adapter 生成完整 observation。
+- **当前还缺的关键闭环**：Windows PID、WSL2 production probe、runner/CLI、aggregate missing-report、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：Windows PID 生产 probe（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - inventory 精确登记当前测试进程 PID 与 `Number.MAX_SAFE_INTEGER` 不存在 PID；
+   - RED 证明 production adapter 仍返回空 process observation，公共 seam 以长度不匹配失败；
+   - GREEN 后固定 process/orphan=`1/1`，序列化 sweep 不含任一 PID。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 扩展**：
+   - PID inventory 非空时执行静态、无 PID/命令行插值的 `Get-Process` 只读 ID 快照；
+   - 在 Node 内对已校验正 PID 做精确整数 membership，不读取或匹配进程命令行，不停止任何进程；
+   - 命令失败、JSON 非法或快照 ID 非法均失败关闭，空 PID inventory 不启动 PowerShell。
+
+3. **Windows 系统 PID `0` 边界修正**：
+   - 首次 GREEN 仍因快照含系统 Idle PID `0` 而失败；只读统计确认当前 `334` 个进程 ID 中恰有 `1` 个非正 ID、类型异常=`0`；
+   - adapter 仅在系统快照层过滤 `Id <= 0`，没有放宽 candidate inventory 的正安全整数合同；
+   - 修正后当前测试进程精确命中，不存在 PID 精确未命中。
+
+4. **效果**：
+   - Windows listener/PID/marker/env 四类 observation 均已由真实只读系统证据产生；
+   - resource ownership 仍完全来自 runner 显式 inventory，不做命令行关键词或父链猜测；
+   - production sweep 只输出聚合计数，不输出 PID、endpoint、路径或正文。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 RED 为 process observation length mismatch；首次 GREEN 暴露系统 PID `0`，最小修正后 process/orphan=`1/1`；
+- candidate-global evidence Vitest `22/22` 全部通过，相关 diff whitespace check 通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：为 `wsl2-linux` 增加显式 distribution 上下文，先用目标发行版内真实 marker/env 验证只读文件存在性；随后接 Linux listener 与 PID exact membership。
+- **为什么先做它**：Windows production adapter 已闭合；WSL2 必须显式绑定发行版，不能依赖默认 distro，否则同一 POSIX PID/path 可能在错误实例中得到伪零结果。
+- **当前还缺的关键闭环**：WSL2 production probe、runner/CLI、aggregate missing-report、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：WSL2 distribution 显式绑定（2026-09-01）
+
+##### 已完成内容
+
+1. **WSL2 环境只读确认**：
+   - `wsl.exe --list --quiet` 确认本机存在 `Ubuntu-22.04` 与 `docker-desktop`；
+   - 后续 candidate probe 固定显式绑定计划目标 `Ubuntu-22.04`，不依赖当前默认发行版；
+   - 本环节未访问发行版内文件、未创建 runtime 资源。
+
+2. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - 以 `wsl2-linux` + 空 inventory、缺失 distribution 调用公共 resource sweep seam；
+   - RED 证明旧实现仍调用 adapter，并生成 WSL2 completed/zero 伪 receipt；
+   - 固定缺失 distribution 必须在 probe 前拒绝，probe call count=`0`。
+
+3. **`scripts/coding-agent-candidate-evidence.mjs` 修改**：
+   - WSL2 inventory 校验完成后要求 non-empty distribution；
+   - 合法 distribution 作为显式字段传给系统 adapter，Windows 调用 interface 不增加该要求；
+   - 未绑定发行版时不允许进入 listener/PID/path probe。
+
+4. **效果**：
+   - POSIX PID、listener 与 path observation 绑定到明确 WSL 实例；
+   - 默认发行版变化不能把目标实例残留错误解释为零；
+   - distribution 只用于 adapter 选择，不进入 receipt 聚合输出。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 RED 返回 `wsl2-linux` completed/zero；GREEN 后在 probe 前以 distribution required 精确拒绝；
+- candidate-global evidence Vitest `23/23` 全部通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在显式 `Ubuntu-22.04` 内，以 `/proc/self/status` 与一个不存在路径验证 marker/env 只读存在性；不创建/删除文件、不读取正文。随后接 Linux listener/PID。
+- **为什么先做它**：先闭合 distribution→真实 WSL 文件 observation，可验证 adapter 进程确实运行在目标实例内，再引入网络与进程表解析。
+- **当前还缺的关键闭环**：WSL2 marker/env/listener/PID production probe、runner/CLI、aggregate missing-report、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：WSL2 runtime 文件生产 probe（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - 显式绑定 `Ubuntu-22.04`，以 `/proc/self/status` 作为真实存在 marker，以明确不存在 path 作为 env；
+   - RED 为 production adapter 明确只支持 Windows；
+   - GREEN 后固定 marker/env=`1/0`、orphan=`1`，序列化 sweep 不含任一路径。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 扩展**：
+   - WSL2 路径通过 `wsl.exe --distribution <explicit> --exec node -e <fixed-script> <paths...>` 只读探测；
+   - path 仅作为 argv 传入，不拼入 shell；固定脚本只执行 `lstatSync`，`ENOENT=false`，其他错误失败关闭；
+   - 返回结果必须为与输入等长的纯布尔数组，再按 marker/env 原始分界拆分。
+
+3. **效果**：
+   - WSL2 marker/env residual 已由目标发行版内的真实文件系统观察产生；
+   - adapter 不创建、删除或读取文件正文，不依赖 Windows 挂载路径或默认发行版；
+   - WSL2 path 仍只用于内部 observation，receipt 只保留聚合计数。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 RED 返回 production probe currently requires Windows；GREEN 后 `Ubuntu-22.04` marker/env=`1/0`、orphan=`1`；
+- candidate-global evidence Vitest `24/24` 全部通过，相关 diff whitespace check 通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：只读确认 `Ubuntu-22.04` 的 TCP 监听表工具与输出形状，再启动可精确收尾的 WSL Node listener fixture，接入 endpoint exact membership；随后接 PID。
+- **为什么先做它**：网络 probe 必须读取监听表而不主动连接服务；先确认工具输出再固定 parser，可避免把非监听连接或 wildcard endpoint 错算为候选残留。
+- **当前还缺的关键闭环**：WSL2 listener/PID、runner/CLI、aggregate missing-report、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：WSL2 listener 生产 probe（2026-09-01）
+
+##### 已完成内容
+
+1. **WSL2 监听表前置只读确认**：
+   - 首次内嵌 Node 探针因 PowerShell 引号解析失败，未进入 WSL、未启动 listener、未产生证据；
+   - 改用固定单引号脚本后确认 `Ubuntu-22.04` 的 `ss -H -ltn` 可用，当前快照行数=`1`、首行字段数=`5`，未输出 endpoint；
+   - 前置确认不创建、停止或修改任何 WSL 资源。
+
+2. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - 在显式 `Ubuntu-22.04` 内启动随机 loopback Node listener fixture；
+   - fixture 仅经 stdout 返回端口，支持 stdin 精确关闭并带 15 秒自动收敛兜底；
+   - RED 为 production adapter 返回空 listener observation；GREEN 后 listener/orphan=`1/1`，sweep 不含端口，`finally` 精确关闭该 fixture。
+
+3. **`scripts/coding-agent-candidate-evidence.mjs` 扩展**：
+   - listener inventory 非空时只读执行 `wsl.exe --distribution <explicit> --exec ss -H -ltn`；
+   - 解析监听行第 4 个 local endpoint 字段，在 Node 内按已校验 IP/port 做 exact membership；
+   - inventory endpoint 不进入 shell 或命令参数，probe 不主动连接服务，非法 row/endpoint 失败关闭。
+
+4. **效果**：
+   - WSL2 listener residual 由目标发行版的真实监听表证明；
+   - 不触发被测服务 accept 路径，不扫描命令行，也不把其他发行版或 wildcard listener 猜作 exact candidate endpoint；
+   - endpoint 仅在 adapter 内部匹配，receipt 保持零标识输出。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- 定向 RED 为 listener observation length mismatch；GREEN 后真实 WSL2 loopback listener/orphan=`1/1` 且 fixture 正常收敛；
+- candidate-global evidence Vitest `25/25` 全部通过，相关 diff whitespace check 通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：启动可精确收尾的 WSL Node process fixture，使用 `/proc/<exact-pid>` 只读 membership 验证存在与不存在 PID；随后把双平台 production adapter 接入 candidate-global evidence/receipt 一键 runner。
+- **为什么先做它**：WSL2 production probe 只剩 PID 类别；完成后 listener/PID/marker/env 四类资源即可由同一显式 distribution adapter 生成完整 observation。
+- **当前还缺的关键闭环**：WSL2 PID、runner/CLI、aggregate missing-report、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：跨平台 PID 上界失败关闭（2026-09-01）
+
+##### 已完成内容
+
+1. **WSL2 PID 首次生产探测边界复核**：
+   - 受控 WSL process fixture PID 可正常探测，但测试使用的 `Number.MAX_SAFE_INTEGER` 虽是 JavaScript 安全整数，仍超出 Linux/Node `process.kill(pid, 0)` 可接受范围；
+   - production probe 因 `ERR_INVALID_ARG_TYPE` 失败，fixture 已在 `finally` 中精确关闭，没有进程残留；
+   - 根因裁决为 inventory 上界过宽，而非把该错误吞成“不存在”。
+
+2. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展与校准**：
+   - 新增 `2147483648` 必须在 probe 前拒绝的公共 seam 负例；
+   - RED 证明旧实现仍触碰 adapter，随后才因 observation 长度不匹配失败；
+   - Windows/WSL2 的合法但不存在 PID fixture 统一改为 `2147483647`。
+
+3. **`scripts/coding-agent-candidate-evidence.mjs` 修改**：
+   - shared PID inventory 合同收紧为 signed 32-bit 正整数 `1..2147483647`；
+   - 超界 PID 在任一系统 probe 前失败关闭，不由 adapter 猜测、截断或转换；
+   - Windows 与 WSL2 复用同一精确范围。
+
+4. **效果**：
+   - OS/Node 不可表示 PID 不会被误判为零残留；
+   - inventory、Windows process snapshot 与 WSL signal-0 probe 的数值域一致；
+   - 失败仍保留真实根因，不降级为 `false` observation。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- PID 上界定向 RED 先触碰 adapter；GREEN 后 `2147483648` 在 probe 前以 signed 32-bit 错误拒绝；
+- 双平台 exact PID 定向 Vitest `2/2` 通过；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在新 PID 合同下完成 WSL2 process fixture exact membership，并跑 candidate-global evidence 全回归；随后组合 evidence 与 receipt producer。
+- **为什么先做它**：上界合同已经对齐，仍需证明同一公共 seam 对真实存在 PID 与合法但不存在 PID 分别返回 true/false，且 fixture 零残留。
+- **当前还缺的关键闭环**：WSL2 PID 最终回归、runner/CLI、aggregate missing-report、维度 mapping 与完整回归。
+
+#### P2-C candidate-global evidence 实现结论：WSL2 PID 生产 probe（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-evidence.test.mjs` 扩展**：
+   - 在显式 `Ubuntu-22.04` 内启动只等待 stdin 的受控 Node process fixture，并从 stdout 获取其 Linux PID；
+   - inventory 同时登记 fixture PID 与合法范围内不存在 PID `2147483647`；
+   - RED 为 production adapter 返回空 process observation；GREEN 后 process/orphan=`1/1`，sweep 不含任一 PID，`finally` 精确关闭 fixture。
+
+2. **`scripts/coding-agent-candidate-evidence.mjs` 扩展**：
+   - exact PID 仅作为 argv 传入显式发行版的固定 Node 脚本；
+   - 使用 `process.kill(pid, 0)` 只读判断存在性，`ESRCH=false`、`EPERM=true`，其他错误失败关闭；
+   - 不枚举进程、不读取或匹配命令行、不停止任何非 fixture 进程。
+
+3. **效果**：
+   - Windows/WSL2 的 listener、PID、runtime marker 与 runtime env 四类 production observation 全部闭合；
+   - 双平台均只复核 runner 显式 inventory，不通过进程名、命令行或工作区扫描猜资源归属；
+   - resource sweep 继续只输出四类 residual 与 orphan 聚合计数，零 endpoint/PID/path/正文。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片修改 `.mjs` module/test，最终 CLI 接线后统一执行 workspace build；
+- WSL2 PID 定向 RED 为 process observation length mismatch；修正 PID 上界后 fixture PID 精确命中、不存在 PID 精确未命中；
+- candidate-global evidence Vitest `27/27` 全部通过，相关 diff whitespace check 通过；所有受控 Windows/WSL2 fixture 正常收敛；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：新增一键零模型 runner，将真实 sensitive scan、Windows/WSL2 exact-owned production sweep 与 `writeCodingAgentCandidateGlobalReceipt()` 组合；先以注入 adapter 验证成功写入与任一 evidence 失败时不落 receipt。
+- **为什么先做它**：扫描与双平台资源证据现已真实可生成，但仍需调用方手工拼接；统一 runner 才能保证 receipt 只在全部 evidence 完整后原子落盘并绑定 verified aggregate。
+- **当前还缺的关键闭环**：candidate-global runner/CLI、aggregate missing-report、维度 mapping、qualification report Schema 与完整回归。
+
+#### P2-C candidate-global runner 实现结论：一键零模型 receipt 成功路径（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/run-coding-agent-candidate-global-receipt.mjs` 新建**：
+   - 新增 `runCodingAgentCandidateGlobalReceipt(...)` 公共 interface；
+   - 在一个深 module 内装配真实敏感扫描、固定顺序 Windows/WSL2 exact-owned sweep、production probe 与 verified aggregate receipt producer；
+   - 调用方只声明 aggregate root、生成时间、扫描 roots/exact values、双平台 inventory 与 WSL distribution，不再手工拼计数。
+
+2. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 建立真实完整 `144/144` v3 aggregate、真实临时扫描根和双平台空 inventory；
+   - RED 为 runner module 不存在；
+   - GREEN 后一次调用写出 Schema 合法 receipt，aggregate binding 与 verified report/index/source/harness 精确一致。
+
+3. **效果**：
+   - candidate-global evidence 从“可分别生成”升级为“一次零模型调用可完整落证”；
+   - receipt 使用既有 producer 的 `wx` 语义，不覆盖已有 evidence；
+   - 敏感值、扫描路径、PID、endpoint 与 runtime path 均不进入 receipt。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片新增/修改 `.mjs` module/test，CLI 接线后统一执行 workspace build；
+- 定向 RED=`ERR_MODULE_NOT_FOUND`；GREEN 后真实扫描 regular/unreadable/finding=`1/0/0`、双平台 orphan=`0/0`，receipt binding 精确通过；
+- runner 成功路径定向 Vitest `1/1` 通过；既有 Ajv `date-time` format 警告不影响结果；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：通过同一 runner seam 注入一个在 WSL2 sweep 失败的 adapter，固定 producer 不得调用且 aggregate root 不得出现 receipt；随后为 runner 增加 CLI 输入文件合同。
+- **为什么先做它**：成功路径证明装配可用，但必须先锁定 all-or-nothing：任何扫描或平台 evidence 未闭合时都不能写出半真 receipt。
+- **当前还缺的关键闭环**：runner 失败原子性、CLI、aggregate missing-report、维度 mapping、qualification report Schema 与完整回归。
+
+#### P2-C 工作量评估结论：候选资格判定与七维评分工具链（2026-09-01）
+
+##### 已完成内容
+
+1. **当前实现范围复核**：
+   - 候选资格判定已有公共 `qualifyCodingAgentBenchmarkCandidate()` seam，可复核完整 `144/144` aggregate、source/harness identity、A/B/C layer Gate、trace/Provider usage、C critical evidence、candidate-global sensitive/orphan hard Gate，并在证据不足时返回 `not_eligible/unscored`；
+   - candidate-global evidence 已有双平台只读 production probe 和一键 receipt runner 成功路径；当前尚未完成 runner 失败原子性、CLI/input contract、`missingReport` authoritative owner、qualification report Schema/CLI 与最终完整回归；
+   - 七维评分的目标向量、权重、语义锚点和原始加权门槛已冻结，但完整 task/artifact/metric→dimension mapping 与确定性实得分规则尚未冻结，因此当前不能把成功率机械换算为七维分。
+
+2. **工作量估算与口径**：
+   - 候选资格判定工具链收尾（runner all-or-nothing、CLI/input、`missingReport` owner、report Schema、负例与回归）：约 **1.5–3.5 人日**；
+   - 七维评分工具链（版本化 mapping、证据等级/加扣分规则、原始加权计算、score report Schema/CLI、drift/缺失/边界负例）：约 **3–6 人日**；
+   - 上述两个范围是工作包视角，存在共享的 report/CLI/回归工作，不应简单相加；P2-C 从工具链收尾到两个连续候选最终复核仍沿用计划基线 **5–7.5 人日工程量 + 候选运行/观察窗口**；
+   - 候选矩阵运行、Provider 费用授权、失败后的返工和两个连续冻结候选的等待时间不计入纯代码工作量，C# 生产接入、Go production rollout、公开发布和生产写入继续排除。
+
+3. **架构边界**：
+   - 不新增大型测试执行系统；保留“evidence/aggregate → qualification evaluator → score evaluator → report”分层，资格判定与七维评分通过小而稳定的公共 seam 组合；
+   - 只有 hard Gate 和 mapping/evidence contract 全部完整时才允许输出数值七维分和原始加权，否则继续输出 `not_eligible/unscored`。
+
+##### 效果
+
+- 将“资格判定工具链的剩余开发量”和“七维评分工具链的独立工作量”与候选运行观察时间明确分开；
+- 保留原计划 `5–7.5 人日 + 观察窗口` 的端到端基线，不把局部工作包估算误读为可直接叠加的承诺；
+- 明确七维评分确实需要独立机器 evaluator，但其职责是消费已验证证据并计算分数，不替代 Benchmark runner 或业务 Agent。
+
+##### 验证结果
+
+- 已只读核对 `scripts/coding-agent-candidate-qualification.mjs`、candidate evidence/runner、v3 scorecard/contract、主计划及指定归档；
+- 当前未调用 Provider、未重跑冻结 Formal、未修改冻结 artifact；
+- 估算依据和边界已写入本计划，下一切片继续以 runner 公共 seam 做失败原子性 Red/Green。
+
+##### 后续计划
+
+- **下一步准备做什么**：在同一 runner seam 验证任一平台 evidence 失败时 producer 不被调用且 aggregate root 不落 receipt，然后补 CLI/input contract。
+- **为什么先做它**：all-or-nothing 是从“能生成证据”进入“可审计资格链”的最小一致性闭环，必须先于付费候选运行和七维授分。
+- **当前还缺的关键闭环**：runner 失败原子性、`missingReport` authoritative owner、完整七维 mapping/score evaluator、qualification report CLI，以及两个连续完整候选。
+
+#### P2-C candidate-global runner 实现结论：失败原子性 Gate（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/run-coding-agent-candidate-global-receipt.test.mjs` 扩展**：
+   - 通过公共 runner seam 注入 WSL2 owned-resource probe 失败；
+   - 断言 runner 将错误原样传播，不调用 receipt producer，且 aggregate root 不出现 `candidate-global-receipt.json`。
+
+2. **现有 runner 装配复核**：
+   - evidence collection 完成前不会调用 `writeCodingAgentCandidateGlobalReceipt()`；
+   - producer 继续使用 `wx` 写入，成功路径与失败路径均不覆盖既有 artifact。
+
+3. **效果**：
+   - 任一平台 evidence 失败都会阻止半真 candidate-global receipt；
+   - 失败不留下可被 qualification 误消费的部分结果。
+
+##### 验证结果
+
+- runner 失败原子性定向 Vitest：`1/1` 通过；
+- 未调用 Provider，未启动 Gateway，未重跑冻结 Formal，未创建 runtime `.env/.env.local`；
+- 失败路径没有生成 receipt，符合 all-or-nothing 合同。
+
+##### 后续计划
+
+- **下一步准备做什么**：为 runner 增加版本化 CLI/input file contract，令扫描 roots、exact values、双平台 inventory、WSL distribution 和 aggregate root 可由受控 JSON 输入驱动，并在执行前失败关闭非法输入。
+- **为什么先做它**：当前公共函数可测试但尚无稳定命令入口；先冻结输入边界，才能让后续 candidate receipt 与 qualification report 可复算、可审计。
+- **当前还缺的关键闭环**：CLI Schema/接线、`missingReport` authoritative owner、完整七维 mapping/score evaluator、qualification report CLI，以及两个连续完整候选。
+
+#### P2-C candidate-global runner 实现结论：版本化 CLI/input contract（2026-09-01）
+
+##### 已完成内容
+
+1. **`benchmarks/coding-agent/v3/candidate-global-runner-input.schema.json` 新建**：
+   - 冻结 `coding-agent-benchmark-candidate-global-runner-input/v1` 封闭输入合同；
+   - 约束 aggregate root、生成时间、扫描 roots、双平台 exact-owned inventory、WSL distribution 与可选 scorecard path；
+   - JSON 只允许声明 `sensitiveValueEnvironmentVariables` 环境变量名，不允许写入 `sensitiveValues` 正文。
+
+2. **`scripts/run-coding-agent-candidate-global-receipt.mjs` 扩展**：
+   - 新增 `runCodingAgentCandidateGlobalReceiptFromFile()` 与 `parseCodingAgentCandidateGlobalReceiptCliArguments()` 公共 seam；
+   - 输入必须是 1 MiB 内常规 JSON 文件，Schema/version/时间戳和全部敏感环境变量在 evidence adapter 前失败关闭；
+   - 敏感值仅在内存中解析，CLI 成功摘要和安全错误均不输出值正文；任一 evidence 失败仍不调用 receipt producer。
+
+3. **命令与仓库合同接入**：
+   - `package.json` 新增 `benchmark:coding-agent:v3:candidate-global-receipt`，使用仓库既有 `node --import tsx` 装载方式；
+   - `scripts/verify-coding-agent-benchmark-contract.mjs` 纳入 input/receipt Schema、版本、脚本、README、project map 与 package command 漂移检查；
+   - `benchmarks/coding-agent/README.md` 与 `docs/project-map.md` 补充零模型入口、敏感值边界和模块职责。
+
+4. **`scripts/run-coding-agent-candidate-global-receipt.test.mjs` 扩展**：
+   - RED 固定缺少 file runner/parser、Schema 漂移和非法时间戳仍会越过校验的行为；
+   - GREEN 覆盖版本化文件加载、唯一 `--input`、未知/重复参数、非法字段、非法时间戳、缺失敏感环境变量及平台 evidence 失败原子性；
+   - 验证缺失环境变量时 adapter 不执行，错误不包含同输入中已解析的敏感值。
+
+5. **效果**：
+   - candidate-global receipt 从仅可编程调用升级为可重复、可审计的一键零模型命令；
+   - input drift、秘密缺失或任一双平台 evidence 不完整时均不会产生半真 receipt；
+   - 命令合同已纳入仓库级失败关闭 verifier，不依赖操作者手工拼接内部对象。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build:incremental` 通过；
+- runner/evidence/benchmark-contract 定向 Vitest `44/44` 通过，其中 runner `6/6`；
+- `corepack pnpm verify:coding-benchmark` 与 `git diff --check` 通过；真实 package script 在缺少 `--input` 时以 exit `1` 和无敏感正文错误安全退出；
+- 未启动 Gateway、模型或 Provider，未重跑冻结 Formal，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：把 aggregate 缺失报告数量从对 `missingRunKeys` 的隐式推断升级为版本化、可复算的 authoritative aggregate metric，并由 qualification 消费该 owner。
+- **为什么先做它**：`missingReportCountMaximum=0` 当前仍映射到宽泛 `aggregate`，但没有独立字段/语义 owner；先关闭该 hard Gate 的真源，才能稳定冻结 qualification report Schema 和七维 mapping。
+- **当前还缺的关键闭环**：aggregate `missingReport` authoritative owner、qualification report Schema/CLI、完整七维 mapping/score evaluator、完整回归与两个连续完整候选。
+
+#### P2-C aggregate `missingReport` owner 实现结论：独立 expected-report artifact 与可重建 projection（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/aggregate-coding-agent-benchmark.mjs` 扩展**：
+   - 新增 `coding-agent-benchmark-expected-reports/v1` 计划合同，输入以稳定 `reportId + path` 声明本次应收 source report；
+   - aggregate 仅把去路径化的 `expected-reports.json` 保留到输出目录，`baseline-index.json` 保存该 artifact 的 SHA-256、expected/collected/missing 三项计数及每个 `reportId` 的 collected/missing 状态；
+   - verifier 从独立 plan artifact 与 retained source report 的 `reportId` 重建 projection，拒绝 plan/hash/manifest/report identity 或 index 派生计数漂移。
+
+2. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展与校准**：
+   - 用完整 `144/144` run coverage 加一份未到达的 expected report，证明 `missingRunKeys=[]` 与 `missingReportCount=1` 可以同时成立；
+   - 断言 retained plan 不含本机绝对路径，并验证仅篡改 index 不能把缺失 report 伪装为 collected；
+   - 删除把 `142` 个 missing run 错写为 `missingReportCount` 的旧测试断言，三类缺失语义保持分离。
+
+3. **效果**：
+   - `missingReportCount` 不再由 run coverage 或 retained artifact 可读性隐式推断；
+   - expected-report 清单具备独立、去路径化、hash-bound 的审计真源；
+   - 旧 aggregate 未提供 expected-report plan 时仍保持原格式，由 qualification 明确报告 owner 未闭合，不把缺失字段解释为零。
+
+##### 验证结果
+
+- TypeScript workspace 编译状态：本切片只修改 `.mjs` module/test，完成 qualification/scorecard 接线后统一执行 workspace build；
+- expected-report artifact/projection 定向 Vitest `1/1` 通过；RED 先因 index 缺少独立 plan reference 失败，GREEN 后可离线重建且篡改 index 被拒绝；
+- 完整 fixture 的 run coverage=`144/144`、missing report=`1`，未调用 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在 qualification 公共 seam 增加 `missingRunKeys=[] + missingReportCount=1` 负例，并按 `missingReportCountMaximum=0` 返回不可补偿 aggregate hard Gate；随后让 complete expected-report plan 只剩 dimension mapping 未闭合。
+- **为什么先做它**：aggregate 已产出可重建真值，但资格判定尚未消费；先锁定非零失败路径，才能避免后续 report/评分层绕过缺失报告。
+- **当前还缺的关键闭环**：qualification 正/负/旧证据兼容行为、scorecard 的独立 owner 声明、qualification report Schema/CLI、七维 mapping/score evaluator 与完整回归。
+
+#### P2-C aggregate `missingReport` owner 实现结论：qualification hard Gate、scorecard owner 与生产 CLI 闭环（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-qualification.mjs` 接入**：
+   - 在完整 run coverage 后、candidate-global receipt 与七维评分前消费 verified `expectedReports.missingReportCount`；
+   - 非零值按 `missingReportCountMaximum=0` 返回不可补偿 `candidate_aggregate_hard_gate_failed`，零值继续后续 Gate；
+   - 历史 aggregate 缺少 expected-report evidence 时不假定为零，最终仍保留 `aggregate_missing_report_metric` blocker。
+
+2. **scorecard 与版本合同收紧**：
+   - `benchmarks/coding-agent/v3/scorecard.json`、`scorecard.schema.json` 和 `scripts/coding-agent-benchmark-v3-contract.mjs` 新增独立 `sources.expectedReports`；
+   - `missingReportCountMaximum` owner 从宽泛 `aggregate` 改为 `expectedReports`；
+   - input plan、retained artifact 与 index projection 分别使用 `coding-agent-benchmark-expected-report-plan/v1`、`coding-agent-benchmark-expected-reports/v1`、`coding-agent-benchmark-expected-report-projection/v1`，不再用同一版本表达三种结构。
+
+3. **生产 CLI 与公开 Schema 接线**：
+   - `aggregate:coding-agent:baseline` 新增 `--expected-report-plan`，只接受 `<=1 MiB` 常规 JSON 文件，重复参数、版本/字段漂移、manifest hash 漂移和未声明 selected report 均在写输出前失败关闭；
+   - 新增 `expected-report-plan.schema.json` 与 `expected-reports.schema.json`，本地相对路径按输入 plan 所在目录解析，聚合后只保留稳定 `reportId`；
+   - benchmark verifier、README 与 project map 同步纳入两个 Schema、CLI 参数、owner 边界与重建规则。
+
+4. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 与 v3 contract 测试扩展**：
+   - 固定 `144/144 run + missing report=1` 在 receipt 前失败、`missing report=0` 继续、历史缺字段不冒充零三条 qualification 行为；
+   - 固定 plan loader/CLI、Schema 额外字段拒绝、index-only 篡改拒绝和 scorecard owner 漂移拒绝；
+   - 删除 missing run 与 missing report 混淆断言，三种缺失语义继续独立。
+
+5. **效果**：
+   - `missingReportCountMaximum` 已有从运行前计划、聚合保留、离线重建到资格判定的单一机器 owner；
+   - 工具证明“运行前冻结 plan 内的报告是否全部到达”，但不声称能发现操作者从未列入 plan 的报告；归档未规定固定 report 数量，因此未硬编码双平台报告数；
+   - 资格链在 expected-report Gate 全绿后只剩 `dimension_evidence_mapping` 未闭合，仍保持 `not_eligible/unscored`，不产生无依据数值评分。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build:incremental` 通过；
+- aggregation/qualification `35/35`、v3/仓库合同 `19/19`、candidate evidence/runner `33/33`，合计 `87/87` 测试全部通过；
+- `corepack pnpm verify:coding-benchmark` 与 `git diff --check` 通过；未启动 Gateway、模型或 Provider，未重跑冻结 Formal，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：为现有 qualification 返回值冻结封闭 report Schema，并新增零模型 writer/CLI，以 verified aggregate 为唯一输入、在目标不存在时写出可审计报告；先固定 partial、hard-Gate 和 contract-incomplete 三类输出。
+- **为什么先做它**：资格 evaluator 已能判定全部已实现 Gate，但当前只有编程接口，缺少版本化磁盘 artifact 与稳定命令入口；先封闭输出合同，七维 mapping/score evaluator 才有可靠上游。
+- **当前还缺的关键闭环**：qualification report Schema/CLI、完整 task/artifact/metric→dimension mapping、确定性七维 score evaluator、两个连续完整候选及最终复核评分。
+
+#### P2-C qualification report 实现结论：aggregate hard-Gate 报告首切片（2026-09-01）
+
+##### 已完成内容
+
+1. **`benchmarks/coding-agent/v3/candidate-qualification-report.schema.json` 扩展**：
+   - 在既有 partial report 合同上新增 `candidate_aggregate_hard_gate_failed` 封闭 blocker；
+   - 只允许 `missingReportCountMaximum` 与 `selectedInfrastructureErrorCountMaximum` 两个 aggregate hard Gate，并要求非负整数 `observed/maximum`；
+   - 保持未知 Gate、额外字段和非整数观测值失败关闭。
+
+2. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 公开 writer/verifier seam 验证**：
+   - 以 `144/144` run coverage、`missingReportCount=1` 的保留证据写出 `candidate-qualification.json`；
+   - 验证 writer 保留 evaluator 原始 decision，verifier 可从 aggregate 与 scorecard 重建同一报告；
+   - RED 精确失败于 report Schema，最小 Schema 扩展后 GREEN。
+
+3. **效果**：
+   - qualification 的 `missingReportCountMaximum` 不可补偿结论现在具备版本化磁盘报告；
+   - 报告层不再因合法 aggregate hard-Gate decision 自身 Schema 不完整而拒绝写入；
+   - 本切片只扩展既有 blocker union，不改变 evaluator 判定顺序或冻结证据。
+
+##### 验证结果
+
+- TypeScript 源码未改；workspace 编译状态沿用上一闭环的 `build:incremental` 通过，report 完整闭环后统一复验；
+- aggregate hard-Gate report 定向 Vitest `1/1` 通过；
+- writer 与 verifier 均返回同一 `missingReportCountMaximum observed=1 / maximum=0` decision；未启动 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：增加 contract-incomplete report 的公开 writer/verifier Red，冻结 `aggregate_missing_report_metric` 与 `dimension_evidence_mapping` 的封闭 Schema；随后逐类覆盖 receipt、run-event 与 layer Gate blocker。
+- **为什么先做它**：contract-incomplete 是全部已实现 Gate 通过后、七维 mapping 尚未冻结时的当前正常终态；先封闭它才能让完整 aggregate 生成可审计而不伪造分数的报告。
+- **当前还缺的关键闭环**：其余 blocker family 的封闭 union、qualification report CLI、证据漂移负例、仓库级合同接线与完整回归。
+
+#### P2-C qualification report 实现结论：缺失合同失败关闭报告（2026-09-01）
+
+##### 已完成内容
+
+1. **`benchmarks/coding-agent/v3/candidate-qualification-report.schema.json` 扩展**：
+   - 新增 `qualification_contract_incomplete` blocker；
+   - 只接受 `dimension_evidence_mapping`，或按 evaluator 固定顺序接受 `aggregate_missing_report_metric + dimension_evidence_mapping`；
+   - 用封闭 tuple 拒绝未知合同、重复合同、顺序漂移与额外字段。
+
+2. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 在完整 legacy aggregate 上通过公开 writer 写入包含两个缺失合同的报告；
+   - 通过公开 verifier 从 retained aggregate、scorecard 与 qualification evidence digest 重建报告；
+   - RED 精确失败于 blocker Schema 缺失，GREEN 后原始 decision 保持不变。
+
+3. **效果**：
+   - 全部已实现 Gate 通过、但七维 mapping 未闭合时可以稳定落盘 `not_eligible/unscored`；
+   - 历史 aggregate 缺少 expected-report owner 时不会把缺字段默认解释为零；
+   - report Schema 不允许操作者自由填写缺失合同来改变资格语义。
+
+##### 验证结果
+
+- TypeScript 源码未改；report 全链闭合后统一复验 workspace build；
+- contract-incomplete writer/verifier 定向 Vitest `1/1` 通过；
+- 决策保留 `aggregate_missing_report_metric` 与 `dimension_evidence_mapping` 两项，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：依次用现有 public qualification 样例为 candidate-global receipt、candidate-global hard Gate、run-event hard Gate 与 A/B/C layer Gate 增加 writer/verifier Red，再最小扩展 report blocker union。
+- **为什么先做它**：这些是 evaluator 已可能产生、但 report Schema 尚不能完整表达的合法终态；必须先封闭全集，CLI 才不会对不同失败原因表现不一致。
+- **当前还缺的关键闭环**：receipt/run-event/layer blocker union、dimension-only contract 路径、CLI、证据漂移负例、仓库接线和完整回归。
+
+#### P2-C qualification report 实现结论：candidate-global blocker family（2026-09-01）
+
+##### 已完成内容
+
+1. **`benchmarks/coding-agent/v3/candidate-qualification-report.schema.json` 扩展**：
+   - 新增 `candidate_global_receipt_missing`，并固定 receipt Schema version；
+   - 将 `candidate_global_receipt_invalid` 按 `schema_validation_failed`、`aggregate_binding_mismatch`、`sensitive_scan_incomplete`、`resource_sweep_inconsistent` 四种 reason 拆成封闭结构；
+   - binding 只允许五个 aggregate 字段，scan 要求正整数 unreadable count，resource 只允许 Windows/WSL2 平台；
+   - 新增 `candidate_global_hard_gate_failed`，只允许 sensitive finding 与 orphan resource 两项不可补偿 Gate。
+
+2. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 六个既有 qualification 行为通过公开 writer/verifier seam 写入并从保留证据重建；
+   - 每种输出先因 Schema union 缺失出现精确 RED，再用对应的 reason/Gate 结构最小 GREEN；
+   - 敏感命中与孤儿资源可同时保留，七维与原始加权仍为 `null/unscored`。
+
+3. **效果**：
+   - receipt 不存在、不可解析、binding 漂移、扫描不完整、资源清扫不一致和 candidate-global hard Gate 均有稳定磁盘表达；
+   - invalid reason 与其诊断字段一一对应，不能拼接不相关字段制造歧义；
+   - qualification report 不读取或输出敏感值正文，只绑定 retained receipt 的摘要证据。
+
+##### 验证结果
+
+- TypeScript 源码未改；report 完整闭环后统一复验 workspace build；
+- candidate-global report 六个垂直切片分别定向 `1/1` 通过；
+- writer/verifier 均保持原始 `not_eligible/unscored` decision；未启动 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：为 run-event 的 trace/Provider usage hard Gate 增加 writer/verifier Red，并冻结两个 Gate id；随后封闭 A/B/C layer Gate 的 ratio/count 形态。
+- **为什么先做它**：run-event 是 candidate-global 全绿后的下一层失败关闭边界；先完成顺序相邻的 blocker，可验证报告没有绕过 trace/usage completeness。
+- **当前还缺的关键闭环**：run-event/layer blocker union、dimension-only contract 路径、CLI、evidence drift 负例、仓库接线和完整回归。
+
+#### P2-C qualification report 实现结论：run-event hard-Gate blocker family（2026-09-01）
+
+##### 已完成内容
+
+1. **`benchmarks/coding-agent/v3/candidate-qualification-report.schema.json` 扩展**：
+   - 新增 `candidate_run_events_hard_gate_failed` blocker；
+   - 只允许 `incompleteTraceCountMaximum` 与 `incompleteProviderUsageCountMaximum`；
+   - `observed/maximum` 均限制为非负整数，未知 event Gate 和额外字段失败关闭。
+
+2. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 完整 aggregate + 合法 candidate-global receipt + 缺失 retained event 合同时，writer 保留 trace/usage=`144/144` 双 Gate；
+   - trace 合法但 terminal Provider usage 不完整时，只保留 usage=`144` 单 Gate；
+   - 两种报告均由 verifier 重新执行 evaluator 并从 retained evidence 重建。
+
+3. **效果**：
+   - qualification report 明确区分 trace completeness 与 Provider usage completeness；
+   - 单项通过不能隐藏另一项失败，也不要求两个 Gate 必须同时失败；
+   - event Gate 失败继续阻止 A/B/C layer Gate 与七维数值评分。
+
+##### 验证结果
+
+- TypeScript 源码未改；report 全链闭合后统一复验 workspace build；
+- run-event 双 Gate 与 usage-only 两个定向 Vitest 均 `1/1` 通过；
+- writer/verifier 保持 `not_eligible/unscored`，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：按 ratio、absolute count、ecosystem ratio 与 maximum count 四种结构封闭 A/B/C layer Gate，并验证 writer/verifier 能保留每类关键诊断字段。
+- **为什么先做它**：layer Gate 是数值七维 mapping 前最后一组已实现 eligibility blocker；完成后 report blocker union 才能覆盖 evaluator 的全部当前返回值。
+- **当前还缺的关键闭环**：layer blocker union、dimension-only contract 路径、CLI、evidence drift 负例、仓库接线和完整回归。
+
+#### P2-C qualification report 实现结论：A/B/C layer-Gate blocker family（2026-09-01）
+
+##### 已完成内容
+
+1. **`benchmarks/coding-agent/v3/candidate-qualification-report.schema.json` 扩展**：
+   - 新增 C critical evidence ratio、A required execution absolute count、B 总成功率 ratio、B ecosystem ratio、B test/patch applicable ratio、B regression maximum count 与 C task success ratio 八种封闭 Gate 结构；
+   - ratio 的 `observed/minimum` 限制为 `[0,1]`，absolute/maximum count 保持非负整数，字段形态不互换；
+   - ecosystem 枚举从 v3 manifest 核对为 `javascript`、`web-mixed`、`go`、`typescript`，未知生态失败关闭。
+
+2. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 八条既有 A/B/C qualification 行为逐项接入公开 writer/verifier seam；
+   - 每条先因具体 layer/id 组合未进入 report union 出现 RED，再以该 Gate 的最小结构 GREEN；
+   - verifier 重新执行 evaluator，保留 numerator、denominator、observed、minimum/maximum 与可选 ecosystem 的原始诊断。
+
+3. **效果**：
+   - report blocker union 已覆盖 evaluator 当前全部 A/B/C layer Gate；
+   - C critical evidence 与 C task success、B 总成功率与 test/patch 适用分母继续互相独立；
+   - 任一 layer Gate 失败仍不可被其他层或未来七维加权补偿。
+
+##### 验证结果
+
+- TypeScript 源码未改；report 全链闭合后统一复验 workspace build；
+- 八个 layer-Gate 垂直切片分别定向 `1/1` 通过；
+- 所有报告仍为 `not_eligible/unscored`，未启动 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：补 selected infrastructure aggregate Gate 与 expected-report owner 全绿后的 dimension-only contract writer/verifier 覆盖，再运行完整 qualification 测试确认 blocker union 无遗漏。
+- **为什么先做它**：两条路径的 Schema 结构已由同 family 约束覆盖，但尚缺公共磁盘 seam 的正交验证；先补齐可避免在进入 CLI 后才发现合法终态不能重建。
+- **当前还缺的关键闭环**：两条正交路径、CLI、evidence drift/输出篡改负例、仓库级接线、完整回归和七维 mapping/score evaluator。
+
+#### P2-C qualification report 实现结论：blocker union 正交复核（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - `selectedInfrastructureErrorCountMaximum` 通过公开 writer/verifier seam，证明 aggregate hard-Gate Schema 同时覆盖 missing report 与 selected infrastructure error；
+   - expected-report owner 全绿时的 `dimension_evidence_mapping` 单项 missing-contract tuple 通过 writer/verifier；
+   - 两条路径直接 GREEN，无需新增 Schema 分支或放宽现有字段。
+
+2. **效果**：
+   - aggregate Gate 的两个合法 id 均具备磁盘报告覆盖；
+   - legacy 双合同与当前 dimension-only 单合同两种失败关闭终态均可重建；
+   - blocker union 的共享结构具备正交证据，不依赖只覆盖首个枚举值的偶然通过。
+
+##### 验证结果
+
+- TypeScript 源码未改；report 全链闭合后统一复验 workspace build；
+- selected infrastructure 与 dimension-only 两条定向 Vitest `2/2` 通过；
+- 未修改 evaluator 判定、未启动 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：运行完整 aggregation/qualification 测试，确认所有 writer 产物在独立临时 aggregate 根内互不冲突；通过后开始 qualification report CLI 的参数/写入/verify Red→Green。
+- **为什么先做它**：blocker union 已逐项局部 Green，但 CLI 接线前必须先证明整组无 Schema 分支重叠、测试污染或重建回归。
+- **当前还缺的关键闭环**：整组回归、CLI、evidence drift/输出篡改负例、仓库级接线与七维 mapping/score evaluator。
+
+#### P2-C qualification report 实现结论：blocker union 整组回归（2026-09-01）
+
+##### 已完成内容
+
+1. **aggregation/qualification 全文件回归**：
+   - 同时执行 baseline aggregation、全部 qualification blocker、expected-report plan 与 aggregation CLI 测试；
+   - 每个 report writer/verifier 使用独立临时 aggregate 根，二次写入仍保持 `wx` 不覆盖；
+   - 逐项 Schema union 在整组运行中无重叠、无误拒绝、无跨测试产物污染。
+
+2. **效果**：
+   - qualification report blocker union 已从局部 Red/Green 升级为完整回归证据；
+   - partial、receipt、aggregate/run-event/layer hard Gate 与 contract-incomplete 均可在同一封闭 Schema 下稳定重建；
+   - 可以在不改变 evaluator 的前提下进入生产 CLI 接线。
+
+##### 验证结果
+
+- TypeScript 源码未改；report CLI/仓库接线后统一执行 workspace build；
+- `scripts/aggregate-coding-agent-benchmark.test.mjs` `35/35` 全部通过；
+- 运行中仅出现仓库 validator 对 `date-time` format 的既有忽略提示，不影响 Schema 结构校验；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：为 `--aggregate-root`、可选 `--scorecard-path` 与 `--verify` 冻结 CLI parser/runner 公共 seam，先写参数和真实写入/验证行为 Red，再实现最小命令入口。
+- **为什么先做它**：Schema/writer 已稳定，CLI 是把编程接口升级为可重复操作入口的最后缺失层；先固定参数行为可避免文档与 package script 接入错误合同。
+- **当前还缺的关键闭环**：CLI、evidence drift/输出篡改负例、仓库级 Schema/脚本/文档接线、完整回归和七维 mapping/score evaluator。
+
+#### P2-C qualification report CLI 实现结论：合法参数首切片（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/run-coding-agent-candidate-qualification.test.mjs` 新建**：
+   - 通过公开 parser seam 固定必填 `--aggregate-root`、可选 `--scorecard-path` 与 `--verify`；
+   - 断言两个文件系统参数规范化为绝对路径，verify mode 为显式布尔值；
+   - RED 为 parser 导出不存在，未绕过 CLI seam 测试内部函数。
+
+2. **`scripts/run-coding-agent-candidate-qualification.mjs` 扩展**：
+   - 新增 `parseCodingAgentCandidateQualificationCliArguments()`；
+   - 返回 writer/verifier 可直接消费的 aggregate root、可选 scorecard path 与 verify mode；
+   - 保持 CLI 尚未接通 main，避免合法 parser 测试提前覆盖未定义命令行为。
+
+3. **效果**：
+   - qualification report 命令参数形状已有稳定公共合同；
+   - 默认 scorecard 与显式 scorecard 两种调用可以共享同一 parser；
+   - 本切片不写文件、不启动模型或 Provider。
+
+##### 验证结果
+
+- TypeScript 源码未改；CLI 全链闭合后统一复验 workspace build；
+- CLI 合法参数定向 Vitest `1/1` 通过；
+- Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：增加参数缺失值不得吞掉下一个 flag 的精确 Red，并覆盖缺 root、重复 flag 与未知参数；随后实现公开 command runner 和真实 write/verify 路径。
+- **为什么先做它**：当前 parser 会把形如 `--scorecard-path --verify` 的后一个 flag 当成路径值；先关闭歧义才能安全接通磁盘写入。
+- **当前还缺的关键闭环**：参数负例、command runner/main、真实 CLI write/verify、evidence/output drift、仓库级接线与完整回归。
+
+#### P2-C qualification report CLI 实现结论：flag 吞值负例（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/run-coding-agent-candidate-qualification.test.mjs` 扩展**：
+   - 新增 `--scorecard-path --verify` 缺值负例；
+   - RED 证明 parser 会把后一个 flag 当作路径值并静默接受；
+   - 断言错误必须明确指向缺少 `--scorecard-path` 值。
+
+2. **`scripts/run-coding-agent-candidate-qualification.mjs` 收紧**：
+   - CLI 路径参数改用专用 `requireCliValue()`；
+   - 空值或以 `--` 开头的下一 flag 均在 writer/verifier 前失败；
+   - 普通编程接口的字符串输入合同不变。
+
+3. **效果**：
+   - CLI flag 不再被误解释为 aggregate/scorecard 路径；
+   - 参数歧义不会触发错误目录访问或报告写入；
+   - 合法 write/verify 参数行为保持兼容。
+
+##### 验证结果
+
+- TypeScript 源码未改；CLI 全链闭合后统一复验 workspace build；
+- CLI parser 定向 Vitest `2/2` 通过；
+- Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：新增公开 command runner，通过真实 partial aggregate 完成一次 write 与一次 verify；随后由 `main()` 调用同一 runner，并补缺 root、重复与未知参数覆盖。
+- **为什么先做它**：parser 已可信，下一最小闭环是证明命令模式确实选择 writer 或 verifier，而不是只解析参数但仍停留在占位错误。
+- **当前还缺的关键闭环**：command runner/main、真实 CLI write/verify、其余参数负例、evidence/output drift、仓库接线和完整回归。
+
+#### P2-C qualification report CLI 实现结论：真实 command runner（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/run-coding-agent-candidate-qualification.mjs` 扩展**：
+   - 新增 `runCodingAgentCandidateQualificationCommand()` 公共 seam；
+   - `verify=true` 精确路由至 verifier，其余情况路由至 `wx` writer；
+   - 可选 scorecard path 仅在显式提供时透传，默认继续使用 v3 权威 scorecard。
+
+2. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 接入**：
+   - 复用真实 1/144 partial aggregate，以 command runner 写出 `candidate-qualification.json`；
+   - 再以 verify mode 重新执行 evaluator 并重建同一报告；
+   - RED 为 command runner 导出不存在，GREEN 后仍保留原有二次写入 `EEXIST` 与字节不变断言。
+
+3. **效果**：
+   - CLI 的 write/verify 路由已由真实 aggregate 而非 mock 验证；
+   - 命令层不复制 evaluator 或报告构造逻辑；
+   - write 与 verify 共享同一 source binding、Schema 和 evidence digest 规则。
+
+##### 验证结果
+
+- TypeScript 源码未改；CLI/仓库接线完成后统一复验 workspace build；
+- command runner partial aggregate 定向 Vitest `1/1` 通过；
+- 报告保持 `not_eligible/unscored`，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：让脚本 `main()` 调用 parser + command runner，并通过真实子进程覆盖 write/verify 成功摘要、缺 root 与未知/重复参数失败退出。
+- **为什么先做它**：编程入口已闭合，但直接执行脚本仍是占位错误；只有子进程入口通过，package script 才能成为可交付命令。
+- **当前还缺的关键闭环**：main/子进程 CLI、其余参数负例、evidence/output drift、package/verifier/docs 接线和完整回归。
+
+#### P2-C qualification report CLI 实现结论：真实 main 与安全失败入口（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/run-coding-agent-candidate-qualification.mjs` 接通**：
+   - 用真实 `main()` 替换固定 `CLI contract is not implemented` 占位出口；
+   - `main()` 只组合 parser 与 command runner，并输出 `wrote/verified + schemaVersion + status` 安全摘要；
+   - 全部异常统一为 `[coding-agent-candidate-qualification] failed: ...`，退出码为 `1`。
+
+2. **`scripts/run-coding-agent-candidate-qualification.test.mjs` 扩展**：
+   - 以真实 `node --import tsx` 子进程执行脚本；
+   - 首次执行确认直接 `node` 无法装载 `.ts` 依赖，因此保持与相邻 candidate-global 命令一致的 tsx loader；
+   - 再现占位错误 RED，接通 main 后缺少 aggregate root 以安全错误和 exit `1` GREEN。
+
+3. **效果**：
+   - 直接执行脚本已进入真实 CLI 合同，不再固定失败；
+   - 缺参数不会访问 aggregate、写报告或泄漏证据正文；
+   - 命令装载方式已明确为 `node --import tsx`，可据此接入 package script。
+
+##### 验证结果
+
+- TypeScript workspace build 待 CLI/仓库接线完成后统一复验；
+- CLI parser/main 定向 Vitest `3/3` 通过；
+- 无参数真实子进程 exit=`1` 且错误包含 `--aggregate-root`，不再包含占位文案；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在独立临时 partial aggregate 上以真实子进程执行 write 与 `--verify`，并补缺 root、未知/重复 flag 的完整参数负例。
+- **为什么先做它**：main 的失败入口已闭合，但还需证明成功入口、输出摘要和 verify 路由在真实进程边界都可用，才能接入 package script。
+- **当前还缺的关键闭环**：真实子进程 write/verify、完整参数负例、evidence/output drift、package/verifier/docs 接线和完整回归。
+
+#### P2-C qualification report CLI 实现结论：生产子进程 write/verify（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 创建独立临时 1/144 v3 partial aggregate，以真实 `node --import tsx` 子进程执行 qualification report write；
+   - 断言 exit=`0`、写入 `candidate-qualification.json`，stdout 只包含 `wrote + schemaVersion + not_eligible` 安全摘要；
+   - 随后以同一 aggregate 执行 `--verify`，断言 exit=`0` 与 `verified + schemaVersion + not_eligible`，stderr 无失败摘要。
+
+2. **测试脚手架接入**：
+   - 新增仅负责启动实际脚本的 `runCandidateQualificationCli()` helper，不 mock parser、writer、verifier 或 evaluator；
+   - 首次测试因 helper 遗漏出现脚手架错误，补齐后直接验证既有 main 成功路径，未据此改动产品逻辑。
+
+3. **效果**：
+   - qualification report 已具备真实可重复命令入口；
+   - write 与 verify 在进程边界共享同一证据重建合同；
+   - CLI 摘要不输出本机路径、证据正文、敏感值或 Provider usage 内容。
+
+##### 验证结果
+
+- TypeScript workspace build 待仓库接线完成后统一复验；
+- 生产 CLI write/verify 定向测试通过；该过滤同时命中既有 aggregation production CLI 测试，合计 `2/2`；
+- qualification write 与 verify 子进程均 exit=`0`，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：补齐 parser 的缺 root、重复 aggregate/scorecard/verify 与未知 flag 负例，再分别篡改 report 和 retained evidence，确认 verifier 失败关闭。
+- **为什么先做它**：成功路径已成立，接下来必须证明操作者误用和证据漂移不能被 CLI 接受，之后才能把命令加入仓库级合同。
+- **当前还缺的关键闭环**：参数全集负例、report/evidence drift、package/verifier/README/project-map 接线、完整回归和七维 mapping/score evaluator。
+
+#### P2-C qualification report CLI 实现结论：参数全集失败关闭（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/run-coding-agent-candidate-qualification.test.mjs` 扩展**：
+   - 覆盖缺少 `--aggregate-root`；
+   - 覆盖重复 `--aggregate-root`、`--scorecard-path` 与 `--verify`；
+   - 覆盖未知 flag，并保留此前缺值吞 flag 负例。
+
+2. **效果**：
+   - CLI 的必填、单次参数和封闭参数集合均有直接回归证据；
+   - 所有参数错误在 aggregate 读取与报告写入前失败；
+   - 现有 parser 已满足全部负例，无需放宽或追加实现分支。
+
+##### 验证结果
+
+- TypeScript workspace build 待仓库接线完成后统一复验；
+- qualification CLI 定向 Vitest `4/4` 通过；
+- 未创建生产报告、未启动 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：分别在独立临时 aggregate 上篡改 `candidate-qualification.json` 与已纳入 digest 的 retained artifact，再通过 verifier/production CLI 确认拒绝。
+- **为什么先做它**：参数误用已关闭，剩余最高风险是报告或源证据在写入后漂移却仍被视为可复核；必须先证明重建绑定有效。
+- **当前还缺的关键闭环**：report/evidence drift、package/verifier/README/project-map 接线、完整回归和七维 mapping/score evaluator。
+
+#### P2-C qualification report 实现结论：Schema-valid 报告篡改拒绝（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 在独立 partial aggregate 写出合法 qualification report；
+   - 仅把 `source.evidence.sha256` 替换为另一条合法 64 位 SHA-256，保持整份报告继续满足公开 Schema；
+   - 通过公开 verifier 重新执行 evaluator，并断言报告无法从 retained evidence 重建。
+
+2. **效果**：
+   - verifier 不会把“Schema-valid”误当成“证据真实”；
+   - source digest、decision 或 wrapper 的静默改写都会因逐字节重建不一致而失败；
+   - 输出篡改不能通过重新格式化或填写合法字段形状绕过。
+
+##### 验证结果
+
+- TypeScript workspace build 待仓库接线完成后统一复验；
+- Schema-valid report tamper 定向 Vitest `1/1` 通过；
+- verifier 返回 `cannot be reconstructed from retained evidence`，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：修改已纳入 qualification evidence digest 的 retained run artifact，再通过 production CLI `--verify` 确认失败关闭。
+- **为什么先做它**：报告自身篡改已经拒绝，但还需证明报告不变、底层证据漂移时同样无法继续复核。
+- **当前还缺的关键闭环**：retained evidence drift、package/verifier/README/project-map 接线、完整回归和七维 mapping/score evaluator。
+
+#### P2-C qualification report 实现结论：retained artifact 漂移拒绝（2026-09-01）
+
+##### 已完成内容
+
+1. **`scripts/aggregate-coding-agent-benchmark.test.mjs` 扩展**：
+   - 在独立 partial aggregate 写出合法 qualification report 后保持报告字节不变；
+   - 仅向已纳入 evidence digest 的 retained run event 追加漂移内容；
+   - 通过 production CLI `--verify` 验证真实进程边界的失败关闭。
+
+2. **效果**：
+   - 底层 retained artifact 在报告签发后发生变化时不能继续被视为原资格证据；
+   - aggregate artifact binding 与 qualification evidence digest/逐字节重建共同阻止漂移；
+   - verify 失败时 stdout 不输出 `verified`，stderr 使用统一安全失败摘要。
+
+##### 验证结果
+
+- TypeScript workspace build 待仓库接线完成后统一复验；
+- retained run-artifact drift 定向 Vitest `1/1` 通过；
+- production verify CLI exit=`1`，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：把 qualification report Schema、脚本与 package command 纳入仓库 verifier，并同步 README/project map；先用仓库合同测试制造缺接线 RED，再最小补齐。
+- **为什么先做它**：功能与负例已闭合，但当前仓库合同尚不能发现 Schema、命令或文档漂移；接线是 qualification report 工具链可维护交付的最后门槛。
+- **当前还缺的关键闭环**：package/verifier/README/project-map 接线、v3 Schema 负例、完整回归/build/diff check 和七维 mapping/score evaluator。
+
+#### P2-C qualification report 实现结论：仓库级合同与完整回归闭环（2026-09-01）
+
+##### 已完成内容
+
+1. **`benchmarks/coding-agent/v3/candidate-qualification-report.schema.json` 与 `scripts/coding-agent-benchmark-v3.test.mjs` 扩展**：
+   - 将七维 `scores.dimensions` 收紧为 scorecard 冻结顺序的七个固定位置，拒绝重复、缺失或换序维度；
+   - 加入真实 partial qualification wrapper 样例、未知字段负例与重复维度负例；
+   - 公开 Schema 继续只接受当前 `not_eligible/unscored` 合同，不提前声称数值评分已经实现。
+
+2. **`scripts/verify-coding-agent-benchmark-contract.mjs` 与对应测试扩展**：
+   - 仓库 verifier 读取并编译 qualification report Schema；
+   - 分别绑定 report、内部 decision 与 retained evidence digest 的三个生产版本常量；
+   - 对缺失 Schema、Schema 不可编译、三个版本漂移，以及 package/README/project-map 接线缺失执行失败关闭。
+
+3. **`package.json`、`benchmarks/coding-agent/README.md` 与 `docs/project-map.md` 接入**：
+   - 新增 `benchmark:coding-agent:v3:candidate-qualification`，固定使用 `node --import tsx`；
+   - 文档化 `candidate-qualification.json` 的 write/`--verify`、不可覆盖、证据 digest 与逐字节重建边界；
+   - 明确命令零 Gateway、零模型、零 Provider，不运行 candidate、不修改冻结 Formal，资格工具不能被解释为已经达到 9.5。
+
+4. **效果**：
+   - qualification report 的 Schema、writer/evaluator 版本、CLI 命令与维护文档形成同一仓库级可验证合同；
+   - 七维占位集合不能因重复 ID 或顺序漂移掩盖缺项；
+   - report/retained evidence 漂移、接线删除和 Schema 漂移均能在仓库 Gate 中稳定失败。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental`（`tsc -b`）通过；
+- `97` 个相关测试全部通过：aggregation/qualification `38/38`、qualification CLI `4/4`、candidate evidence/runner `33/33`、v3 Schema `8/8`、repository contract `14/14`；其中本环节新增/扩展覆盖固定七维、Schema 编译/版本漂移与仓库接线负例；
+- `corepack pnpm verify:coding-benchmark` 通过，`git diff --check` 通过；既有 validator 的 `date-time` format 忽略提示不影响断言；
+- 未重跑任何冻结 Formal，未启动 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在现有公开 `qualifyCodingAgentBenchmarkCandidate()` seam 上实现七维 evidence mapping 与 score evaluator 的第一个最小 Red→Green，先冻结单维输入 owner、分母和舍入规则。
+- **为什么先做它**：qualification 的资格 Gate 与可复核报告已经闭合，当前唯一显式 missing contract 是 `dimension_evidence_mapping`；先建立可独立验证的单维纵向切片，才能安全移除 `unscored` 占位而不把 eligibility 与评分混在一起。
+- **当前还缺的关键闭环**：七维 mapping/score 合同及全部正负例、数值版 qualification report Schema/writer/verifier、候选窗口编排与真实连续候选观察。
+
+#### P2-C 七维评分实现结论：`context_retrieval` partial mapping 合同（2026-09-01）
+
+##### 已完成内容
+
+1. **`candidate-dimension-mapping.json` 新建**：
+   - 固定 `target_threshold_certification` 计分语义，只有 `status=complete` 的维度才允许授予 scorecard minimum；失败分为 `null`，不定义 benchmark 百分比到 `0-10` 的线性换算；
+   - 首个 `context_retrieval` 切片绑定 deterministic、四真实仓和 parallel read 三组 aggregate 任务，分别使用 `1 / 0.92 / 0.9` 的原始完成率门槛；
+   - 显式保留 CodeIntel truth/freshness、Context Inspector、双平台 resource soak、semantic adoption/context-waste、无二值回退和 Go canary eligibility 六项候选级缺口，因此该维仍为 `partial`，其余六维保持 `unmapped`。
+
+2. **`candidate-dimension-mapping.schema.json` 与 `coding-agent-candidate-score.mjs` 新建**：
+   - Schema 固定 mapping 版本、七维 scorecard 顺序、partial/unmapped 状态、计分/展示舍入语义及证据字段形状；
+   - 公共 `loadCodingAgentCandidateDimensionMapping({ manifest, scorecard })` seam 只读加载并编译 Schema，绑定 manifest/scorecard 版本、维度、任务、metric owner/source/aggregation、`selected_runs` 分母和 Gate 阈值；
+   - 重复或未知 task、未知 metric、metric/阈值漂移均失败关闭；本切片不读取 aggregate、不计算或授予数值分。
+
+3. **`coding-agent-candidate-score.test.mjs` 扩展**：
+   - 先复现缺失生产模块的精确 Red，再通过公共 loader 验证首个单维 Green；
+   - 直接断言 aggregate 证据存在不等于维度完整，避免三组任务通过后误授 `9.5`。
+
+4. **效果**：
+   - 七维 evaluator 首次获得版本化、可机读且失败关闭的 mapping owner；
+   - “任务门槛通过”与“维度全部证据完整”被明确分离；
+   - 当前 candidate 继续保持 `not_eligible/unscored`，不会因 partial mapping 改写历史评分或冻结证据。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` 通过；
+- `1` 个定向测试全部通过（含 `1` 个新增 `context_retrieval` partial mapping 公共 seam 测试）；
+- `git diff --check` 通过，仅有既存 LF→CRLF 工作区提示；未重跑冻结 Formal，未启动 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在同一 loader seam 增加 mapping Schema/version、重复/未知 task、metric owner/source/aggregation、阈值与 scorecard 维度漂移负例，并按每个 Red→Green 切片收紧失败信息。
+- **为什么先做它**：正例已证明合同可读，但 score evaluator 后续会把该文件当作授分依据；必须先证明 mapping 被篡改或与 manifest/scorecard 脱节时稳定失败关闭。
+- **当前还缺的关键闭环**：mapping 漂移负例、其余六维 mapping、候选级 evidence owner/外键、真正 score evaluator、数值 qualification report 及仓库级接线。
+
+#### P2-C 七维评分实现结论：partial mapping 漂移失败关闭（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-score.test.mjs` 扩展**：
+   - 通过公共 loader 和临时 mapping 副本覆盖版本漂移、必填 partial evidence 缺失、task set 缺项、重复/未知 task、coherent metric 替换、owner/source/aggregation、阈值及 scorecard 维度顺序漂移；
+   - 版本漂移 Red 证明 loader 曾忽略显式测试输入，task-set Red 证明“task 存在”不足以固定分母，coherent metric Red 证明“metric 与 manifest 自洽”仍可能被悄悄替换为无关指标；
+   - 其余负例确认首版 Schema 和 loader 已有失败分支，不为通过测试增加冗余实现。
+
+2. **`coding-agent-candidate-score.mjs` 收紧**：
+   - 公共 loader 支持显式 `mappingPath`，生产默认仍只读权威 v3 mapping；
+   - 在通用 Schema 校验前给版本漂移稳定诊断，并逐组绑定 deterministic、real-repository、parallel 的完整有序 task set；
+   - 在 manifest metric source/aggregation 校验之外，再固定三组 context evidence 只能使用 `task_completion_rate`，阻止恢复率等“合法但无关”指标替换。
+
+3. **效果**：
+   - mapping 的版本、分母、指标语义和 scorecard 外键不能静默漂移；
+   - 负例均走与生产相同的公开 loader，不依赖内部函数或 mock；
+   - 权威 mapping、冻结 aggregate 和 candidate 评分状态均未被测试篡改。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` 通过；
+- `11` 个 mapping 测试全部通过（含版本、task set、重复/未知 task、metric、阈值和维度漂移负例）；
+- `git diff --check` 通过，仅有既存 LF→CRLF 工作区提示；未重跑冻结 Formal，未启动 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：只读整理剩余六维的观察点、24 项任务可重复使用边界和已有候选级 artifact owner，先形成 `editing_testing` 的 aggregate-side partial mapping Red→Green。
+- **为什么先做它**：`editing_testing` 权重最高且是当前真实瓶颈；它同时需要 B 层 task/test/patch/regression 与验证 DAG/Browser evidence，先处理它能尽早暴露 task 跨维复用和 candidate artifact 外键的架构问题。
+- **当前还缺的关键闭环**：其余六维 mapping、跨维证据复用规则、候选级 evidence owner/外键、真正 score evaluator、数值 qualification report 及仓库级接线。
+
+#### P2-C 七维评分实现结论：`editing_testing` aggregate-side partial mapping（2026-09-01）
+
+##### 已完成内容
+
+1. **`candidate-dimension-mapping.json` 扩展**：
+   - 新增 `evidenceReuse` 合同：同一 task 可被不同维度用于各自独立认证，但同一维内不得重复进入分母；固定权重不因证据复用而累计；
+   - `editing_testing` 绑定 deterministic editing/diagnosis 三项任务和八项真实仓任务；两组均同时检查 task completion、适用测试通过、适用 patch acceptance 与 regression sum；
+   - deterministic 门槛固定为 task/test/patch=`1`、regression=`0`；真实仓门槛绑定 scorecard 的 `0.92 / 0.95 / 0.95 / 0`，不做成功率到 9.6 的线性换算。
+
+2. **`candidate-dimension-mapping.schema.json` 扩展**：
+   - 第二维从 `unmapped` 收紧为固定 `editing_testing=partial`；
+   - criteria 支持同一 evidence group 的四项独立指标，rate Gate 使用 `gte`，regression sum 使用 `lte`；
+   - `test_pass_rate` 与 `patch_acceptance_rate` 显式使用 `applicable_selected_runs`，避免把不适用 run 错计入分母。
+
+3. **`coding-agent-candidate-score.mjs` 与测试扩展**：
+   - loader 从全局 task 去重修正为维内去重、跨维独立复用，并按 metric aggregation 固定 `selected_runs` 或 `applicable_selected_runs`；
+   - 对 context/editing 每组 task、criteria 数量与顺序、metric、分母、operator 和 threshold 做精确绑定；
+   - 新增公共 seam 正例，证明 aggregate 证据就绪后仍因 Impact Truth Set、结构化 test report、失败 replay 和 Browser Relay 行为证据缺失而保持 `partial`。
+
+4. **效果**：
+   - 最高权重的编辑/测试维度已有可复算 aggregate-side owner，且与现有 B 层 hard Gate 使用同一门槛；
+   - 真实仓任务可同时证明检索与编辑，但不会增加维度权重、重复授分或绕过各维候选级证据；
+   - `context_retrieval` 与 `editing_testing` 均继续为 `partial`，候选仍为 `not_eligible/unscored`。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` 通过；
+- `12` 个 mapping 测试全部通过（含 `1` 个新增 `editing_testing` partial mapping 测试）；
+- `git diff --check` 通过，仅有既存 LF→CRLF 工作区提示；未重跑冻结 Formal，未启动 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：建立 `cli_tui` 的 aggregate-side partial mapping，先绑定 interactive command 任务与跨入口 TaskProjection/PTY 可达性候选级缺口，再补该维 task/metric 漂移负例。
+- **为什么先做它**：`cli_tui` 的 aggregate 代表任务较窄，适合先验证“单任务外部行为 + 多入口候选级合同”的组合形状，为后续安全、长任务和生态维度复用同一种 evidence 结构。
+- **当前还缺的关键闭环**：其余五维 mapping、候选级 evidence owner/外键、全部维度完成态、真正 score evaluator、数值 qualification report 与仓库级接线。
+
+#### P2-C 七维评分实现结论：`cli_tui` aggregate-side partial mapping（2026-09-01）
+
+##### 已完成内容
+
+1. **`candidate-dimension-mapping.json` 扩展**：
+   - 将 `command.interactive-control` 固定为 `interactive_cli` 组；
+   - 要求 task completion=`1`、适用 transcript test pass=`1`、manual intervention sum=`0`；
+   - 显式保留 TaskProjection 跨入口 conformance、终态/动作一致性、效率时间线和 TUI 双平台可达性四类候选级缺口。
+
+2. **`candidate-dimension-mapping.schema.json` 与 loader 扩展**：
+   - 第三维从 `unmapped` 收紧为固定 `cli_tui=partial`；
+   - Schema 固定单组 interactive CLI 证据形状，loader 精确绑定 task、三项 metric、适用分母、operator 与 threshold；
+   - 既有维内 task 去重、manifest metric binding 与 scorecard 维度顺序继续适用。
+
+3. **`coding-agent-candidate-score.test.mjs` 扩展**：
+   - 新增公共 seam Red→Green，直接断言单个 PTY 任务不能替代完整 CLI/TUI 产品化认证；
+   - 保持 context/editing 正例及全部 mapping 漂移负例通过。
+
+4. **效果**：
+   - CLI/TUI 的可重复 aggregate 证据已有 owner；
+   - interactive command 成功只关闭 PTY/task/test/人工介入子集，不外推四入口状态一致性或可达性；
+   - 当前三维为 `partial`，其余四维 `unmapped`，candidate 继续 `not_eligible/unscored`。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` 通过；
+- `13` 个 mapping 测试全部通过（含 `1` 个新增 `cli_tui` partial mapping 测试）；
+- `git diff --check` 通过，仅有既存 LF→CRLF 工作区提示；未重跑冻结 Formal，未启动 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：建立 `safety_recovery` aggregate-side partial mapping，绑定 safety boundary、disconnect recovery 和 C 层 critical Gate，并保留 candidate-global sensitive/resource、fault matrix 与审计对账外键缺口。
+- **为什么先做它**：安全/恢复同时消费 run-level rate、system evidence 和 candidate-global hard Gate；先明确三类 owner 的边界，能为后续真正 evaluator 的多来源证据模型定形。
+- **当前还缺的关键闭环**：其余四维 mapping、多来源候选级 evidence owner/外键、全部维度完成态、真正 score evaluator、数值 qualification report 与仓库级接线。
+
+#### P2-C 七维评分实现结论：`safety_recovery` aggregate-side partial mapping（2026-09-01）
+
+##### 已完成内容
+
+1. **`candidate-dimension-mapping.json` 扩展**：
+   - 新增 `safety_boundary`，绑定 `safety.boundary-enforcement` 的 task completion、适用测试与 dangerous-operation block rate，三项门槛均为 `1`；
+   - 新增 `disconnect_recovery`，绑定 `gateway.disconnect-recovery` 的 task completion、适用测试、适用 patch 与 recovery success rate，四项门槛均为 `1`；
+   - C 层 critical system evidence、candidate sensitive scan、双平台 resource sweep 及 fault-matrix/audit reconciliation 继续显式列为缺失合同。
+
+2. **`candidate-dimension-mapping.schema.json` 与 loader 扩展**：
+   - 第四维从 `unmapped` 收紧为固定 `safety_recovery=partial`；
+   - Schema 固定 safety/recovery 两组及多来源缺口，loader 精确绑定两项 task、七项 metric/分母/operator/threshold；
+   - 没有把 qualification 已消费的 `systemEvidence` 或 candidate-global hard Gate伪装成当前 mapping 已接入证据。
+
+3. **`coding-agent-candidate-score.test.mjs` 扩展**：
+   - 新增公共 seam Red→Green，证明 run aggregate 只能关闭 safety boundary 与 disconnect recovery 子集；
+   - 保持前三维正例和全部 mapping drift 负例通过。
+
+4. **效果**：
+   - 安全/恢复维度已区分 run-level aggregate 与候选级多来源 hard evidence；
+   - aggregate 指标不能绕过 C critical、敏感扫描、资源清理和审计对账；
+   - 当前四维为 `partial`、其余三维 `unmapped`，candidate 仍为 `not_eligible/unscored`。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` 通过；
+- `14` 个 mapping 测试全部通过（含 `1` 个新增 `safety_recovery` partial mapping 测试）；
+- `git diff --check` 通过，仅有既存 LF→CRLF 工作区提示；未重跑冻结 Formal，未启动 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：建立 `session_long_running` aggregate-side partial mapping，绑定 disconnect/cancel/process-restart 与 C 层 parallel/restart task，再保留 Supervisor 60 分钟 soak、预算、reattach 和 fan-in 候选级缺口。
+- **为什么先做它**：会话/长任务与安全/恢复共享 recovery task，但需要独立回答取消、重启、并行隔离和长时预算；按已冻结的跨维复用规则可验证这类共享不会重复计权。
+- **当前还缺的关键闭环**：其余三维 mapping、多来源候选级 evidence owner/外键、全部维度完成态、真正 score evaluator、数值 qualification report 与仓库级接线。
+
+#### P2-C 七维评分实现结论：`session_long_running` aggregate-side partial mapping（2026-09-01）
+
+##### 已完成内容
+
+1. **`candidate-dimension-mapping.json` 扩展**：
+   - `session_control` 绑定 disconnect recovery、client cancel 与 process restart，要求 task/test/recovery=`1`、manual intervention sum=`0`；
+   - `parallel_long_running` 绑定 parallel read、parallel write fan-in 与 restart delivery reconciliation，要求 task completion `>=0.9`、适用 dangerous-operation block/recovery=`1`、manual intervention sum=`0`；
+   - 双平台 60 分钟 Supervisor soak、预算/cancel/restart/reattach、managed-worktree fan-in review/remediation 与资源收敛继续列为候选级缺口。
+
+2. **`candidate-dimension-mapping.schema.json` 与 loader 扩展**：
+   - 第五维从 `unmapped` 收紧为固定 `session_long_running=partial`；
+   - 精确绑定两组 task 与八项 metric/分母/operator/threshold，其中 C 层 task completion 复用 scorecard `otherSystemSuccessRateMinimum`；
+   - disconnect/parallel task 可按跨维复用合同分别支撑安全/恢复和长任务，但不会重复增加任何维度权重。
+
+3. **`coding-agent-candidate-score.test.mjs` 扩展**：
+   - 新增公共 seam Red→Green，直接断言短矩阵任务不能被当作 60 分钟 soak；
+   - 保持前四维正例与全部 mapping drift 负例通过。
+
+4. **效果**：
+   - 会话控制、取消/重启和并行 workflow 的 aggregate-side 证据可重复计算；
+   - 短任务成功不能替代长期预算、reattach、review/remediation 或资源收敛；
+   - 当前五维为 `partial`、其余两维 `unmapped`，candidate 保持 `not_eligible/unscored`。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` 通过；
+- `15` 个 mapping 测试全部通过（含 `1` 个新增 `session_long_running` partial mapping 测试）；
+- `git diff --check` 通过，仅有既存 LF→CRLF 工作区提示；未重跑冻结 Formal，未启动 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：建立 `headless_ecosystem` aggregate-side partial mapping，绑定 browser system task 与完整矩阵可观测子集，并保留双外部 consumer、真实 CI、N-1/N、error taxonomy/cancellation conformance 等候选级证据。
+- **为什么先做它**：Headless/生态的 9.5 主要由仓外 consumer 与协议 conformance 决定，v3 aggregate 只能提供 browser/system 子证据；先明确这一弱映射可阻止“全矩阵通过即生态达标”的错误外推。
+- **当前还缺的关键闭环**：Headless/生态与 Git/交付两维 mapping、多来源候选级 evidence owner/外键、全部维度完成态、真正 score evaluator、数值 qualification report 与仓库级接线。
+
+#### P2-C 七维评分实现结论：`headless_ecosystem` aggregate-side partial mapping（2026-09-01）
+
+##### 已完成内容
+
+1. **`candidate-dimension-mapping.json` 扩展**：
+   - 新增 `headless_browser_workflow`，只绑定 `system.browser-behavior`；
+   - 要求 task completion `>=0.9`、适用 dangerous-operation block=`1`、manual intervention sum=`0`；
+   - 两个仓外 consumer 生命周期、真实 CI consumer binding、协议版本兼容和 error taxonomy/cancellation conformance 继续显式列为缺失合同。
+
+2. **`candidate-dimension-mapping.schema.json` 与 loader 扩展**：
+   - 第六维从 `unmapped` 收紧为固定 `headless_ecosystem=partial`；
+   - Schema 固定单组 browser workflow 子证据，loader 绑定 task、三项 metric/分母/operator/threshold；
+   - C 层 task 与 critical 门槛继续从 scorecard 读取，未把全矩阵或 browser 单任务等同于生态达标。
+
+3. **`coding-agent-candidate-score.test.mjs` 扩展**：
+   - 新增公共 seam Red→Green，直接断言 headless browser workflow 不能替代外部生态 conformance；
+   - 保持前五维正例和全部 mapping drift 负例通过。
+
+4. **效果**：
+   - Headless/browser 的矩阵子证据已可重复计算；
+   - 仓外 consumer、真实 CI 与协议 conformance 仍需候选级 artifact，不能由单个 system task 外推；
+   - 当前六维为 `partial`、Git/交付仍 `unmapped`，candidate 保持 `not_eligible/unscored`。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` 通过；
+- `16` 个 mapping 测试全部通过（含 `1` 个新增 `headless_ecosystem` partial mapping 测试）；
+- `git diff --check` 通过，仅有既存 LF→CRLF 工作区提示；未重跑冻结 Formal，未启动 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：完成 `git_delivery` aggregate-side partial mapping，绑定 dirty-worktree、delivery-guard、parallel fan-in 和 restart-delivery 子证据，同时保留多仓 worktree soak、review/remediation、远端分权与 delivery recovery 候选级缺口。
+- **为什么先做它**：这是最后一个未映射维度；先把七维全部提升为明确的 `partial`，才能统一设计多来源 evidence reference，而不是在存在 `unmapped` 维度时提前实现数值 evaluator。
+- **当前还缺的关键闭环**：Git/交付 mapping、七维多来源候选级 evidence owner/外键、全部维度完成态、真正 score evaluator、数值 qualification report 与仓库级接线。
+
+#### P2-C 七维评分实现结论：`git_delivery` aggregate-side partial mapping（2026-09-01）
+
+##### 已完成内容
+
+1. **`candidate-dimension-mapping.json` 扩展**：
+   - `local_git_boundaries` 绑定 `git.dirty-worktree` 与 `git.delivery-guard`，要求 task completion 与适用测试通过率均为 `1`；
+   - `delivery_reconciliation` 绑定 parallel write fan-in 与 restart-delivery reconciliation，要求 task completion `>=0.9`、适用 dangerous-operation block/recovery=`1`、manual intervention sum=`0`；
+   - 多仓 worktree soak、review/remediation loop、remote-delivery authority separation 和 delivery-recovery audit matrix 继续显式列为候选级缺口。
+
+2. **`candidate-dimension-mapping.schema.json` 与 loader 扩展**：
+   - 第七维从 `unmapped` 收紧为固定 `git_delivery=partial`；
+   - 精确绑定两组 task 与六项 metric/分母/operator/threshold；
+   - 删除已无消费者的 `unmappedDimension` Schema 分支，七维固定顺序内每维现均有明确 partial owner。
+
+3. **`coding-agent-candidate-score.test.mjs` 扩展**：
+   - 新增公共 seam Red→Green，直接断言本地 Git 和 reconciliation 不能替代远端 delivery readiness；
+   - 总体断言七维全部为 `partial`，并保持全部既有正例与 mapping drift 负例通过。
+
+4. **效果**：
+   - 七维 aggregate-side task/metric mapping 已完整覆盖，不再存在 `unmapped` 维度；
+   - 每维仍保留明确的候选级缺失合同，当前 mapping 总体继续为 `partial`；
+   - 未执行任何远端 Git 写入，未声称远端分权、PR 或 recovery 已由本地任务认证，candidate 仍为 `not_eligible/unscored`。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` 通过；
+- `17` 个 mapping 测试全部通过（含 `1` 个新增 `git_delivery` partial mapping 测试）；
+- `git diff --check` 通过，仅有既存 LF→CRLF 工作区提示；未重跑冻结 Formal，未启动 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：设计并实现版本化 candidate dimension evidence reference 合同，先把现有 `systemEvidence` 与 candidate-global receipt 作为只读、identity-bound 外键接入一条维度，再逐类接入 CodeIntel、Verification、TaskProjection、Supervisor、consumer 与 delivery evidence。
+- **为什么先做它**：七维 aggregate-side mapping 已齐全，但所有维度仍因候选级证据缺失保持 `partial`；在实现 evaluator 前必须先规定 artifact owner、路径、Schema 版本、identity/hash binding 和 completion semantics，防止读取历史文档或测试结果人工补齐。
+- **当前还缺的关键闭环**：多来源 evidence reference Schema/loader/负例、七维完成态、真正 score evaluator、数值 qualification report、仓库级接线及两个连续候选观察。
+
+#### P2-C 七维评分实现结论：`safety_recovery` 多来源 evidence reference 首切片（2026-09-01）
+
+##### 已完成内容
+
+1. **`candidate-dimension-evidence-reference.schema.json` 新建**：
+   - 冻结 `coding-agent-benchmark-candidate-dimension-evidence-reference/v1`，将引用清单绑定到 manifest/report/index SHA-256、clean source/harness identity；
+   - `systemEvidence` owner 固定逐 run 的 `runId/taskId/platform/path/schemaVersion/sha256`，candidate-global owner 固定候选级 path/schemaVersion/sha256；
+   - failure semantics 明确为：缺引用保持 incomplete，缺 artifact、摘要或 Schema/identity 漂移拒绝，完成条件未满足则 failed，不把 reference 变成第二事实库。
+
+2. **`coding-agent-candidate-score.mjs` 扩展**：
+   - 新增公共 `loadCodingAgentCandidateDimensionEvidence({ aggregateRoot, verifiedAggregate })` seam，调用方只消费规范化维度状态；
+   - 内部复用现有 system-evidence evaluator 与 candidate-global receipt Schema，验证安全相对路径、常规文件、SHA-256、run binding 和 aggregate/source/harness identity；
+   - `safety_recovery` 首次只读解析 `system_evidence_critical_rate`、`candidate_sensitive_scan`、`candidate_resource_sweeps` 三项完成证据，仍保留 `fault_matrix_audit_reconciliation` 缺口。
+
+3. **`coding-agent-candidate-dimension-evidence.test.mjs` 新建**：
+   - 通过公开 loader 构造完整双平台 C run 与 candidate-global receipt 引用；
+   - RED 精确证明 loader seam 尚不存在，GREEN 后三项合同为 `complete`，维度与总体仍为 `partial`；
+   - 断言规范化结果不含 `score`，本切片不接 qualification、不产生数值授分。
+
+4. **效果**：
+   - 七维评分开始消费原始、可哈希、可绑定的候选级 artifact，而非历史文档或人工结论；
+   - 两种已有 owner 的格式差异被隐藏在一个小 interface 后，后续调用方无需复制 artifact 解析逻辑；
+   - candidate 继续为 `not_eligible/unscored`，冻结 Formal 与历史 aggregate 未被读取后改写。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` 通过；
+- 定向 RED 唯一失败为 `loadCodingAgentCandidateDimensionEvidence is not a function`；GREEN 后 mapping/evidence 联合 Vitest `18/18` 通过（含 `1` 个新增多来源正向切片）；
+- `git diff --check` 通过，仅有既存 LF→CRLF 工作区提示；未重跑冻结 Formal，未启动 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在同一公共 loader seam 补 evidence reference 缺失、路径越界、artifact SHA-256 漂移、aggregate/source/harness identity 错配和未满足 completion 的负例，并收紧稳定失败语义。
+- **为什么先做它**：正向切片已证明两个 Adapter 可组合，但 reference 将成为后续授分依据；必须先证明篡改、陈旧或不完整证据不能静默升级维度状态。
+- **当前还缺的关键闭环**：reference/owner/binding/completion 负例、fault-matrix 与其余六维候选级 Adapter、七维完成态、真正 score evaluator、数值 qualification report 和仓库级接线。
+
+#### P2-C 七维评分实现结论：evidence reference 缺失保持 incomplete（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` 扩展**：
+   - 删除候选根中的 `candidate-dimension-evidence-reference.json`，通过同一公共 loader 建立精确 RED；
+   - 断言 reference 整体不存在时，`safety_recovery` 的四项候选级合同全部保留为 missing，七维均保持 `partial`；
+   - 与“reference 已声明但 artifact 缺失必须拒绝”语义明确分离。
+
+2. **`coding-agent-candidate-score.mjs` 扩展**：
+   - reference 文件未建立时返回规范化 `coding-agent-benchmark-candidate-dimension-evidence-resolution/v1` incomplete 投影；
+   - aggregate 的 manifest/report/index/source/harness 自身绑定仍在返回 incomplete 前验证，不允许借缺清单绕过 aggregate drift；
+   - 抽取统一 resolution 投影，正向 reference 与缺失 reference 共用维度状态计算。
+
+3. **效果**：
+   - 尚未生成候选级引用清单的 candidate 可被稳定解释为证据不完整，而不是工具异常；
+   - 缺失证据不会被补零、猜测或升级为 completed，更不会产生数值分；
+   - 后续 qualification 可区分“尚未建立 reference”和“已声明证据遭破坏”。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` 通过；
+- RED 唯一失败为 `Unable to read ... evidence reference`；GREEN 后 mapping/evidence 联合 Vitest `19/19` 通过（含 `1` 个新增缺失 reference 负例）；
+- `git diff --check` 通过，仅有既存 LF→CRLF 工作区提示；未重跑冻结 Formal，未启动 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：篡改已声明 system-evidence reference 的相对路径为越界路径，先证明 Schema/loader 在读取 aggregate root 外部内容前拒绝；随后补 digest 和 identity 漂移。
+- **为什么先做它**：reference 缺失是合法 incomplete，但 reference 一旦存在就成为不可信输入；路径 containment 是读取任何声明 artifact 前的第一安全 Gate。
+- **当前还缺的关键闭环**：路径/digest/aggregate identity/completion 失败关闭、fault-matrix 与其余六维候选级 Adapter、七维完成态、真正 score evaluator、数值 qualification report 和仓库级接线。
+
+#### P2-C 七维评分实现结论：evidence reference 路径 containment（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` 扩展**：
+   - 将已声明的首个 system-evidence path 篡改为 `../outside.json`；
+   - 通过公共 loader 断言越界引用因 reference Schema 不匹配而拒绝，不读取 aggregate root 外文件；
+   - 保持缺失 reference 的合法 incomplete 与已存在 reference 的非法路径两种语义正交。
+
+2. **现有 Schema/loader Gate 复核**：
+   - `safeRelativePath` 已拒绝绝对路径、盘符路径、反斜杠与任意 `..` 段；
+   - loader 在 artifact Adapter 前编译并执行封闭 Schema，因此本负例无需新增旁路检查或重复实现。
+
+3. **效果**：
+   - candidate reference 不能借路径穿越消费候选根之外的历史或伪造证据；
+   - 路径失败不会降级为 missing/incomplete，也不会进入维度完成状态计算；
+   - 本切片没有读取或改写任何真实冻结 artifact。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` 通过；
+- mapping/evidence 联合 Vitest `20/20` 通过（含 `1` 个新增路径越界负例）；
+- `git diff --check` 通过，仅有既存 LF→CRLF 工作区提示；未重跑冻结 Formal，未启动 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：分别篡改 system-evidence artifact 内容、candidate-global receipt 内容和 reference aggregate source/harness identity，锁定 SHA-256 与身份漂移均在授予 completed contract 前拒绝。
+- **为什么先做它**：路径只证明读取目标位于候选根内；仍需证明同路径内容替换、陈旧 reference 或跨候选身份拼接无法被 loader 接受。
+- **当前还缺的关键闭环**：artifact digest 与 aggregate/source/harness identity 失败关闭、completion failed 投影、fault-matrix 与其余六维候选级 Adapter、七维完成态、真正 score evaluator、数值 qualification report 和仓库级接线。
+
+#### P2-C 七维评分实现结论：多来源 artifact SHA-256 漂移拒绝（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` 扩展**：
+   - 在不更新 reference 的情况下分别向 retained system-evidence 与 candidate-global receipt 追加换行；
+   - 通过同一公共 loader 断言两个 owner 均因声明 SHA-256 与实际字节不一致而拒绝；
+   - 保持 artifact 的 JSON 语义仍可解析，证明验证依据是原始字节摘要，而非解析后对象等价。
+
+2. **现有双 Adapter 摘要 Gate 复核**：
+   - system-evidence Adapter 在 Schema 与 run-level completion evaluator 前校验每个声明 artifact 的 SHA-256；
+   - candidate-global Adapter 在 receipt Schema、aggregate binding 与 sensitive/resource completion 前校验候选级 SHA-256；
+   - 两类 drift 使用 owner-specific 稳定诊断，不会降级为 incomplete 或 failed completion。
+
+3. **效果**：
+   - 同路径内容被替换、格式化或追加后不能继续沿用陈旧 reference；
+   - retained run evidence 与 candidate-global receipt 均不可通过 JSON 等价绕过 byte-for-byte 绑定；
+   - 被篡改 artifact 不会产生任何 completed contract 或数值分。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` 通过；
+- mapping/evidence 联合 Vitest `22/22` 通过（含 `2` 个新增 system/candidate-global digest 漂移负例）；
+- `git diff --check` 通过，仅有既存 LF→CRLF 工作区提示；未重跑冻结 Formal，未启动 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：分别篡改 reference 的 aggregate source/harness identity，并在重算 receipt SHA 后篡改 receipt 内部 aggregate binding，确认外层与内层 identity Gate 都失败关闭。
+- **为什么先做它**：SHA-256 只能证明“读取的字节等于 reference 声明”；还必须证明 reference 和 artifact 都属于当前 verified aggregate，防止跨候选复制完整且摘要自洽的证据。
+- **当前还缺的关键闭环**：reference/receipt identity 失败关闭、completion failed 投影、fault-matrix 与其余六维候选级 Adapter、七维完成态、真正 score evaluator、数值 qualification report 和仓库级接线。
+
+#### P2-C 七维评分实现结论：多层 candidate identity 绑定拒绝（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` 扩展**：
+   - 分别把 reference 外层 `aggregate.source` 与 `aggregate.harness` 替换为另一 clean identity；
+   - 篡改 candidate-global receipt 内层 source identity，并同步重算 reference SHA-256，证明摘要自洽仍不能跨候选复用；
+   - 篡改 retained system-evidence 内部 `runId` 并同步重算 SHA-256，锁定逐 run 身份错配必须 reject。
+
+2. **`coding-agent-candidate-score.mjs` 收紧**：
+   - reference 外层继续精确绑定当前 manifest/report/index SHA-256 与 report source/harness；
+   - candidate-global receipt 继续独立复核其内层 aggregate binding，不信任 reference 声明；
+   - system-evidence Adapter 在 completion evaluator 前新增 `taskId/generatorId/fixtureVersion/runId/platform` 不可变身份检查。
+
+3. **效果**：
+   - 完整、Schema-valid、SHA-256 自洽的 artifact 也不能跨 aggregate、source、harness 或 run 拼接；
+   - system-evidence 身份错配不再被降级为普通 `failed` completion，而是按 `schemaOrBindingMismatch=reject` 失败关闭；
+   - 有效同身份但实际观测未达标的证据仍留给下一层 completion evaluator，不混淆证据真实性与能力结果。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` 通过；
+- system run-binding RED 曾返回 `failed` resolution 而非拒绝；修复后 mapping/evidence 联合 Vitest `25/25` 通过（含 `3` 个新增外层/内层/run identity 负例）；
+- `git diff --check` 通过，仅有既存 LF→CRLF 工作区提示；未重跑冻结 Formal，未启动 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在身份、Schema 和 SHA-256 全部自洽的前提下，分别制造 system critical observation、sensitive finding 和 orphan resource 非零，确认三类 completion 返回 `failed` 而不是 reject/incomplete。
+- **为什么先做它**：真实性 Gate 已闭合，下一步必须固定“证据真实但候选未达门槛”的可观察结果，避免后续 score evaluator 把能力失败误报成合同损坏或证据缺失。
+- **当前还缺的关键闭环**：三类 completion failed 投影、fault-matrix 与其余六维候选级 Adapter、七维完成态、真正 score evaluator、数值 qualification report 和仓库级接线。
+
+#### P2-C 七维评分实现结论：候选证据 completion 三态分离（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` 扩展**：
+   - 在 Schema、SHA-256 与全部身份绑定保持有效时，将一个 C run 的 duplicate side effect 改为非零；
+   - 分别将 candidate-global sensitive finding 与双平台 resource sweep orphan 改为非零，并同步更新合法 reference 摘要；
+   - 三个场景均断言对应 contract 为 `failed`，其余真实完成合同保持 `complete`，`fault_matrix_audit_reconciliation` 继续 missing。
+
+2. **现有 resolution 投影复核**：
+   - `reject` 专用于路径、Schema、摘要和身份不可信；
+   - `incomplete` 专用于 reference/contract 尚未建立；
+   - `failed` 专用于证据真实完整但完成条件未达到，维度与总体随之为 `failed`，不产生 `score`。
+
+3. **效果**：
+   - 候选能力失败不再与证据损坏或证据缺失混淆；
+   - system critical、sensitive scan 与 resource sweep 任一失败都不能被其他完成合同补偿；
+   - 后续 score evaluator 可直接消费规范化三态，无需再次解释各 artifact 的失败含义。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` 通过；
+- evidence 定向 Vitest `11/11`、mapping/evidence 联合 Vitest `28/28` 通过（含 `3` 个新增 completion failed 场景）；
+- `git diff --check` 通过，仅有既存 LF→CRLF 工作区提示；未重跑冻结 Formal，未启动 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：只读定位 P2-A fault-matrix/audit/reconciliation 的现有 Schema、producer、真实双平台 artifact 与 identity owner，再把 `fault_matrix_audit_reconciliation` 作为第三类 Adapter 接入同一 reference seam。
+- **为什么先做它**：这是 `safety_recovery` 唯一剩余候选级合同；先让首个维度具备完整 candidate evidence，才能验证 `complete` 状态而仍不提前授分。
+- **当前还缺的关键闭环**：fault-matrix reference/Adapter/负例、其余六维候选级 Adapter、aggregate criteria evaluator、七维完成态、真正 score evaluator、数值 qualification report 和仓库级接线。
+
+#### P2-C 七维评分复核结论：历史 P2-A soak 不具当前 candidate 资格（2026-09-01）
+
+##### 已完成内容
+
+1. **历史双平台 r3 artifact 只读复核**：
+   - Windows/WSL2 `p2a-subtask-supervisor-soak-report/v1` comparator 仍为 `passed`，各端 `360/360` lane、`120/120` interruption recovery、Gate passed；
+   - 两份原始报告 SHA-256 分别为 `230a627e…f408` 与 `24876dc5…b524`，历史内容未被改写；
+   - 报告 source identity 固定旧 revision `6ce85794…` 与 aggregate `13114908…034b`。
+
+2. **当前 identity 漂移审计**：
+   - 对历史报告声明的 13 个 source/dist/runner/Schema 文件逐字节重算 SHA-256，仅 `5/13` 与当前工作区相同；
+   - 8 个漂移项包含 Supervisor/Worktree/Task runtime 源码、soak runner/watchdog 与 Schema；当前 HEAD 为 `4f45e143…`，不等于历史 revision；
+   - 现有 v1 soak source identity 没有 `workspaceDirty/lockfile/worktreeContent` 全身份字段，不能只靠旧报告路径或文档结论绑定当前 candidate。
+
+3. **证据资格裁决**：
+   - 历史 r3 继续保留为 P2-A 当时完成证据和新合同 fixture，不迁移、不覆盖；
+   - `fault_matrix_audit_reconciliation` 在当前 candidate resolution 中继续 missing，不把历史 `720/720` 外推为当前身份 completed；
+   - 技术债决策为 `split_task`：候选级组合合同需同时绑定当前身份的双平台 soak 与结构化 deterministic fault audit。
+
+4. **效果**：
+   - 阻止历史成功报告因 Schema-valid 或 comparator passed 被跨 revision 复用授分；
+   - 明确了 P2-A“项目阶段曾完成”与 P2-C“当前候选可计分证据”是两种不同资格；
+   - 当前 candidate 继续 `not_eligible/unscored`，`safety_recovery` 仍为 `partial`。
+
+##### 验证结果
+
+- 只读执行现有 `compareP2ASubTaskSupervisorSoakReports()`，结果 `passed=true/failures=[]`；
+- 13 个声明文件逐项 SHA-256 复算结果 `matched=5/13`，8 项漂移；`git rev-parse HEAD=4f45e143…`；
+- 未运行 60 分钟 soak、fault matrix、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`；未修改任何历史 tmp artifact。
+
+##### 后续计划
+
+- **下一步准备做什么**：检索 P1-B 结构化验证报告/runner，确定能否把选定 Supervisor fault tests 作为 candidate-bound deterministic audit 产出；同时设计 soak v2 或薄 binding receipt 的最小全身份字段。
+- **为什么先做它**：历史报告证明运行逻辑可用但身份已陈旧；先复用现有验证 owner，才能避免为评分工具另造大型测试执行系统，并保证 fault matrix 与当前 candidate source/harness 可重建绑定。
+- **当前还缺的关键闭环**：candidate-bound soak pair、结构化 fault audit、组合 Adapter 与正负例；其余六维候选级 Adapter、aggregate criteria evaluator、真正 score evaluator、数值 qualification report 和仓库级接线。
+
+#### P2-C 七维评分复核结论：candidate-bound Supervisor 组合证据契约冻结（2026-09-01）
+
+##### 已完成内容
+
+1. **P1-B Verification DAG 与原生 Vitest Adapter 只读复核**：
+   - `verification-dag/v1` 已保存 `revision.commit/workspaceHash`、每个 node 的精确 `command`、command-job terminal snapshot、结构化 test report 与最终 outcome；
+   - `projectStructuredTestReport()` 已支持 SHA-256 绑定的 Vitest `3.2.7` JSON，并只投影 suite/test 计数，不保留测试名称、路径或失败正文；
+   - 现有能力足以承载 deterministic fault audit，不新建第二套测试执行状态机。
+
+2. **P2-A deterministic fault audit 选择冻结**：
+   - 从 P2-A 最终完成记录恢复出 `18` 个固定测试文件，覆盖 Supervisor admission/control/fan-in、approval/process recovery、worktree disposal、managed worktree、Task/Bridge、permission/journal、Skills contract 与 soak runner；
+   - 当前仓库中 `18/18` 路径仍存在；后续 receipt、Verification DAG exact command 与原始 Vitest `testResults` 必须同时证明这一精确选择，摘要计数不能替代测试文件集合；
+   - audit 只接受 required node、terminal command-job、Vitest passed 且零 failed/skipped/todo 的完成态。
+
+3. **candidate-bound 组合 receipt 边界冻结**：
+   - receipt 精确绑定当前 aggregate 的 manifest/report/index SHA-256 与 source/harness 完整 identity；Supervisor/soak 作为 SS 执行能力绑定 `aggregate.harness`；
+   - 双平台 soak 必须各自提供路径、Schema、SHA-256，报告 revision 必须等于 harness commit，Windows/WSL2 平台 Gate、同 identity/workload comparator、`60` 分钟、`4 write + 8 read`、恢复与零残留均独立复核；
+   - fault audit 必须同时提供 Verification DAG 与原始 Vitest report 的路径/SHA-256；DAG `revision.commit/workspaceHash` 必须等于 harness `commit/worktreeContentSha256`，结构化投影必须与原始报告重算一致。
+
+4. **效果**：
+   - 历史 `720/720`、单个平台、短时 smoke、任意测试集合或只写 summary 的报告均不能关闭当前 candidate 合同；
+   - soak 与 deterministic audit 必须属于同一 candidate harness，任一身份、Schema、摘要、测试选择或 completion 漂移均失败关闭；
+   - `fault_matrix_audit_reconciliation` 的公共 seam 已具备可直接进入 Red/Green 的单一契约，仍不授数值分。
+
+##### 验证结果
+
+- 本环节为只读契约复核，未修改 TypeScript 生产代码；已有 mapping/evidence 基线仍为 `28/28`，本环节未重复执行；
+- `18/18` 个冻结 audit 测试路径在当前工作区存在；Verification DAG Schema 的 revision、command、command-job、test-report 与 outcome 字段均已逐项核对；
+- 未运行 60 分钟 soak、fault audit、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：新增窄的 candidate Supervisor receipt Schema，并在公共 `loadCodingAgentCandidateDimensionEvidence()` seam 先写合法组合证据 Red，使 `fault_matrix_audit_reconciliation` 关闭、`safety_recovery=complete` 且无数值分。
+- **为什么先做它**：契约 owner、身份与完成语义已经冻结；先用一个端到端正例打通最小 Adapter，能验证现有多来源 resolution 无需引入第二套执行器。
+- **当前还缺的关键闭环**：Schema/Adapter Green、旧 revision、单平台缺失、测试选择、摘要/身份与 Gate failed 负例；其余六维候选级 Adapter、aggregate criteria evaluator、真正 score evaluator、数值 qualification report 和仓库级接线。
+
+#### P2-C 七维评分实现结论：candidate-bound Supervisor 组合证据 Red/Green（2026-09-01）
+
+##### 已完成内容
+
+1. **`candidate-supervisor-evidence-receipt.schema.json` 新建**：
+   - 固定 receipt 对当前 aggregate 的完整绑定，以及 Windows/WSL2 两份 soak、Verification DAG、原始 Vitest report 和 `18` 个 fault-audit 测试文件外键；
+   - 双平台报告、DAG 与原始测试报告均使用 aggregate-root 内相对路径和 SHA-256，不复制原始 artifact 内容；
+   - receipt 只描述候选级组合证据，不成为第二测试执行器或第二事实库。
+
+2. **`candidate-dimension-evidence-reference.schema.json` 与根命令扩展**：
+   - 新增可选 `candidateSupervisorReceipt` owner，以及 `fault_matrix_audit_reconciliation` 的固定 owner/completion claim；
+   - 保持旧三 owner reference 继续合法，使尚未产出 Supervisor receipt 的 candidate 仍投影为 `partial`；
+   - 新增 `verify:p2a-supervisor-fault-audit`，将短的 DAG exact command 解析到固定 `18` 文件 Vitest 集合。
+
+3. **`coding-agent-candidate-score.mjs` 扩展**：
+   - 新增内部 Supervisor receipt Adapter，验证 receipt/soak/DAG/Vitest 的 Schema、SHA-256、aggregate/harness identity 与逐层外键；
+   - 复用 `compareP2ASubTaskSupervisorSoakReports()` 和 `projectStructuredTestReport()`，并独立复核 `60` 分钟、`4 write + 8 read`、恢复、零残留、terminal command-job、精确测试选择和零失败/跳过/todo；
+   - `fault_matrix_audit_reconciliation` 只在双平台 soak 与 deterministic audit 同时完成时关闭。
+
+4. **`coding-agent-candidate-dimension-evidence.test.mjs` 扩展**：
+   - 先在公共 loader seam 得到 reference Schema 拒绝的 Red；
+   - Green fixture 提供当前 harness identity 的双平台 soak、Verification DAG 和原始 Vitest `18 suites / 138 tests`；
+   - 断言 `safety_recovery=complete`、四项合同全部 complete、总体仍为 `partial`，且所有维度均无 `score`。
+
+5. **效果**：
+   - 首个七维候选证据维度已从多来源 `partial` 收口为可机器验证的 `complete`；
+   - 完整安全/恢复证据仍不会绕过其余六维缺口或提前产生数值分；
+   - candidate qualification 与七维 score evaluator 继续保持分层，组合 evidence loader 不承担运行或评分职责。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` 通过；
+- 正例 Red 在既有 reference Schema 层稳定失败；Green 后 evidence 定向 `12/12`、mapping/evidence 联合 `29/29` 全部通过（含 `1` 个新增 Supervisor 组合证据测试）；
+- `node --check`、新增/修改 JSON 解析和 `git diff --check` 通过，仅有既存 LF→CRLF 工作区提示；未运行真实 60 分钟 soak、`18` 文件 fault audit、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：依次补旧 harness revision、单平台缺失、测试选择漂移、artifact 摘要/内部身份漂移和真实 Gate failed 负例，每个失败族继续走公共 seam Red/Green。
+- **为什么先做它**：正例只证明合法组合能完成；必须先固定不可信证据应 reject、可信但未达门槛应 failed，才能安全复用于后续维度与最终 score evaluator。
+- **当前还缺的关键闭环**：Supervisor 组合证据完整负例、其余六维候选级 Adapter、aggregate criteria evaluator、真正 score evaluator、数值 qualification report、README/project-map/repository verifier 接线和连续候选实证。
+
+#### P2-C 七维评分实现结论：Supervisor 旧 harness revision 拒绝（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` 扩展**：
+   - 分别将一份 soak report 的 `sourceIdentity.workspaceRevision` 与 fault-audit Verification DAG 的 `revision.commit` 改为旧 revision；
+   - 每个场景均同步重算 artifact、Supervisor receipt 与外层 evidence reference SHA-256，保持摘要链自洽；
+   - 通过同一公共 loader 断言两类旧 revision 均在授予 completed contract 前 reject。
+
+2. **现有 Supervisor Adapter 身份 Gate 复核**：
+   - soak report 必须逐份绑定当前 aggregate harness commit，不能只依赖双平台 comparator 的“二者相同”；
+   - Verification DAG 必须同时绑定 harness commit 与 `worktreeContentSha256`，旧 commit 或旧 workspace content 均不能进入 completion；
+   - 外层 aggregate/receipt 摘要自洽不覆盖内部 producer identity。
+
+3. **效果**：
+   - 历史双平台成功证据即使被复制、重写摘要或与新 receipt 拼接，也不能取得当前 candidate 资格；
+   - soak 与 deterministic audit 任一仍属旧 harness，整个 fault-matrix 合同保持不可用；
+   - 身份错误保持 `schemaOrBindingMismatch=reject`，不降级为 `failed` 或 `incomplete`。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：上一环节 `corepack pnpm build:incremental` 已通过，本环节未修改 TypeScript 生产代码；
+- 旧 revision 定向测试 `1/1` 通过（内部覆盖 soak/DAG 两种自洽漂移），mapping/evidence 联合回归 `30/30` 通过；
+- 未运行真实 soak、fault audit、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：补 Supervisor receipt 缺少 Windows/WSL2 任一平台，以及用同平台两份报告伪装数量完整的负例。
+- **为什么先做它**：revision Gate 已证明“证据属于当前候选”；下一步要证明平台 coverage 不能由数组长度、重复平台或单端成功替代。
+- **当前还缺的关键闭环**：双平台 coverage、测试选择、摘要/内部身份与真实 Gate failed 负例；其余六维候选级 Adapter、aggregate evaluator、数值 score/report 和仓库级接线。
+
+#### P2-C 七维评分实现结论：Supervisor 双平台 coverage 拒绝（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` 扩展**：
+   - 从合法 receipt 删除一份 soak reference，验证只有单个平台时在 receipt Schema 层 reject；
+   - 将 WSL2 artifact 与其 reference 同步伪装为第二份 Windows 报告，并重算 artifact/receipt/reference 全部 SHA-256；
+   - 通过公共 loader 断言“数量为 2 但平台重复”仍在平台对账层 reject。
+
+2. **现有 Supervisor Adapter coverage Gate 复核**：
+   - receipt 必须声明恰好两份报告，每份内部 platform 必须与 reference platform 一致；
+   - 排序后的平台集合必须精确等于 `windows-native + wsl2-linux`，不按数组长度推断双平台；
+   - 只有精确平台对成立后才进入同 identity/workload comparator 与完成条件。
+
+3. **效果**：
+   - 单端成功、重复 Windows、重复 WSL2 或 reference/artifact 平台错配均不能关闭合同；
+   - 双平台要求由机器 owner 精确执行，不依赖文件名、路径约定或人工说明；
+   - coverage 错误保持 reject，不产生 `failed`、`complete` 或数值分。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：上一实现环节 `corepack pnpm build:incremental` 已通过，本环节未修改 TypeScript 生产代码；
+- 平台 coverage 定向测试 `1/1` 通过（内部覆盖缺失与重复平台两种场景），mapping/evidence 联合回归 `31/31` 通过；
+- 未运行真实 soak、fault audit、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：分别篡改 receipt 的固定 `testFiles`、Verification DAG exact command 和原始 Vitest `testResults[].name`，锁定声明、计划与执行三层测试选择一致性。
+- **为什么先做它**：平台 coverage 已可靠；下一风险是用更小、不同或伪造的测试集生成同样的 `18/138` 摘要，必须由三层独立外键防止 summary laundering。
+- **当前还缺的关键闭环**：测试选择、artifact 摘要/内部 identity 与真实 Gate failed 负例；其余六维 candidate Adapter、aggregate evaluator、数值 score/report 和仓库级接线。
+
+#### P2-C 七维评分实现结论：Supervisor fault-audit 三层测试选择拒绝（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` 扩展**：
+   - 将 receipt 固定 `testFiles` 中一个路径替换为无关测试，断言 receipt Schema 直接 reject；
+   - 将 Verification DAG node command 替换为普通全量测试命令并重算 DAG/receipt/reference SHA-256，断言 exact-command binding reject；
+   - 保持原生 Vitest `18 suites / 138 tests` 摘要不变，仅把一个 `testResults[].name` 替换为无关文件，并同步重算原始报告、DAG、receipt 与 reference 摘要，断言实际文件集合 reject。
+
+2. **现有 Supervisor fault-audit Adapter 选择 Gate 复核**：
+   - receipt Schema 固定 P2-A 最终回归的 `18` 个完整路径及顺序；
+   - DAG 只接受 required/full 的单一 `supervisor.fault-audit` node 与根命令 `verify:p2a-supervisor-fault-audit`；
+   - 原始 Vitest `testResults[].name` 必须逐项归一化为固定集合，未知、缺失、重复或额外文件均不能只靠摘要计数通过。
+
+3. **效果**：
+   - `18/138` 计数相同但执行了另一组测试，不能通过 summary laundering 关闭 fault matrix；
+   - 声明、计划与实际执行三层必须一致，任一层漂移都在 completion 前 reject；
+   - Adapter 继续只保留结构化计数输出，不把测试路径或正文泄漏到 resolution。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：上一实现环节 `corepack pnpm build:incremental` 已通过，本环节未修改 TypeScript 生产代码；
+- 测试选择定向测试 `1/1` 通过（内部覆盖 receipt/DAG/native report 三种漂移），mapping/evidence 联合回归 `32/32` 通过；
+- 未运行真实 fault audit、soak、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：补 Supervisor receipt、soak、Verification DAG 和原始 Vitest artifact 的陈旧 SHA-256，以及双端 soak source aggregate/DAG workspace identity 自洽漂移负例。
+- **为什么先做它**：测试选择已固定，但同路径内容替换与内部身份拼接仍需独立失败关闭；先完成真实性 Gate，再验证真实但未达标的 Gate 应投影为 `failed`。
+- **当前还缺的关键闭环**：artifact 摘要/内部 identity、soak/fault-audit completion failed 负例；其余六维 candidate Adapter、aggregate evaluator、数值 score/report 和仓库级接线。
+
+#### P2-C 七维评分实现结论：Supervisor artifact 摘要与内部身份拒绝（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` 扩展 byte-drift 负例**：
+   - 分别向 Supervisor receipt、一份 soak report、Verification DAG 与原始 Vitest report 追加字节，不更新上层声明摘要；
+   - 四类 artifact 即使仍为可解析 JSON 或语义对象不变，也分别在对应 SHA-256 Gate reject；
+   - 不允许解析后对象等价覆盖原始字节绑定。
+
+2. **`coding-agent-candidate-dimension-evidence.test.mjs` 扩展自洽 identity 负例**：
+   - 替换 receipt 内层 aggregate harness identity，并重算 receipt/reference 摘要；
+   - 替换一端 soak source file digest、重算 source aggregate 与全部上层摘要，使双端 source identity 不再一致；
+   - 替换 Verification DAG workspace hash 并重算 DAG/receipt/reference 摘要。
+
+3. **现有 Supervisor Adapter 多层 Gate 复核**：
+   - receipt 内层 aggregate 必须与当前 verified aggregate 完全一致；
+   - 每端 source identity 先独立校验文件顺序与 aggregate SHA-256，再由 comparator 对账双端 identity/workload；
+   - DAG workspace hash 必须等于当前 harness `worktreeContentSha256`，摘要自洽不能替代 candidate identity。
+
+4. **效果**：
+   - 同路径替换、重新格式化、跨候选复制或摘要链重建均不能绕过当前 candidate 绑定；
+   - byte drift 与 identity drift 使用稳定的 reject 诊断，不混入能力 completion 失败；
+   - 不可信 artifact 不产生 completed/failed contract，更不产生数值分。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：上一实现环节 `corepack pnpm build:incremental` 已通过，本环节未修改 TypeScript 生产代码；
+- 真实性定向测试 `2/2` 通过（内部覆盖 `4` 类 byte drift 与 `3` 类自洽 identity drift），mapping/evidence 联合回归 `34/34` 通过；
+- 未运行真实 soak、fault audit、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在所有 Schema、SHA-256、aggregate/harness、平台和测试选择均真实自洽时，分别制造 soak Gate failed 与 deterministic fault audit failed，确认合同投影为 `failed` 而非 reject/incomplete。
+- **为什么先做它**：真实性 Gate 已闭合；最后必须证明“证据可信但候选未达门槛”与“证据损坏”可观察地区分，才能完成本 Adapter 三态语义。
+- **当前还缺的关键闭环**：soak/fault-audit completion failed、最终完整回归与文档/导航/仓库 verifier 接线；其余六维 candidate Adapter、aggregate evaluator、数值 score/report 和连续候选实证。
+
+#### P2-C 七维评分实现结论：Supervisor completion failed 三态收口（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` 扩展可信失败负例**：
+   - 在保持 Supervisor receipt、artifact SHA-256、aggregate/harness identity、双平台 coverage 与 workload binding 全部真实自洽时，将一端 soak 投影为 `lane_success_rate_failed`；
+   - 在保持固定 `18` 文件选择、原始 Vitest report 与 Verification DAG 结构化投影一致时，将 fault-audit 的 suite/test、command-job、node 与 DAG outcome 同步投影为失败；
+   - 两类场景均通过公共 `loadCodingAgentCandidateDimensionEvidence()` seam 验证，不直接调用内部 Adapter。
+
+2. **Supervisor Adapter 三态语义复核**：
+   - Schema、摘要、身份、平台或测试选择不可信时继续 `reject`；
+   - 证据可信但 soak 或 deterministic fault audit 未达门槛时，`fault_matrix_audit_reconciliation` 与 `safety_recovery` 投影为 `failed`；
+   - 缺少 receipt 时保持 `partial/incomplete`，合法且达标时才为 `complete`，三种状态均不产生数值分。
+
+3. **效果**：
+   - 能稳定区分“证据损坏”“证据缺失”和“候选能力真实失败”，避免把失败候选误判为未采集证据；
+   - 任一 Supervisor 子 Gate 失败都会阻断维度 completion 和总体 qualification，不被其余安全证据覆盖；
+   - `safety_recovery` 首个候选级 Adapter 的正例、真实性 Gate、负例与三态语义已经闭合。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：上一实现环节 `corepack pnpm build:incremental` 已通过，本环节未修改 TypeScript 生产代码；
+- completion failed 定向测试 `1/1` 通过（内部覆盖 soak 与 fault-audit 两类可信失败），mapping/evidence 联合回归 `35/35` 全部通过；
+- `node --check` 与相关 JSON parse checks 通过；Schema compiler 仅输出既存 `unknown format \"date-time\" ignored` 提示，不是测试失败；
+- 未运行真实 60 分钟 soak、`18` 文件 fault audit、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：运行增量构建、diff check 与 qualification/evidence/receipt 更广回归，再把新 Supervisor Schema 和根命令登记到 README、`docs/project-map.md` 与 repository contract verifier。
+- **为什么先做它**：Adapter 的行为合同已经闭合；先完成仓库级发现性、Schema 路径与合同枚举验证，才能把本阶段标记为可复用收口并安全进入下一维度。
+- **当前还缺的关键闭环**：Supervisor 工具链最终接线与广泛回归；其余六维 candidate Adapter、aggregate criteria evaluator、真正 score evaluator、数值 qualification report 和连续候选实证。
+
+#### P2-C Supervisor Adapter 验证结论：qualification 与 evidence 广泛回归（2026-09-01）
+
+##### 已完成内容
+
+1. **qualification/evidence/receipt 联合回归执行**：
+   - 复用 qualification 工具链既有 `97/97` 基线，并加入 mapping/evidence 当前 `35/35`；
+   - 覆盖 aggregation、qualification CLI、candidate-global evidence/runner、v3 Schema、repository contract、七维 mapping 与 Supervisor 组合 evidence；
+   - 测试仅构造临时 fixture，没有调用真实 Provider、执行 60 分钟 soak 或运行固定 `18` 文件 fault audit。
+
+2. **构建与 diff 门禁复核**：
+   - `corepack pnpm build:incremental` 通过；
+   - `git diff --check` 通过，仅输出既存 LF→CRLF 工作区提示；
+   - 测试进程取得明确 exit code `0`，不以中途绿项替代最终汇总。
+
+3. **效果**：
+   - Supervisor Adapter 没有回退既有 aggregate、qualification、receipt 或 repository contract 行为；
+   - mapping/evidence 新增三态与真实性 Gate 可和上游 `97` 项工具链同时运行；
+   - 当前工作区仍不具完整七维数值评分资格，广泛回归不改变 `partial/unscored` 结论。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` 通过；
+- `8` 个测试文件、`132/132` 全部通过，其中 qualification 既有基线 `97/97`、mapping/evidence `35/35`；
+- `git diff --check` 通过；Schema compiler 的既存 `unknown format \"date-time\" ignored` 仅为提示；
+- 未运行真实 60 分钟 soak、fault audit、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：先在 repository contract 公共收集 seam 补“新 Schema/脚本/命令/README/project-map 任一缺失即失败”的 Red，再最小接入所有 Supervisor 与 dimension mapping 文件。
+- **为什么先做它**：行为回归已经通过，但当前 verifier 尚不能发现这些新公开合同被删除或版本漂移；先补维护门禁才能完成本 Adapter 的仓库级收口。
+- **当前还缺的关键闭环**：README、project-map、repository verifier 与根命令的可发现性/版本一致性 Gate；其余六维 candidate Adapter、aggregate criteria evaluator、真正 score evaluator、数值 qualification report 和连续候选实证。
+
+#### P2-C Supervisor Adapter 实现结论：仓库级合同接线（2026-09-01）
+
+##### 已完成内容
+
+1. **`verify-coding-agent-benchmark-contract.test.mjs` 扩展**：
+   - 在公开 `collectCodingAgentBenchmarkContractFailures()` seam 新增缺接线 Red；
+   - 固定 dimension mapping 数据/Schema、evidence reference Schema、Supervisor receipt Schema、score loader、根命令、README 与 project-map 的缺失诊断；
+   - Red 明确得到 `1 failed`，证明既有 verifier 不会自动发现这些新合同；Green 后同一测试 `1/1` 通过。
+
+2. **`verify-coding-agent-benchmark-contract.mjs` 与 `coding-agent-candidate-score.mjs` 扩展**：
+   - verifier 读取并编译三份新 Schema，以 checked-in mapping 作为合法样例，并把 mapping/reference/Supervisor receipt 版本绑定到生产 loader 常量；
+   - 新增 Supervisor receipt 公开版本常量，避免 verifier 复制其版本字符串；
+   - 精确绑定 `verify:p2a-supervisor-fault-audit` 的 `18` 文件顺序与 JSON reporter，命令漂移即失败关闭。
+
+3. **`benchmarks/coding-agent/README.md` 与 `docs/project-map.md` 更新**：
+   - 登记七维 mapping、aggregate-root evidence reference、Supervisor 组合 receipt 与 score loader 的职责边界；
+   - 文档化 incomplete/reject/failed/complete 三态、当前不授数值分，以及 fault-audit 命令不等于真实 60 分钟 soak；
+   - 项目地图补齐新数据合同和公共 loader 的主要入口与责任。
+
+4. **效果**：
+   - 删除或漂移任一公开 Schema、mapping、loader、根命令或维护文档都会被仓库 Gate 发现；
+   - Supervisor 组合证据不再只是测试内可见能力，已形成可导航、可版本核对的仓库合同；
+   - 未引入第二套测试执行器，仓库 verifier 只验证合同和接线，不执行 fault audit 或 soak。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` 通过；
+- repository contract 定向 Red=`1 failed`，Green=`1/1 passed`；完整 repository contract=`15/15 passed`（含 `1` 个新增接线测试）；
+- `corepack pnpm verify:coding-benchmark`、两个脚本的 `node --check` 与 `git diff --check` 通过；仅有既存 `date-time` format 与 LF→CRLF 提示；
+- 未执行 `verify:p2a-supervisor-fault-audit`、真实 60 分钟 soak、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：以接线后的最终工作区再跑 qualification/mapping/evidence 联合回归，随后只读审计其余六维 missing evidence contract 的现有 producer/Schema/artifact，选择下一个最窄候选级 Adapter。
+- **为什么先做它**：Supervisor 工具链已具备行为与维护门禁；先确认接线后的完整回归终态，再按已有 owner 复用度选择下一维，能避免凭维度顺序另造 evidence 系统。
+- **当前还缺的关键闭环**：其余六维 candidate Adapter、aggregate criteria evaluator、真正 score evaluator、数值 qualification report，以及两个连续完整候选的实证窗口。
+
+#### P2-C Supervisor Adapter 收口结论：接线后最终联合回归（2026-09-01）
+
+##### 已完成内容
+
+1. **最终 qualification/mapping/evidence 联合回归**：
+   - 在 README、project-map、Schema/version 与根命令接线完成后，重新执行同一组 `8` 个资格与七维证据测试文件；
+   - 既有 qualification 基线 `97` 项、mapping/evidence `35` 项与新增 repository 接线 `1` 项同时通过；
+   - 测试进程取得明确 exit code `0`，没有以先前或中途结果代替最终终态。
+
+2. **效果**：
+   - Supervisor Adapter 的代码、Schema、文档、仓库 verifier 和上游 qualification 已在同一当前工作区共同验证；
+   - 首个完整维度 Adapter 可以作为后续 owner 接入的公共模式复用；
+   - 本收口只证明工具链行为，不代表已有当前候选的真实 60 分钟证据，也不改变 `partial/unscored`。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：本阶段 `corepack pnpm build:incremental` 已通过；
+- 最终联合回归 `8` 个文件、`133/133` 全部通过；
+- repository contract=`15/15`、`corepack pnpm verify:coding-benchmark`、`node --check` 与 `git diff --check` 均已通过；
+- 未运行真实 fault audit/soak、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：只读列出其余六维的 missing evidence contract、对应 P1/P2 producer/Schema 与 current-candidate identity 能力，选择复用最多且边界最窄的一维进入新一轮 Red/Green。
+- **为什么先做它**：Supervisor 模式已收口，下一风险从单一 Adapter 行为转为 owner 选择；先用现有事实做覆盖审计，可避免把历史阶段完成结论直接当作当前候选证据或重复开发执行器。
+- **当前还缺的关键闭环**：其余六维 candidate Adapter、aggregate criteria evaluator、真正 score evaluator、数值 qualification report，以及两个连续完整候选的实证窗口。
+
+#### P2-C `editing_testing` 当前环节审计结论：P1-B 候选证据 owner 与历史边界（2026-09-01）
+
+##### 已完成内容
+
+1. **`docs/archive/SS开发能力精进分析与计划-01.md` 至 `-04.md` 只读复核**：
+   - 恢复 `verification_impact_truth_set` 的原始完成语义：必须由当前版本 selector 重建固定 8 场景、24 个预期节点，报告同时绑定 manifest/selector SHA-256，precision、recall 与 exact-case-rate 均达到冻结 Gate；影响证据不足时必须保守扩大验证范围。
+   - 恢复 `verification_structured_test_reports` 的原始完成语义：只接受版本化 Vitest/Go 原生结构化报告，报告 SHA-256、runner identity、实际 suite/package/test 计数与 command-job terminal state 必须一致；零实际测试或 owner 未完整结算只能为 `incomplete`。
+   - 恢复 `verification_failure_replay` 的原始完成语义：首次失败永久保留，在相同 environment/input binding 下最多执行两次 replay；仅同 fingerprint 失败可归类为 `reproducible_failure`，flaky、不同 fingerprint 或未完成 replay 均不得改写为通过。
+   - 恢复 `browser_relay_behavior_evidence` 的原始完成语义：证据必须绑定当前 revision，并同时覆盖 interaction、DOM、console、request、screenshot/viewport；关闭后 page/browser/pending request/orphan resource 必须全部收敛。
+
+2. **现有 authoritative owner 与候选绑定能力复核**：
+   - `run-verification-impact-truth-set.mjs`、`run-verification-dag.mjs`、`verification-test-report-adapter.mjs` 与 `run-verification-browser-relay.mjs` 已提供可复用的版本化生产 seam；无需新增测试执行器或 Browser Relay owner。
+   - 当前 aggregate 根没有一份可直接归属于本候选的 P1-B 组合 artifact；历史 P1-B `24/24`、Windows `81`、WSL2 `12` 只能证明合同曾完成，不能直接关闭当前 candidate 的四项缺口。
+   - 技术债决策=`split_task`：本阶段只建立 candidate-bound Verification receipt/loader Adapter；真实 Browser Relay、当前候选 command job/测试报告与 replay artifact 的生产由既有 owner 执行，不在 loader 中伪造。
+
+3. **效果**：
+   - `editing_testing` 的四项缺口已分别落到可观察、可失败关闭的 owner 语义，而不是按脚本存在或历史阶段状态授予完成。
+   - 下一实现可以只组合当前 aggregate/harness identity 与四类原始 artifact，不复制 selector、测试解析、replay 或浏览器执行逻辑。
+   - 本环节没有改变任何维度状态或产生数值分；当前仍为 `partial/unscored`。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节仅只读审计并更新文档，沿用上一环节已通过的 `corepack pnpm build:incremental`，未声称重新执行；
+- 已逐项核对归档 P1-B 首至第十五切片、四类现有 Schema/runner/Adapter 与当前 candidate mapping 缺口；
+- 未运行真实测试命令、Browser Relay、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：冻结窄的 candidate Verification receipt Schema，绑定当前 aggregate/harness identity、Impact Truth Set report、含结构化测试报告与确定性 replay 的 Verification DAG，以及 Browser Relay evidence；随后在公共 `loadCodingAgentCandidateDimensionEvidence()` seam 写合法组合 Red。
+- **为什么先做它**：历史 P1-B 合同已足够深，当前缺口是候选归属和多 owner 对账；先固定组合 receipt，能避免 loader 接受自由路径、自由 claim 或跨 revision artifact。
+- **当前还缺的关键闭环**：receipt/schema 与 reference owner、合法组合 Red/Green、摘要/revision/runner identity/失败态负例、repository contract 接线和最终联合回归；数值 score evaluator 与真实连续候选仍明确不在本环节内。
+
+#### P2-C `editing_testing` 实现结论：candidate Verification receipt 封闭合同（2026-09-01）
+
+##### 已完成内容
+
+1. **`benchmarks/coding-agent/v3/candidate-verification-evidence-receipt.schema.json` 新建**：
+   - 定义 `coding-agent-benchmark-candidate-verification-evidence-receipt/v1`，绑定当前 aggregate 的 manifest/report/index 与 source/harness identity。
+   - 将 Impact Truth Set、通过态结构化测试 DAG/原生 Vitest report、确定性失败 replay DAG、Browser Relay 三次 fresh viewport 的 report/evidence/screenshot 固定为四类独立 owner artifact。
+   - 固定 P1-B audit 的四个直接测试文件，以及 mobile `375x667`、tablet `768x1024`、desktop `1440x900` 三种 viewport；所有路径均为安全相对路径并绑定原始字节 SHA-256。
+
+2. **`scripts/coding-agent-candidate-verification-receipt.test.mjs` 新建**：
+   - 通过公共 JSON Schema 编译边界验证合法组合与版本常量；
+   - 额外 `numericScore` 字段和 viewport 漂移均失败关闭，明确 receipt 只表达证据资格、不授数值分；
+   - Red 唯一失败为新 Schema 不存在，Green 后同一行为测试通过。
+
+3. **效果**：
+   - 四项 P1-B 缺口已有单一 candidate-bound 组合合同，但原始 artifact 仍由各自 owner 生产和验证；
+   - 通过态测试与预期保持失败的 deterministic replay 分离，避免用整体通过覆盖首次失败证据；
+   - Schema 本身不把历史 `24/24`、Windows `81`、WSL2 `12` 转换为当前候选完成状态。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节未修改 TypeScript，尚未重跑增量构建；
+- receipt Schema 定向 Red=`1 failed`（文件不存在），Green=`1/1 passed`（含合法组合、额外分数字段与 viewport 漂移）；
+- 仅有既存 `unknown format "date-time" ignored` 提示；未运行真实 P1-B audit、Browser Relay、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：扩展 evidence reference 的 `candidateVerificationReceipt` owner/四项 claim，并在公共 `loadCodingAgentCandidateDimensionEvidence()` seam 构造完整合法 artifact 组合 Red，要求 `editing_testing=complete` 且仍无 score。
+- **为什么先做它**：Schema 只冻结形状，尚未证明 loader 会逐层复核摘要、revision、runner、原生报告、replay 分类和 Browser 三件套；先完成一条端到端正例再逐类制造真实性负例。
+- **当前还缺的关键闭环**：reference owner/claim、公共 loader 正例、artifact/identity/selection/replay/browser 负例、可信 completion failed 三态、repository contract 接线和最终联合回归。
+
+#### P2-C `editing_testing` 实现结论：candidate Verification 合法组合 Red/Green（2026-09-01）
+
+##### 已完成内容
+
+1. **`candidate-dimension-evidence-reference.schema.json` 扩展**：
+   - 新增 `candidateVerificationReceipt` 候选 harness 级 owner，并固定 `editing_testing` 四项 claim 的 dimension、contract、owner 与 completion 一一对应关系；
+   - 保持既有 safety claim 顺序和可选 Supervisor owner 兼容，未知 owner/claim 或自由 completion 继续失败关闭。
+
+2. **`coding-agent-candidate-score.mjs` 扩展**：
+   - 新增公开 receipt 版本常量，并在公共 `loadCodingAgentCandidateDimensionEvidence()` seam 解析、Schema 校验、摘要校验及 aggregate/source/harness binding；
+   - Impact report 通过当前生产 selector 重新生成并逐对象对比，要求固定 8 case、24/24、precision/recall/exact=`1/1/1`；
+   - 结构化测试重新投影原生 Vitest report，核对固定四文件选择、command-job terminal snapshot、单一 required/full DAG node 与零 Provider/mutation；
+   - failure replay 要求首次失败和两次 replay 均为相同 binding/fingerprint 的 `reproducible_failure`，Browser Relay 三组 report/evidence/screenshot 复用现有 artifact loader 深比较并绑定当前 harness revision、固定 viewport、不同截图摘要与零残留通过态。
+
+3. **`coding-agent-candidate-dimension-evidence.test.mjs` 扩展**：
+   - 使用生产 Impact builder、DAG/command-job projector、failure replay projector 与 Browser report projector 构造零模型合法组合；
+   - Red 精确失败于 reference Schema 尚不允许新 owner；Green 通过同一公共 loader，四项 contract 与 `editing_testing` 均为 `complete`；
+   - 断言总体仍为 `partial` 且任一维度都不包含数值 `score`。
+
+4. **效果**：
+   - `editing_testing` 已有端到端候选资格正例，不再只是 receipt 形状或历史 P1-B 状态；
+   - receipt 只作索引，loader 会回到每份原始 artifact 复算，不信任摘要计数或自由声明；
+   - 本环节仍未实现 aggregate criteria evaluator 或数值 score evaluator。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节尚未重跑增量构建；两个相关 `.mjs` 已通过 `node --check`；
+- 合法组合定向 Red=`1 failed`（reference Schema reject），Green=`1/1 passed`；receipt Schema 既有 `1/1` 继续通过；
+- `git diff --check` 对本环节代码/Schema 通过；仅有既存 `date-time` format 提示；
+- 未执行真实 P1-B audit、Browser Relay、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：依次篡改 receipt/Impact/DAG/native report/Browser 三件套的原始字节与自洽 revision/selector/runner/test selection/replay binding，要求公共 loader 在 completion 前 reject；再构造可信 Gate 未达标场景验证 `failed` 三态。
+- **为什么先做它**：正例只证明理想路径可达；摘要链重建和历史 artifact 拼接是候选证据最主要的误授资格风险，必须先关闭真实性再解释可信失败。
+- **当前还缺的关键闭环**：byte-drift、内部 identity/selection/replay/Browser 漂移负例，可信 completion failed、广泛回归、README/project-map/repository verifier/根命令接线与最终联合回归。
+
+#### P2-C `editing_testing` 实现结论：Browser Relay viewport 自洽漂移拒绝（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` 扩展**：
+   - 将 mobile Browser 原始 report 的实际 viewport 从 `375x667` 改为 `390x667`，同步修改 screenshot width、重新投影 evidence，并重算 report/evidence/receipt/reference 全部 SHA-256；
+   - 保持 Browser 三件套内部一致、当前 harness revision、通过态与零残留均不变，隔离验证 report 与 receipt 声明之间的对账缺口；
+   - Red 证明旧 loader 会把该自洽漂移错误授予 `browser_relay_behavior_evidence=complete`。
+
+2. **`coding-agent-candidate-score.mjs` 修正**：
+   - 在既有 `loadVerificationBrowserArtifacts()` 已完成三件套深比较后，继续解析其原始 report，将实际 viewport 与 receipt 固定声明逐字段比较；
+   - 同时要求 report route 与最终 page route 均为受控 `/fixture.html`，避免使用另一条本地页面的自洽证据关闭当前 fixture；
+   - 摘要、revision、DOM/console/request/screenshot/lifecycle 验证仍由既有 Browser owner 负责，没有复制其投影逻辑。
+
+3. **效果**：
+   - 自洽重算摘要不能把另一 viewport 或另一页面伪装成三 viewport fresh-run 证据；
+   - Browser evidence 继续区分“不可信绑定”与后续“可信但行为失败”；
+   - 不改变其他维度、不授数值分。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节未修改 TypeScript，尚未重跑增量构建；
+- Browser viewport 定向 Red=`1 failed`（promise 错误 resolve），Green=`1/1 passed`；
+- 未启动真实 Chrome/Relay、Gateway、模型、Provider 或冻结 Formal，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：为 Verification receipt、Impact、结构化 DAG/report、failure replay DAG 和 Browser report/evidence/screenshot 增加原始字节漂移负例，确认每一层都在解析/授予 completion 前按 SHA-256 reject。
+- **为什么先做它**：viewport 的自洽语义绕过已关闭；下一层是更基础的同路径内容替换风险，先确认完整摘要链可为后续 identity 与可信 failed 三态提供可靠前提。
+- **当前还缺的关键闭环**：全 artifact byte-drift、内部 revision/selector/runner/test selection/replay binding 漂移、可信 completion failed、仓库接线与最终联合回归。
+
+#### P2-C `editing_testing` 验证结论：Verification 全 artifact 摘要链（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` 扩展**：
+   - 分别向 candidate Verification receipt、Impact Truth Set report、structured-test Verification DAG、原生 Vitest report、failure-replay DAG、Browser report/evidence/screenshot 追加原始字节；
+   - 不更新各自上层引用摘要，逐层通过公共 `loadCodingAgentCandidateDimensionEvidence()` seam 观察 reject；
+   - screenshot 使用二进制追加，其他 JSON 即使仍可解析也不能以对象等价绕过 byte-for-byte binding。
+
+2. **现有 Adapter 摘要 Gate 复核**：
+   - receipt 先由 evidence reference SHA-256 绑定；四类子 owner 再由 receipt 分别绑定原始 artifact；
+   - Browser report/evidence/screenshot 还会由既有 Browser artifact loader 做内部交叉投影；
+   - 八类 artifact 任一同路径替换均在解析或 completion 判定前停止。
+
+3. **效果**：
+   - 基础摘要链已覆盖 candidate Verification 组合的所有原始输入，不允许悄然改写已声明证据；
+   - 摘要失败继续属于 `reject`，不会被误投影为候选能力 `failed` 或 `incomplete`；
+   - 不产生数值分。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节未修改 TypeScript，尚未重跑增量构建；
+- 全 artifact byte-drift 定向测试 `1/1` 通过，内部覆盖 `8` 类原始输入；
+- 仅有既存 `date-time` format 提示；未运行真实 audit/Browser/Gateway/模型/Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：把 deterministic replay 的 environment/input/failure fingerprint 绑定到当前 harness identity 与冻结 fixture 公式，先以三者整体替换且重算 DAG/receipt/reference 摘要构造 Red。
+- **为什么先做它**：摘要链只能证明“artifact 未被声明后改写”，不能证明声明时就是当前候选；整组旧 replay binding 自洽复制仍可能关闭 `verification_failure_replay`。
+- **当前还缺的关键闭环**：replay current-candidate identity、其余 DAG/report/Browser 内部 identity 与选择漂移、可信 completion failed、仓库接线和最终回归。
+
+#### P2-C `editing_testing` 实现结论：failure replay 当前候选身份绑定（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` 扩展**：
+   - 同时替换 deterministic replay 的 environment/input binding 与 failure fingerprint，并同步修改两次 replay attempt、summary、DAG/receipt/reference 全部 SHA-256；
+   - 保持三次 attempt 彼此一致、分类仍为 `reproducible_failure`，隔离验证“历史 replay 整组自洽拼接”风险；
+   - Red 证明旧 loader 只检查三次内部一致，会错误关闭当前候选的 `verification_failure_replay`。
+
+2. **`coding-agent-candidate-score.mjs` 修正**：
+   - environment hash 通过版本化公式绑定当前 harness commit、lockfile SHA-256 与 worktree content SHA-256；
+   - input hash 绑定冻结 fixture ID、node ID 与 deterministic command；failure fingerprint 再绑定 environment/input 与固定 `deterministic_test_failure` 类别；
+   - loader 独立复算三者，再核对两次 replay attempt 与 summary，三次仅彼此一致不再足够。
+
+3. **测试 fixture 独立 worked example**：
+   - fixture 使用预先计算的三个 SHA-256 字面量，不调用或复刻生产 helper 形成同源断言；
+   - 正例继续完整通过，替换为另一组自洽 binding/fingerprint 时在 current-candidate binding Gate reject。
+
+4. **效果**：
+   - 旧 harness、旧输入或另一 deterministic failure 的 replay artifact 不能经摘要链重建后授予当前候选完成；
+   - 首次失败、两次有界 replay 和 `reproducible_failure` 分类仍由 P1-B 原生 DAG 合同表达；
+   - 不产生数值分。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节未修改 TypeScript，尚未重跑增量构建；
+- replay identity Red=`1 failed`（旧 loader promise resolve），Green 后正例 + 旧候选 binding 负例=`2/2 passed`；
+- 仅有既存 `date-time` format 提示；未运行真实 failure command、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：补 structured-test DAG/native report 的自洽旧 revision、runner/command/test-file 选择漂移，以及 Impact 当前 selector 绑定回归；再处理 Browser revision/三次 fresh-run 与可信失败态。
+- **为什么先做它**：replay 已不能跨候选复用；结构化 audit 是另一条可通过“相同计数但换测试/runner”的主要 laundering 路径，需要在三态之前关闭。
+- **当前还缺的关键闭环**：structured-test identity/selection、Impact selector、Browser internal identity、四类可信 completion failed、仓库接线与最终联合回归。
+
+#### P2-C `editing_testing` 验证结论：Impact、structured-test 与 Browser 内部绑定（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` 扩展 Impact 负例**：
+   - 修改 Impact Truth Set report 内的 selector source SHA-256，并重算 report/receipt/reference 摘要；
+   - 当前 loader 重新运行生产 selector 构建 expected report，逐对象对比后拒绝自洽但非当前 selector 的证据。
+
+2. **structured-test DAG 与原生报告负例**：
+   - 分别替换 DAG revision、根命令并重算全部摘要，当前 harness/固定 `verify:p1b-verification-audit` binding 均在 completion 前 reject；
+   - 保持 `4 suites / 4 tests` 摘要不变，仅将一个 `testResults[].name` 换成无关文件，同时同步原生报告、DAG、receipt/reference 摘要，实际测试文件集合 Gate 正确 reject。
+
+3. **Browser revision 负例**：
+   - 将一组 Browser report/evidence revision 自洽改为另一 commit，并重算三件套上层摘要；
+   - 既有 Browser artifact loader 按当前 harness expected revision 拒绝跨候选 Browser 证据。
+
+4. **效果**：
+   - 相同摘要计数、相同通过态或重新构建完整 SHA-256 链均不能替代当前 selector、当前 harness、固定 audit command 与实际文件选择；
+   - Impact、structured test、Browser 三类 owner 的真实性边界已与 replay current-candidate identity 一起闭合；
+   - 不产生数值分。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节未修改 TypeScript，尚未重跑增量构建；
+- 内部 identity/selection 定向测试 `1/1` 通过，内部覆盖 Impact selector、DAG revision、DAG command、原生 test file selection 与 Browser revision `5` 类漂移；
+- 仅有既存 `date-time` format 提示；未执行真实 audit/Browser/Gateway/模型/Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在所有 Schema、摘要、current-candidate identity、runner/selection 均真实自洽时，分别制造 structured-test failure、flaky/non-repro replay 与 Browser behavior/lifecycle failure，确认对应 contract 与 `editing_testing` 投影为 `failed` 而非 reject/incomplete。
+- **为什么先做它**：真实性 Gate 已基本闭合；接下来必须区分“不可信证据”和“可信但候选未达标”，完成本 Adapter 的三态语义。
+- **当前还缺的关键闭环**：可信 completion failed、定向/广泛回归、P1-B audit 根命令与 Schema/README/project-map/repository verifier 接线，以及最终联合回归。
+
+#### P2-C `editing_testing` 实现结论：可信 completion failed 三态收口（2026-09-01）
+
+##### 已完成内容
+
+1. **`candidate-verification-evidence-receipt.schema.json` 扩展 replay 初始身份**：
+   - receipt 显式保存 current-candidate replay binding 与 initial failure fingerprint；
+   - loader 仍按当前 harness/冻结 fixture 公式独立复算，并以固定首次失败 message hash 核对 DAG；
+   - P1-B 对 flaky/non-reproducible summary 将 fingerprint 置空的原生语义得到保留，不再被误判为证据损坏。
+
+2. **`coding-agent-candidate-dimension-evidence.test.mjs` 扩展可信失败场景**：
+   - structured-test 原生报告、command-job、DAG 与摘要全部自洽地投影为一个真实测试失败；
+   - deterministic replay 分别形成 `flaky` 与 `non_reproducible`，initial current-candidate binding/fingerprint 仍真实；
+   - Browser Relay 分别形成可信 `console_error` 与 `lifecycle_incomplete`，report/evidence/screenshot、revision、viewport 与摘要链保持自洽。
+
+3. **`coding-agent-candidate-score.mjs` 三态分流**：
+   - Schema、摘要、current-candidate identity、selector、runner、test selection 或 viewport 不可信时继续 `reject`；
+   - 证据可信但 structured test 失败、replay 非 reproducible、Browser 行为失败或资源未收敛时，对应 contract 与 `editing_testing` 为 `failed`；
+   - 缺 receipt 时保持 `partial/incomplete`，四项均可信达标时才为 `complete`，三态均不产生数值分。
+
+4. **效果**：
+   - 能区分“证据被篡改/拼接”“尚未提供当前候选证据”和“当前候选真实未达门槛”；
+   - flaky 不会因后续偶然通过而被改写为完成，Browser lifecycle 未收敛也不会被行为绿项覆盖；
+   - `editing_testing` 候选级 Adapter 的正例、真实性 Gate、负例与三态语义已闭合。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节尚未重跑增量构建；相关 `.mjs` 语法检查已通过；
+- 正例 + 可信 completion failed 定向测试 `2/2` 通过，其中 failed 测试内部覆盖 structured test、flaky replay、non-repro replay、Browser console 与 Browser lifecycle `5` 类场景；
+- 仅有既存 `date-time` format 提示；未运行真实 P1-B audit/Browser Relay、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：运行 receipt/loader 全量定向回归、增量构建与 diff check；随后在 repository contract 公共收集 seam 为新 Schema、版本常量、P1-B audit 根命令、README 和 project-map 接线补 Red/Green。
+- **为什么先做它**：Adapter 行为已经闭合；先确认既有 safety/Supervisor 与新 Verification 组合在同一测试文件内无回退，再建立可发现性/版本漂移门禁，才能安全收口本维度。
+- **当前还缺的关键闭环**：Adapter 全回归、仓库级合同接线、qualification/evidence 最终联合回归；其余五维 Adapter、aggregate criteria evaluator、真正数值 score/report 与连续候选实证仍未完成。
+
+#### P2-C `editing_testing` Adapter 验证结论：行为全回归与工程门禁（2026-09-01）
+
+##### 已完成内容
+
+1. **mapping/receipt/dimension evidence 联合回归**：
+   - 同时执行七维 aggregate-side mapping、既有 safety/Supervisor candidate evidence 与新增 Verification receipt/Adapter 测试；
+   - 覆盖 reference 缺失、路径越界、摘要/identity/selection 漂移、可信 failed、合法 complete 与全程无数值分；
+   - 所有 fixture 均在临时目录确定性构造，没有执行 receipt 中声明的真实 audit command 或 Browser Relay。
+
+2. **构建、语法与 diff 门禁**：
+   - `corepack pnpm build:incremental` 通过；
+   - `coding-agent-candidate-score.mjs`、dimension evidence test 与 receipt test 均通过 `node --check`，新 Schema JSON parse 通过；
+   - `git diff --check` 通过，仅输出既存 LF→CRLF 工作区提示。
+
+3. **效果**：
+   - `editing_testing` 新增行为没有回退既有 dimension mapping、candidate-global、safety 或 Supervisor Adapter；
+   - receipt Schema、公共 loader 正例、真实性 Gate 与三态可在同一当前工作区共同运行；
+   - 本回归只证明工具链行为，不代表已经生成某个真实当前候选的 P1-B 组合 receipt，也不改变总体 `partial/unscored`。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` 通过；
+- `3` 个测试文件、`42/42` 全部通过，其中 mapping `18`、dimension evidence `23`、Verification receipt `1`；
+- 三个 `.mjs` 语法检查、Schema JSON parse 与 `git diff --check` 通过；仅有既存 `date-time` format/LF→CRLF 提示；
+- 未运行真实 P1-B audit、Browser Relay、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在 `collectCodingAgentBenchmarkContractFailures()` 公共 seam 增加新 Verification receipt Schema/version、P1-B audit 根命令、README 与 project-map 任一缺失即失败的 Red，再最小补齐生产 verifier 和维护文档。
+- **为什么先做它**：行为已闭合，但公开合同若被删除、命令顺序漂移或文档不再可发现，当前仓库 Gate 尚不能保证发现；先补维护门禁再做最终联合回归。
+- **当前还缺的关键闭环**：repository contract Red/Green、README/project-map/root command 接线与 qualification/evidence 最终联合回归；其余五维 Adapter 和数值评分链仍未完成。
+
+#### P2-C `editing_testing` 验证结论：failure replay 整链自洽负例补强（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` 修正**：
+   - 历史候选 replay 负例除同步替换 DAG 内两次 replay attempt 与 summary 的 environment/input binding、failure fingerprint 外，现也同步替换 receipt 顶层 `replayBinding` 与 `initialFailureFingerprint`；
+   - 测试辅助函数把当前 receipt 一并交给 artifact 变异回调，并继续重算 artifact、receipt 与 evidence reference 三层 SHA-256；
+   - 生产 loader 未修改，负例现在准确表示“整条声明与摘要链均自洽，但身份属于另一候选 harness”。
+
+2. **效果**：
+   - replay current-candidate Gate 不再依赖 receipt 顶层与 DAG 内层意外不一致才能触发；
+   - 即使旧候选 replay 的内外身份和全部摘要均被整体重建，公共 loader 仍按当前 harness 与冻结 fixture 公式拒绝；
+   - 测试真实性增强不改变已有 API、维度状态或数值评分边界。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节仅修改 `.mjs` 测试夹具，沿用上一环节已通过的 `corepack pnpm build:incremental`，未声称重新执行；
+- 整链自洽 replay 定向负例 `1/1` 通过，其余 `23` 项按测试过滤器跳过；
+- 仅有既存 `date-time` format 提示；未执行真实 failure command、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在公开 `collectCodingAgentBenchmarkContractFailures()` seam 新增一项独立 repository wiring Red，验证 Verification receipt Schema、固定 P1-B audit 命令、README 标记和 project-map 路径任一缺失均产生诊断。
+- **为什么先做它**：Adapter 行为及补强负例均已闭合，当前剩余首要风险是新公开合同尚未纳入仓库维护 Gate。
+- **当前还缺的关键闭环**：repository contract Red/Green、Schema/version 与根命令接线、README/project-map 可发现性、最终联合回归；其余五维 Adapter 和数值评分链仍未完成。
+
+#### P2-C `editing_testing` 验证结论：repository wiring Red（2026-09-01）
+
+##### 已完成内容
+
+1. **`verify-coding-agent-benchmark-contract.test.mjs` 扩展**：
+   - 在公开 `collectCodingAgentBenchmarkContractFailures()` seam 新增独立 Verification repository wiring 用例；
+   - 用最小空仓 fixture 要求 collector 分别报告 Verification receipt Schema、`verify:p1b-verification-audit`、README 版本/命令标记与 project-map Schema 路径缺失；
+   - 断言只观察公共失败列表，不调用或复制 verifier 内部 helper。
+
+2. **Red 证据**：
+   - 现有 collector 返回 `411` 条既有缺失诊断，但预期的 `5` 条 Verification 接线诊断均不存在；
+   - 新增用例成为唯一失败项，证明当前 repository Gate 确实无法发现该公开合同被删除或遗漏；
+   - 下一 Green 只需补齐这五类维护合同，不需要执行真实 P1-B audit。
+
+3. **效果**：
+   - Green 的完成条件已由可观察失败精确定义；
+   - 测试不会因 fixture 中其他既有缺文件诊断而假通过；
+   - 未改变任何生产行为、候选状态或数值评分。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节仅新增 `.mjs` 测试，尚未重跑增量构建；
+- repository wiring 定向 Red=`1 failed / 15 skipped`，进程 exit code=`1`，失败原因是预期五条诊断不在 collector 输出中；
+- 未执行真实 P1-B audit、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：最小扩展 production verifier，读取/编译并版本绑定 Verification receipt Schema，精确绑定四文件 JSON audit 命令，再更新 package script、README 与 project-map。
+- **为什么先做它**：Red 已隔离出维护 Gate 缺口；按该合同补 Green 可避免引入新的执行器或扩大 Adapter 行为范围。
+- **当前还缺的关键闭环**：repository wiring Green、完整 repository contract 与 `verify:coding-benchmark`、接线后 qualification/evidence 联合回归；其余五维 Adapter 和数值评分链仍未完成。
+
+#### P2-C `editing_testing` 实现结论：repository wiring Green（2026-09-01）
+
+##### 已完成内容
+
+1. **`package.json` 扩展**：
+   - 新增 `verify:p1b-verification-audit` 根命令；
+   - 精确固定 Impact Truth Set、structured-test adapter、Verification DAG 与 Browser report adapter 四个测试文件及其顺序；
+   - 固定 `--reporter=json`，供 candidate receipt 对账原始 Vitest 报告，未引入第二套执行器。
+
+2. **`verify-coding-agent-benchmark-contract.mjs` 接入**：
+   - 读取并编译 `candidate-verification-evidence-receipt.schema.json`；
+   - 直接绑定 `coding-agent-candidate-score.mjs` 公开的 Verification receipt 版本常量，拒绝 Schema/loader 版本漂移；
+   - 精确校验根命令的四文件顺序与 JSON reporter，并将 README/project-map 标记纳入失败关闭清单。
+
+3. **`benchmarks/coding-agent/README.md` 与 `docs/project-map.md` 更新**：
+   - 登记 Verification receipt 的 artifact 组合、当前 candidate identity 与三态边界；
+   - 说明 audit 根命令只运行四个原生测试文件，不启动真实 Browser Relay、Gateway、模型或 Provider；
+   - 项目地图补齐新 Schema 与公共 loader 对 Verification owner 的职责。
+
+4. **效果**：
+   - Verification Schema、版本、命令或维护文档任一缺失/漂移都会由 repository Gate 报告；
+   - Green 只建立可发现性和合同一致性，不运行真实 P1-B audit，也不把历史 P1-B 结果当作当前候选证据；
+   - `editing_testing=complete` 仍不产生数值分。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节尚未运行增量构建，留待下一完整回归环节确认；
+- 同一 repository wiring 用例由 Red=`1 failed / 15 skipped` 转为 Green=`1 passed / 15 skipped`，进程 exit code=`0`；
+- 未执行真实 P1-B audit、Browser Relay、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：运行完整 repository contract、`corepack pnpm verify:coding-benchmark`、增量构建、qualification/mapping/evidence/receipt 联合回归、语法与 diff 门禁。
+- **为什么先做它**：定向 Green 只证明缺失诊断存在；必须在完整当前工作区确认新增 Schema/version/命令与所有既有公开合同共同一致，才能收口本 Adapter。
+- **当前还缺的关键闭环**：完整 repository/qualification/evidence 回归终态与最终文档结论；其余五维 Adapter、数值 score/report 和连续候选实证仍未完成。
+
+#### P2-C `editing_testing` 验证结论：完整 repository contract Gate（2026-09-01）
+
+##### 已完成内容
+
+1. **完整 repository contract 回归**：
+   - 执行 `verify-coding-agent-benchmark-contract.test.mjs` 全文件，新增 Verification wiring 与既有 v1/v2/v3、qualification、Supervisor、Web UI、跨平台合同共同验证；
+   - 新增用例后总数由 `15` 增为 `16`，全部取得明确通过终态；
+   - 运行公开 `corepack pnpm verify:coding-benchmark`，确认 manifests、Schemas、README、project-map 与平台 Gate 当前对齐。
+
+2. **效果**：
+   - Verification receipt 接线没有回退任何既有 benchmark 公共合同；
+   - 新 Schema 能由真实 repository verifier 编译，版本常量、命令与文档路径在当前工作区共同一致；
+   - repository Gate 仍只校验合同，不执行真实 P1-B audit 或生成 candidate evidence。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节尚未运行增量构建，下一环节执行；
+- repository contract=`16/16` 全部通过，`corepack pnpm verify:coding-benchmark` exit code=`0`；
+- 仅输出既存 JSON Schema `date-time` format 提示；未执行真实 audit/Browser Relay、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：运行 `corepack pnpm build:incremental` 与接线后 qualification/mapping/evidence/receipt 九文件联合回归，再补脚本语法、Schema parse 与 diff check。
+- **为什么先做它**：仓库合同已闭合；下一风险是 verifier import、loader/qualification 组合或工作区构建在接线后发生回退，需要用真实构建与上游联合回归确认。
+- **当前还缺的关键闭环**：构建、最终联合测试、语法/Schema/diff 门禁及收口结论；其余五维 Adapter、数值 score/report 和连续候选实证仍未完成。
+
+#### P2-C `editing_testing` 验证结论：接线后增量构建（2026-09-01）
+
+##### 已完成内容
+
+1. **工作区增量构建执行**：
+   - 在 Verification Schema/version、根命令与 repository verifier 接线后的同一工作区运行 `corepack pnpm build:incremental`；
+   - TypeScript project references 全部取得成功终态；
+   - 未用脚本语法检查或测试通过替代真实编译结果。
+
+2. **效果**：
+   - repository verifier 新增的 loader 常量 import 与现有 TypeScript/ESM 构建链兼容；
+   - 新接线未破坏 workspace project references；
+   - 构建不执行候选 audit、Browser Relay 或 Provider 调用。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build:incremental`（`tsc -b`）exit code=`0`；
+- 本环节未运行测试，联合回归留到下一环节；
+- 未执行真实 P1-B audit、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：运行接线后的 qualification/mapping/evidence/receipt 九文件联合回归，以本次实际测试汇总确认完整资格链终态。
+- **为什么先做它**：编译 Gate 已通过；接下来要证明 Verification Adapter、repository verifier 与既有 aggregate/qualification/candidate-global 逻辑在同一进程组中无行为回退。
+- **当前还缺的关键闭环**：最终联合测试、脚本语法/Schema parse/diff 门禁及收口结论；其余五维 Adapter、数值 score/report 和连续候选实证仍未完成。
+
+#### P2-C `editing_testing` 验证结论：接线后最终联合回归（2026-09-01）
+
+##### 已完成内容
+
+1. **qualification/mapping/evidence/receipt 九文件联合回归**：
+   - 同时执行 aggregate、v3 Schema、candidate-global evidence/runner、qualification runner、七维 mapping、dimension evidence、Verification receipt 与 repository contract 测试；
+   - 覆盖既有资格判定基线、Supervisor 与 Verification 两个候选级 Adapter、公开 Schema/version/command/docs 接线；
+   - 测试进程持续到明确最终汇总和 exit code，没有以中途绿项代替终态。
+
+2. **效果**：
+   - Verification receipt/Adapter 与既有 aggregate、candidate-global、qualification、Supervisor 和 repository verifier 在同一当前工作区共同通过；
+   - replay 整链自洽负例补强后，dimension evidence 全文件仍保持通过；
+   - 联合回归只构造临时 fixture，不生成真实候选 receipt，不改变总体 `partial/unscored`。
+
+##### 验证结果
+
+- TypeScript 编译无错误：上一环节 `corepack pnpm build:incremental` 已通过；
+- 最终联合回归 `9` 个测试文件、`141/141` 全部通过，进程 exit code=`0`；
+- 仅有既存 JSON Schema `date-time` format 提示；未执行真实 P1-B audit/Browser Relay、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：对本轮相关 `.mjs` 执行 `node --check`，解析新增/关联 JSON Schema，并运行 `git diff --check`；通过后回写 `editing_testing` Adapter 最终收口结论。
+- **为什么先做它**：行为、仓库合同与构建均已通过；最后需要独立确认脚本语法、JSON 可解析性和补丁空白规范，避免测试加载路径未覆盖的交付缺陷。
+- **当前还缺的关键闭环**：最终工程门禁与收口结论；其余五维 Adapter、数值 score/report 和连续候选实证仍未完成。
+
+#### P2-C `editing_testing` Adapter 收口结论：最终工程门禁（2026-09-01）
+
+##### 已完成内容
+
+1. **脚本语法与 JSON 合同复核**：
+   - `coding-agent-candidate-score.mjs`、dimension evidence/Verification receipt 测试、repository verifier 及其测试共 `5` 个 `.mjs` 通过 `node --check`；
+   - `candidate-verification-evidence-receipt.schema.json`、`candidate-dimension-evidence-reference.schema.json` 与 `package.json` 通过独立 JSON parse；
+   - `git diff --check` 通过，没有新增 whitespace error。
+
+2. **`editing_testing` Adapter 完整闭环**：
+   - candidate Verification receipt、evidence reference owner/claims、公共 loader 正例与 `incomplete/reject/failed/complete` 三态均已实现；
+   - artifact byte drift、selector/revision/command/test selection、replay current-candidate identity、Browser viewport/route/revision 及可信失败负例均已覆盖；
+   - P1-B audit 根命令、Schema/version、README、project-map 与 repository verifier 已完成仓库级接线。
+
+3. **效果**：
+   - `editing_testing` 已形成可复用的第二个候选级维度 Adapter，与先前 `safety_recovery` 使用同一 aggregate-root evidence 外键和公共 loader；
+   - 历史 P1-B 绿项、跨候选自洽 artifact、损坏证据与可信能力失败可被明确区分；
+   - 本收口只完成资格证据解析工具链，不代表已采集真实当前候选证据，也不产生七维数值分。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build:incremental` 通过；
+- repository contract=`16/16`，最终 qualification/mapping/evidence/receipt 联合回归=`9` 文件、`141/141` 全部通过；
+- `corepack pnpm verify:coding-benchmark`、`5` 个脚本语法检查、关联 JSON parse 与 `git diff --check` 均通过；仅有既存 `date-time` format 与 LF→CRLF 提示；
+- 未执行 `verify:p1b-verification-audit`、真实 Browser Relay、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：只读审计其余五维 `context_retrieval`、`cli_tui_interaction`、`session_workflow`、`browser_ecosystem`、`git_delivery` 的 missing evidence contracts、现有 producer/Schema 与 current-candidate identity 能力，选择复用最多且边界最窄的一维。
+- **为什么先做它**：两个 Adapter 已收口，下一主要风险是凭维度顺序新造 owner；先核对现有证据生产 seam 与候选绑定能力，才能把下一 Red/Green 控制在组合 receipt/Adapter，而非复制执行器。
+- **当前还缺的关键闭环**：其余五维候选级 Adapter、aggregate criteria evaluator、真正数值 score/report，以及两个连续完整候选的实证窗口。
+
+#### P2-C 剩余五维审计结论：下一候选选择与 owner 复用（2026-09-01）
+
+##### 已完成内容
+
+1. **权威维度与 missing contract 复核**：
+   - 以 `candidate-dimension-mapping.json` 为真源校正剩余维度 ID：`context_retrieval`、`cli_tui`、`session_long_running`、`headless_ecosystem`、`git_delivery`；
+   - 逐项核对五维共 `22` 个 missing evidence contract，而非按历史 P1/P2 阶段标题推断完成；
+   - 本地代码图工具缺少仓库规范要求的 `index_status`，无法确认缓存新鲜度，本环节未采用图结果，全部结论来自当前源码、Schema、测试与归档原文。
+
+2. **现有 owner 与 current-candidate identity 能力审计**：
+   - `context_retrieval` 有 CodeIntel truth/resource-soak/uplift/Go canary 报告族，但六项合同跨多份报告，仍缺统一 candidate-bound receipt；
+   - `cli_tui` 有 TaskProjection 四入口 conformance 与 TUI performance owner，但 `tui_accessibility_cross_platform` 尚无等价的结构化候选 artifact；
+   - `headless_ecosystem` 有 packed ESM/TypeScript external consumer 和 v1 success/failure conformance，仍需把真实 CI identity 与两类 consumer 运行结果组合为候选 receipt；
+   - `git_delivery` 可复用 Supervisor/fan-in/reconciliation 测试，但多仓 worktree soak、远端 delivery authority separation 尚不能由现有单一 artifact 关闭。
+
+3. **`session_long_running` 复用结论**：
+   - 已 candidate-bound 的 `coding-agent-benchmark-candidate-supervisor-evidence-receipt/v1` 同时持有 current-harness Windows/WSL2 60 分钟 soak 与固定 `18` 文件 fault audit；
+   - soak 原始报告直接提供 requested/observed duration、`4 write + 8 read`、interruption recovery、duplicate side effect 和 run-owned/differential resource convergence；
+   - 固定 audit 文件覆盖 Supervisor budget、exact-bound cancel/steer、restart reattach、fan-in diff/test/read-only review、conflict/confirm、crash reconciliation、worktree/journal/permission 与 soak runner 合同；
+   - 技术债决策=`fix_now`：下一维复用现有 Supervisor receipt 和 loader，不新增执行器或第三份组合 receipt。
+
+4. **效果**：
+   - 下一纵向切片确定为 `session_long_running`，其四项 claim 可由同一可信 owner 分别解析；
+   - owner 复用不会把 `safety_recovery` 的完成状态自动复制为 session 完成，仍要求 session 自己的四项显式 claim 和 completion；
+   - 其他四维保持 `partial`，没有因 producer 文件存在或历史阶段已完成而获得资格。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节仅只读审计并更新文档，沿用上一收口环节已通过的 `corepack pnpm build:incremental`，未声称重新执行；
+- 已直接核对权威 mapping、Supervisor receipt/soak Schema、固定 audit `18` 文件测试名称、P1-A/P1-C/P2-A/P2-B 归档完成语义及现有 producer；
+- 未运行真实 soak、fault audit、CodeIntel、TUI、外部 consumer、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：扩展 evidence reference 的 `session_long_running` 四项显式 claim，并在公共 `loadCodingAgentCandidateDimensionEvidence()` seam 写一条复用合法 Supervisor receipt 的 Red，要求该维 `complete` 且仍无 score。
+- **为什么先做它**：现有 receipt 的真实性与三态已由 `safety_recovery` Adapter 收口；先证明同一 owner 能按独立 session claims 复用，可用最小改动关闭第三维正例而不复制验证逻辑。
+- **当前还缺的关键闭环**：session claim/Schema 与合法组合 Red/Green、claim 独立性和四项 completion failed 负例、最终回归/仓库接线；其余四维 Adapter、数值 evaluator/report 与连续候选实证仍未完成。
+
+#### P2-C `session_long_running` 验证结论：Supervisor receipt 复用 Red（2026-09-01）
+
+##### 已完成内容
+
+1. **`candidate-dimension-evidence-reference.schema.json` 扩展**：
+   - 新增 `session_long_running` 的四项封闭 claim：双平台 60 分钟 soak、预算/取消/重启重附、managed-worktree fan-in/read-only review/remediation、并行资源收敛；
+   - 四项 owner 均固定为 `candidateSupervisorReceipt`，completion 使用互不替代的稳定枚举；
+   - claims 上限由 `8` 收紧扩展为 `12`，只容纳 safety、editing/testing 与 session 三组各四项显式 claim。
+
+2. **`coding-agent-candidate-dimension-evidence.test.mjs` 扩展 Red**：
+   - 复用已通过真实性 Gate 的 current-harness Supervisor receipt，不创建新 receipt 或执行器；
+   - evidence reference 显式追加四项 session claim，并通过公共 `loadCodingAgentCandidateDimensionEvidence()` seam 要求该维 `complete`；
+   - 继续断言所有维度均无 `score` 字段，隔离资格证据解析与数值评分边界。
+
+3. **Red 证据**：
+   - Schema、aggregate/harness fixture 与 Supervisor receipt 均通过到 production claim Gate；
+   - 现有 loader 以 `Coding benchmark candidate dimension evidence claims drifted.` 唯一失败，证明它尚未接受或解析 session claims；
+   - 失败不是由 artifact、摘要、平台或测试报告夹具错误触发。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节只修改 JSON Schema 与 `.mjs` 测试，尚未重跑增量构建；
+- session 合法组合定向 Red=`1 failed / 24 skipped`，进程 exit code=`1`，失败点位于公共 loader 的 exact-claims Gate；
+- 仅有既存 `date-time` format 提示；未运行真实 soak/fault audit、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：把 Supervisor receipt 解析结果拆为 soak workload、control/budget/restart audit、fan-in/review audit 与 resource convergence 四个独立布尔值，同时保留 safety 的总 Gate；再将四项结果映射到 session claims。
+- **为什么先做它**：四项不能简单共享一个总布尔值，否则任一子能力失败时无法形成准确 failed 投影，并会违反维度内证据独立性。
+- **当前还缺的关键闭环**：合法组合 Green、claim 独立性、四类可信 failed 与完整回归/接线；其余四维 Adapter、数值 evaluator/report 和连续候选实证仍未完成。
+
+#### P2-C `session_long_running` 实现结论：Supervisor 四子 Gate 复用 Green（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-score.mjs` 扩展 session claim 合同**：
+   - 新增四项 exact expected claims；Supervisor owner 存在但未声明 session claims 时不自动关闭该维，出现任一 session claim 时必须四项完整且顺序一致；
+   - existing safety、可选 Verification 与可选 session claim 依次组合，继续拒绝自由 claim、错 owner、错 completion 或部分声明；
+   - evidence reference 的 Schema 与 production exact-claims Gate 共同约束形状和语义配对。
+
+2. **Supervisor receipt 单次验真、多子 Gate 投影**：
+   - receipt、双平台 soak、Verification DAG 与原生 Vitest JSON 仍只加载并完成一次 Schema/SHA-256/current-harness/平台/测试选择真实性校验；
+   - soak 分拆为 workload 60 分钟/`4+8` lane/成功率、interruption recovery/duplicate side effect、differential/run-owned resource 三组 completion；
+   - 固定 `18` 文件 audit 划分为互不重叠的 control/budget/restart `8` 文件、fan-in/review `7` 文件、resource/cleanup `3` 文件，三组合计精确覆盖全部文件；
+   - safety 继续消费 soak + fault audit 全量总 Gate，既有语义不变。
+
+3. **公共 loader Green**：
+   - 同一 current-candidate Supervisor receipt 能按四项显式 claim 将 `session_long_running` 投影为 `complete`；
+   - `safety_recovery` 与 session 各自拥有独立 claim，owner 复用不造成隐式跨维授予；
+   - 所有维度继续不含数值 `score`。
+
+4. **效果**：
+   - 第三个候选级维度开始复用已有深 owner，不新增 soak runner、fault audit 或组合 receipt；
+   - 后续任一 workload、control、fan-in 或 resource 子 Gate 失败可以只标记对应 session contract，而非把四项一起压成同一个失败；
+   - 当前 Green 证明合法路径，不代表真实当前候选已有该 receipt。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节尚未重跑增量构建；`coding-agent-candidate-score.mjs` 语法检查和 evidence reference Schema JSON parse 已通过；
+- 同一 session 合法组合用例由 Red=`1 failed / 24 skipped` 转为 Green=`1 passed / 24 skipped`，进程 exit code=`0`；
+- 仅有既存 `date-time` format 提示；未运行真实 soak/fault audit、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：先验证 owner 存在但无 session claims 时该维仍保持四项 incomplete，并验证部分/乱序 session claims 被 exact Gate reject；随后分别制造 workload、recovery/control、fan-in/review、resource/cleanup 的可信失败。
+- **为什么先做它**：合法 Green 已可达；必须先证明跨维 owner 复用不会自动授予或接受部分声明，再用四类负例证明子 Gate 确实独立可观察。
+- **当前还缺的关键闭环**：claim 独立性、四类可信 failed、完整回归与 repository 文档/测试接线；其余四维 Adapter、数值 evaluator/report 和连续候选实证仍未完成。
+
+#### P2-C `session_long_running` 验证结论：claim 独立性与完整性（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` 负例补强**：
+   - 增加 Supervisor owner 已存在但没有声明四项 session claim 的用例，确认 `session_long_running` 仍为 `partial`，四项合同均保持 `incomplete`；
+   - 增加只声明三项 session claim 的部分声明负例；
+   - 增加交换最后两项 session claim 的乱序负例，二者均由 production exact-claims Gate 拒绝。
+
+2. **公共 loader 合同复核**：
+   - 测试只通过公共 `loadCodingAgentCandidateDimensionEvidence()` seam 观察结果，没有直接调用内部解析 helper；
+   - 同一 Supervisor receipt 可服务多个维度，但 owner 存在本身不产生跨维资格；
+   - session claim 必须四项完整、顺序固定且与 owner/completion 精确配对，所有维度继续不含数值 `score`。
+
+3. **效果**：
+   - `safety_recovery` 已完成时不会隐式关闭 `session_long_running`；
+   - 部分或乱序声明不能绕过 Schema 之外的语义 Gate；
+   - 后续可信失败测试可以只聚焦四个 completion 子 Gate，而无需再怀疑 claim 集合宽松接受。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节仅增加 `.mjs` 测试，尚未重跑增量构建；
+- claims 独立性/完整性定向测试=`2/2` 全部通过，另有 `25` 个非目标用例跳过，进程 exit code=`0`；
+- 仅输出既存 JSON Schema `date-time` format 提示；未运行真实 soak/fault audit、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：先制造可信的 soak workload 失败，要求只有 `supervisor_dual_platform_60_minute_soak` 为 `failed`，其余三项 session completion 保持 `complete`；随后按同一节奏覆盖 control、fan-in 与 resource 三类失败。
+- **为什么先做它**：workload Gate 只依赖双平台 soak 的持续时间、lane 数和成功率，是四类子 Gate 中依赖面最窄的一项，适合作为失败隔离 tracer bullet。
+- **当前还缺的关键闭环**：四类可信 failed 的独立投影、session 全文件与资格链联合回归、repository 文档/合同接线及最终工程门禁；其余四维 Adapter、数值 evaluator/report 和连续候选实证仍未完成。
+
+#### P2-C `session_long_running` 验证结论：soak workload 可信失败隔离（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` workload 负例**：
+   - 在 current-harness Windows soak 报告中制造低于阈值的 lane 成功率与对应原生 Gate failure；
+   - 同步重建 soak artifact SHA、Supervisor receipt SHA 与 evidence reference SHA，保持证据链字节摘要自洽；
+   - 通过公共 loader 断言只有 `supervisor_dual_platform_60_minute_soak` 为 `failed`。
+
+2. **session completion 隔离断言 helper**：
+   - 新增统一的四项 session claim 期望映射；
+   - 对失败项断言 `failedEvidenceContracts`，对其余三项断言 `resolvedEvidenceContracts` 为 `complete`；
+   - 明确断言 `missingEvidenceContracts=[]` 且所有维度仍无数值 `score`。
+
+3. **效果**：
+   - 可信 workload 能力失败与 artifact/SHA 损坏被区分；
+   - soak workload 失败不会错误连带 bounded control、fan-in/review 或 resource convergence；
+   - safety 的全量 Supervisor Gate 可同时失败，但 session 内部仍保持四项精确投影。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节只增加 `.mjs` 测试/helper，尚未重跑增量构建；
+- soak workload 可信失败定向测试=`1/1` 通过，另有 `27` 个非目标用例跳过，进程 exit code=`0`；
+- 仅输出既存 JSON Schema `date-time` format 提示；未运行真实 soak/fault audit、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：分别制造 interruption recovery 失败与 control/budget/restart 固定 audit 文件失败，要求二者都只使 `bounded_budget_cancel_restart_reattach` 为 `failed`。
+- **为什么先做它**：该 claim 是唯一同时组合 soak recovery 与固定 audit 子集的合同，需要同时证明两个输入分支任一失败都会失败关闭，且不会污染其他 session claim。
+- **当前还缺的关键闭环**：bounded control、fan-in/review、resource/cleanup 三类可信 failed，session 全文件与资格链联合回归、repository 文档/合同接线及最终工程门禁；其余四维 Adapter、数值 evaluator/report 和连续候选实证仍未完成。
+
+#### P2-C `session_long_running` 验证结论：bounded recovery/control 可信失败隔离（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` recovery 分支负例**：
+   - 在 current-harness Windows soak 报告中制造 interruption recovery 少一次的可信能力失败；
+   - 同步写入原生 Gate failure，并重建 soak artifact、Supervisor receipt 与 evidence reference SHA；
+   - 断言只使 `bounded_budget_cancel_restart_reattach` 为 `failed`。
+
+2. **control audit 分支负例与 fixture helper 扩展**：
+   - 将 `failCandidateSupervisorFaultAudit()` 参数化为按固定 test file 精确选择失败 suite；
+   - 选择 `subtask-supervisor-control-runtime.test.ts` 制造一项失败，保持全部 `18` 个固定文件的选择、顺序和候选身份不变；
+   - 同步重建原生 Vitest 报告、Verification DAG、Supervisor receipt 与 evidence reference SHA，再断言同一 bounded claim 单独失败。
+
+3. **效果**：
+   - bounded claim 的 soak recovery 与 control/budget/restart audit 两个必要输入均已证明失败关闭；
+   - 可信失败不会被误判为 test selection、artifact digest 或 current-harness identity 漂移；
+   - 两个分支均保持 workload、fan-in/review、resource convergence 三项 session claim 为 `complete`。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节只修改 `.mjs` 测试/helper，尚未重跑增量构建；
+- bounded recovery/control 两分支定向测试=`1` 个用例（内部 `2` 个独立 fixture）全部通过，另有 `28` 个非目标用例跳过，进程 exit code=`0`；
+- 仅输出既存 JSON Schema `date-time` format 提示；未运行真实 soak/fault audit、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：从固定 fan-in/review `7` 文件子集中选择一个 suite 制造可信失败，要求只使 `managed_worktree_fan_in_review_remediation` 为 `failed`。
+- **为什么先做它**：fault-audit helper 已能按固定文件精确失败；复用该 seam 可直接证明 `7` 文件子集与 control/resource 分组互不污染。
+- **当前还缺的关键闭环**：fan-in/review、resource/cleanup 两类可信 failed，session 全文件与资格链联合回归、repository 文档/合同接线及最终工程门禁；其余四维 Adapter、数值 evaluator/report 和连续候选实证仍未完成。
+
+#### P2-C `session_long_running` 验证结论：fan-in/review 可信失败隔离（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` fan-in 负例**：
+   - 从固定 fan-in/review `7` 文件子集中选择 `subtask-supervisor-fan-in-runtime.test.ts` 制造一项可信 suite 失败；
+   - 保留固定 `18` 文件选择及 current-harness identity，使用参数化 helper 重建原生报告、Verification DAG、Supervisor receipt 与 evidence reference SHA；
+   - 通过公共 loader 断言只有 `managed_worktree_fan_in_review_remediation` 为 `failed`。
+
+2. **分组隔离复核**：
+   - workload、bounded control 与 resource convergence 三项 session claim 均保持 `complete`；
+   - `missingEvidenceContracts=[]`，说明证据存在且可信，只是对应能力 Gate 未通过；
+   - safety 的全量 fault-audit Gate 可同时失败，但不改变 session 内部精确投影。
+
+3. **效果**：
+   - fan-in/read-only review/remediation 子集已具备独立可信失败证据；
+   - 单个 fan-in suite 失败不会被扩大为四项 session claim 全失败；
+   - control `8` 文件、fan-in `7` 文件与 resource `3` 文件的分组边界已在负例中开始得到可观察验证。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节只增加 `.mjs` 测试，尚未重跑增量构建；
+- fan-in/review 可信失败定向测试=`1/1` 通过，另有 `29` 个非目标用例跳过，进程 exit code=`0`；
+- 仅输出既存 JSON Schema `date-time` format 提示；未运行真实 fault audit、soak、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：分别制造 soak run-owned/differential resource residue 与固定 resource/cleanup audit 文件失败，要求二者都只使 `parallel_resource_convergence` 为 `failed`。
+- **为什么先做它**：resource claim 同样组合 soak 与 audit 两个必要输入；补齐双分支后，四项 session completion 的可信失败矩阵才完整。
+- **当前还缺的关键闭环**：resource/cleanup 双分支可信 failed、session 全文件与资格链联合回归、repository 文档/合同接线及最终工程门禁；其余四维 Adapter、数值 evaluator/report 和连续候选实证仍未完成。
+
+#### P2-C `session_long_running` 验证结论：resource/cleanup 可信失败隔离（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` resource residue 负例**：
+   - 在 current-harness Windows soak 报告中保留一个 differential worktree residue，并写入对应原生 Gate failure；
+   - 重建 soak artifact、Supervisor receipt 与 evidence reference SHA，保持证据链自洽；
+   - 断言只使 `parallel_resource_convergence` 为 `failed`。
+
+2. **resource/cleanup audit 分支负例**：
+   - 从固定 resource/cleanup `3` 文件子集中选择 `subtask-supervisor-worktree-disposal-runtime.test.ts` 制造可信 suite 失败；
+   - 保持固定 `18` 文件选择及 current-harness identity，重建原生报告、Verification DAG、Supervisor receipt 与 evidence reference SHA；
+   - 再次断言只有 resource convergence claim 失败，workload、bounded control 与 fan-in/review 均保持 `complete`。
+
+3. **效果**：
+   - resource claim 的 soak differential/run-owned 零残留与 cleanup audit 两个必要输入均已证明失败关闭；
+   - 四项 session claim 现均具备合法完成、可信失败与非目标 claim 隔离证据；
+   - 可信能力失败保持 `missingEvidenceContracts=[]` 且不生成数值 `score`。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节只增加 `.mjs` 测试，尚未重跑增量构建；
+- resource residue/cleanup 两分支定向测试=`1` 个用例（内部 `2` 个独立 fixture）全部通过，另有 `30` 个非目标用例跳过，进程 exit code=`0`；
+- 仅输出既存 JSON Schema `date-time` format 提示；未运行真实 soak/fault audit、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：运行 `coding-agent-candidate-dimension-evidence.test.mjs` 全文件回归，确认新增 session 正例、claims 负例、四类可信失败与既有 safety/editing 测试共同通过。
+- **为什么先做它**：定向行为矩阵已闭合；应先在最直接的公共 loader 测试文件内排除 helper 参数化或共享 fixture 对既有真实性/三态用例的回退，再扩大到资格链联合回归。
+- **当前还缺的关键闭环**：dimension evidence 全文件回归、repository 文档/合同接线、资格链联合回归、构建与最终工程门禁；其余四维 Adapter、数值 evaluator/report 和连续候选实证仍未完成。
+
+#### P2-C `session_long_running` 验证结论：dimension evidence 全文件回归（2026-09-01）
+
+##### 已完成内容
+
+1. **公共 dimension evidence 测试全量执行**：
+   - 完整运行 `coding-agent-candidate-dimension-evidence.test.mjs`，未使用测试名称过滤；
+   - 同时覆盖 absent/partial、candidate-global、Supervisor、Verification 三类 owner 的真实性拒绝与可信失败投影；
+   - 覆盖 session 合法完成、owner 不自动授予、部分/乱序 claims 拒绝，以及 workload、bounded、fan-in、resource 四类可信失败隔离。
+
+2. **共享 fixture/helper 回归确认**：
+   - 参数化 `failCandidateSupervisorFaultAudit()` 后，既有 safety 总 Gate 可信失败用例继续通过；
+   - Supervisor receipt、soak、DAG、原生报告的 byte drift、identity drift、test selection drift 负例继续通过；
+   - editing/testing Verification receipt 的正例、replay/Browser/structured-test 负例未发生回退。
+
+3. **效果**：
+   - `session_long_running` 行为矩阵与既有两个候选级 Adapter 可在同一公共 loader 中共同成立；
+   - Supervisor owner 的总 Gate 与四个 session 子 Gate 保持兼容且职责清晰；
+   - 测试只使用临时 fixture，不生成真实候选证据，不改变当前总体 `partial/unscored`。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节尚未重跑增量构建；
+- dimension evidence 全文件=`31/31` 全部通过，测试文件=`1/1`，进程 exit code=`0`；
+- 仅输出既存 JSON Schema `date-time` format 提示；未执行真实 soak/fault audit、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：审计并更新 repository verifier、benchmark README 与 project-map 中的候选维度 Adapter 合同说明，确保公开文档/Schema 校验能识别第三个 `session_long_running` Adapter；接线后先跑 repository contract。
+- **为什么先做它**：公共 loader 行为已闭合；在扩大到九文件资格链与构建前，需要先消除仓库级合同仍只描述两维的漂移。
+- **当前还缺的关键闭环**：repository 文档/合同接线与定向验证、资格链联合回归、构建及最终语法/Schema/diff 门禁；其余四维 Adapter、数值 evaluator/report 和连续候选实证仍未完成。
+
+#### P2-C `session_long_running` 验证结论：repository 文档合同接线 Red（2026-09-01）
+
+##### 已完成内容
+
+1. **repository wiring 缺口审计**：
+   - 已确认 Schema/version、公共 loader、Supervisor receipt 文件与根命令均已被 repository verifier 校验；
+   - benchmark README 只说明 Supervisor receipt 的 safety 总 Gate，尚未公开其对 `session_long_running` 四项独立 completion 的复用语义；
+   - project-map 只概括 Supervisor/Verification receipt，没有标出第三个候选级 Adapter 的职责边界。
+
+2. **`verify-coding-agent-benchmark-contract.test.mjs` Red**：
+   - 在既有 candidate dimension/Supervisor wiring 负例中新增 `session_long_running` 文档 token；
+   - 同时要求 README 明示 soak、bounded control、fan-in/review 与 resource convergence 四个稳定 contract ID；
+   - 测试继续通过公开 `collectCodingAgentBenchmarkContractFailures()` seam 验证失败关闭。
+
+3. **Red 证据**：
+   - 目标用例按预期失败，新增五项文档合同均未出现在 production verifier 的 failures 中；
+   - 既有 Schema、脚本、命令、README 与 project-map 缺失断言仍正常返回；
+   - 失败源是 verifier 尚未保护 session 文档语义，不是 fixture、Schema loader 或文件读取异常。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节只修改 `.mjs` 测试，尚未重跑增量构建；
+- repository wiring 定向 Red=`1 failed / 15 skipped`，进程 exit code=`1`，失败差异精确缺少五个 session 文档 failure token；
+- 未运行真实 soak/fault audit、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在 repository verifier 的 README 必备 token 中加入 session 维度与四项合同，并同步补充 benchmark README 和 project-map 的 Supervisor receipt 复用/独立失败投影说明，再运行同一用例转 Green。
+- **为什么先做它**：Red 已证明公开行为缺少仓库级保护；先补最小合同与说明，避免第三维实现只存在于测试和生产代码、后续被文档漂移静默删除。
+- **当前还缺的关键闭环**：repository wiring Green/全文件 contract、资格链联合回归、构建与最终语法/Schema/diff 门禁；其余四维 Adapter、数值 evaluator/report 和连续候选实证仍未完成。
+
+#### P2-C `session_long_running` 实现结论：repository 文档合同接线 Green（2026-09-01）
+
+##### 已完成内容
+
+1. **`verify-coding-agent-benchmark-contract.mjs` 接线**：
+   - README 必备 token 新增 `session_long_running`；
+   - 固定要求公开 soak、bounded control、fan-in/review 与 resource convergence 四个稳定 contract ID；
+   - 后续删除或改写关键公开合同会由 repository verifier 失败关闭。
+
+2. **`benchmarks/coding-agent/README.md` 扩展**：
+   - 说明同一 current-harness Supervisor receipt 对 `session_long_running` 四项合同的复用关系；
+   - 明确 owner 存在不自动授予该维，四项 claim 必须完整且顺序固定；
+   - 明确可信子 Gate 失败只投影对应合同，其他合同可保持 `complete`，且不产生数值分。
+
+3. **`docs/project-map.md` 更新**：
+   - 将 Supervisor owner 的职责补充为 safety 总 Gate 与 session 四子 Gate 的单次验真、独立投影；
+   - 标明不自动跨维授予，并保持 incomplete/reject/failed/complete 状态边界；
+   - 更新公共 loader 导航说明，未改变项目目录结构或模块归属。
+
+4. **效果**：
+   - 第三个候选级 Adapter 的公开合同、导航与 repository Gate 保持一致；
+   - session 实现不再只存在于生产代码和测试中；
+   - repository wiring 用例已从精确 Red 转为 Green。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节尚未重跑增量构建；
+- 同一 repository wiring 用例由 Red=`1 failed / 15 skipped` 转为 Green=`1 passed / 15 skipped`，进程 exit code=`0`；
+- 未运行真实 soak/fault audit、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：运行 repository contract 测试全文件与 `corepack pnpm verify:coding-benchmark` 根命令，确认新增文档 token 与当前真实仓库全部公开合同共同通过。
+- **为什么先做它**：定向 Green 只证明缺失 fixture 会报告五项 token；还需验证真实 README/project-map/Schema/package 接线没有遗漏或与其他仓库合同冲突。
+- **当前还缺的关键闭环**：repository 全文件/根命令、资格链联合回归、增量构建与最终语法/Schema/diff 门禁；其余四维 Adapter、数值 evaluator/report 和连续候选实证仍未完成。
+
+#### P2-C `session_long_running` 验证结论：repository contract 全文件回归（2026-09-01）
+
+##### 已完成内容
+
+1. **repository contract 测试全量执行**：
+   - 完整运行 `verify-coding-agent-benchmark-contract.test.mjs`，未使用测试名称过滤；
+   - 覆盖真实仓库 manifest、Schema、README、project-map、package scripts 与 Windows/Linux Quality Gate 对齐；
+   - 覆盖 candidate qualification、dimension/Supervisor、Verification 三组缺失接线失败关闭用例。
+
+2. **session 文档合同回归确认**：
+   - 新增五个 session 必备 token 与既有数百项公开合同共同通过；
+   - candidate dimension/Supervisor 缺失 fixture 能继续精确返回 Schema、脚本、命令、README 与 project-map failures；
+   - Schema version drift、Schema compile failure 与既有 Web truth set 负例均未发生回退。
+
+3. **效果**：
+   - 第三个候选级 Adapter 的 repository 接线已由定向 Green 扩展为全文件验证；
+   - README/project-map 的新增说明与真实 verifier 合同一致；
+   - 本测试不运行任何真实 candidate audit 或 Provider 调用。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节尚未重跑增量构建；
+- repository contract 测试文件=`1/1`、测试=`16/16` 全部通过，进程 exit code=`0`；
+- 仅输出既存 JSON Schema `date-time` format 提示；未运行真实 soak/fault audit、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：执行 `corepack pnpm verify:coding-benchmark` 根命令，确认仓库用户实际调用入口与直接 Vitest 结果一致。
+- **为什么先做它**：全文件测试已通过；根命令仍是 CI/开发者消费的正式 repository Gate，必须取得自身明确终态后才能进入资格链联合回归。
+- **当前还缺的关键闭环**：repository 根命令、资格链联合回归、增量构建与最终语法/Schema/diff 门禁；其余四维 Adapter、数值 evaluator/report 和连续候选实证仍未完成。
+
+#### P2-C `session_long_running` 验证结论：repository 正式根 Gate（2026-09-01）
+
+##### 已完成内容
+
+1. **`verify:coding-benchmark` 正式入口执行**：
+   - 通过 `corepack pnpm verify:coding-benchmark` 调用仓库公开 Gate；
+   - 实际加载当前 v1/v2/v3 manifest、Schema、文档、package scripts 与跨平台 CI 接线；
+   - session 新增的 README/verifier/project-map 合同与现有公开仓库合同共同对齐。
+
+2. **效果**：
+   - 直接 Vitest 与开发者/CI 根命令取得一致成功终态；
+   - 第三个候选级 Adapter 的 repository 接线可由标准命令重复验证；
+   - 命令不执行候选 audit、冻结 Formal、Gateway 或 Provider 调用。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节尚未重跑增量构建；
+- `corepack pnpm verify:coding-benchmark` exit code=`0`，输出 v1/v2/v3 manifests、schemas、docs、platform gates aligned；
+- repository contract 全文件仍为上一环节 `16/16`；仅输出既存 JSON Schema `date-time` format 提示；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：运行 aggregate、v3 Schema、candidate-global evidence/runner、qualification runner、七维 mapping、dimension evidence、Verification receipt 与 repository contract 九文件联合回归。
+- **为什么先做它**：repository 接线已闭合；下一风险是 session claims/Schema 与上游 aggregate、qualification、candidate-global、Verification Adapter 在同一测试进程组中发生组合回退。
+- **当前还缺的关键闭环**：资格链联合回归、增量构建与最终语法/Schema/diff 门禁；其余四维 Adapter、数值 evaluator/report 和连续候选实证仍未完成。
+
+#### P2-C `session_long_running` 验证结论：资格链九文件联合回归（2026-09-01）
+
+##### 已完成内容
+
+1. **qualification/mapping/evidence/receipt 九文件联合回归**：
+   - 同时执行 aggregate、v3 contract、candidate-global evidence/runner、qualification runner、七维 mapping、dimension evidence、Verification receipt 与 repository contract 测试；
+   - 覆盖既有资格判定基线、Supervisor/Verification owner、三个候选级维度 Adapter 与公开 Schema/docs 接线；
+   - 测试进程持续到明确最终汇总和 exit code，没有以中途绿项代替终态。
+
+2. **session 组合回归确认**：
+   - 新增合法完成、owner 独立性、claims 完整性与 workload/bounded/fan-in/resource 可信失败隔离均在联合进程组中通过；
+   - candidate-global、expected-report、A/B/C hard Gate 与 retained evidence 漂移负例继续通过；
+   - Verification receipt 的 Impact/structured-test/replay/Browser 组合正例继续通过。
+
+3. **效果**：
+   - `session_long_running` Schema/claims/子 Gate 与 aggregate、qualification、candidate-global、existing adapters 共同兼容；
+   - 联合回归只构造临时 fixture，不生成真实候选 receipt，不改变总体 `partial/unscored`；
+   - 相比上次 `141` 项基线，本次以实际 Vitest 汇总记录为 `148` 项。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节尚未重跑增量构建；
+- 最终联合回归=`9` 个测试文件、`148/148` 全部通过，进程 exit code=`0`；
+- 仅有既存 JSON Schema `date-time` format 提示；未执行真实 soak/fault audit、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：运行 `corepack pnpm build:incremental`，确认 session 生产代码、repository verifier 与现有 TypeScript project references/ESM import 链兼容。
+- **为什么先做它**：行为与仓库合同已通过；接下来必须以真实 `tsc -b` 结果排除测试转译路径未暴露的编译或模块接线问题。
+- **当前还缺的关键闭环**：增量构建、脚本语法/Schema parse/diff 门禁与 `session_long_running` Adapter 最终收口；其余四维 Adapter、数值 evaluator/report 和连续候选实证仍未完成。
+
+#### P2-C `session_long_running` 验证结论：接线后增量构建（2026-09-01）
+
+##### 已完成内容
+
+1. **工作区增量构建执行**：
+   - 在 session Schema/loader、测试与 repository verifier/docs 接线后的同一工作区运行 `corepack pnpm build:incremental`；
+   - TypeScript project references 通过真实 `tsc -b` 取得成功终态；
+   - 未以脚本语法检查、Vitest 转译或上一轮构建结果替代本次编译。
+
+2. **效果**：
+   - session 四子 Gate 与 repository verifier 的新增 ESM import/常量接线兼容现有构建链；
+   - 新增 Schema/文档/测试未破坏 workspace project references；
+   - 构建不执行真实 soak、fault audit、冻结 Formal 或 Provider 调用。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build:incremental`（`tsc -b`）exit code=`0`；
+- 本环节未重复运行测试，上一环节九文件联合回归=`148/148`；
+- 未启动 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：对本轮相关 `.mjs` 执行 `node --check`，独立解析 evidence reference Schema，并运行 `git diff --check`；全部通过后回写 `session_long_running` Adapter 最终收口结论。
+- **为什么先做它**：行为、仓库合同与 TypeScript 构建均已通过；最后需要排除测试加载路径未覆盖的脚本语法、JSON 可解析性和补丁空白缺陷。
+- **当前还缺的关键闭环**：最终工程门禁与第三维收口结论；其余四维 Adapter、数值 evaluator/report 和连续候选实证仍未完成。
+
+#### P2-C `session_long_running` Adapter 收口结论：最终工程门禁（2026-09-01）
+
+##### 已完成内容
+
+1. **脚本语法与 JSON 合同复核**：
+   - `coding-agent-candidate-score.mjs`、dimension evidence 测试、repository verifier 及其测试共 `4` 个 `.mjs` 通过 `node --check`；
+   - `candidate-dimension-evidence-reference.schema.json` 通过独立 JSON parse；
+   - `git diff --check` 通过，没有新增 whitespace error。
+
+2. **轻量对抗性 Review**：
+   - 直接从生产常量解析固定 fault-audit 集合，control/fan-in/resource 分组分别为 `8/7/3` 文件；
+   - 三组合计 `18`、唯一文件 `18`，无重叠、无遗漏、无额外文件，精确覆盖固定 fault audit；
+   - 复核 Schema `claims.maxItems=12`、session 封闭 claim 形状、production exact-claims Gate 与源码 score 写入检索，未发现跨维自动授予或提前评分路径。
+
+3. **`session_long_running` Adapter 完整闭环**：
+   - evidence reference 新增四项显式 session claim，同一 current-harness Supervisor receipt 单次验真后分别投影 workload、bounded control、fan-in/review 与 resource convergence；
+   - owner 存在但无 session claim 时保持 incomplete，部分/乱序声明 reject；
+   - workload、recovery/control、fan-in/review、resource/cleanup 四类可信能力失败均只标记对应 session contract，artifact/SHA/identity/test-selection 损坏继续 reject；
+   - benchmark README、project-map 与 repository verifier 已完成第三维公开合同接线。
+
+4. **效果**：
+   - `session_long_running` 成为第三个可复用候选级维度 Adapter，不新增 soak runner、fault-audit 执行器或第三份组合 receipt；
+   - `safety_recovery` 总 Gate 与 session 四子 Gate 共享 owner 但保持独立资格语义；
+   - 本收口只完成资格证据解析工具链，不代表已采集真实当前候选证据，也不产生七维数值分。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build:incremental`（`tsc -b`）通过；
+- dimension evidence=`31/31`、repository contract=`16/16`、qualification/mapping/evidence/receipt 九文件联合回归=`148/148` 全部通过；
+- `corepack pnpm verify:coding-benchmark`、`4` 个脚本语法检查、关联 JSON parse、fault-audit `8+7+3=18` 精确分组检查与 `git diff --check` 均通过；仅有既存 `date-time` format 与 LF→CRLF 提示；
+- 未执行真实 `verify:p2a-supervisor-fault-audit`、60 分钟 soak、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：按剩余四维 owner 审计结果，先只读比较 `context_retrieval`、`cli_tui`、`headless_ecosystem`、`git_delivery` 的最小组合 receipt/缺口，选择能复用既有 producer 且无需新增真实执行器的下一纵向切片，再从合法 owner/claim Red 开始。
+- **为什么先做它**：第三维已收口；剩余四维都不能由现有单一 receipt 直接关闭，先把 producer、候选身份绑定与缺失结构化证据收敛为一个最小组合 owner，才能避免凭维度顺序新造工具链。
+- **当前还缺的关键闭环**：剩余四维候选级 Adapter、aggregate criteria evaluator、真正数值 score/report，以及两个连续完整候选的实证窗口。
+
+#### P2-C 剩余四维审计结论：`headless_ecosystem` 本地/远端证据分层（2026-09-01）
+
+##### 已完成内容
+
+1. **剩余四维权威缺口复核**：
+   - `context_retrieval` 仍需组合 CodeIntel truth/freshness、Context Inspector、resource soak、semantic adoption/context waste、无 binary fallback 与 Go canary eligibility 六类报告；
+   - `cli_tui` 已有 TaskProjection 与 TUI performance owner，但 `tui_accessibility_cross_platform` 尚无等价候选级结构化 artifact；
+   - `git_delivery` 可复用 Supervisor/fan-in/reconciliation 局部证据，但 multi-repository soak 与 current-candidate remote delivery authority 仍缺统一 owner；
+   - 三者都比现有 coding-run client 审计需要更多新 producer 或真实执行面。
+
+2. **`headless_ecosystem` 深模块/Adapter 审计**：
+   - packed ESM consumer 与独立 `NodeNext + strict` TypeScript consumer 是两个真实 adapter，均通过系统临时仓外根消费实际 `@belldandy/core/coding-run-client` tarball 并执行完整 `7/7` 生命周期；
+   - 版本化 `coding-run-client-conformance/v1` 固定 current/N-1 Gate、七项 operation 与 `contentMode=none`；
+   - success/failure conformance 覆盖 Core 与 VS Code adapter、`17 + 1 + 5` error taxonomy、unknown/redaction、四类 cursor、frame、backpressure、abort/cancel、timeout、transport close；
+   - 根命令 `verify:coding-run-client` 固定七个测试文件，Quality workflow 在 Windows/Ubuntu matrix 明确执行该命令。
+
+3. **本地与真实 CI 证据边界**：
+   - 下一最小组合 owner 只绑定 current-harness 七文件 audit 的 Verification DAG 与原始 Vitest JSON，关闭 `external_consumer_pair_lifecycle`、`protocol_version_conformance`、`error_taxonomy_cancellation_conformance` 三项；
+   - `real_ci_consumer_binding` 不由本地测试或 workflow 文本关闭，必须由单独、机读且绑定当前候选 commit/run/attempt/platform/job conclusion 的真实 CI owner 提供；
+   - 历史 Quality run `31805350871` 绑定旧 identity，只能作为 P2-B 历史完成证据，不能用于当前 P2-C 候选资格。
+
+4. **技术债与 seam 决策**：
+   - 技术债决策=`split_task`：先实现本地三合同 receipt/Adapter，真实 CI receipt 留作同维第二纵向切片；
+   - 外部测试 seam 继续使用 `loadCodingAgentCandidateDimensionEvidence()`，不暴露内部报告分组 helper；
+   - 不新增 coding-run client 执行器，只复用现有两个 consumer runner、conformance 测试与根命令。
+
+5. **效果**：
+   - 下一切片确定为 `headless_ecosystem`，同时避免把 workflow 已接线误写成真实 CI 已运行；
+   - 本地三项完成后该维仍应保持 `partial`，只缺 `real_ci_consumer_binding`；
+   - 后续真实 CI 证据可作为第二个 adapter 接入同一公共 loader，而无需重写本地审计解析。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节仅只读审计并更新文档，沿用上一收口环节已通过的 `corepack pnpm build:incremental`，未声称重新执行；
+- 已直接核对权威 mapping、`verify:coding-run-client` 七文件命令、两个 packed consumer runner/测试、v1 conformance Schema/manifest、failure conformance 与 Quality workflow Windows/Ubuntu 接线；
+- 未运行 packed consumer、真实 CI、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：新增封闭的 candidate coding-run client audit receipt Schema，并在公共 dimension evidence loader seam 写合法七文件 receipt 的 Red，要求本地三项合同 `complete`、`real_ci_consumer_binding` 仍 `incomplete` 且无 score。
+- **为什么先做它**：先证明现有七文件审计可以由一个小 interface 复用，能在零新执行器、零远端写入下关闭三个已具备深证据的合同，同时保留真实 CI 的独立真实性门槛。
+- **当前还缺的关键闭环**：本地 audit receipt/Schema/真实性与可信失败三态、current-candidate CI receipt、其余三维 Adapter、aggregate evaluator、数值 report 与连续候选实证。
+
+#### P2-C `headless_ecosystem` 实现结论：本地 audit receipt Schema 合同奠基（2026-09-01）
+
+##### 已完成内容
+
+1. **`candidate-coding-run-client-evidence-receipt.schema.json` 新建**：
+   - 定义本地 coding-run client audit receipt 的封闭 `v1` interface；
+   - 固定绑定 current aggregate、Verification DAG、原始 Vitest native report 与 `verify:coding-run-client` 七个测试文件；
+   - receipt 只承载本地审计证据，不包含或替代真实 CI run/job conclusion。
+
+2. **`candidate-dimension-evidence-reference.schema.json` 扩展**：
+   - 新增 `candidateCodingRunClientReceipt` owner；
+   - 新增 `headless_ecosystem` 三项本地 claim，并将 owner 精确固定到该 receipt；
+   - 保留 `real_ci_consumer_binding` 的独立 owner 边界，未通过本地 receipt 提前授予。
+
+3. **效果**：
+   - 本地三合同获得可机读、可按 SHA/候选身份验真的最小证据接口；
+   - 下一步可在公共 dimension evidence loader seam 以合法 receipt 定义 Red；
+   - 当前仅完成 Schema 合同，不代表 Adapter 已实现、测试已 Green 或维度已获得数值分。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节只新增/修改 JSON Schema，尚未重跑增量构建；
+- 自动化测试=`0`（本环节尚未进入 loader Red）；两份关联 Schema 均通过 PowerShell `ConvertFrom-Json` 独立解析；
+- 工作区仍位于 `main`，既有 P2-C 改动全部保留；未提交、未推送，未运行 packed consumer、真实 CI、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在 `coding-agent-candidate-dimension-evidence.test.mjs` 构造绑定 current aggregate、Verification DAG、原始 Vitest report 与固定七文件的合法 receipt，并只通过公共 `loadCodingAgentCandidateDimensionEvidence()` 断言本地三合同完成、真实 CI 合同仍缺失且全维无 `score`。
+- **为什么先做它**：Schema 只定义数据形状，尚未证明生产 loader 会验真或投影合同；先取得公共 seam 的明确 Red，才能锁住调用者可观察行为并避免测试内部 helper。
+- **当前还缺的关键闭环**：合法 receipt Red/Green、claims/byte/identity/test-selection 漂移负例、三类可信失败隔离、repository 接线、联合回归与构建门禁；其余三维 Adapter、真实 CI owner、aggregate evaluator、数值 report 和连续候选实证仍未完成。
+
+#### P2-C `headless_ecosystem` TDD 结论：合法本地 audit receipt 公共 seam Red（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` 扩展**：
+   - 新增固定 `verify:coding-run-client` 命令与七文件选择；
+   - 构造绑定 current aggregate/harness 的原始 Vitest report、零执行 Verification DAG 与 candidate coding-run client receipt；
+   - 只经公共 `loadCodingAgentCandidateDimensionEvidence()` 断言本地三合同完成、`real_ci_consumer_binding` 仍缺失且所有维度无 `score`。
+
+2. **Red 失败定位**：
+   - 测试 fixture 已通过 evidence reference Schema 校验入口；
+   - 生产 `requireExactDimensionClaims()` 对新增三项 headless claim 精确失败关闭；
+   - 唯一错误为 `Coding benchmark candidate dimension evidence claims drifted.`，符合预期未实现行为。
+
+3. **效果**：
+   - 公共 seam 已锁定本地三合同的调用者可观察结果；
+   - Red 没有通过内部 helper、真实 packed consumer 或 CI 运行旁路完成；
+   - 真实 CI 合同继续保持独立缺口，未被 workflow 文本或本地报告冒领。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节只修改 `.mjs` 测试，尚未重跑增量构建；
+- 定向 Red=`1 failed / 31 skipped`，进程 exit code=`1`，唯一失败为生产 exact-claims Gate 的预期 claims drift；
+- 未运行真实 packed consumer、CI、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在 `coding-agent-candidate-score.mjs` 最小接入 receipt version/Schema、三项 exact claims、owner resolver 及 current-harness DAG/report/七文件验真，运行同一用例转 Green。
+- **为什么先做它**：公共 Red 已明确需求边界；现在只实现使该行为通过所需的最小生产路径，避免提前混入负例或真实 CI owner。
+- **当前还缺的关键闭环**：合法 receipt Green、owner 无 claims/部分乱序 claims、byte/identity/command/test-selection 漂移和三类可信失败隔离；repository 接线、联合回归与构建门禁也尚未完成。
+
+#### P2-C `headless_ecosystem` TDD 结论：合法本地 audit receipt 公共 seam Green（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-score.mjs` 接入**：
+   - 新增 candidate coding-run client receipt version、Schema 路径与三项封闭 exact claims；
+   - 公共 loader 接入 `candidateCodingRunClientReceipt` owner，校验 receipt SHA、Schema、aggregate/current-harness identity；
+   - 校验零执行 Verification DAG、固定 `verify:coding-run-client` 命令、原始 Vitest report 与精确七文件选择。
+
+2. **本地三子 Gate 实现**：
+   - consumer Gate 绑定 Core stdio/client、VS Code adapter 与 packed ESM/TypeScript 两个 consumer 文件；
+   - protocol Gate 绑定共同基础文件与版本 conformance 文件；
+   - error/cancellation Gate 绑定共同基础文件与 failure conformance 文件；
+   - 未新增 `real_ci_consumer_binding` owner、claim 或自动完成路径。
+
+3. **效果**：
+   - 合法 current-harness receipt 将三项本地合同投影为 `complete`；
+   - `headless_ecosystem` 仍保持 `partial`，唯一缺失合同为 `real_ci_consumer_binding`；
+   - 资格解析继续保持零模型、零执行、零数值评分。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节尚未重跑增量构建；
+- 同一公共 seam 用例由 Red=`1 failed / 31 skipped` 转为 Green=`1 passed / 31 skipped`，进程 exit code=`0`；
+- 仅输出既存 JSON Schema `date-time` format 提示；未运行真实 packed consumer、CI、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：补充 owner 存在但无 headless claims 的 incomplete 行为，以及部分/乱序三 claims 的 reject 行为，并运行定向负例取得明确终态。
+- **为什么先做它**：合法 Green 只证明正向投影；先锁住“owner 不自动授予”和 exact-claims 封闭性，防止后续增加真实 CI owner 时本地 receipt 被跨合同放大。
+- **当前还缺的关键闭环**：claims 负例、receipt/DAG/report byte drift、aggregate/harness/command/test selection 漂移、consumer/protocol/error 可信失败隔离、repository 接线、联合回归与构建门禁。
+
+#### P2-C `headless_ecosystem` 验证结论：owner 独立性与 exact-claims 封闭性（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` 负例扩展**：
+   - 新增 coding-run client receipt owner 存在、但不声明 headless claims 的公共 loader 用例；
+   - 新增三项 headless claims 缺一项与顺序漂移用例；
+   - 所有断言继续只观察公共 dimension evidence resolution 或公开拒绝错误。
+
+2. **行为边界确认**：
+   - owner-only 时四项 headless 合同全部保持 `missing`，不自动授予本地三合同；
+   - 部分或乱序 claims 均由 exact-claims Gate 失败关闭；
+   - 两类路径均不产生任何维度 `score`。
+
+3. **效果**：
+   - receipt 的存在与合同声明保持解耦；
+   - 后续接入真实 CI owner 时，本地 owner 不能隐式扩大到远端合同；
+   - claim 集合和顺序成为封闭、可回归的资格接口。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节只修改 `.mjs` 测试，尚未重跑增量构建；
+- 定向封闭性验证=`2 passed / 32 skipped`，进程 exit code=`0`；
+- 仅输出既存 JSON Schema `date-time` format 提示；未运行真实 packed consumer、CI、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：补 receipt、Verification DAG、原始 Vitest report 三层 byte drift，以及 aggregate/current-harness/command/test-selection 的自洽漂移负例。
+- **为什么先做它**：claims 边界已封闭；下一风险是声明合法但证据字节、候选身份或测试选择被替换，必须先证明这类不可信输入会 reject，而不是降级为普通能力失败。
+- **当前还缺的关键闭环**：artifact/identity/selection reject、consumer/protocol/error 三类可信失败隔离、repository 接线、全文件与联合回归、构建和最终工程门禁。
+
+#### P2-C `headless_ecosystem` 验证结论：artifact 与 current-candidate 真实性失败关闭（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` 真实性负例扩展**：
+   - 覆盖 receipt、Verification DAG、原始 Vitest report 三层 byte drift；
+   - 覆盖同步重算下游 SHA 后的 receipt aggregate、DAG current-harness、命令与测试选择漂移；
+   - 新增最小 fixture mutation helper，只用于构造自洽攻击输入，测试 seam 仍为公共 loader。
+
+2. **生产验真边界确认**：
+   - 未重算 SHA 的三层字节变化分别由 receipt/audit digest Gate reject；
+   - receipt 绑定另一 aggregate、DAG 绑定另一 harness 或命令漂移均由 binding Gate reject；
+   - 用无关文件替换固定七文件并同步更新 report/DAG/receipt SHA，仍由 test-selection Gate reject。
+
+3. **效果**：
+   - 合法 claim 不能绕过 byte、identity、command 或 selection 验真；
+   - 不可信证据不会被误表示为某项能力 `failed`，而是整体拒绝解析；
+   - 本地 receipt 只能证明 current-candidate/current-harness 的精确七文件 audit。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节只修改 `.mjs` 测试，尚未重跑增量构建；
+- 定向真实性验证=`2 passed / 34 skipped`，内部实际覆盖 `3` 个 byte drift 与 `4` 个自洽漂移变体，进程 exit code=`0`；
+- 仅输出既存 JSON Schema `date-time` format 提示；未运行真实 packed consumer、CI、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：分别令 packed consumer、protocol conformance、failure/error conformance 的唯一分组文件产生可信 Vitest 失败，并断言只把对应 headless 合同投影为 `failed`，其余本地合同保持 `complete`、真实 CI 继续缺失。
+- **为什么先做它**：真实性 reject 已闭合；下一步要区分“证据不可信”与“可信证据证明能力失败”，并验证三子 Gate 没有退化成同生共死的总 Gate。
+- **当前还缺的关键闭环**：三类可信失败隔离、dimension evidence 全文件回归、receipt Schema/README/project-map/verifier 仓库接线、联合回归、构建与最终工程门禁。
+
+#### P2-C `headless_ecosystem` 验证结论：三类可信失败独立投影（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` 可信失败扩展**：
+   - packed consumer 分组以 external consumer 文件失败作为独立 witness；
+   - protocol 分组以版本 conformance 文件失败作为独立 witness；
+   - error/cancellation 分组以 failure conformance 文件失败作为独立 witness。
+
+2. **可信终态重建**：
+   - 每个失败变体同步重建原始 Vitest report、非零 command-job 终态与 Verification DAG；
+   - 同步更新 report、DAG、receipt 和 evidence reference 的全部 SHA；
+   - aggregate/current-harness、固定命令与七文件选择保持不变，因此证据通过真实性 Gate 后进入能力失败投影。
+
+3. **效果**：
+   - consumer、protocol、error/cancellation 三项合同不再同生共死；
+   - 任一分组可信失败只将对应合同标记为 `failed`，另两项保持 `complete`；
+   - `real_ci_consumer_binding` 始终保持 `missing`，且失败路径仍不产生数值分。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节只修改 `.mjs` 测试，尚未重跑增量构建；
+- 定向可信失败验证=`1 passed / 36 skipped`，内部实际覆盖 consumer/protocol/error-cancellation 共 `3` 个失败变体，进程 exit code=`0`；
+- 仅输出既存 JSON Schema `date-time` format 提示；未运行真实 packed consumer、CI、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：运行 `coding-agent-candidate-dimension-evidence.test.mjs` 全文件，确认新增合法、claims、真实性与失败隔离路径同既有 safety、session、Verification Adapter 全部兼容。
+- **为什么先做它**：定向用例只证明新增 headless 分支；在进入 repository 文档/Schema 接线前，必须先取得公共 loader 整个测试文件的明确终态，排除 exact-claims 与共享 report adapter 的回归。
+- **当前还缺的关键闭环**：dimension evidence 全文件回归、repository Schema/version/README/project-map/verifier 接线、正式根 Gate、资格链联合回归、构建与最终工程门禁。
+
+#### P2-C `headless_ecosystem` 验证结论：dimension evidence 全文件回归（2026-09-01）
+
+##### 已完成内容
+
+1. **公共 loader 测试文件全量执行**：
+   - 完整运行 `coding-agent-candidate-dimension-evidence.test.mjs`，未使用测试名称过滤；
+   - 覆盖 absence/incomplete、SHA/Schema/binding reject、可信 failure 与 complete 四类状态边界；
+   - 同时覆盖既有 safety、session、Verification Adapter 与新增 headless 本地 Adapter。
+
+2. **组合兼容性确认**：
+   - 新增三项 exact claims 未破坏 Supervisor owner 与 session 可选 claims 组合；
+   - coding-run client 原始 Vitest report 复用 structured-test adapter 时，与 Verification/Supervisor report 路径共同通过；
+   - 所有正例和负例继续保持无数值 `score`。
+
+3. **效果**：
+   - `headless_ecosystem` 本地 receipt 的正例、claims 封闭性、真实性拒绝与三类可信失败已由整个公共 loader 测试文件保护；
+   - 既有三个候选级 Adapter 未发生回退；
+   - 下一步可进入 repository Schema/docs/verifier 接线，而无需扩大生产行为。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节尚未重跑增量构建；
+- dimension evidence 测试文件=`1/1`、测试=`37/37` 全部通过，进程 exit code=`0`；
+- 仅输出既存 JSON Schema `date-time` format 提示；未运行真实 packed consumer、CI、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在 repository contract 测试 fixture 中要求新 receipt Schema、生产 version token、README 三项本地合同与真实 CI 独立边界、project-map owner 导航，先取得精确 wiring Red。
+- **为什么先做它**：行为测试已闭合，但新增 Schema/owner 仍可能未被仓库正式 Gate 与公开导航保护；先用失败测试定义完整接线面，再补最小文档/verifier Green。
+- **当前还缺的关键闭环**：repository wiring Red/Green、repository 全文件与根 Gate、资格链联合回归、增量构建、语法/Schema/diff 最终门禁与本地 Adapter 收口结论。
+
+#### P2-C `headless_ecosystem` TDD 结论：repository wiring 精确 Red（2026-09-01）
+
+##### 已完成内容
+
+1. **`verify-coding-agent-benchmark-contract.test.mjs` 扩展**：
+   - 新增 candidate coding-run client repository wiring 的独立失败关闭用例；
+   - 要求 receipt Schema、正式 `verify:coding-run-client` 七文件脚本、README receipt/维度/合同说明；
+   - 要求 project-map 记录 receipt Schema 与 `candidateCodingRunClientReceipt` owner 导航。
+
+2. **Red 失败定位**：
+   - 当前 verifier 尚未读取或校验新 receipt Schema/version；
+   - 当前 verifier 尚未保护 `verify:coding-run-client` 的精确七文件命令；
+   - README/project-map 尚未公开本地三合同与真实 CI 独立合同边界。
+
+3. **效果**：
+   - repository wiring 的完整缺口已由单一测试精确定义；
+   - 后续若删除 Schema、改写命令或移除关键公开合同，正式 repository Gate 将具备失败关闭入口；
+   - Red 不运行真实七文件 audit、packed consumer 或 CI。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节只修改 `.mjs` 测试，尚未重跑增量构建；
+- repository wiring 定向 Red=`1 failed / 16 skipped`，进程 exit code=`1`，失败差异精确缺少新 Schema/script/README/project-map 共 `11` 项 wiring 结果；
+- 未运行真实 packed consumer、CI、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在 repository verifier 中读取、编译并核对新 receipt Schema/version与精确七文件脚本；同步补充 benchmark README 和 project-map 的本地三合同、独立真实 CI owner 及失败语义说明，再运行同一用例转 Green。
+- **为什么先做它**：Red 已证明公开行为缺少仓库级保护；现在只补使该失败测试通过的最小接线，避免实现仅存在于 loader 与测试中。
+- **当前还缺的关键闭环**：repository wiring Green、repository 全文件/正式根 Gate、资格链联合回归、增量构建、语法/Schema/diff 最终门禁与本地 Adapter 收口。
+
+#### P2-C `headless_ecosystem` 实现结论：repository 文档合同接线 Green（2026-09-01）
+
+##### 已完成内容
+
+1. **`verify-coding-agent-benchmark-contract.mjs` 接线**：
+   - 读取、编译并校验 candidate coding-run client receipt Schema 与生产导出 version；
+   - 精确锁定 `verify:coding-run-client` 的七文件顺序和 JSON reporter；
+   - README/project-map 必备 token 新增 receipt、`headless_ecosystem`、本地三合同、真实 CI 独立合同及 owner 导航。
+
+2. **`package.json` 对齐**：
+   - `verify:coding-run-client` 保持原七文件集合与顺序；
+   - 增加 `--reporter=json`，使正式命令可直接产生 receipt 所绑定的原始 Vitest JSON；
+   - 未新增 runner、Provider、远端写入或真实 CI 调用。
+
+3. **`benchmarks/coding-agent/README.md` 与 `docs/project-map.md` 更新**：
+   - 公开 `candidateCodingRunClientReceipt` 的 current-aggregate/current-harness、DAG/report/七文件绑定边界；
+   - 说明 consumer/protocol/error 三子 Gate 的独立失败投影与 owner 不自动授予；
+   - 明确 `real_ci_consumer_binding` 只能由绑定当前候选 commit/run/attempt/platform/job conclusion 的独立真实 CI owner 关闭，workflow 文本、本地报告和历史 run 均不能替代。
+
+4. **效果**：
+   - 第四个候选级 Adapter 的 Schema、正式命令、公开合同与导航由 repository verifier 统一保护；
+   - receipt 所需原始 JSON 与标准命令产物格式对齐；
+   - repository wiring 用例已从精确 Red 转为 Green。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节尚未重跑增量构建；
+- 同一 repository wiring 用例由 Red=`1 failed / 16 skipped` 转为 Green=`1 passed / 16 skipped`，进程 exit code=`0`；
+- 本环节未实际运行 `verify:coding-run-client`、packed consumer 或真实 CI；未运行冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：运行 repository contract 测试全文件，确认新增 Schema/version/script/docs/map token 与现有全部公开合同共同通过。
+- **为什么先做它**：定向 Green 只证明空 fixture 能报告新增 wiring；还需验证真实仓库内容、Schema 编译和已有 repository 合同没有冲突。
+- **当前还缺的关键闭环**：repository 全文件与正式根 Gate、资格链联合回归、增量构建、语法/Schema/diff 最终门禁与本地 Adapter 收口结论。
+
+#### P2-C `headless_ecosystem` 验证结论：repository contract 全文件回归（2026-09-01）
+
+##### 已完成内容
+
+1. **repository contract 测试全量执行**：
+   - 完整运行 `verify-coding-agent-benchmark-contract.test.mjs`，未使用测试名称过滤；
+   - 覆盖真实仓库 manifest、全部公开 Schema、README、project-map、package scripts 与双平台 Quality Gate 接线；
+   - 覆盖 candidate qualification、dimension/Supervisor、Verification 与 coding-run client 四组缺失接线失败关闭用例。
+
+2. **headless repository 回归确认**：
+   - 新 receipt Schema 可编译且 version 与生产 loader 导出一致；
+   - `verify:coding-run-client` 七文件顺序/JSON reporter 与 README/project-map 新增合同共同通过；
+   - 既有 Web truth set、Schema drift、qualification 与三维 Adapter repository 合同未发生回退。
+
+3. **效果**：
+   - 第四个候选级 Adapter 的 repository 接线已由定向 Green 扩展为全文件验证；
+   - 新增公开合同与真实仓库内容一致；
+   - 本测试只校验接线，不执行 coding-run client audit、packed consumer 或真实 CI。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节尚未重跑增量构建；
+- repository contract 测试文件=`1/1`、测试=`17/17` 全部通过，进程 exit code=`0`；
+- 仅输出既存 JSON Schema `date-time` format 提示；未运行真实 packed consumer、CI、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：执行 `corepack pnpm verify:coding-benchmark` 正式根命令，确认仓库用户与 CI 实际调用入口和直接 Vitest 结果一致。
+- **为什么先做它**：全文件测试已通过，但标准根命令仍是正式 repository Gate；必须取得自身明确终态后才能进入资格链联合回归。
+- **当前还缺的关键闭环**：repository 正式根 Gate、资格链联合回归、增量构建、语法/Schema/diff 最终门禁与本地 Adapter 收口结论。
+
+#### P2-C `headless_ecosystem` 验证结论：repository 正式根 Gate（2026-09-01）
+
+##### 已完成内容
+
+1. **`verify:coding-benchmark` 正式入口执行**：
+   - 通过 `corepack pnpm verify:coding-benchmark` 调用仓库公开 Gate；
+   - 实际加载当前 v1/v2/v3 manifest、全部公开 Schema、README、project-map、package scripts 与跨平台 CI 接线；
+   - coding-run client receipt、精确七文件 JSON reporter 命令和 headless 本地/真实 CI 证据边界与现有仓库合同共同对齐。
+
+2. **效果**：
+   - 直接 Vitest 与开发者/CI 正式根命令取得一致成功终态；
+   - 第四个候选级 Adapter 的 repository 接线可由标准命令重复验证；
+   - 命令不执行 coding-run client audit、packed consumer、真实 CI、冻结 Formal、Gateway 或 Provider 调用。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节尚未重跑增量构建；
+- `corepack pnpm verify:coding-benchmark` exit code=`0`，输出 v1/v2/v3 manifests、schemas、docs、platform gates aligned；
+- repository contract 全文件仍为上一环节 `17/17`；仅输出既存 JSON Schema `date-time` format 提示；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：运行 aggregate、v3 Schema、candidate-global evidence/runner、qualification runner、七维 mapping、dimension evidence、Verification receipt 与 repository contract 九文件联合回归。
+- **为什么先做它**：repository 接线已闭合；下一风险是新 receipt/claims/Schema 与上游 aggregate、candidate-global、qualification 和已有三个 Adapter 在同一测试进程组中发生组合回退。
+- **当前还缺的关键闭环**：资格链联合回归、增量构建、语法/Schema/diff 最终门禁与本地 Adapter 收口结论；真实 CI owner、其余三维 Adapter、数值 evaluator/report 和连续候选实证仍未完成。
+
+#### P2-C `headless_ecosystem` 验证结论：资格链九文件联合回归（2026-09-01）
+
+##### 已完成内容
+
+1. **qualification/mapping/evidence/receipt 九文件联合回归**：
+   - 同时执行 aggregate、v3 contract、candidate-global evidence/runner、qualification runner、七维 mapping、dimension evidence、Verification receipt 与 repository contract 测试；
+   - 覆盖既有资格判定基线、Supervisor/Verification/coding-run client owner、四个候选级维度 Adapter 与公开 Schema/docs 接线；
+   - 测试进程持续到明确最终汇总和 exit code，没有以首个 `30s` yield 或中途绿项代替终态。
+
+2. **headless 组合回归确认**：
+   - 合法完成、owner 独立性、claims 完整性、artifact/identity/selection reject 与 consumer/protocol/error 可信失败隔离均在联合进程组中通过；
+   - candidate-global、expected-report、A/B/C hard Gate、retained evidence 漂移与 Verification receipt 正例继续通过；
+   - 相比上次 `148` 项基线，本次实际增加 dimension evidence `6` 项与 repository contract `1` 项，共 `155` 项。
+
+3. **效果**：
+   - coding-run client receipt/Schema/三子 Gate 与 aggregate、qualification、candidate-global、既有三个 Adapter 共同兼容；
+   - 联合回归只构造临时 fixture，不生成真实候选 receipt、不运行 packed consumer 或 CI，也不改变总体 `partial/unscored`；
+   - `real_ci_consumer_binding` 继续保持独立缺口。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节尚未重跑增量构建；
+- 最终联合回归=`9` 个测试文件、`155/155` 全部通过，进程 exit code=`0`；
+- 仅有既存 JSON Schema `date-time` format 提示；未执行真实 coding-run client audit、packed consumer、CI、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：运行 `corepack pnpm build:incremental`，确认新增生产常量/resolver、repository verifier import 与 package script/docs 接线兼容现有 TypeScript project references 和 ESM 加载链。
+- **为什么先做它**：行为、仓库合同与组合回归均已通过；接下来必须以真实 `tsc -b` 结果排除 Vitest 转译路径未暴露的编译或模块接线问题。
+- **当前还缺的关键闭环**：增量构建、脚本语法/Schema parse/diff 最终门禁与 headless 本地 Adapter 收口结论；真实 CI owner、其余三维 Adapter、数值 evaluator/report 和连续候选实证仍未完成。
+
+#### P2-C `headless_ecosystem` 验证结论：接线后增量构建（2026-09-01）
+
+##### 已完成内容
+
+1. **工作区增量构建执行**：
+   - 在 coding-run client receipt Schema/loader、测试、package script 与 repository verifier/docs 接线后的同一工作区运行 `corepack pnpm build:incremental`；
+   - TypeScript project references 通过真实 `tsc -b` 取得成功终态；
+   - 未以 Vitest 转译、脚本语法检查或上一轮构建结果替代本次编译。
+
+2. **效果**：
+   - 新增生产 version/resolver 与 repository verifier ESM import 兼容现有构建链；
+   - package script、Schema、文档与测试变更未破坏 workspace project references；
+   - 构建不运行 coding-run client audit、packed consumer、真实 CI、冻结 Formal 或 Provider 调用。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build:incremental`（`tsc -b`）exit code=`0`；
+- 本环节未重复运行测试，上一环节九文件联合回归=`155/155`；
+- 未启动 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：执行相关 `.mjs` 的 `node --check`，独立解析/复核三份关联 Schema，检查七文件及 consumer/protocol/error 分组与无真实 CI/score 路径，并运行 `git diff --check`；全部通过后回写 headless 本地 Adapter 最终收口结论。
+- **为什么先做它**：行为、仓库合同、组合回归和 TypeScript 构建均已通过；最后需要排除测试加载路径未覆盖的脚本语法、JSON 合同、分组接线和补丁空白缺陷。
+- **当前还缺的关键闭环**：最终工程门禁与本地三合同 Adapter 收口；`real_ci_consumer_binding`、其余三维 Adapter、数值 evaluator/report 和连续候选实证仍未完成。
+
+#### P2-C `headless_ecosystem` 对抗复核结论：DAG/report 终态一致性 Red（2026-09-01）
+
+##### 已完成内容
+
+1. **最终工程门禁轻量对抗复核**：
+   - 在 SHA、Schema、aggregate、current-harness、命令和七文件选择全部自洽的前提下，将 Verification DAG 改为 non-zero/failed 终态；
+   - 保持原始 Vitest report 为全通过，并同步重算 DAG、receipt 与 evidence reference 全部 SHA；
+   - 只通过公共 `loadCodingAgentCandidateDimensionEvidence()` 观察资格结果。
+
+2. **Red 缺口定位**：
+   - 当前 binding Gate 能校验 DAG 内嵌的 report projection 与原始 report 一致，但尚未核对 node/attempt/command-job/outcome 终态；
+   - 篡改后的 schema-valid failed DAG 被意外接受，三项本地合同仍全部投影为 `complete`；
+   - 定向测试以 `promise resolved instead of rejecting` 精确证明终态一致性 Gate 缺失。
+
+3. **效果**：
+   - 最终收口前发现并锁定一个真实证据真实性旁路；
+   - 后续修复将只补 DAG 与原始 report 的双向终态一致性，不改变合法成功或可信测试失败的三子 Gate 语义；
+   - 当前阶段暂不表述为 Adapter 已收口。
+
+##### 验证结果
+
+- TypeScript 编译状态：缺口发现发生在上一轮已通过的 `tsc -b` 之后，修复前尚未重跑构建；
+- 定向终态一致性 Red=`1 failed / 37 skipped`，进程 exit code=`1`，唯一失败为公共 loader 未拒绝 DAG/report 终态矛盾；
+- 脚本语法、关联 JSON parse 与 `git diff --check` 已分别通过；初版静态分组复核命令因自身正则转义错误误报，改用逐行字面量解析后确认七文件唯一集合=`7`、common/consumer/protocol/error=`3/5/4/4`；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在 coding-run client audit binding 中增加 report passed/failed 与 DAG node、attempt、command-job exit、outcome 的精确双向一致性 Gate，并运行同一用例转 Green，再复跑合法成功与三类可信失败用例。
+- **为什么先做它**：该旁路会把执行失败的 DAG 与通过报告组合成伪完成证据，是收口前必须关闭的核心真实性风险；其余工程门禁已通过，最小修复即可收敛。
+- **当前还缺的关键闭环**：终态一致性 Green、dimension evidence/九文件联合回归重跑、增量构建与最终工程门禁复核；真实 CI owner、其余三维 Adapter、数值 evaluator/report 和连续候选实证仍未完成。
+
+#### P2-C `headless_ecosystem` 对抗修复结论：DAG/report 双向终态一致性 Green（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-score.mjs` 修复**：
+   - 新增 coding-run client audit 的 DAG/report 双向终态一致性 Gate；
+   - 只接受 `passed report + zero-exit/completed DAG` 或 `failed report + non-zero/required-failure DAG` 两种闭合组合；
+   - 交叉组合、未执行、不完整或 recovery 未 settled 的终态统一 reject。
+
+2. **`coding-agent-candidate-dimension-evidence.test.mjs` 回归保护**：
+   - 保留 SHA、Schema、aggregate、harness、命令和七文件选择均自洽、但 DAG/report 终态矛盾的对抗 witness；
+   - 同组复跑合法全绿 receipt 与 consumer/protocol/error 三类可信失败；
+   - 测试继续只观察公共 `loadCodingAgentCandidateDimensionEvidence()` seam。
+
+3. **效果**：
+   - failed DAG 不能再与 passed report 组合成三项伪完成证据；
+   - 合法全绿仍完成本地三合同，可信非零失败仍只投影对应子合同；
+   - 修复不增加真实 CI 完成路径或数值评分。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节修复后尚未重跑增量构建；
+- 同一终态一致性用例由 Red=`1 failed / 37 skipped` 转为 Green；与合法成功、三类可信失败联合定向=`3 passed / 35 skipped`，进程 exit code=`0`；
+- 仅输出既存 JSON Schema `date-time` format 提示；未运行真实 coding-run client audit、packed consumer、CI、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：重跑 dimension evidence 全文件，确认新增终态 Gate 与全部 safety/session/Verification/headless 正负例共同通过。
+- **为什么先做它**：定向 Green 已关闭旁路，但最终收口必须以公共 loader 全文件终态确认 exact-claims、真实性和可信 failure 组合均未回退。
+- **当前还缺的关键闭环**：dimension evidence 全文件、九文件联合回归、增量构建与最终语法/Schema/分组/diff 门禁复核；真实 CI owner、其余三维 Adapter、数值 evaluator/report 和连续候选实证仍未完成。
+
+#### P2-C `headless_ecosystem` 验证结论：终态修复后 dimension evidence 全文件回归（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` 全文件执行**：
+   - 完整运行公共 `loadCodingAgentCandidateDimensionEvidence()` seam 的全部维度证据测试，未使用测试名称过滤；
+   - 同时覆盖 safety、session、Verification 与 coding-run client receipt 的合法 owner、封闭 claims、身份/artifact 真实性和失败关闭路径；
+   - 覆盖新增 DAG/report 双向终态一致性 reject，以及 consumer/protocol/error 三类可信失败的独立合同投影。
+
+2. **终态修复回归确认**：
+   - 合法全绿 receipt 继续只完成 `external_consumer_pair_lifecycle`、`protocol_version_conformance`、`error_taxonomy_cancellation_conformance` 三项本地合同；
+   - passed report/failed DAG、failed report/passed DAG 等矛盾终态保持 reject；
+   - `real_ci_consumer_binding` 未获得本地完成路径，维度不产生数值 `score`。
+
+3. **效果**：
+   - 终态真实性 Gate 与现有三个候选级 Adapter 的全部正负例共同兼容；
+   - 本地三合同的完成结果仍受 current-aggregate/current-harness、固定七文件、DAG/report SHA 与终态一致性共同约束；
+   - 本次回归只使用临时 fixture，未生成真实候选证据或执行 coding-run client audit。
+
+##### 验证结果
+
+- TypeScript 编译状态：终态修复后尚未重跑增量构建；
+- dimension evidence 测试文件=`1/1`、测试=`38/38` 全部通过，进程 exit code=`0`；
+- 仅输出既存 JSON Schema `date-time` format 提示；未执行真实 packed consumer、CI、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：重跑 aggregate、v3 Schema、candidate-global evidence/runner、qualification runner、七维 mapping、dimension evidence、Verification receipt 与 repository contract 九文件联合回归。
+- **为什么先做它**：dimension evidence 局部终态已闭合；下一步必须确认新终态 Gate 与上游 aggregate、qualification、candidate-global、其余 Adapter 和 repository 合同在同一进程组中没有组合回退。
+- **当前还缺的关键闭环**：终态修复后的九文件联合回归、增量构建与最终语法/Schema/分组/diff/benchmark 门禁；真实 CI owner、其余三维 Adapter、数值 evaluator/report 和连续候选实证仍未完成。
+
+#### P2-C `headless_ecosystem` 验证结论：终态修复后资格链九文件联合回归（2026-09-01）
+
+##### 已完成内容
+
+1. **qualification/mapping/evidence/receipt 九文件联合回归**：
+   - 同时执行 aggregate、v3 contract、candidate-global evidence/runner、qualification runner、七维 mapping、dimension evidence、Verification receipt 与 repository contract 测试；
+   - 覆盖终态一致性修复、既有资格判定基线、四个候选级维度 Adapter、公开 Schema/docs 与 repository wiring；
+   - 持续等待同一测试进程至最终汇总和 exit code，未以两个 `30s` 窗口内的中途绿项代替终态。
+
+2. **组合回归确认**：
+   - 新增 DAG/report 双向终态一致性 reject 与合法成功、三类可信失败在联合进程组中全部通过；
+   - candidate-global、expected-report、A/B/C hard Gate、retained evidence 漂移、Supervisor/Verification receipt 与 repository contract 未发生回退；
+   - 相比终态修复前的 `155` 项，本次实际增加 `1` 项对抗回归，共 `156` 项。
+
+3. **效果**：
+   - coding-run client 本地三合同 Adapter 与上游 aggregate、qualification、candidate-global 和既有 Adapter 保持兼容；
+   - 终态真实性旁路已由组合回归保护；
+   - `real_ci_consumer_binding` 仍为独立缺口，candidate 仍为 `partial/unscored`。
+
+##### 验证结果
+
+- TypeScript 编译状态：终态修复后尚未重跑增量构建；
+- 最终联合回归=`9` 个测试文件、`156/156` 全部通过，进程 exit code=`0`，Vitest duration=`70.78s`；
+- 仅有既存 JSON Schema `date-time` format 提示；未执行真实 coding-run client audit、packed consumer、CI、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：运行 `corepack pnpm build:incremental`，确认终态一致性生产修复兼容 TypeScript project references 与当前 ESM 加载链。
+- **为什么先做它**：九文件行为与组合回归已闭合；接下来必须用真实 `tsc -b` 排除测试转译路径未暴露的编译或模块接线问题。
+- **当前还缺的关键闭环**：终态修复后的增量构建与最终语法/Schema/分组/diff/benchmark 门禁；真实 CI owner、其余三维 Adapter、数值 evaluator/report 和连续候选实证仍未完成。
+
+#### P2-C `headless_ecosystem` 验证结论：终态修复后增量构建（2026-09-01）
+
+##### 已完成内容
+
+1. **工作区增量构建执行**：
+   - 在 DAG/report 双向终态一致性修复及其完整回归后的同一工作区运行 `corepack pnpm build:incremental`；
+   - TypeScript project references 通过真实 `tsc -b` 取得成功终态；
+   - 未以 Vitest 转译结果或修复前的构建记录替代本次编译。
+
+2. **效果**：
+   - 终态一致性生产 Gate 兼容现有 TypeScript 构建链和 ESM 模块接线；
+   - receipt Schema/loader、repository verifier、package script、文档与测试的组合改动未破坏 workspace project references；
+   - 构建不执行 coding-run client audit、packed consumer、真实 CI 或 Provider 调用。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build:incremental`（`tsc -b`）exit code=`0`；
+- 本环节未重复运行测试，上一环节九文件联合回归=`156/156`；
+- 未启动 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：重跑相关 `.mjs` 语法检查、关联 JSON Schema 独立解析、固定七文件及 `3/5/4/4` 分组、无真实 CI/score 完成路径、`git diff --check` 与 `verify:coding-benchmark` 正式根 Gate。
+- **为什么先做它**：行为回归和编译均已通过；最后需要排除脚本语法、静态选择、Schema 文本、公开仓库合同与补丁空白缺陷，才能正式收口本地三合同 Adapter。
+- **当前还缺的关键闭环**：最终工程门禁和本地 Adapter 收口；`real_ci_consumer_binding`、其余三维 Adapter、数值 evaluator/report 和连续候选实证仍未完成。
+
+#### P2-C `headless_ecosystem` 验证结论：终态修复后静态工程门禁（2026-09-01）
+
+##### 已完成内容
+
+1. **相关脚本与 JSON 合同复核**：
+   - `coding-agent-candidate-score.mjs`、dimension evidence 测试、repository verifier 及其测试共 `4` 个 `.mjs` 通过 `node --check`；
+   - coding-run client receipt Schema、dimension evidence reference Schema、dimension mapping 及其 Schema 共 `4` 份 JSON 通过独立解析；
+   - 检查只读当前工作区文件，未运行 receipt 所声明的真实 audit 命令。
+
+2. **固定选择与能力边界复核**：
+   - 逐行字面量解析生产常量，确认 audit 唯一文件=`7`，common/consumer/protocol/error 分组=`3/5/4/4`；
+   - 确认生产 loader 不包含 `real_ci_consumer_binding` 完成路径；
+   - 确认 dimension evidence resolution 不写入数值 `score`，`git diff --check` 通过。
+
+3. **效果**：
+   - 终态一致性修复没有改变正式七文件选择或三个本地子合同的失败投影边界；
+   - 本地 receipt 不能越权关闭真实 CI 合同或提前产生七维分数；
+   - 脚本语法、JSON 可解析性与补丁空白规范均具备独立成功证据。
+
+##### 验证结果
+
+- TypeScript 编译无错误：上一环节同一工作区 `corepack pnpm build:incremental`（`tsc -b`）exit code=`0`；
+- 上一环节九文件联合回归=`156/156`；本环节 `node --check=4/4`、JSON parse=`4/4`、静态分组=`7; 3/5/4/4`、无真实 CI/score 路径和 `git diff --check` 全部通过；
+- `git diff --check` 仅输出既存 LF→CRLF 工作区提示；未执行真实 coding-run client audit、packed consumer、CI、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：运行 `corepack pnpm verify:coding-benchmark` 正式根 Gate，复核终态修复后的 Schema/version/script/docs/platform wiring。
+- **为什么先做它**：静态与行为门禁均已闭合；正式根命令是仓库用户和 CI 的公开验证入口，必须取得自身成功终态后才能写本地 Adapter 收口结论。
+- **当前还缺的关键闭环**：正式 benchmark 根 Gate 与本地 Adapter 收口；`real_ci_consumer_binding`、其余三维 Adapter、数值 evaluator/report 和连续候选实证仍未完成。
+
+#### P2-C `headless_ecosystem` 验证结论：终态修复后 repository 正式根 Gate（2026-09-01）
+
+##### 已完成内容
+
+1. **`verify:coding-benchmark` 正式入口执行**：
+   - 通过 `corepack pnpm verify:coding-benchmark` 调用仓库公开 Gate；
+   - 实际加载当前 v1/v2/v3 manifest、全部公开 Schema、README、project-map、package scripts 与跨平台 Gate 接线；
+   - 复核 coding-run client receipt/version、固定七文件 JSON reporter 命令和 headless 本地/真实 CI 证据边界。
+
+2. **效果**：
+   - 终态一致性修复后的生产代码、Schema、文档和公开验证入口保持一致；
+   - 本地三合同 Adapter 的 repository wiring 可由标准命令重复验证；
+   - 根 Gate 不执行 coding-run client audit、packed consumer 或真实 CI，也不生成候选证据或数值评分。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本阶段最终 `corepack pnpm build:incremental`（`tsc -b`）exit code=`0`；
+- `corepack pnpm verify:coding-benchmark` exit code=`0`，输出 v1/v2/v3 manifests、schemas、docs、platform gates aligned；九文件联合回归仍为本阶段 `156/156`；
+- 仅输出既存 JSON Schema `date-time` format 提示；未执行真实 coding-run client audit、packed consumer、CI、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：汇总 Schema、公共 loader、真实性/终态 Gate、三类可信失败、仓库接线、回归、构建和最终工程门禁，写入 `headless_ecosystem` 本地三合同 Adapter 正式收口结论。
+- **为什么先做它**：所有既定完成条件均已有明确成功终态；先固定本地切片的完成边界，才能在下一切片中只处理独立的 `real_ci_consumer_binding`，避免状态混淆。
+- **当前还缺的关键闭环**：本地 Adapter 文档收口；之后仍缺 current-candidate 真实 CI receipt/owner、其余三维 Adapter、数值 evaluator/report 和两个连续完整候选实证。
+
+#### P2-C `headless_ecosystem` Adapter 收口结论：本地三合同候选证据链（2026-09-01）
+
+##### 已完成内容
+
+1. **`candidate-coding-run-client-evidence-receipt.schema.json` 新建并接线**：
+   - 冻结 current-aggregate/current-harness、Verification DAG、原始 Vitest JSON、固定命令与七文件 audit 的候选级 receipt；
+   - receipt 只索引原始 artifact，不能自由声明合同完成或数值分；
+   - Schema/version 已由 repository verifier、README 与 project-map 保护。
+
+2. **`candidate-dimension-evidence-reference.schema.json` 与 `coding-agent-candidate-score.mjs` 扩展**：
+   - 新增 `candidateCodingRunClientReceipt` owner 与三项封闭 claim：`external_consumer_pair_lifecycle`、`protocol_version_conformance`、`error_taxonomy_cancellation_conformance`；
+   - 公共 `loadCodingAgentCandidateDimensionEvidence()` seam 逐层复核 receipt/DAG/report SHA、Schema、aggregate/harness identity、命令、固定七文件及 `3/5/4/4` 子分组；
+   - 新增 DAG/report 双向终态一致性 Gate，只接受 passed+zero-exit/completed 或 failed+non-zero/required-failure 的闭合组合。
+
+3. **`coding-agent-candidate-dimension-evidence.test.mjs` 正负例闭合**：
+   - 覆盖合法三合同完成、owner 不自动授予、partial/reordered claims、artifact/identity/selection 漂移与终态矛盾 reject；
+   - consumer、protocol、error/cancellation 三类可信失败只投影对应合同，另两项保持完成；
+   - 所有路径均断言 `real_ci_consumer_binding` 仍缺失且不产生数值 `score`。
+
+4. **`package.json`、repository verifier、README 与 project-map 接线**：
+   - `verify:coding-run-client` 保持精确七文件集合并输出 JSON reporter；
+   - 仓库 Gate 固定 Schema/version、命令、文档与导航合同；
+   - 明确 workflow 文本、本地报告和历史 Quality run 均不能替代 current-candidate 真实 CI owner。
+
+5. **效果**：
+   - `headless_ecosystem` 的三个本地合同已有可复用、失败关闭、零模型的候选证据 Adapter；
+   - 本地成功、可信失败与不可信证据被明确区分，执行失败不能与通过报告拼接为伪完成；
+   - 该维仍为 `partial`，唯一剩余合同是 `real_ci_consumer_binding`；当前没有真实候选 receipt，也没有数值评分。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build:incremental`（`tsc -b`）exit code=`0`；
+- dimension evidence=`38/38`、资格链九文件联合回归=`156/156` 全部通过；其中新增 headless 正负例覆盖本地三合同、封闭 claims、真实性、终态一致性和三类可信失败；
+- `node --check=4/4`、JSON parse=`4/4`、固定 audit/group=`7; 3/5/4/4`、无真实 CI/score 生产路径、`git diff --check` 与 `corepack pnpm verify:coding-benchmark` 全部通过；仅有既存 `date-time` 与 LF→CRLF 提示。
+
+##### 后续计划
+
+- **下一步准备做什么**：只读审计 current-candidate 真实 CI 可提供的 run/attempt/commit/platform/job conclusion 原始证据、GitHub Actions producer 与现有下载/验证 seam，先冻结最小 receipt/owner 合同，再通过公共 loader 写零模型 Red。
+- **为什么先做它**：本地三合同已闭合，`headless_ecosystem` 唯一剩余缺口是 `real_ci_consumer_binding`；先确认真实 CI 原始证据和身份边界，可避免以 workflow 文本、历史 run 或本地 fixture 误授资格。
+- **当前还缺的关键闭环**：current-candidate 真实 CI receipt Schema/producer/owner、真实 run artifact 与 loader Green；其余三维 Adapter、aggregate criteria evaluator、数值 score/report 和两个连续完整候选实证仍未完成。
+
+#### P2-C `headless_ecosystem` 只读审计结论：current-candidate 真实 CI 证据边界（2026-09-01）
+
+##### 已完成内容
+
+1. **`.github/workflows/quality-gates.yml` 与本地合同审计**：
+   - `coding-ci-contract` 以 `ubuntu-latest` / `windows-latest` matrix 运行，并在 build、`verify:coding-ci` 后执行 `pnpm verify:coding-run-client`；
+   - 当前命令已使用 Vitest JSON reporter，但 workflow 没有把该原始 JSON 或 lane receipt 上传为 artifact；
+   - 现有 workflow 文本只能证明接线意图，不能证明某个 current-candidate run/attempt 的真实执行结果。
+
+2. **private GitHub Actions 原始 API 只读校准**：
+   - 最新可见 Quality run=`33415964382`、attempt=`1`、head SHA=`4f45e143f98eb4d365911189c27d11c3fd4d6bb9`、run conclusion=`failure`；
+   - 该 run 内 `Coding CI contract (ubuntu-latest)` job=`99566546813` 与 `Coding CI contract (windows-latest)` job=`99566547216` 均为 `completed/success`，两者的 `Verify coding-run client conformance` step 也均为 `completed/success`；
+   - artifact 清单只有 `b00-build-benchmark` 与 `dependency-audit-report`，没有 coding-run client 原始报告或候选 CI receipt。
+
+3. **current-candidate 身份与历史证据边界**：
+   - 本地 HEAD 同为 `4f45e143…`，但当前工作区有 `35` 项改动，因此旧 run 不包含本轮 receipt/loader/终态 Gate 实现；
+   - run 总结论与目标 matrix job 可以不同，不能仅凭整体 run conclusion 判定目标合同；
+   - 历史 job/step 绿项缺少当前实现、原始七文件 JSON 与候选 aggregate/harness 外键，不得授予 `real_ci_consumer_binding`。
+
+4. **最小 owner 结论**：
+   - 真实 CI owner 必须独立于本地 receipt，绑定 repository、workflow、run id、run attempt、head SHA 与当前 aggregate/harness；
+   - 必须逐平台绑定 Ubuntu/Windows job id/name/status/conclusion、目标 step status/conclusion，以及从该 lane 上传并经 SHA-256 验证的原始七文件 Vitest JSON；
+   - producer 需要在真实 job 内生成 lane receipt/artifact，candidate owner 再组合双平台 artifact；仅 GitHub API 摘要、workflow 文本或历史 run 均不足以关闭合同。
+
+5. **效果**：
+   - 第二切片的证据来源、身份外键和失败关闭边界已收敛；
+   - 旧 run 只用于校准 API 字段形状，没有被写成当前候选证据；
+   - 当前 `headless_ecosystem` 继续为 `partial`，`real_ci_consumer_binding` 仍为唯一缺口且无数值分。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节只读审计并更新文档，沿用上一收口环节已通过的 `corepack pnpm build:incremental`，未声称重新执行；
+- 已实际读取 private run/jobs/artifacts API：run=`33415964382/attempt 1`，目标双平台 job 与目标 step 均 success，但 coding-run client artifact=`0`；
+- 未触发、重跑或修改任何 GitHub Actions run，未执行真实 coding-run client audit、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：新增独立的 candidate coding-run client CI receipt Schema 测试，先要求 current aggregate/harness、GitHub run/attempt/head SHA、双平台 job/step 与原始七文件报告的封闭形状，并取得文件缺失的精确 Red。
+- **为什么先做它**：先冻结数据合同可以把 producer 与 loader 共享的最小可信字段固定下来，同时阻止后续用 workflow 文本或单个平台摘要替代真实双平台 artifact。
+- **当前还缺的关键闭环**：CI receipt Schema Red/Green、reference owner/claim、公共 loader 正负例、workflow lane producer/artifact 接线、真实 current-candidate run 采集与最终 owner 组合。
+
+#### P2-C `headless_ecosystem` TDD 结论：真实 CI receipt Schema 精确 Red（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-coding-run-client-ci-receipt.test.mjs` 新建**：
+   - 通过公开 JSON Schema 编译/校验 seam 定义 current-candidate GitHub Actions receipt；
+   - 合法样例固定 current aggregate/harness、repository/workflow/run/attempt/head SHA、GitHub API 原始响应引用，以及 Ubuntu/Windows 双平台 lane；
+   - 每个 lane 固定 job、目标 verification/upload step、GitHub artifact id/name/service digest、原始七文件 Vitest JSON 与 SHA-256。
+
+2. **失败关闭边界定义**：
+   - 额外数值评分字段必须 reject；
+   - 缺失或乱序平台 lane、目标 step 名称漂移、过期 artifact 必须 reject；
+   - 测试放在独立相邻文件，避免继续扩大已超过 `3000` 行的 dimension evidence 测试。
+
+3. **Red 失败定位**：
+   - 待新增 `candidate-coding-run-client-ci-evidence-receipt.schema.json` 当前不存在；
+   - 单测在读取 Schema 时以 `ENOENT` 精确失败，尚未进入任何远端或真实 CI 操作；
+   - Red 没有使用 workflow 文本或历史 run 授予 `real_ci_consumer_binding`。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节只新增 `.mjs` 测试，尚未重跑增量构建；
+- CI receipt Schema 定向 Red=`1 failed`，进程 exit code=`1`，唯一失败为目标 Schema 文件缺失；
+- 未触发 GitHub Actions、未生成真实候选 receipt，未运行冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：新增封闭的 CI receipt Schema，只实现使同一合法双平台样例通过、既定反例失败的字段与常量，然后运行同一测试转 Green。
+- **为什么先做它**：Red 已确认测试只暴露缺失的数据合同；现在补最小 Schema 可先稳定 producer/loader 共享边界，不提前实现远端采集或资格投影。
+- **当前还缺的关键闭环**：Schema Green、reference owner/claim、公共 loader 正负例、workflow lane producer/artifact 接线、真实 current-candidate run 采集与最终 owner 组合。
+
+#### P2-C `headless_ecosystem` 实现结论：真实 CI receipt Schema Green（2026-09-01）
+
+##### 已完成内容
+
+1. **`candidate-coding-run-client-ci-evidence-receipt.schema.json` 新建**：
+   - 固定 `coding-agent-benchmark-candidate-coding-run-client-ci-evidence-receipt/v1` 与 current aggregate/source/harness 绑定；
+   - 固定 private GitHub repository、Quality Gates workflow、run id/attempt/event/head SHA/status/conclusion 和三份原始 REST API 响应引用；
+   - 以固定顺序要求 `ubuntu-latest/Linux` 与 `windows-latest/Windows` 两个 lane。
+
+2. **双平台 lane 合同冻结**：
+   - 每个 lane 要求成功的固定 job、`Verify coding-run client conformance` step 与 `Upload coding-run client CI evidence` step；
+   - 固定 GitHub artifact id/name/service `sha256:` digest、未过期状态、workflow-run 外键，以及下载 ZIP 的本地 SHA-256；
+   - 固定 job 内 lane receipt、原始 Vitest JSON 和精确七文件选择，不允许附带数值评分字段。
+
+3. **`coding-agent-candidate-coding-run-client-ci-receipt.test.mjs` Green**：
+   - 同一合法双平台样例由 Schema 文件缺失 Red 转为通过；
+   - 缺失或乱序 lane、目标 step 名称漂移、过期 artifact 与额外 `numericScore` 均保持 reject；
+   - 本环节只冻结形状，尚未把 owner 接入资格 loader，也未声称样例是真实候选证据。
+
+4. **效果**：
+   - CI producer、远端 collector 与候选 loader 现在有一份共同的最小封闭数据合同；
+   - GitHub artifact 服务端 digest 与本地 archive/report 引用均有明确位置，后续可做原始字节和跨字段验真；
+   - `real_ci_consumer_binding` 仍为 missing，维度继续 `partial/unscored`。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节新增 Schema 与 `.mjs` 测试，尚未重跑增量构建；
+- 同一 CI receipt Schema 测试由 Red=`1 failed` 转为 Green=`1/1 passed`，进程 exit code=`0`；
+- 仅输出既存 JSON Schema `date-time` format 提示；未触发 GitHub Actions、未生成真实候选 receipt，未运行冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在 reference Schema 中新增独立 `candidateCodingRunClientCiReceipt` owner 与 `real_ci_consumer_binding` 封闭 claim，并先通过公共 `loadCodingAgentCandidateDimensionEvidence()` seam 构造合法组合 Red；同时确定 archive/lane receipt 的最小原始字节验真方式。
+- **为什么先做它**：Schema 只证明 receipt 形状；只有公共 loader 逐层复核 aggregate、GitHub API、双平台 job/artifact 和原始报告后，才能把真实 CI 合同从 missing 投影为 complete。
+- **当前还缺的关键闭环**：reference owner/claim、公共 loader 正负例、lane receipt/ZIP 原始证据验真、workflow producer/artifact 接线、真实 current-candidate run 采集与最终 owner 组合。
+
+#### P2-C `headless_ecosystem` TDD 结论：job-produced CI lane receipt Schema 精确 Red（2026-09-01）
+
+##### 已完成内容
+
+1. **独立 CI receipt 测试扩展**：
+   - 新增 job 内生成的 `coding-agent-benchmark-coding-run-client-ci-lane-evidence/v1` 行为合同；
+   - 固定 `GITHUB_REPOSITORY/WORKFLOW/WORKFLOW_REF/JOB/RUN_ID/RUN_ATTEMPT/SHA/REF`、runner platform/OS/arch、正式命令与原始七文件报告；
+   - `runAttempt` 保持任意正整数，避免把 fixture 的 attempt=`1` 误冻结为长期规则。
+
+2. **失败关闭边界定义**：
+   - 非正 run attempt、平台与 runner OS 矛盾、report 非 passed 必须 reject；
+   - lane receipt 不携带候选 aggregate、远端 job conclusion 或数值分，这些由组合 owner 与 GitHub API 原始响应交叉验证；
+   - 组合 receipt 另增 archive 引用，使 GitHub service digest 可与实际下载 ZIP SHA-256 对照。
+
+3. **Red 失败定位**：
+   - 既有 candidate CI receipt Schema 用例继续 Green；
+   - 新增 lane receipt 用例因 `coding-run-client-ci-lane-evidence.schema.json` 不存在精确失败；
+   - 未进入公共 loader、workflow 修改或远端执行。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节只修改 `.mjs` 测试，尚未重跑增量构建；
+- CI receipt 测试文件=`1/1`，结果=`1 passed / 1 failed`，进程 exit code=`1`；唯一失败为 lane Schema 文件缺失；
+- 未触发 GitHub Actions、未生成真实候选 receipt，未运行冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：新增最小 lane evidence Schema，使同一合法 job receipt 通过并保持 attempt/platform/report 反例失败，再运行同一测试转 Green。
+- **为什么先做它**：组合 receipt 必须引用一个有版本定义的 job 原始 owner；先闭合这一生产侧数据合同，后续 loader 才能对下载 ZIP 内的 lane receipt 与 GitHub API 做可信交叉验证。
+- **当前还缺的关键闭环**：lane Schema Green、reference owner/claim、公共 loader 正负例、workflow producer/artifact 接线、真实 current-candidate run 采集与最终 owner 组合。
+
+#### P2-C `headless_ecosystem` 实现结论：job-produced CI lane receipt Schema Green（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-run-client-ci-lane-evidence.schema.json` 新建**：
+   - 固定 job 内可观察的 GitHub repository/workflow/workflow ref/job/run/attempt/SHA/ref 上下文；
+   - 固定正式 `corepack pnpm verify:coding-run-client` 命令、runner platform/OS/arch 与 passed 原始 Vitest 七文件报告引用；
+   - 以 `oneOf` 绑定 `ubuntu-latest ↔ Linux`、`windows-latest ↔ Windows`，拒绝平台/OS 交叉拼接。
+
+2. **组合 CI receipt provenance 收紧**：
+   - 每个 lane 增加下载 `artifact.zip` 的格式/path/SHA-256 引用；
+   - GitHub artifact service digest 与 archive SHA 使用同一摘要值，后续 loader 可验证远端 artifact 与本地 ZIP 的对应关系；
+   - lane receipt 保持独立版本，组合 receipt 只通过 artifact 内引用接入，不把 lane 自报字段直接当作 GitHub API 真源。
+
+3. **同一测试 Red→Green**：
+   - 既有 candidate CI receipt Schema 用例继续通过；
+   - lane receipt 用例由文件缺失 Red 转为 Green；
+   - 非正 attempt、平台/OS 矛盾与 report 非 passed 继续 reject。
+
+4. **效果**：
+   - CI job producer 与 candidate-side collector 的两层 receipt 形状均已冻结；
+   - 后续公共 loader 可以将 job 内自报上下文、GitHub API 原始响应、服务端 artifact digest、下载 ZIP 和原始报告逐层交叉验证；
+   - 当前仍没有真实 current-candidate artifact，`real_ci_consumer_binding` 继续 missing 且无数值分。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节新增 JSON Schema，尚未重跑增量构建；
+- CI receipt 测试文件=`1/1`、测试=`2/2` 全部通过，进程 exit code=`0`；
+- 仅输出既存 JSON Schema `date-time` format 提示；未触发 GitHub Actions、未生成真实候选 receipt，未运行冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在 reference Schema 中增加独立 CI owner/claim，并通过公共 loader 构造一份完全自洽的双平台 GitHub API、archive、lane receipt、原始报告组合 Red；为避免大文件继续膨胀，新增 fixture/场景优先放相邻测试模块。
+- **为什么先做它**：两层形状已稳定，但资格只应来自公共 loader 对原始字节与跨层外键的复核；这是关闭 `real_ci_consumer_binding` 前最关键的真实性 seam。
+- **当前还缺的关键闭环**：reference owner/claim、公共 loader 合法/拒绝/可信失败行为、workflow producer/artifact 接线、真实 current-candidate run 采集与最终 owner 组合。
+
+#### P2-C `headless_ecosystem` 对抗复核结论：真实 CI receipt 三态语义 Red（2026-09-01）
+
+##### 已完成内容
+
+1. **两层 CI receipt 轻量对抗复核**：
+   - 将组合 receipt 的单个平台 job/verification step 改为完整的 `completed/failure`，upload 与 artifact 仍成功保留；
+   - 将 job-produced lane receipt 的原始 report 状态改为 `failed`，其余 GitHub/runner/命令/七文件字段保持合法；
+   - 要求两类可信失败仍通过形状校验，后续由公共 loader 投影为 `failed`，而不是在 Schema 层当作证据损坏 reject。
+
+2. **Red 缺口定位**：
+   - candidate CI Schema 将 job/verification conclusion 固定为 `success`；
+   - lane Schema 将 report status 固定为 `passed`；
+   - 两个可信失败样例均被 Schema 拒绝，证明当前合同不能保留 `reject`（不可信）与 `failed`（可信未达标）的既有三态语义。
+
+3. **架构影响检查**：
+   - GitHub Actions 属于 true external，原始采集/ZIP/API 验真应封装在深模块，外部测试 seam 仍保持公共 `loadCodingAgentCandidateDimensionEvidence()`；
+   - Schema 只允许表达可信成功或失败，不负责授予 completion；
+   - upload step、artifact、archive、lane receipt 与原始 report 仍必须完整，避免把取消或证据缺失误写成可信能力失败。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节只修改 `.mjs` 测试，尚未重跑增量构建；
+- CI receipt 测试文件=`1/1`、测试=`2 failed`，进程 exit code=`1`；两个失败均为现有 Schema 对可信 failure 返回 `ok=false`；
+- 未触发 GitHub Actions、未生成真实候选 receipt，未运行冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：最小放宽 job/verification/report 的成功或失败形状，同时保持 upload/artifact 完整性要求，再运行同一两个测试转 Green。
+- **为什么先做它**：先恢复可信失败可表达性，公共 loader 才能在下一切片对成功/失败终态做双向一致性检查并输出正确三态。
+- **当前还缺的关键闭环**：三态 Schema Green、reference owner/claim、公共 loader 成功/拒绝/可信失败行为、workflow producer/artifact 接线与真实 current-candidate run。
+
+#### P2-C `headless_ecosystem` 对抗修复结论：真实 CI receipt 三态 Schema Green（2026-09-01）
+
+##### 已完成内容
+
+1. **candidate CI receipt Schema 修正**：
+   - lane job conclusion 与目标 verification step conclusion 允许终态 `success|failure`；
+   - upload step 继续固定为 `completed/success`；
+   - artifact 未过期、service digest、archive/lane/report 引用和双平台顺序约束保持不变。
+
+2. **job-produced lane Schema 修正**：
+   - 原始 report status 允许 `passed|failed`；
+   - GitHub/runner/命令/七文件与平台-OS 配对合同保持不变；
+   - Schema 只允许表达可信终态，不决定 qualification completion。
+
+3. **效果**：
+   - 真实 CI 成功和可信测试失败都能进入同一原始证据链；
+   - 公共 loader 后续可将终态一致的失败投影为 `failed`，将摘要/字节/外键矛盾继续 reject；
+   - 证据缺失、upload 失败或 artifact 过期仍不能伪装成可信能力失败。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节只修改 JSON Schema，尚未重跑增量构建；
+- 同一 CI receipt 测试由三态 Red=`2 failed` 转为 Green=`2/2 passed`，进程 exit code=`0`；既有额外评分、缺失/乱序 lane、step 漂移、过期 artifact、attempt/platform 反例继续失败关闭；
+- 仅输出既存 JSON Schema `date-time` format 提示；未触发 GitHub Actions、未生成真实候选 receipt，未运行冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：新增独立 reference owner 与 `real_ci_consumer_binding` claim，通过公共 loader 构造自洽双平台组合 Red；随后把 ZIP/API/report 验真封装在窄接口深模块内。
+- **为什么先做它**：两层 Schema 的成功/失败表达已经正确，下一步应在唯一外部 seam 固定“什么真实组合才算 complete”，避免把内部 ZIP/GitHub 细节扩散到调用方。
+- **当前还缺的关键闭环**：reference owner/claim、公共 loader complete/reject/failed 行为、workflow producer/artifact 接线、真实 current-candidate run 采集与最终 owner 组合。
+
+#### P2-C `headless_ecosystem` 接口纠偏结论：CI artifact ZIP entry 语义 Red（2026-09-01）
+
+##### 已完成内容
+
+1. **深模块 seam 复核**：
+   - 明确 GitHub artifact 下载物是 ZIP，aggregate-root 只保留下载 archive；
+   - job-produced `lane-receipt.json` 与 `vitest-report.json` 是 ZIP 内 entry，不是 aggregate-root 独立路径；
+   - 将测试接口从含糊 `path` 改为固定 `entry`，避免公共 loader 调用方承担解压目录语义。
+
+2. **Red 失败定位**：
+   - lane receipt Schema 用例继续通过；
+   - candidate CI receipt 合法样例因现有 Schema 仍要求 `path` 而失败；
+   - 失败只涉及组合 receipt 的 ZIP entry 接口，没有触发远端采集或资格投影。
+
+3. **效果**：
+   - 后续受限 ZIP 验真模块可以直接从已校验 archive 读取两个固定 entry；
+   - 不再存在“合法 ZIP + 可被替换的旁路解压文件”这种由接口诱导的拼接路径；
+   - 当前仍未授予 `real_ci_consumer_binding`。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节只修改 `.mjs` 测试，尚未重跑增量构建；
+- CI receipt 测试文件=`1/1`，结果=`1 passed / 1 failed`，进程 exit code=`1`；唯一失败为 candidate CI Schema 尚未接受固定 ZIP `entry`；
+- 未触发 GitHub Actions、未生成真实候选 receipt，未运行冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：把 candidate CI Schema 的 lane receipt/report 引用改为固定 `lane-receipt.json` / `vitest-report.json` entry，并移除平台分支中重复的伪路径约束，再运行同一测试转 Green。
+- **为什么先做它**：先把 Schema 接口与真实 GitHub ZIP 产物结构对齐，后续 ZIP 深模块才能用一个窄接口完成摘要、entry 与原始字节验真。
+- **当前还缺的关键闭环**：ZIP entry Schema Green、reference owner/claim、公共 loader complete/reject/failed 行为、workflow producer/artifact 接线与真实 current-candidate run。
+
+#### P2-C `headless_ecosystem` 接口实现结论：CI artifact ZIP entry 语义 Green（2026-09-01）
+
+##### 已完成内容
+
+1. **candidate CI receipt Schema 接口修正**：
+   - `laneReceipt` 从 aggregate-root `path` 改为固定 ZIP `entry=lane-receipt.json`；
+   - `nativeTestReport` 从 aggregate-root `path` 改为固定 ZIP `entry=vitest-report.json`；
+   - 平台分支只继续固定各自的 archive 路径，不重复制造旁路解压路径。
+
+2. **效果**：
+   - aggregate-root 只保留经 service digest/SHA-256 绑定的下载 ZIP；
+   - 后续深模块直接从已验证 ZIP 读取两个固定 entry，调用方无需知道解压实现或临时目录；
+   - 消除了由接口允许的“合法 ZIP + 被替换旁路文件”拼接面，未改变可信 success/failure 三态。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节只修改 JSON Schema，尚未重跑增量构建；
+- 同一 CI receipt 测试由 ZIP entry Red=`1 failed / 1 passed` 转为 Green=`2/2 passed`，进程 exit code=`0`；
+- 仅输出既存 JSON Schema `date-time` format 提示；未触发 GitHub Actions、未生成真实候选 receipt，未运行冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在 reference Schema 与 exact-claims Gate 中接入独立 `candidateCodingRunClientCiReceipt` / `real_ci_consumer_binding`；先通过公共 loader 证明“声明 owner 但 receipt 缺失”会进入 owner 读取并 reject，且不会自动授予合同。
+- **为什么先做它**：这是比完整 ZIP 验真更窄的纵向切片，可先固定 owner/claim 接线与缺失 artifact 的公开失败行为，再实现深模块成功路径。
+- **当前还缺的关键闭环**：reference owner/claim、公共 loader complete/reject/failed 行为、受限 ZIP/API 深模块、workflow producer/artifact 接线与真实 current-candidate run。
+
+#### P2-C `headless_ecosystem` TDD 结论：真实 CI reference owner/claim 精确 Red（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence.test.mjs` 公共 seam 扩展**：
+   - 在既有本地三合同合法 fixture 上声明独立 `candidateCodingRunClientCiReceipt` owner；
+   - 按 mapping 顺序插入 `real_ci_consumer_binding` claim；
+   - 故意不创建 owner 所引用的 receipt，要求公共 `loadCodingAgentCandidateDimensionEvidence()` 进入 owner 读取并失败关闭。
+
+2. **Red 失败定位**：
+   - 当前 `candidate-dimension-evidence-reference.schema.json` 尚不认识新 owner/claim；
+   - 公共 loader 先以 `evidence reference does not match its schema` 失败，尚未到达预期的缺失 receipt 读取错误；
+   - 用例没有因 owner 存在而自动完成 `real_ci_consumer_binding`。
+
+3. **效果**：
+   - reference 接线缺口已在既定公共 seam 精确暴露；
+   - 下一 Green 只需补 owner/claim/version/读取入口，不需要提前实现 ZIP/API 成功路径；
+   - 测试文件新增后仍低于仓库 `3000` 行拆分阈值。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节只修改 `.mjs` 测试，尚未重跑增量构建；
+- 定向 reference owner Red=`1 failed / 38 skipped`，进程 exit code=`1`；实际错误为 Reference Schema reject，目标错误为缺失 CI receipt；
+- 仅输出既存 JSON Schema `date-time` format 提示；未触发 GitHub Actions、未生成真实候选 receipt，未运行冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在 Reference Schema、生产 version/path 常量、exact-claims Gate 与 owner dispatch 中接入独立 CI receipt；resolver 本切片只做到有摘要约束的 receipt 读取/Schema/aggregate binding，使同一缺失 receipt 用例到达预期错误并转 Green。
+- **为什么先做它**：先闭合 owner 存在但 artifact 缺失的失败路径，可以证明 claim 不会自动授予，再单独开发原始 ZIP/API 成功解析模块。
+- **当前还缺的关键闭环**：owner/claim 缺失 artifact Green、公共 loader 完整成功/拒绝/可信失败行为、受限 ZIP/API 深模块、workflow producer 与真实 current-candidate run。
+
+#### P2-C `headless_ecosystem` 实现结论：真实 CI reference owner/claim 缺失 artifact Green（2026-09-01）
+
+##### 已完成内容
+
+1. **`candidate-dimension-evidence-reference.schema.json` 扩展**：
+   - 新增独立 `candidateCodingRunClientCiReceipt` owner 与固定 artifact/version/path；
+   - `headlessEcosystemClaim` 增加 `real_ci_consumer_binding`、独立 owner 与 completion；
+   - claims 上限从 `15` 对齐为 `16`，不改变其他维度或 owner 的合同。
+
+2. **`coding-agent-candidate-score.mjs` 最小接线**：
+   - 导出 CI receipt version 并接入 Schema path；
+   - exact-claims Gate 按 mapping 顺序组合 local consumer、真实 CI、protocol、error/cancellation 四项 claim；
+   - owner dispatch 读取 receipt，复核 reference SHA、receipt Schema 与 current aggregate binding。
+
+3. **失败关闭边界**：
+   - CI owner/claim 声明完整但 receipt 缺失时，公共 loader 明确 reject；
+   - 当前 resolver 不把 CI owner 写入 `completedContracts`，因此 Schema-valid receipt 在深验真完成前也不会自动授予合同；
+   - 本地三合同 owner 与真实 CI owner继续独立。
+
+4. **效果**：
+   - 新 owner 已跨越 Reference Schema、exact claims 与公共 loader dispatch 三层接线；
+   - “owner 存在即完成”的误授路径已关闭；
+   - 下一切片可专注 ZIP/API/report 原始证据深模块及其成功/失败输出。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节修改 `.mjs` 生产代码与 JSON Schema，尚未重跑增量构建；
+- 同一公共 seam 用例由 Red=`1 failed / 38 skipped`（Reference Schema reject）转为 Green=`1 passed / 38 skipped`（缺失 receipt 明确 reject），进程 exit code=`0`；
+- 仅输出既存 JSON Schema `date-time` format 提示；未触发 GitHub Actions、未生成真实候选 receipt，未运行冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：新增相邻的受限 GitHub artifact 验真深模块，通过公共 loader 构造自洽双平台 run/jobs/artifacts API、ZIP、lane receipt 与原始报告组合 Red，要求 `real_ci_consumer_binding=complete` 且仍无 score。
+- **为什么先做它**：owner 接线和缺失证据路径已经闭合；下一步必须用原始字节与跨层外键证明成功路径，而不是让组合 receipt 摘要自证。
+- **当前还缺的关键闭环**：公共 loader complete/reject/failed 行为、受限 ZIP/API 深模块、workflow lane producer/artifact 接线、真实 current-candidate run 采集与最终 owner 组合。
+
+#### P2-C `headless_ecosystem` 支撑实现结论：dimension evidence fixture 行为不变提取（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence-fixtures.mjs` 新建**：
+   - 从公共 loader 测试中提取 aggregate、reference、receipt 与 retained system evidence 的共享 fixture 构造逻辑；
+   - 集中提供相对路径写入、reference 读写、确定性 JSON 序列化与 SHA-256 等测试支撑函数；
+   - 未新增生产入口，也未改变候选资格合同或证据判定规则。
+
+2. **`coding-agent-candidate-dimension-evidence.test.mjs` 调整**：
+   - 复用相邻 fixture 支撑模块，主测试文件由 `2967` 行降至 `2666` 行；
+   - 保留公共测试 seam `loadCodingAgentCandidateDimensionEvidence()` 与既有断言，不测试 ZIP/helper 内部实现；
+   - 为后续双平台 CI archive/API/report fixture 留出独立扩展边界，避免测试文件越过 `3000` 行阈值。
+
+3. **效果**：
+   - 测试职责与 fixture 构造职责分离，既有 dimension evidence 行为保持不变；
+   - 后续真实 CI 成功、拒绝与可信失败场景可继续通过同一公共 loader 验收；
+   - 当前 `real_ci_consumer_binding` 仍未授予，整体结果继续为 `partial/unscored`。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节仅重排 `.mjs` 测试支撑代码，未重新执行 workspace 构建；
+- 两个 `.mjs` 文件 `node --check`=`2/2` 通过；dimension evidence 全文件=`39/39` 通过，进程 exit code=`0`；
+- 仅输出既存 JSON Schema `date-time` format 提示；未触发 GitHub Actions、真实 coding-run client audit、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在相邻 fixture 模块构造完整自洽的双平台 GitHub run/jobs/artifacts API、artifact ZIP、lane receipt 与原始七文件 Vitest JSON，并通过公共 loader 取得成功路径精确 Red。
+- **为什么先做它**：先由外部 seam 固定可观察完成行为，才能确保后续深模块只实现关闭 `real_ci_consumer_binding` 所需的最小 ZIP/API/report 验真能力。
+- **当前还缺的关键闭环**：公共 loader 合法 complete、字节/外键/终态漂移 reject、单 lane 可信失败投影、workflow producer/artifact 接线，以及真实 current-candidate run。
+
+#### P2-C `headless_ecosystem` TDD 结论：真实 CI 双平台成功路径精确 Red（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence-fixtures.mjs` 扩展**：
+   - 构造与 current aggregate/harness 绑定的 GitHub run、jobs、artifacts 三份原始 REST JSON；
+   - 为 `ubuntu-latest/Linux` 与 `windows-latest/Windows` 分别构造只含 `lane-receipt.json`、`vitest-report.json` 的确定性 ZIP artifact；
+   - 双 lane 均包含固定七文件 Vitest 成功报告、job/step/artifact 外键、GitHub service digest 与本地 archive/entry SHA-256。
+
+2. **`coding-agent-candidate-dimension-evidence.test.mjs` 公共 seam 扩展**：
+   - 仅通过 `loadCodingAgentCandidateDimensionEvidence()` 观察真实 CI 成功行为；
+   - 要求 `headless_ecosystem` 四项合同全部 `complete`，同时总体仍因其他维度缺口保持 `partial`；
+   - 明确要求所有维度继续无 `score`，未测试 ZIP helper 或生产深模块内部细节。
+
+3. **Red 失败定位**：
+   - receipt/reference/Schema/current aggregate binding 已全部通过，公共 loader 正常返回 resolution；
+   - 唯一失败为 `real_ci_consumer_binding` 仍在 `missingEvidenceContracts`，`headless_ecosystem` 实际为 `partial`；
+   - 证明当前生产代码尚未把经深验真的真实 CI owner 结果投影到 `completedContracts`。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节只扩展 `.mjs` 测试与 fixture，尚未重新执行 workspace 构建；
+- 两个 `.mjs` 文件 `node --check`=`2/2` 通过；成功路径定向 Red=`1 failed / 39 skipped`，进程 exit code=`1`；
+- 唯一断言差异为目标合同仍 missing；未触发 GitHub Actions、真实 coding-run client audit、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：新增相邻的受限 CI evidence 深模块，完成原始 API、ZIP 摘要/entry、lane receipt、七文件报告与跨层外键验真，并把其三态结果接回公共 loader，使同一用例转 Green。
+- **为什么先做它**：Red 已证明外部行为与 fixture 自洽，下一步只需补真实证据验真和 completion 投影，不需要改变 reference、mapping 或评分边界。
+- **当前还缺的关键闭环**：成功 Green、字节/外键/终态漂移 reject、单 lane 可信失败投影、workflow producer/artifact 接线，以及真实 current-candidate run。
+
+#### P2-C `headless_ecosystem` 实现结论：真实 CI 双平台成功路径 Green（2026-09-01）
+
+##### 已完成内容
+
+1. **`coding-run-client-ci-evidence-loader.mjs` 新建**：
+   - 以单一 `loadCodingRunClientCiEvidence({ aggregateRoot, receipt, expectedHarness })` Interface 封装 GitHub API、artifact ZIP、lane receipt 与原始 Vitest 报告验真；
+   - 复核 run/repository/workflow/attempt/head SHA、双平台 job/step/artifact 外键、GitHub service digest、本地 archive SHA-256/大小及 ZIP entry SHA-256；
+   - ZIP reader 只接受固定 `lane-receipt.json`、`vitest-report.json`，校验中央目录、local header、data descriptor、CRC-32，并限制 archive/entry/总展开大小与压缩比；不依赖仓库未声明的传递 ZIP 包。
+
+2. **lane receipt 与七文件报告验真接入**：
+   - lane receipt 必须通过公开 Schema，并与 GitHub run、runner platform/OS、workflow ref、报告摘要及固定七文件选择交叉一致；
+   - 原始 Vitest JSON 复用 structured report Adapter 校验 suite/test/assertion 计数与终态；
+   - 双 lane 全部可信通过时返回 `complete=true`，可信失败保留 `complete=false` 的三态接口，不可信摘要、外键或终态矛盾继续抛出 reject。
+
+3. **`coding-agent-candidate-score.mjs` 接入**：
+   - CI owner 在 receipt SHA、Schema 与 current aggregate binding 通过后进入深模块；
+   - 仅把深模块返回值投影到 `real_ci_consumer_binding`，公共 loader 不承担 ZIP/API 内部知识；
+   - 同一成功用例由合同 missing 的精确 Red 转为四项合同全部 `complete`，`headless_ecosystem=complete`，总体仍为 `partial` 且所有维度无数值分。
+
+4. **测试 fixture 与公共 seam 更新**：
+   - `coding-agent-candidate-dimension-evidence-fixtures.mjs` 提供确定性双平台 API/ZIP/lane/report worked example；
+   - `coding-agent-candidate-dimension-evidence.test.mjs` 仍只从 `loadCodingAgentCandidateDimensionEvidence()` 断言可观察资格结果；
+   - 新深模块=`595` 行、主测试=`2713` 行，均低于仓库 `3000` 行拆分阈值。
+
+5. **效果**：
+   - current-candidate 双平台原始 CI 字节可在零模型、本地只读 loader 中完成真实性复核并关闭唯一目标合同；
+   - workflow 文本、历史 run、组合 receipt 自报或本地 audit 均不能单独授予 `real_ci_consumer_binding`；
+   - 本环节只完成成功路径 Green，尚未把各类自洽攻击负例、可信单 lane failure 与 workflow producer 纳入验收闭环。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` exit code=`0`；
+- 同一公共 seam 成功用例由 Red=`1 failed / 39 skipped` 转为 Green=`1 passed / 39 skipped`；dimension evidence 全文件=`40/40` 通过，进程 exit code=`0`；
+- 四个相关 `.mjs` 文件 `node --check`=`4/4` 通过，相关文件 `git diff --check` 通过；仅输出既存 JSON Schema `date-time` format 提示；
+- 未触发 GitHub Actions、真实 coding-run client audit、冻结 Formal、60 分钟 soak、Supervisor fault audit、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：暂停后从公共 loader 补 archive/API/lane/report 字节漂移、run/attempt/head SHA/job/platform/artifact 外键漂移、success/report/job 终态矛盾的失败关闭测试，再补单 lane 可信 failure 的 `failed` 投影。
+- **为什么先做它**：成功路径已经证明深模块 Interface 可关闭合同；下一步必须用独立自洽攻击输入确认每一层真实性校验可观察且不会被重算摘要绕过，然后才适合接 workflow producer。
+- **当前还缺的关键闭环**：负例矩阵、可信 failure 三态、workflow job-side lane receipt/report 生成与 upload-artifact 接线、repository verifier/README/project-map 同步、完整联合回归，以及真实 current-candidate GitHub run。
+
+#### P2-C `headless_ecosystem` 实现结论：真实 CI 自洽攻击失败关闭矩阵（2026-09-02）
+
+##### 已完成内容
+
+1. **`coding-run-client-ci-evidence-loader.mjs` 强化**：
+   - GitHub run URL 必须由当前 repository full name 与 run ID 唯一派生，API 与 receipt 即使同步重封到其他仓库/run 也会 reject；
+   - 每个 job 只允许唯一 required runner platform label，GitHub job/artifact name 与 verification/upload step name 均要求唯一，阻止 receipt 从同名对象中择优绑定；
+   - 强制 `run.created -> job.started -> verification -> upload -> job.completed -> run.updated`、`verification.completed -> laneReceipt.generatedAt -> upload.started` 与 artifact `created_at -> updated_at -> expires_at` 时间线单调不减。
+
+2. **`coding-agent-candidate-coding-run-client-ci-evidence.test.mjs` 新建并扩展**：
+   - 将 CI 深证据攻击测试拆入相邻文件，主 dimension 测试继续只通过 `loadCodingAgentCandidateDimensionEvidence()` 公共 seam 验收；
+   - 覆盖双 platform label、倒置 job 时间线、倒置 artifact 生命周期、artifact/job/step 同名歧义、过早 lane receipt 与原始 `updated_at` 漂移；
+   - 连同主 dimension 文件中的 run URL 重封攻击，共固定 `9` 个可重算的 CI reject 场景。
+
+3. **效果**：
+   - 攻击者不能仅靠同步修改 GitHub API JSON、candidate receipt 与 SHA-256 摘要，把其他仓库/run、歧义 matrix object、旧 receipt 或非法时间线伪装为当前候选证据；
+   - 所有异常继续表现为 reject，不会降级成 `incomplete`、`failed` 或误授 `complete`；
+   - 未改变成功路径、固定双平台/七文件选择或“不提前计算数值分”的边界。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` exit code=`0`；
+- dimension/CI receipt/CI evidence 联合回归 `52/52` 通过，其中 CI evidence reject 测试 `8/8`、主 dimension run URL reject `1/1`；
+- 三个本环节 `.mjs` 文件 `node --check=3/3` 通过；仅保留既存 JSON Schema `date-time` format 提示；
+- 未触发 GitHub Actions、真实 current-candidate run、冻结 Formal、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：用同一公共 dimension seam 构造一个原始 Vitest report、lane receipt、ZIP、job/step 与 GitHub API 全层一致的单 lane 失败，确认只投影 `real_ci_consumer_binding=failed`。
+- **为什么先做它**：reject 矩阵已经关闭证据伪造路径，下一步必须证明可信产品/测试失败与证据损坏可被严格区分，才能让真实 CI 失败仍产出可诊断 artifact。
+- **当前还缺的关键闭环**：单 lane 可信 failure、workflow producer/upload 接线、仓库文档与 verifier、完整联合回归，以及需要外部授权的真实 current-candidate GitHub run。
+
+#### P2-C `headless_ecosystem` 实现结论：真实 CI 单 lane 可信 failure 三态（2026-09-02）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-dimension-evidence-fixtures.mjs` 扩展**：
+   - 为确定性 CI fixture 增加按 platform 选择 `passed/failed` 的窄测试输入；
+   - 失败 lane 同步生成一个真实失败 assertion、完整 Vitest suite/test counters、`success=false` 与 `report.status=failed`；
+   - 同步封装 verification step/job=`failure`，保留 upload step=`success`，并重建 lane receipt、ZIP entry、archive/artifact digest 与 API receipt 外键。
+
+2. **`coding-agent-candidate-coding-run-client-ci-evidence.test.mjs` 扩展**：
+   - 固定 Windows 单 lane 可信失败、Ubuntu lane 成功的 worked example；
+   - 公共 loader 可观察结果严格为总体与 `headless_ecosystem=failed`、`real_ci_consumer_binding=failed`；
+   - 其他合同保持 missing、不产生数值分，且全流程不抛出 reject。
+
+3. **效果**：
+   - current-candidate CI 的真实测试失败可保留为资格失败证据，而不会被误报成 artifact 损坏；
+   - 只有报告、receipt、job/step 与 API 终态全层一致时才允许 `failed` 投影，任一层矛盾仍失败关闭；
+   - 生产 loader 无需放宽校验，三态能力由既有 `complete=false` Interface 经公共 resolution 正确呈现。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` exit code=`0`；
+- 可信 failure 公共 seam 由 Red=`expected failed, received partial` 转为 Green=`1/1`；dimension/CI receipt/CI evidence 联合回归 `52/52` 通过；
+- 三个本环节 `.mjs` 文件 `node --check=3/3` 通过，文件行数分别为 `673/723/268`，均低于 `3000` 行阈值；
+- 未触发 GitHub Actions、真实 current-candidate run、冻结 Formal、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：接入 `quality-gates.yml` 的固定 Vitest JSON report、job-side lane receipt producer 与 `if: always()` artifact upload，并用仓库合同测试先行锁定失败时仍产证、job 最终仍真实失败的行为。
+- **为什么先做它**：consumer 已能区分可信 success/failure，但真实 Quality job 尚不会产生其所需的两文件 artifact；producer 是取得 current-candidate 原始证据前的最后本地实现缺口。
+- **当前还缺的关键闭环**：workflow producer/upload、repository verifier/README/project-map 同步、完整联合回归，以及需要 private push/CI 运行授权的真实 current-candidate receipt。
+
+#### P2-C `headless_ecosystem` 实现结论：真实 CI workflow producer 与仓库接线（2026-09-02）
+
+##### 已完成内容
+
+1. **`run-coding-run-client-ci-lane-receipt.mjs` 新建**：
+   - 以公开 CLI 接收固定 `vitest-report.json`、目标 `lane-receipt.json`、matrix platform 与 GitHub step outcome；
+   - 绑定 GitHub Actions repository/workflow/run/attempt/SHA/ref、runner platform/OS/arch，复用 structured Vitest adapter 校验 success/failure 终态与完整 counters；
+   - 要求七文件选择精确唯一、报告终态与 step outcome 一致，自验 `coding-agent-benchmark-coding-run-client-ci-lane-evidence/v1` 后以 `wx` 写入，异常时不遗留 receipt。
+
+2. **`package.json` 与 `quality-gates.yml` 接入**：
+   - `verify:coding-run-client` 保持原七文件与真实退出码，只追加固定 JSON 输出 `artifacts/coding-run-client-ci/vitest-report.json`；
+   - 双平台 verification step 增加稳定 id，push/workflow dispatch 上 producer 与 pinned `actions/upload-artifact` 均在 `always()` 条件下执行；
+   - artifact 名固定为 `coding-run-client-ci-${{ matrix.os }}`，ZIP 只包含 `lane-receipt.json` 与 `vitest-report.json`，缺文件即失败；PR 仍运行相同测试但不生成 current-candidate artifact。
+
+3. **仓库合同与文档同步**：
+   - `quality-gates-workflow.test.ts` 固定 report、producer、upload、顺序与“不使用 continue-on-error”行为；
+   - `verify-coding-agent-benchmark-contract.mjs` 纳入两份 CI Schema 的编译/版本、producer 文件、workflow 接线、README 与 project-map Gate，并补缺失接线回归；
+   - `benchmarks/coding-agent/README.md` 与 `docs/project-map.md` 明确 job-side/candidate receipt 两层职责、success/reject/failed 语义与真实 run 边界。
+
+4. **效果**：
+   - Quality lane 在测试成功或可信失败时都能留下可供 candidate loader 复算的原始两文件 artifact，同时原 Vitest 非零退出仍使 job 真实失败；
+   - workflow 文本本身不授予资格，只有后续采集 GitHub API、artifact ZIP 并绑定 current candidate 才能关闭 `real_ci_consumer_binding`；
+   - `headless_ecosystem` 本地 consumer/producer/validator 链已收口，未触发外部 GitHub Actions 或 private push。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` exit code=`0`；
+- 固定 `corepack pnpm verify:coding-run-client` 真实执行，Vitest suites/tests=`15/15`、`41/41`，生成报告 `15,518` bytes；producer 消费该真实报告后输出 Schema-valid receipt `1,394` bytes、固定七文件与匹配 SHA-256；
+- producer/workflow/repository 合同 `40/40`，此前 dimension/CI receipt/CI evidence 联合回归 `52/52`；`verify:coding-ci`、`verify:coding-benchmark`、四个 `.mjs` `node --check` 与相关 `git diff --check` 全部通过；
+- 仅保留既存 JSON Schema `date-time` format 提示；未触发 GitHub Actions、private push、冻结 Formal、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在不触发外部写入的前提下继续实现 `context_retrieval` 六合同的 current-candidate Adapter，优先盘点现有 truth/freshness、Context Inspector、resource soak、adoption/context-waste、no-binary-fallback 与 Go canary producer/Schema；真实 CI receipt 单独保留为授权边界。
+- **为什么先做它**：`headless_ecosystem` 的本地代码、测试、workflow 与仓库 Gate 已闭合，剩余真实 run 需要 private push/CI 授权；`context_retrieval` 是下一项可完全本地推进且已有 P1-A 证据可复用的计划内工作。
+- **当前还缺的关键闭环**：一份绑定未来 current-candidate commit 的真实双平台 GitHub API/ZIP receipt，以及 `context_retrieval`、`cli_tui`、`git_delivery` 三维 Adapter、数值 evaluator、完整回归与两个连续候选。
+
+#### P2-C `context_retrieval` 审计结论：六合同 owner 与新鲜度边界（2026-09-02）
+
+##### 已完成内容
+
+1. **CodeIntel producer/Schema 与历史 artifact 只读复核**：
+   - 核对 `run-code-intel-truth-set.mjs`、`run-code-intel-resource-soak.mjs`、`run-code-intel-agent-uplift.mjs`、`run-code-intel-go-canary-comparator.mjs` 及四类报告 Schema，确认 truth/freshness、双平台 resource soak、semantic adoption/context-waste、无二值回退与 Go canary 均已有可复算 owner；
+   - 固定历史已通过报告的实际选择与 SHA-256：TS/JS truth Windows/WSL2、resource soak Windows/WSL2、attempt 12 uplift aggregate 与 Go comparator；本环节只读，不覆盖或重跑任何冻结 artifact；
+   - 直接复核报告关键事实：truth=`14/14`、soak 每平台 `23` 次 query 且 stale cursor fail-closed、uplift semantic successful runs=`7` 且 context-waste alternative 通过、Go comparator Gate 通过且 `productionEligible=false`。
+
+2. **current-candidate 新鲜度边界校正**：
+   - 历史 truth fixture、CodeIntel source/runtime、resource-soak runner 的多项 SHA-256 与当前工作树不再一致；attempt 12 uplift 也绑定旧 commit/dirty identity，不能由一份新 receipt 包装成当前候选结果；
+   - 后续 Adapter 必须校验底层报告 Schema、SHA-256、报告间 identity 与 current-candidate 选择/生成关系；旧报告只作为历史完成证据和测试设计依据，不直接关闭未来 candidate claim；
+   - 技术债决策=`fix_now`：为 current candidate 增加统一 receipt/producer，并使缺失 artifact、摘要漂移、选择漂移与身份漂移全部 fail-closed。
+
+3. **`context_inspector` owner 边界校正**：
+   - `benchmarks/code-intel/README.md` 明确规定 TS/JS truth set 不代表 Context Inspector，因此禁止用同一 `14/14` truth 报告同时关闭 `context_inspector`；
+   - `projection.ts` 是 Tool 与 Context Inspector 共享的只读投影，但当前没有独立的候选级结构化 Context Inspector artifact；下一步需补最小 producer/test owner，而不是在 Adapter 中推断完成；
+   - 六项合同仍保持彼此独立，producer 文件存在或历史阶段标记为完成均不自动授予候选资格。
+
+4. **效果**：
+   - `context_retrieval` 的实现路线收敛为“一份 candidate-bound 组合 receipt + 六类独立可复算 completion”，不会把历史 P1-A 完成状态冒充 current-candidate 证据；
+   - 可直接复用现有 truth/soak/uplift/Go producer 与 Schema，新增执行面仅限 Context Inspector 最小结构化 owner和组合 receipt producer；
+   - 当前维度继续为 `partial/unscored`，没有提前授分或改写冻结 Formal。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节仅只读审计并回写文档，沿用上一环节已通过的 `corepack pnpm build:incremental`，未声称重新执行；
+- 已直接读取并核对 `6` 份历史报告、`4` 类 producer/Schema、README 证据边界和当前文件 SHA-256；历史报告 Gate 均为已记录通过，但多项 current-source identity 比对明确为不匹配；
+- 未运行 truth/soak/uplift/Go producer、冻结 Formal、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：先为 Context Inspector 建立零模型、current-harness 绑定的最小结构化 audit owner；随后定义统一 CodeIntel candidate receipt Schema，并在公共 `loadCodingAgentCandidateDimensionEvidence()` seam 写六合同成功路径 Red。
+- **为什么先做它**：其余五项已有结构化 producer，`context_inspector` 是唯一没有候选 artifact 的真实缺口；先补这个最窄 owner，才能让组合 receipt 的六项输入都来自权威报告而非推断。
+- **当前还缺的关键闭环**：Context Inspector producer/Schema/test、统一 receipt/Adapter 的成功/拒绝/可信失败三态、repository 接线与全链验证；此外仍缺 `cli_tui`、`git_delivery` Adapter、数值 evaluator、真实 CI receipt 和两个连续候选。
+
+#### P2-C `context_retrieval` TDD 结论：Context Inspector 公共投影 audit Red（2026-09-02）
+
+##### 已完成内容
+
+1. **`context-inspector-audit-report.schema.json` 新建**：
+   - 定义零模型、只读、current-harness 绑定的 Context Inspector audit report `v1`；
+   - 固定 `projectCodeIntelQueryResult()`、`code-intel/v1`、`zero-based-line-column` 与 `mutationAuthority=none`；
+   - 以 fresh/completed、stale/partial、unknown/partial 三个封闭场景保留 evidence、freshness、provenance、diagnostics 与 page，且绑定 source/runtime 文件 SHA-256。
+
+2. **`run-code-intel-context-inspector-audit.test.mjs` 新建 Red**：
+   - 仅调用公开的 `buildCodeIntelContextInspectorAuditReport()` seam，不测试内部 helper；
+   - 要求报告通过 Schema、三个投影逐字等于输入加坐标声明、Gate 通过且 Gateway/model/Provider/network/credential/mutation 全为零；
+   - 测试 fixture 使用显式 clean harness identity，不依赖历史 truth report 或 UI 旁路。
+
+3. **Red 证据与效果**：
+   - 定向 Vitest 在收集期以 `ERR_MODULE_NOT_FOUND` 精确失败，缺失模块为 `run-code-intel-context-inspector-audit.mjs`；
+   - 现有 projection、truth 或 Tool 测试没有偶然满足该 producer 合同；
+   - `context_inspector` 仍为 missing contract，尚未被新 Schema 或测试提前关闭。
+
+##### 验证结果
+
+- TypeScript 编译状态：本 Red 环节仅新增 JSON Schema 与 `.mjs` 测试，尚未运行增量编译；
+- 定向 Red：Test Files=`1 failed`、Tests=`no tests`，exit code=`1`，唯一失败为预期的 producer 模块缺失；
+- 未运行真实 CodeIntel Provider、Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：新增最小 `run-code-intel-context-inspector-audit.mjs`，从实际 `dist` 导入公共 projection，核验 source/runtime hash，生成三场景报告并将同一测试转 Green。
+- **为什么先做它**：Red 已把调用者可观察合同固定下来；下一步只补使该合同成立的 producer，避免提前混入组合 receipt 或评分逻辑。
+- **当前还缺的关键闭环**：producer Green、不可覆盖 writer/CLI 与 projection/source drift 负例、candidate receipt/Adapter 三态、仓库接线和完整回归。
+
+#### P2-C `context_retrieval` 实现结论：Context Inspector 公共投影 audit Green（2026-09-02）
+
+##### 已完成内容
+
+1. **`run-code-intel-context-inspector-audit.mjs` 新建**：
+   - 从显式 `sourceRoot` 的实际 `packages/belldandy-skills/dist/code-intel/projection.js` 动态加载 `projectCodeIntelQueryResult()`，不使用测试替身或内部 helper；
+   - 对 `projection.ts`、`types.ts` 及对应 runtime 文件执行 bounded regular-file 检查并记录 SHA-256，报告绑定显式 clean harness identity；
+   - 构造 fresh/completed、stale/partial、unknown/partial 三个封闭输入并逐项核对 projection 仅追加 `zero-based-line-column`，同时扫描禁止的 mutation authority 字段。
+
+2. **`context-inspector-audit-report.schema.json` 修正并闭合**：
+   - 区分不含坐标字段的 query input 与必须含坐标字段的 query projection；
+   - 保持 evidence location/range、document revision、page/cursor、freshness、provenance、diagnostics 的封闭形状；
+   - source/runtime 文件顺序与路径均固定，避免任意文件列表替代权威投影 owner。
+
+3. **公共 producer Green 与效果**：
+   - 同一用例由 `ERR_MODULE_NOT_FOUND` Red 转为 `1/1` Green；
+   - 三类结果逐字保留所有只读证据字段，报告 Gate=`passed`，Gateway/model/Provider/network/credential/mutation 均为零；
+   - 该 Green 证明 Context Inspector audit producer 可生成可信候选输入，但尚未通过 dimension Adapter 关闭 `context_inspector`。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` 通过；
+- `1` 个 Context Inspector audit 测试全部通过（含 `1` 个新增公共 producer 行为测试）；
+- `node --check`、Schema JSON parse 与关联 `git diff --check` 全部通过；仅有既存 AJV `date-time` format 提示，未运行 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：按 TDD 增加不可覆盖 report writer 与显式 CLI 参数合同，再补 runtime export/投影形状/source 文件边界漂移负例。
+- **为什么先做它**：内存报告已 Green，但候选流程需要可重复、不可覆盖的物化 artifact；先收口 producer 自身真实性，避免组合 receipt 接入一个可被静默覆盖或换 runtime 的 owner。
+- **当前还缺的关键闭环**：writer/CLI 与漂移负例、统一 CodeIntel candidate receipt/Adapter 的成功/拒绝/可信失败三态、仓库接线和完整回归。
+
+#### P2-C `context_retrieval` TDD 结论：Context Inspector 不可覆盖 writer Red（2026-09-02）
+
+##### 已完成内容
+
+1. **`run-code-intel-context-inspector-audit.test.mjs` 扩展**：
+   - 新增公开 `writeCodeIntelContextInspectorAuditReport()` seam 的不可覆盖行为测试；
+   - 先生成已通过的内存 report，再要求首次物化内容可 JSON 回读且第二次写同一路径明确拒绝；
+   - 临时根在测试后清理，不触碰项目 artifact 或冻结证据。
+
+2. **Red 证据与效果**：
+   - 定向用例进入 writer 调用后以 `writeCodeIntelContextInspectorAuditReport is not a function` 失败；
+   - builder Green 用例保持隔离，失败并非 Schema、source/runtime 或 harness fixture 引起；
+   - 当前 producer 仍不能物化候选 artifact，不提前进入组合 receipt。
+
+##### 验证结果
+
+- TypeScript 编译状态：本 Red 环节仅修改 `.mjs` 测试，未重新执行增量编译；
+- 定向 Red：`1 failed / 1 skipped`，exit code=`1`，唯一失败为预期 writer export 缺失；
+- 未写入项目 artifact，未运行 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：实现使用 `fs.open(..., "wx")` 的最小 writer，并运行同一用例转 Green；随后再单独固定 CLI 参数 Red。
+- **为什么先做它**：公开行为已由单一失败测试锁定，只需补不可覆盖写入，不应在本轮同时加入尚未测试的 CLI 分支。
+- **当前还缺的关键闭环**：writer Green、CLI Red/Green、真实性负例、组合 receipt/Adapter 三态与仓库接线。
+
+#### P2-C `context_retrieval` 实现结论：Context Inspector 不可覆盖 writer Green（2026-09-02）
+
+##### 已完成内容
+
+1. **`run-code-intel-context-inspector-audit.mjs` 扩展**：
+   - 新增公开 `writeCodeIntelContextInspectorAuditReport()`；
+   - 输出目录按需创建，目标文件使用 `fs.open(..., "wx")` 原子写入，已有文件返回稳定 `already exists` 错误；
+   - 正常与异常路径均关闭文件句柄，报告使用确定性缩进和结尾换行。
+
+2. **公共 writer Green 与效果**：
+   - 同一用例由 `is not a function` Red 转为 Green；
+   - 首次写入可完整 JSON 回读，第二次写入不会覆盖或改写既有 artifact；
+   - 临时测试根在结束后清理，项目历史 artifact 保持冻结。
+
+##### 验证结果
+
+- TypeScript 编译状态：本最小 Green 仅修改 `.mjs` producer，尚未重新执行增量编译；
+- 定向 writer 测试=`1 passed / 1 skipped`，exit code=`0`；
+- 未写入项目 artifact，未运行 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：为显式 CLI 参数解析与一键 build+write 路径写 Red，固定 clean harness 四字段、source root、output 和可选 generated-at；未知/重复/缺失参数均失败关闭。
+- **为什么先做它**：writer 已可信，CLI 是候选编排调用 producer 的唯一缺口；先固定小而封闭的参数面，避免未来 receipt runner 通过环境隐式推断身份。
+- **当前还缺的关键闭环**：CLI Red/Green、runtime/source/projection 漂移负例、组合 receipt/Adapter 三态、仓库接线和完整回归。
+
+#### P2-C `context_retrieval` TDD 结论：Context Inspector 显式 CLI 参数 Red（2026-09-02）
+
+##### 已完成内容
+
+1. **`run-code-intel-context-inspector-audit.test.mjs` 扩展**：
+   - 新增公开 `parseCodeIntelContextInspectorAuditCliArguments()` seam；
+   - 固定 `--source-root`、`--output`、三项 harness identity 与可选 `--generated-at` 的调用者可观察结果；
+   - `workspaceDirty=false` 由 producer 固定，不提供可降级为 dirty 的 CLI 参数，并要求未知参数失败关闭。
+
+2. **Red 证据与效果**：
+   - 定向用例在 parser 调用处以 `parseCodeIntelContextInspectorAuditCliArguments is not a function` 失败；
+   - builder/writer 两项用例保持跳过，失败与已有生产路径无关；
+   - 尚未增加一键执行或隐式环境身份读取。
+
+##### 验证结果
+
+- TypeScript 编译状态：本 Red 环节仅修改 `.mjs` 测试，未重新执行增量编译；
+- 定向 Red：`1 failed / 2 skipped`，exit code=`1`，唯一失败为预期 parser export 缺失；
+- 未写项目 artifact，未运行 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：实现最小封闭 parser，使合法显式参数与未知参数用例转 Green；随后分别补重复/缺失/格式错误参数和一键 run 路径。
+- **为什么先做它**：当前 Red 只定义解析接口，先完成这一层可保持单一纵向切片，并避免把 CLI 进程副作用混进 parser 行为。
+- **当前还缺的关键闭环**：parser Green、参数负例、一键 build+write、真实性负例、组合 receipt/Adapter 三态和仓库接线。
+
+#### P2-C `context_retrieval` 实现结论：Context Inspector 显式 CLI parser Green（2026-09-02）
+
+##### 已完成内容
+
+1. **`run-code-intel-context-inspector-audit.mjs` 扩展**：
+   - 新增公开 `parseCodeIntelContextInspectorAuditCliArguments()`；
+   - 只接受 source root、output、harness commit/lockfile/worktree content SHA-256 与可选 generated-at 六类显式 flag；
+   - 路径统一解析为绝对路径，identity 与 ISO 时间复用 production 校验，不读取 Git、环境变量或隐式 workspace 状态。
+
+2. **公共 parser Green 与效果**：
+   - 同一用例由缺失 export Red 转为 Green；
+   - 合法输入稳定投影 `workspaceDirty=false` 的 clean harness identity，未知参数返回稳定错误；
+   - parser 本身不写 artifact、不启动 Provider，也不执行候选资格判断。
+
+##### 验证结果
+
+- TypeScript 编译状态：本最小 Green 仅修改 `.mjs` producer，尚未重新执行增量编译；
+- 定向 parser 测试=`1 passed / 2 skipped`，exit code=`0`；
+- 未写项目 artifact，未运行 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：增加重复 flag、缺值/奇数参数、缺少必填项和 identity/时间格式错误负例，再最小收紧 parser；随后实现一键 build+write CLI。
+- **为什么先做它**：合法 Green 已可达，但当前 parser 尚未显式拒绝重复选择和缺值；这些边界会直接影响候选 identity 与输出目标，必须先失败关闭。
+- **当前还缺的关键闭环**：参数攻击矩阵、一键执行、runtime/source/projection 漂移负例、组合 receipt/Adapter 三态、仓库接线和完整回归。
+
+#### P2-C `context_retrieval` 验证结论：Context Inspector CLI 参数攻击矩阵 Red（2026-09-02）
+
+##### 已完成内容
+
+1. **`run-code-intel-context-inspector-audit.test.mjs` 扩展**：
+   - 新增 `6` 组表驱动参数攻击：重复 output、末尾缺值、缺少 output、非法 commit、非法 lockfile SHA-256 与非法 generated-at；
+   - 全部只经公开 parser seam 观察稳定错误，不读取 parser 内部 Map 或 helper；
+   - 合法参数测试与 builder/writer 行为保持独立。
+
+2. **Red 定位**：
+   - 缺少必填 output、非法 commit、非法 SHA-256 与非法时间 `4` 组已由现有 production 校验拒绝；
+   - 重复 `--output` 未报错，后值静默覆盖前值；末尾 `--generated-at` 缺值虽失败，但错误落到通用 required 校验，未形成稳定参数级诊断；
+   - 失败点证明需要最小收紧参数选择唯一性与成对值检查，不需要改 builder/writer。
+
+3. **效果**：
+   - 参数攻击矩阵已把“身份/输出选择不可歧义”转化为可重复回归；
+   - 当前 CLI 仍未宣称收口，组合 receipt 尚未接入该 producer。
+
+##### 验证结果
+
+- TypeScript 编译状态：本 Red 环节只修改 `.mjs` 测试，未重新执行增量编译；
+- 定向攻击矩阵=`2 failed / 4 passed / 3 skipped`，exit code=`1`；两个失败分别为重复 output 未拒绝与末尾缺值错误语义不稳定；
+- 未写项目 artifact，未运行 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在 parser 循环中先验证 flag/value 成对且 flag 唯一，再写入值 Map；运行同一 `6` 组矩阵转 Green。
+- **为什么先做它**：四项身份/格式 Gate 已成立，只需修复两个已复现漏洞，保持 diff 最小且不改变合法 CLI 结果。
+- **当前还缺的关键闭环**：参数矩阵 Green、一键 build+write、runtime/source/projection 漂移负例、组合 receipt/Adapter 三态与仓库接线。
+
+#### P2-C `context_retrieval` 实现结论：Context Inspector CLI 参数攻击矩阵 Green（2026-09-02）
+
+##### 已完成内容
+
+1. **`run-code-intel-context-inspector-audit.mjs` parser 收紧**：
+   - 每个 flag 在进入 values Map 前必须有配对值；
+   - 同名 flag 只能出现一次，禁止以末次值静默覆盖 source、output、harness identity 或 generated-at；
+   - 合法参数的绝对路径、clean identity 与可选时间投影保持不变。
+
+2. **攻击矩阵 Green 与效果**：
+   - 重复 output 与末尾缺值两项由 Red 转 Green；
+   - 缺少必填 output、非法 commit、非法 lockfile SHA-256 和非法 generated-at 四项继续失败关闭；
+   - CLI 参数层不再存在已知的选择歧义或奇数参数降级路径。
+
+##### 验证结果
+
+- TypeScript 编译状态：本最小 Green 仅修改 `.mjs` parser，尚未重新执行增量编译；
+- 参数攻击矩阵 `6/6` 全部通过，另有 `3` 个非目标用例按定向过滤跳过，exit code=`0`；
+- 未写项目 artifact，未运行 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：新增公开 `runCodeIntelContextInspectorAudit()` 的 build+immutable-write 行为 Red/Green，再接同模块 CLI 主入口并用系统临时目录做进程级 smoke。
+- **为什么先做它**：builder、writer、parser 已分别可信，下一步只需在一个窄 orchestration seam 组合三者，避免 CLI 主入口复制逻辑。
+- **当前还缺的关键闭环**：一键 run/CLI、runtime export/source/projection 漂移负例、组合 receipt/Adapter 三态、仓库接线和完整回归。
+
+#### P2-C `context_retrieval` TDD 结论：Context Inspector 一键 run seam Red（2026-09-02）
+
+##### 已完成内容
+
+1. **`run-code-intel-context-inspector-audit.test.mjs` 扩展**：
+   - 新增公开 `runCodeIntelContextInspectorAudit()` seam 的 build+immutable-write 行为测试；
+   - 显式传入 source root、output、generated-at 与 clean harness，要求返回 report 与落盘 JSON 完全一致；
+   - 第二次运行同一路径必须沿用 writer 的不可覆盖失败语义。
+
+2. **Red 证据与效果**：
+   - 定向用例在公开 run seam 调用处以 `runCodeIntelContextInspectorAudit is not a function` 失败；
+   - builder、writer、parser 与攻击矩阵共 `9` 个非目标用例保持跳过；
+   - 失败只证明 orchestration seam 尚未实现，不涉及新的身份或 artifact 语义。
+
+##### 验证结果
+
+- TypeScript 编译状态：本 Red 环节仅修改 `.mjs` 测试，未重新执行增量编译；
+- 定向 Red=`1 failed / 9 skipped`，exit code=`1`，唯一失败为预期 run export 缺失；
+- 未写项目 artifact，未运行 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：新增最小 run seam，顺序调用现有 builder 与 writer并返回同一 report，运行同一用例转 Green。
+- **为什么先做它**：两个底层 seam 已独立验证，orchestrator 只需组合而不复制校验或写入逻辑。
+- **当前还缺的关键闭环**：run Green、CLI 进程入口/smoke、真实性攻击、组合 receipt/Adapter 三态与仓库接线。
+
+#### P2-C `context_retrieval` 实现结论：Context Inspector 一键 run seam Green（2026-09-02）
+
+##### 已完成内容
+
+1. **`run-code-intel-context-inspector-audit.mjs` 扩展**：
+   - 新增公开 `runCodeIntelContextInspectorAudit()`；
+   - 顺序复用已验证的 builder 与 immutable writer，并返回同一 report 对象；
+   - 构建或写入失败直接传播，不吞错、不写伪成功状态，也不复制底层校验。
+
+2. **公共 run seam Green 与效果**：
+   - 同一用例由缺失 export Red 转为 Green；
+   - 返回 report 与落盘 JSON 完全一致，Gate=`passed`；
+   - 第二次运行同一 output 保持不可覆盖失败语义。
+
+##### 验证结果
+
+- TypeScript 编译状态：本最小 Green 仅修改 `.mjs` producer，尚未重新执行增量编译；
+- 定向 run seam 测试=`1 passed / 9 skipped`，exit code=`0`；
+- 只写并清理系统临时目录，未写项目 artifact；未运行 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：接入同模块 CLI 主入口，使用真实 Node 子进程和系统临时 output 做 smoke，验证显式参数到 report 物化的端到端路径与二次运行拒绝。
+- **为什么先做它**：run seam 已闭合，CLI 只应负责参数传递、摘要输出和非零失败码；进程级 smoke 可证明主入口没有绕过 parser/run。
+- **当前还缺的关键闭环**：CLI smoke、runtime export/source/projection 漂移负例、组合 receipt/Adapter 三态、仓库接线和完整回归。
+
+#### P2-C `context_retrieval` TDD 结论：Context Inspector CLI 进程 smoke Red（2026-09-02）
+
+##### 已完成内容
+
+1. **`run-code-intel-context-inspector-audit.test.mjs` 扩展**：
+   - 新增真实 Node 子进程测试，以显式 source root、output、clean harness identity 与 generated-at 调用 producer；
+   - 成功路径要求 stdout 只返回 `outputPath`、`schemaVersion`、`gate`，并检查落盘 artifact；
+   - 同一路径二次执行要求非零退出、stderr 含 `already exists`，且已有文件字节保持不变。
+
+2. **Red 证据与效果**：
+   - 子进程当前 exit code=`0`，但 stdout 为空，测试在 `JSON.parse(first.stdout)` 处以 `Unexpected end of JSON input` 失败；
+   - 失败证明模块尚无 CLI 主入口，现有 builder/run seam 被 import 测试覆盖但无法由外部编排进程调用；
+   - 首次子进程未产生目标 artifact，未触发第二次覆盖检查。
+
+##### 验证结果
+
+- TypeScript 编译状态：本 Red 环节仅修改 `.mjs` 测试，未重新执行增量编译；
+- 定向 CLI Red=`1 failed / 10 skipped`，exit code=`1`，唯一失败为预期 stdout 摘要缺失；
+- 测试只使用并清理系统临时目录；未运行 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在同一 producer 增加最小 CLI 主入口，复用公开 parser/run seam，成功输出三字段 JSON 摘要，Gate 失败或异常时设置非零退出码。
+- **为什么先做它**：Red 已把缺口限定在进程入口；无需修改 builder、writer、parser 或 artifact 合同即可闭合外部调用路径。
+- **当前还缺的关键闭环**：CLI Green、runtime export/source/projection 漂移与错误坐标/字段丢失/mutation authority 负例、六合同组合 receipt/Adapter 三态和仓库接线。
+
+#### P2-C `context_retrieval` 实现结论：Context Inspector CLI 进程 smoke Green（2026-09-02）
+
+##### 已完成内容
+
+1. **`run-code-intel-context-inspector-audit.mjs` 扩展**：
+   - 增加模块直跑检测，模块被 import 时不产生 CLI 副作用；
+   - CLI 主入口只复用公开 parser 与 run seam，不复制 identity、构建或写入逻辑；
+   - 成功 stdout 只输出 `outputPath`、`schemaVersion`、`gate`，Gate 未通过或任意异常均以 stderr 与非零退出码失败关闭。
+
+2. **真实子进程 Green 与效果**：
+   - 同一进程测试由 stdout 为空的 Red 转为 Green；
+   - 首次执行生成 Schema 版本与 Gate 正确的 artifact，stdout 不泄漏完整报告或源码身份细节；
+   - 二次同路径执行 exit code=`1`、stdout 为空、stderr 含 `already exists`，既有 artifact 字节完全不变。
+
+##### 验证结果
+
+- TypeScript 编译状态：本最小 Green 仅修改 `.mjs` producer，尚未重新执行增量编译；
+- 定向 CLI 测试=`1 passed / 10 skipped`，exit code=`0`；
+- 测试只写并清理系统临时目录；未运行 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：逐项增加 runtime export 缺失、错误坐标、投影字段丢失与 mutation authority 暴露真实性攻击，每项先 Red 再最小 Green。
+- **为什么先做它**：producer 已可由外部编排真实运行，下一风险是被漂移或恶意 runtime 生成看似合法报告；应先证明错误实现不会被误判为通过。
+- **当前还缺的关键闭环**：真实性攻击矩阵、Context Inspector 全文件/build/Schema/diff Gate、六合同组合 receipt/Adapter 三态和仓库接线。
+
+#### P2-C `context_retrieval` TDD 结论：Context Inspector runtime export 真实性 Red（2026-09-02）
+
+##### 已完成内容
+
+1. **`run-code-intel-context-inspector-audit.test.mjs` 扩展**：
+   - 通过公开 run seam 加载一份实际存在但不导出 `projectCodeIntelQueryResult()` 的临时 runtime；
+   - 要求错误明确绑定 `packages/belldandy-skills/dist/code-intel/projection.js`，并确认失败时不生成 output；
+   - fixture 复制真实 source/types runtime，只替换本攻击目标文件，避免用内部 import mock 绕过文件边界。
+
+2. **Red 证据与效果**：
+   - producer 已拒绝缺失 export，但当前错误仅为 `Context Inspector runtime projection export is missing.`；
+   - 定向测试因诊断未包含被绑定 runtime 相对路径而失败，证明多文件证据链仍缺稳定定位信息；
+   - output 保持不存在，未观察到伪报告或部分 artifact。
+
+##### 验证结果
+
+- TypeScript 编译状态：本 Red 环节仅修改 `.mjs` 测试，未重新执行增量编译；
+- 定向真实性 Red=`1 failed / 11 skipped`，exit code=`1`，唯一失败为错误诊断缺少 runtime 路径；
+- 测试只写并清理系统临时 source fixture；未运行 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：让缺失 export 错误附带固定 runtime 相对路径，复跑同一用例转 Green；随后单独增加错误坐标攻击。
+- **为什么先做它**：拒绝行为已成立，最小缺口只是可诊断性；无需修改加载、hash、Gate 或 artifact 结构。
+- **当前还缺的关键闭环**：export Green、错误坐标/字段丢失/mutation authority 负例、完整局部 Gate、六合同组合 receipt/Adapter 三态和仓库接线。
+
+#### P2-C `context_retrieval` 实现结论：Context Inspector runtime export 真实性 Green（2026-09-02）
+
+##### 已完成内容
+
+1. **`run-code-intel-context-inspector-audit.mjs` 修改**：
+   - 缺少公共 projection export 时保留原失败关闭行为；
+   - 错误增加固定 `packages/belldandy-skills/dist/code-intel/projection.js` 相对路径；
+   - 不回显临时绝对路径、runtime 正文或其他 source identity 内容。
+
+2. **真实性攻击 Green 与效果**：
+   - 同一用例由诊断路径缺失 Red 转为 Green；
+   - 实际存在但 export 漂移的 runtime 无法生成 audit artifact；
+   - 后续组合 receipt 可用稳定路径直接定位漂移 owner，而不依赖平台临时目录。
+
+##### 验证结果
+
+- TypeScript 编译状态：本最小 Green 仅修改 `.mjs` producer，尚未重新执行增量编译；
+- 定向 runtime export 测试=`1 passed / 11 skipped`，exit code=`0`；
+- 测试只写并清理系统临时 fixture；未运行 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：注入返回错误 coordinate system 的实际 runtime，要求 producer 生成 Schema-valid、Gate failed 且包含 `coordinate_system_mismatch` 的可信失败报告。
+- **为什么先做它**：export 缺失属于无法执行的 reject；可执行但违反只读投影合同应形成可验证的 failed evidence，不能因报告自身 Schema 无法表达坏观察而退化成 malformed reject。
+- **当前还缺的关键闭环**：错误坐标/字段丢失/mutation authority 三项可信失败、完整局部 Gate、六合同组合 receipt/Adapter 三态和仓库接线。
+
+#### P2-C `context_retrieval` TDD 结论：Context Inspector 错误坐标可信失败 Red（2026-09-02）
+
+##### 已完成内容
+
+1. **`run-code-intel-context-inspector-audit.test.mjs` 扩展**：
+   - 通过公开 run seam 执行一份返回 `one-based-line-column` 的真实临时 runtime；
+   - 要求报告保留实际错误投影，同时以 `projection_shape_mismatch` 与 `coordinate_system_mismatch` 形成可信 Gate failure；
+   - 要求失败报告仍通过 audit Schema 并完整落盘，以便 Adapter 区分 `failed` 与 malformed `reject`。
+
+2. **Red 证据与效果**：
+   - producer 已执行坏 runtime并生成 Gate failure，但 Schema validator 对该报告返回 `ok=false`；
+   - 直接原因是现有 `queryProjection` Schema 只允许 `zero-based-line-column`，无法表达审计实际观察到的坏坐标；
+   - 当前错误能力观察会被误分类为证据格式损坏，可信 failure 三态尚未闭合。
+
+##### 验证结果
+
+- TypeScript 编译状态：本 Red 环节仅修改 `.mjs` 测试，未重新执行增量编译；
+- 定向错误坐标 Red=`1 failed / 12 skipped`，exit code=`1`，唯一失败为报告 Schema validation `ok=false`；
+- 仅有既存 AJV `date-time` warning；未运行 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：让 audit Schema 的 `projection` 表示实际观察到的 JSON object，保留严格 input/envelope/identity 约束，并由 Gate 决定投影合同是否满足。
+- **为什么先做它**：audit artifact 的职责是忠实记录通过或失败观察；若 Schema 预先排除坏观察，Adapter 无法区分可信能力失败与证据篡改。
+- **当前还缺的关键闭环**：错误坐标 Green、字段丢失与 mutation authority 攻击、完整局部 Gate、六合同组合 receipt/Adapter 三态和仓库接线。
+
+#### P2-C `context_retrieval` 实现结论：Context Inspector 错误坐标可信失败 Green（2026-09-02）
+
+##### 已完成内容
+
+1. **`context-inspector-audit-report.schema.json` 修改**：
+   - 将 scenario `projection` 明确为实际观察到的 JSON object，不再由 Schema 预先要求成功坐标；
+   - 保持 input query contract、report envelope、source/runtime identity、execution 与 Gate failure code 的封闭约束；
+   - 成功投影是否逐字保留输入、坐标是否正确，继续由 producer Gate 独立判断。
+
+2. **错误坐标攻击 Green 与效果**：
+   - 同一用例由 Schema validation `ok=false` 转为 Green；
+   - 报告忠实保留三个 scenario 的 `one-based-line-column`，Gate=`failed` 且 failures=`projection_shape_mismatch, coordinate_system_mismatch`；
+   - 失败报告通过 Schema 并完整落盘，为后续 Adapter 的可信 `failed` 语义提供可复算输入。
+
+##### 验证结果
+
+- TypeScript 编译状态：本最小 Green 仅修改 JSON Schema，尚未重新执行增量编译；
+- 定向错误坐标测试=`1 passed / 12 skipped`，exit code=`0`；
+- 仅有既存 AJV `date-time` warning；未运行 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：注入会删除 `provenance` 的实际 runtime，要求报告保留字段丢失观察并以仅 `projection_shape_mismatch` 形成 Schema-valid 可信失败。
+- **为什么先做它**：坐标失败已证明 Schema 可表达坏值，还需证明完整性丢失不会因放宽 observed projection 而被误判为通过。
+- **当前还缺的关键闭环**：字段丢失/mutation authority 攻击、完整局部 Gate、六合同组合 receipt/Adapter 三态和仓库接线。
+
+#### P2-C `context_retrieval` 验证结论：Context Inspector 投影字段丢失失败关闭（2026-09-02）
+
+##### 已完成内容
+
+1. **`run-code-intel-context-inspector-audit.test.mjs` 扩展**：
+   - 通过公开 run seam 执行一份删除 `provenance` 的真实临时 runtime；
+   - 要求报告保留实际字段丢失观察、通过 audit Schema并完整落盘；
+   - 要求 Gate 只返回 `projection_shape_mismatch`，避免把字段完整性错误误报为坐标错误。
+
+2. **既有行为验证与效果**：
+   - 新回归首次执行即 Green，证明现有逐字 shape Gate 已覆盖字段丢失；
+   - observed projection 的 Schema 放宽没有让缺失 evidence/freshness/provenance/diagnostics/page 的结果获得通过；
+   - 无需修改 production 或增加重复 failure code，技术债决策=`record_only`。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节仅修改 `.mjs` 测试，尚未重新执行增量编译；
+- 定向字段丢失测试=`1 passed / 13 skipped`，exit code=`0`；
+- 仅有既存 AJV `date-time` warning；未运行 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：注入额外 write/mutation authority 的实际 runtime，确认报告保留观察并同时触发 shape 与 mutation authority failure。
+- **为什么先做它**：字段完整性已闭合；mutation authority 是 Context Inspector 只读边界的独立安全合同，必须用恶意可执行投影而非正常样本证明。
+- **当前还缺的关键闭环**：mutation authority 攻击、Context Inspector 全文件/build/Schema/diff Gate、六合同组合 receipt/Adapter 三态和仓库接线。
+
+#### P2-C `context_retrieval` 验证结论：Context Inspector mutation authority 失败关闭（2026-09-02）
+
+##### 已完成内容
+
+1. **`run-code-intel-context-inspector-audit.test.mjs` 扩展**：
+   - 通过公开 run seam 执行一份额外暴露 `write` authority 的真实临时 runtime；
+   - 要求报告保留实际 mutation authority 观察、通过 audit Schema并完整落盘；
+   - 要求 Gate 同时返回 `projection_shape_mismatch` 与 `mutation_authority_exposed`。
+
+2. **既有行为验证与效果**：
+   - 新回归首次执行即 Green，证明现有递归 mutation authority 扫描已覆盖投影顶层写能力；
+   - 正确坐标不能掩盖额外写权限，Context Inspector 仍只能作为只读证据投影；
+   - 无需修改 production 或增加新权限接口，技术债决策=`record_only`。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节仅修改 `.mjs` 测试，尚未重新执行增量编译；
+- 定向 mutation authority 测试=`1 passed / 14 skipped`，exit code=`0`；
+- 仅有既存 AJV `date-time` warning；未运行 Gateway、模型或 Provider，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：执行 Context Inspector 全文件测试、增量编译、producer 语法、Schema JSON parse 与相关 diff Gate，并据实际结果收口 producer。
+- **为什么先做它**：成功、reject、可信 failed、CLI 与不可覆盖路径均已有局部证据；在接组合 receipt 前先确认这些切片联跑没有互相污染。
+- **当前还缺的关键闭环**：Context Inspector 局部完整 Gate、六合同组合 receipt/Adapter 的成功/拒绝/可信失败三态、仓库接线与全链验证。
+
+#### P2-C `context_retrieval` 实现结论：Context Inspector audit producer 局部收口（2026-09-02）
+
+##### 已完成内容
+
+1. **`context-inspector-audit-report.schema.json` 收口**：
+   - 固定 audit envelope、clean harness、source/runtime identity、三类输入、零副作用 execution 与封闭 failure code；
+   - 允许 `projection` 忠实记录实际 JSON object，使错误坐标、字段丢失和 mutation authority 可形成可信失败；
+   - 成功条件仍由逐字 shape、固定坐标和无 mutation authority 三项 Gate 判定。
+
+2. **`run-code-intel-context-inspector-audit.mjs` 收口**：
+   - builder、不可覆盖 writer、显式 parser、公共 run seam 与真实 CLI 入口均已闭合；
+   - runtime export 缺失在写入前失败并稳定指出绑定文件；
+   - CLI 成功只输出三字段摘要，异常/Gate failure 返回非零退出码，二次运行不得覆盖已有 artifact。
+
+3. **`run-code-intel-context-inspector-audit.test.mjs` 扩展**：
+   - 共 `15` 个测试覆盖正常投影、writer、run、CLI、参数攻击与四类真实性/失败关闭场景；
+   - runtime 攻击均使用实际临时文件与动态 import，不 mock 内部 helper；
+   - 临时 fixture 全部在测试结束后清理，不触碰历史冻结 artifact。
+
+4. **效果**：
+   - `context_inspector` 现在有独立、只读、current-harness 可绑定的权威候选输入，不再借用 TS/JS truth set 自证；
+   - producer 能区分不可执行的 export reject 与可执行但合同未满足的可信 failed report；
+   - 本收口只建立证据 owner，尚未通过 dimension Adapter 授予 `context_retrieval` 完成状态。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` exit code=`0`；
+- Context Inspector 测试 `15/15` 全部通过（含 CLI、参数与 `4` 类真实性/失败关闭测试）；
+- producer `node --check`、Schema JSON parse、相关 `git diff --check` 全部通过；仅有既存 AJV `date-time` warning 与非阻断 Git 行尾提示；
+- 未运行 Gateway、CodeIntel Provider、模型、真实 CI 或冻结 Formal，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：定义统一 candidate-bound CodeIntel receipt Schema，固定六合同 owner、底层 artifact digest/Schema/selection summary 与 aggregate source/harness identity；随后从公共 dimension loader 写成功路径 Red。
+- **为什么先做它**：六类底层 producer 现在均有权威 artifact；先固定组合 receipt 的封闭外键，才能让 Adapter 在一次加载中验证 current-candidate 归属且不依赖历史说明。
+- **当前还缺的关键闭环**：统一 receipt/fixture/Adapter 成功路径、identity/selection/summary drift reject、可信 failure 三态、仓库命令/README/project-map/verifier 接线与联合回归。
+
+#### P2-C `context_retrieval` TDD 结论：统一 CodeIntel receipt Schema Red（2026-09-02）
+
+##### 已完成内容
+
+1. **`candidate-code-intel-evidence-receipt.schema.json` 新建**：
+   - 定义一个 current-candidate aggregate/harness 绑定的组合 receipt，包含 source inventory、固定 selection、可重算 summary 与底层 artifact SHA-256/Schema 外键；
+   - 分别保留 truth/freshness、Context Inspector、双平台 resource soak、agent uplift 与 Go canary 输入；uplift 的 semantic/context-waste 与 binary no-fallback 仍由 loader 独立判定；
+   - Schema 不包含 numeric score，也不强制 observed Gate 为 true，可承载可信 failed evidence。
+
+2. **`coding-agent-candidate-code-intel-receipt.test.mjs` 新建 Red**：
+   - 通过公开 Schema interface 验证合法六合同 receipt、额外 numeric score、平台漂移与 task selection 漂移；
+   - Schema 编译成功，但合法 fixture 在 `/truthSet/0` validation=`ok=false`；
+   - 根因定位为三字段 `artifactReference` 的 `additionalProperties=false` 与通过 `allOf` 追加的 `platform` 字段冲突。
+
+##### 验证结果
+
+- TypeScript 编译状态：本 Red 环节仅新增 JSON Schema 与 `.mjs` 测试，未重新执行增量编译；
+- 定向 Schema Red=`1 failed / 1 total`，exit code=`1`，稳定诊断为 `/truthSet/0` 不匹配；
+- 仅有既存 AJV `date-time` warning；未读取 Provider 凭据、运行 Gateway/模型/Provider/真实 CI 或冻结 Formal，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：将 platform artifact reference 改为独立的封闭四字段对象，复跑合法/额外字段/平台漂移/选择漂移同一测试转 Green。
+- **为什么先做它**：失败只来自 Schema 组合语义；修正 base object 即可保留严格封闭性，无需放宽 `additionalProperties` 或改变 receipt interface。
+- **当前还缺的关键闭环**：Schema Green、candidate fixture 与公共 loader 成功路径 Red/Green、identity/selection/summary drift reject、可信 failure、producer/仓库接线和联合回归。
+
+#### P2-C `context_retrieval` 实现结论：统一 CodeIntel receipt Schema Green（2026-09-02）
+
+##### 已完成内容
+
+1. **`candidate-code-intel-evidence-receipt.schema.json` 修正并闭合**：
+   - platform artifact reference 使用独立封闭的 `platform/artifactSchemaVersion/path/sha256` 四字段对象；
+   - 保持 Windows/WSL2 顺序、固定 artifact 路径、版本、truth/resource/uplift/Go selection 与 aggregate/source identity 约束；
+   - summary 只记录可由底层报告重算的观察，不包含分数或资格结论。
+
+2. **`coding-agent-candidate-code-intel-receipt.test.mjs` Green**：
+   - 合法六合同 receipt 通过 Schema；
+   - 增加 `numericScore`、把 Windows truth 标为 WSL2、或把 uplift 固定任务替换为 Go task 均被 Schema 拒绝；
+   - 同一用例由 `/truthSet/0` Red 转为 Green，未通过放宽 `additionalProperties` 绕过封闭性。
+
+3. **接口设计效果**：
+   - 统一 receipt 是一个深模块的输入合同：调用者只需提供 verified aggregate、source root 与固定底层 artifact，内部承担 Schema、摘要、身份和跨报告外键；
+   - 六个 evidence contract 共用 owner，但 completion 必须独立重算，不能共享总 Gate 布尔值；
+   - Schema 可表达可信 failed report，证据损坏仍由 digest/Schema/binding mismatch 进入 reject。
+
+##### 验证结果
+
+- TypeScript 编译状态：本最小 Green 仅修改 JSON Schema，尚未重新执行增量编译；
+- 定向 receipt Schema 测试=`1 passed / 1 total`，exit code=`0`；
+- 仅有既存 AJV `date-time` warning；未运行 Gateway、模型、Provider、真实 CI 或冻结 Formal，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：扩展 candidate fixture 写入 Schema-valid 的六合同 artifact/receipt/reference，并在公共 `loadCodingAgentCandidateDimensionEvidence()` seam 要求 `context_retrieval` 六项全部 complete，先取得 loader Red。
+- **为什么先做它**：receipt 形状已冻结；下一步应直接验证最终消费 seam，而不是先写一组未被资格链使用的内部解析 helper。
+- **当前还缺的关键闭环**：公共 loader 成功路径 Red/Green、identity/selection/summary drift reject、可信 failure、真实 producer/CLI 与仓库命令/README/project-map/verifier 接线。
+
+#### P2-C `context_retrieval` TDD 结论：公共 loader 六合同成功路径 Red（2026-09-02）
+
+##### 已完成内容
+
+1. **`candidate-dimension-evidence-reference.schema.json` 扩展**：
+   - 新增可选 `candidateCodeIntelReceipt` owner，固定 candidate-harness scope、receipt 版本和唯一 artifact 路径；
+   - 新增 `contextRetrievalClaim`，只允许六条既定 CodeIntel 合同与各自 completion；
+   - claims 上限由 `16` 调整为 `22`，未配置 owner 的既有 reference 仍保持兼容。
+
+2. **`coding-agent-candidate-score.mjs` 修改**：
+   - 固定 receipt 版本常量和六条有序、精确的 `context_retrieval` claims；
+   - owner 存在时必须完整包含六条 claim，owner 缺失时保持原有 `partial` 行为；
+   - 本 Red 环节未实现 receipt resolver，避免测试与生产实现同时落地。
+
+3. **`coding-agent-candidate-code-intel-evidence-fixtures.mjs` 与 `coding-agent-candidate-code-intel-dimension-evidence.test.mjs` 新建**：
+   - 在系统临时 aggregate root 中物化 receipt/reference 和固定底层 artifact 外键，不读取历史冻结 artifact；
+   - 只通过公共 `loadCodingAgentCandidateDimensionEvidence()` seam 观察行为；
+   - 成功合同要求六项全部 complete，并要求其他维度相对 owner 接入前完全不变。
+
+4. **效果**：
+   - reference Schema 与精确 claim 接线已被测试接受；
+   - 当前唯一可观察缺口是公共 loader 尚未消费 `candidateCodeIntelReceipt`；
+   - Red 稳定表现为 `context_retrieval=partial`、六项全部位于 `missingEvidenceContracts`，没有提前扩展数值评分或旁路 API。
+
+##### 验证结果
+
+- TypeScript 编译状态：本 Red 环节修改 JSON Schema 与 `.mjs` 测试/合同，尚未重新执行增量编译；
+- 定向 Red=`1 failed / 1 total`，exit code=`1`，唯一差异为预期 `complete` 实际仍为 `partial`；
+- reference Schema、owner 与六条 claims 已通过 loader 前置校验；仅有既存 AJV `date-time` warning；
+- 未运行 Gateway、模型、Provider、真实 CI 或冻结 Formal，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在公共 loader 内实现最小 CodeIntel receipt resolver，先验证 receipt 自身 digest/Schema/aggregate binding，再逐份验证底层报告并重算六项 completion，使同一成功用例转 Green。
+- **为什么先做它**：Red 已把主链路缺口精确限定为 Adapter 消费；先关闭成功路径可直接让 `context_retrieval` 从证据存在走到资格可消费，不应继续增加外围工具。
+- **当前还缺的关键闭环**：成功路径 Green、阻断误资格的 identity/selection/summary drift reject、六项可信 failed、唯一 producer/仓库接线与联合回归；完成这些即停止扩展本 Adapter并转入下一维度。
+
+#### P2-C `context_retrieval` 实现结论：六合同公共 resolver 与四态主链（2026-09-02）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-code-intel-receipt.mjs` 新建并收口**：
+   - 从统一 receipt 读取 `11` 份固定 artifact，逐份验证 bounded regular file、SHA-256、producer Schema、固定路径/平台与 receipt aggregate/harness binding；
+   - 对账 receipt source inventory 与 truth、Context Inspector、resource soak、uplift source/runtime、Go source/runtime identity，并校验 checked-in truth/resource/Go manifest/config 字节；
+   - 独立重算 truth/freshness、Context Inspector、resource soak、semantic adoption/context-waste、no-binary-fallback 与 Go canary 六项 completion，不信任 receipt 的单一总 Gate。
+
+2. **`coding-agent-candidate-score.mjs` 接入**：
+   - 公共 `loadCodingAgentCandidateDimensionEvidence()` 在 owner 存在时调用窄 resolver，并将六项布尔 completion 注入既有 resolution；
+   - owner/reference 缺失仍保持 `partial/incomplete`，artifact/digest/Schema/binding 损坏抛错 reject，Schema-valid Gate 未满足投影为 `failed`；
+   - 没有新增 score 字段，也没有绕过 qualification 或提前进入数值评分。
+
+3. **公共 seam 四态行为测试**：
+   - 原六合同成功路径由六项 missing 的 Red 转为 `context_retrieval=complete`，其余维度保持 owner 接入前原状；
+   - sealed reference 后修改 receipt 实际字节会以 `candidate CodeIntel receipt digest drifted` reject；
+   - Context Inspector artifact 与 receipt 同步重封为 Schema-valid Gate failure 时，只将 `context_inspector` 投影为 `failed`，其余五项仍 complete，所有维度仍无数值分。
+
+4. **效果**：
+   - CodeIntel current-candidate 证据已从“Schema/fixture 存在”进入公共资格 loader 可消费状态；
+   - `complete / failed / reject / incomplete` 四态主链成立，可信能力失败与证据损坏不会互相混淆；
+   - 工作继续围绕“真实产品能力 → current-candidate 原生证据 → SHA/Schema/identity/外键验真 → qualification → 评分”，没有扩展新的 CodeIntel 产品旁支。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` exit code=`0`；
+- receipt Schema、`11` 份 producer fixture 与公共 dimension seam 联合测试 `5/5` 通过（含 `3` 个公共 resolver complete/reject/failed 行为测试）；
+- resolver、fixture 与 dimension 测试 `node --check` `3/3` 通过；仅保留既存 AJV `date-time` format 提示；
+- 未运行 Gateway、真实 CodeIntel Provider、模型、真实 CI 或冻结 Formal，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：补最小误资格攻击矩阵，覆盖 receipt summary 与底层报告不一致、artifact/source/selection/Go comparator 外键漂移；随后接唯一 candidate receipt producer、package/README/project-map/repository verifier 并运行联合回归。
+- **为什么先做它**：成功与基本四态已成立，但在宣告 Adapter 完成并转入 `cli_tui` 前，必须证明攻击者不能通过同步重封摘要或跨报告外键来获得 complete。
+- **当前还缺的关键闭环**：summary/binding/外键 reject 矩阵、可信 failed 的必要六项代表覆盖、唯一 producer/仓库接线与全链回归；完成后立即停止扩大 CodeIntel 边界并转入 `cli_tui`，真实 CI 在稳定提交检查点按授权插入。
+
+#### P2-C `context_retrieval` 实现结论：摘要与源/报告绑定攻击收口（2026-09-02）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-code-intel-receipt.mjs` 强化**：
+   - 对 receipt summary 重新计算 truth、Context Inspector、resource soak、uplift 与 Go canary 汇总，禁止通过同步重封摘要伪造完成状态；
+   - 对 receipt source inventory、Go comparator 输入报告 SHA 与底层 artifact 字节绑定执行失败关闭；
+   - 保持 Schema-valid Gate failure 投影为 `failed`，证据损坏继续以 `reject` 终止资格链。
+
+2. **`coding-agent-candidate-code-intel-dimension-evidence.test.mjs` 扩展**：
+   - 新增 summary drift、Go comparator input SHA 重绑和 source inventory digest 重绑三类公共 seam 攻击测试；
+   - 调整 receipt 字节漂移断言，使其匹配最外层 sealed reference digest 契约；定向测试现为 `6/6` 通过。
+
+3. **效果**：
+   - 当前 candidate-bound CodeIntel receipt 不能依靠摘要或跨 artifact digest 重绑获得 `complete`；
+   - 攻击验证仍只经过公共 `loadCodingAgentCandidateDimensionEvidence()`，未引入内部 helper 测试或数值评分旁路。
+
+##### 验证结果
+
+- 定向公共 dimension seam 测试 `6/6` 通过，包含 `3` 个新增摘要/绑定攻击场景；
+- 既存 AJV `date-time` format warning 仍存在但不影响结果；本环节模型调用与 Provider 费用均为 `0/$0`；
+- 尚未执行本环节后的完整联合回归、增量构建与仓库 verifier，未运行 Gateway、真实 Provider、真实 CI 或冻结 Formal。
+
+##### 后续计划
+
+- **下一步准备做什么**：补四类最小代表性外键漂移（artifact path/platform、selection manifest/config/truth-set、Go native/OCI shared runtime、uplift pair/task/platform），并在每类测试后保持 resolver 失败关闭。
+- **为什么先做它**：摘要与单一 digest 绑定已闭合，剩余风险集中在跨报告身份/外键错配；只覆盖能导致误资格的代表场景即可验证边界，不扩大 CodeIntel 产品范围。
+- **当前还缺的关键闭环**：外键攻击矩阵、唯一 producer 与 package/README/project-map/verifier 接线、联合回归及真实 current-candidate receipt；完成后立即转入 `cli_tui` 并在稳定提交检查点执行已授权真实 CI。
+
+#### P2-C `context_retrieval` 实现结论：CodeIntel 最小外键攻击矩阵收口（2026-09-02）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-code-intel-dimension-evidence.test.mjs` 扩展**：
+   - 在既有摘要、source inventory、selection manifest/config、Go comparator、truth platform、Go shared runtime 与 uplift pair/task 负例基础上，新增 receipt artifact `platform` 与固定 `path` 自洽重绑代表；
+   - 所有变体同步重封 receipt/reference SHA，确保测试验证的是 Schema/selection/path Gate，而不是未同步摘要造成的偶然失败；
+   - 测试仍只经过公共 `loadCodingAgentCandidateDimensionEvidence()` seam，不调用 resolver 内部 helper。
+
+2. **`scripts/coding-agent-candidate-code-intel-receipt.mjs` 边界复核**：
+   - 现有 resolver 无需扩大生产逻辑，即可对上述自洽重绑执行 fail-closed reject；本环节未改变 CodeIntel 产品能力或评分语义；
+   - 四态主链和六项 completion 独立投影保持不变，真实 CI、数值 score 与其他维度均未被旁路授予。
+
+3. **效果**：
+   - CodeIntel current-candidate receipt 的最小跨层外键攻击面已由公共 seam 覆盖，Schema-valid 且摘要同步的错误绑定不能获得 `complete`；
+   - 当前工作边界收敛到唯一 producer/仓库接线，之后立即转入 `cli_tui`，不继续增加 CodeIntel 旁支。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` exit code=`0`；
+- CodeIntel receipt、fixture validation 与公共 dimension seam 联合测试 `16/16` 全部通过，其中外键代表矩阵新增 `2` 个测试，定向完整矩阵为 `14/14`；
+- `node --check`（resolver、fixture、dimension test）与 `git diff --check` 通过；仅保留既存 AJV `date-time` format warning；
+- 未运行 Gateway、真实 CodeIntel Provider、模型、真实 CI 或冻结 Formal，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：实现唯一 candidate-bound CodeIntel receipt producer/仓库接线，并运行 repository verifier、资格链联合回归；完成后立即停止扩大 CodeIntel 边界并转入 `cli_tui`。
+- **为什么先做它**：外键攻击矩阵已证明 resolver 的最小 fail-closed 边界，剩余缺口是让真实 producer 和正式仓库 Gate 可重复地产生、发现并消费该 receipt。
+- **当前还缺的关键闭环**：唯一 producer 的实际输出接线、repository verifier/README/project-map 同步、联合回归，以及绑定未来 current-candidate 的真实 CI/连续候选证据；本环节至此暂停，不在未获新指示时继续推进。
 
 ## 实施计划进度表
+
+### 前提：总体核心目标、当前推进目标与工作链路（2026-09-02）
+
+#### 总体核心目标
+
+本计划的总体核心目标不是开发一套测试评分工具，也不是单纯把展示数字做成 `9.5`，而是：
+
+> 把 Star Sanctuary（贝露丹蒂）提升为一套能够稳定完成真实复杂软件开发工作的工程 Agent，并以可复算、不可由候选自证造假的真实证据，证明其综合开发能力达到计划中的 9.5 目标。
+
+该目标分为三个层次：
+
+1. **真实产品能力提升是目的**：
+   - 提升代码理解、跨文件编辑与测试、CLI/TUI、长任务与中断恢复、并行 Supervisor、外部生态/CI、Git 交付及安全边界等真实工程能力；
+   - 完成标准是“真实项目任务能够稳定做成”，而不是“为评分准备的测试能够通过”；
+   - 候选证据暴露真实能力缺陷时，应回到产品实现修复，不能通过放宽 evaluator、删减分母或调整评分掩盖问题。
+
+2. **Benchmark、候选资格判定和七维评分工具链是验证手段**：
+   - 它们用于把能力证据绑定到单一 current-candidate source/harness identity，并区分 `incomplete / reject / failed / complete`；
+   - 它们阻止自报结果、历史 run、workflow 文本、局部测试或人工说明冒充当前候选完成证据；
+   - 工具链建设本身不等于产品能力提升，也不能替代真实仓、双平台、外部 consumer、真实 CI 和长任务恢复证据。
+
+3. **最终交付是可信的能力与资格结论**：
+   - 只有七维证据合同和 hard Gate 全部闭合，才允许机器 evaluator 计算七维实得分与未四舍五入原始加权；
+   - 最终仍需两个连续冻结候选在 Windows/WSL2、真实仓、真实 CI、外部 consumer、长任务恢复、敏感值及资源收敛等关键场景形成 current-candidate 证据；
+   - 达到目标必须同时满足每维最低分、原始加权 `>=9.500` 和全部 hard Gate，不能用单次成功、跨 revision projection 或发布分四舍五入替代。
+
+**总结**：产品能力提升是目的，候选资格与证据工具链是防止误判的门禁，七维评分是最终证据化表达。
+
+#### 目标优先与边界收敛原则
+
+- 所有 P2-C 工作必须能直接追溯到“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 数值评分 → 两个连续候选”闭环；不能关闭其中明确缺口的工具、Schema、测试或文档不继续扩展。
+- 以达成总体目标而不是保留既有实现为准绳；允许根据闭环需要调整既有 P2-C 改动，并在形成单一关注点、验证稳定的节点后创建本地提交。
+- 每个维度 Adapter 只做到 current-candidate binding、`complete / failed / reject` 必要三态、唯一 producer/仓库接线和相关回归；达到完成边界后立即转入下一未闭合维度，避免为假想场景无止境扩大边界。
+- 真实 GitHub Actions CI 已获用户授权；需要时先确认 `main` 分支、提交边界、零模型/敏感值/资源 Gate，再按仓库默认规则只推送 `private/main`。该授权不包含 `origin/main`、公开 tag、GitHub Release 或其他公开发布动作。
+
+#### 当前主要推进目标与链路
+
+当前主要推进目标是完成一条 **current-candidate-bound、fail-closed、零模型可复算** 的证据到评分链，先证明每项能力证据真实、完整且属于当前候选，再允许进入数值评分。当前工作属于七维评分相关工作，但准确位置是“评分前的维度证据真实性与资格门禁”，不是在为通过测试而开发另一套业务系统。
+
+```text
+真实产品能力与当前候选源码
+  -> 原生 Benchmark / 系统 / 外部 consumer / CI 证据
+  -> verified aggregate + candidate receipts
+  -> SHA-256 / Schema / source-harness identity / 跨层外键验真
+  -> 七维 evidence contracts（incomplete / reject / failed / complete）
+  -> candidate qualification hard Gates
+  -> 七维数值 evaluator 与 score report
+  -> 未四舍五入原始加权及每维最低分 Gate
+  -> 两个连续冻结候选最终复核
+```
+
+当前本地推进点位于 `context_retrieval` 统一 candidate-bound CodeIntel receipt：Context Inspector producer、receipt Schema 与公共 loader 六合同 resolver 已收口，`incomplete / reject / failed / complete` 主链已由公共 seam 证明；本环节已补阻断误资格所必需的最小 artifact path/platform、selection manifest/config、Go shared runtime 与 uplift pair/task 外键代表矩阵，下一步只剩唯一 producer/仓库接线，完成即转入 `cli_tui`，不继续扩展 CodeIntel 旁支。推进以总体核心目标为准，必要时可调整既有 P2-C 实现，但不为保留既有改动或假想场景无止境扩大边界。`headless_ecosystem` 唯一剩余项仍是一份绑定未来 current-candidate commit 的真实 GitHub Actions run/API/ZIP receipt；真实 CI 现已获授权，可在形成稳定提交与执行前 Gate 后只推送 `private/main` 触发，不能由本地 fixture 代替。主要顺序为：`context_retrieval` 唯一 producer/接线收口 -> `cli_tui` -> `git_delivery` -> 数值 evaluator/report -> 完整回归 -> 两个连续候选；真实 CI 在合适检查点插入并回填。若候选运行暴露真实产品缺陷，流程应回到产品修复与重新冻结，而不是继续授分。
+
+#### 后续工作量估算
+
+**本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链和最小外键攻击矩阵已完成，剩余是唯一 producer/仓库接线；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
+
+**风险与可行性**：本地收口可行性高，综合风险为中高。主要风险不是算法复杂度，而是 `cli_tui`/`git_delivery` 可能缺少可直接复用的 current-candidate producer、真实 CI 在 `private/main` 检查点后可能暴露平台差异，以及完整候选可能暴露新的产品缺陷；真实 CI 授权已具备，不再是授权阻塞。以下按“首轮候选不需要新增产品修复、相邻工作包共享回归”的前提估算；工程量与 CI/候选实际运行等待时间分开计算：
+
+| 剩余工作包 | 包含内容与完成边界 | 预计工程量 |
+| --- | --- | ---: |
+| `context_retrieval` 唯一 producer/仓库接线 | 将已完成的六合同 resolver 接入唯一 candidate-bound producer，补 README/project-map/repository verifier、联合回归和正式输出 | `0.5–1 人日` |
+| `headless_ecosystem` 真实 CI receipt 收口 | 绑定稳定 current-candidate commit，采集 GitHub Actions run/API/ZIP receipt，核对 identity/外键/终态并完成回填；本地链已完成 | `0.5–1.25 人日工程量`，另计 CI 排队/观察窗口 |
+| `cli_tui` Adapter | 复用 TaskProjection/效率证据，补跨入口终态与 TUI 双平台 accessibility owner、真实性/三态和仓库接线 | `0.75–1.5 人日` |
+| `git_delivery` Adapter | 组合 multi-repository worktree soak、review/remediation、remote authority separation 与 recovery audit；补 current-candidate identity、可信失败及负例 | `1.25–2.5 人日` |
+| 七维数值 evaluator/report | 只在七维合同 complete 且 qualification hard Gates 全绿时授予版本化实得分；实现原始加权、每维最低分、Schema/CLI/verify、缺失/漂移/边界负例 | `1–2 人日` |
+| 全链最终接线与工程复核 | 固定命令、跨维度资格链联合回归、build、Schema/语法/diff Gate、README/project-map/verifier 同步与一轮轻量对抗复核 | `0.5–1 人日` |
+| 两个连续候选的组织与复核 | 冻结 identity，执行前 Gate，完成证据采集/聚合/资格/评分、失败分类和连续性对账；不含真实运行等待时间 | `1–2 人日工程量`，另计两个完整运行/观察窗口 |
+
+**更新后的常规计划基线**：约 **`5.5–9.5 人日工程量 + 两个完整候选的实际运行/观察窗口`**。其中 CodeIntel/Headless 剩余收口、`cli_tui`、`git_delivery`、评分工具链和最终复核构成主要工程量；候选组织/复核约 `1–2 人日`。表内工作包共享 producer、report/CLI 和联合回归，不能把各项上限机械相加；真实 CI 排队、Provider 费用和观察窗口不折算为人日。
+
+估算边界如下：
+
+- **包含**：`context_retrieval` 唯一 producer/仓库接线、`headless_ecosystem` 真实 CI receipt、P2-C 其余维度闭环、七维数值 evaluator/report、仓库接线、完整回归，以及两个连续候选的一次通过式组织与复核；
+- **不包含**：候选运行/CI 排队的自然等待时间、Provider 费用、授权等待、候选失败后暴露的未知产品修复、重跑次数、C# 生产接入、Go production rollout、公开发布或生产写入；
+- **风险增量**：若 `cli_tui` accessibility 或 `git_delivery` 多仓/远端分权缺少可复用 producer，预计另增 `2–5+ 人日`；若真实 CI 或完整候选暴露平台、编辑/测试或系统稳定性缺陷，返工量必须按实际失败证据重新估算，当前不能提前伪造确定值；
+- **完成边界**：七维证据、qualification、数值 score/report 和仓库 Gate 全部可复算，且两个连续冻结候选分别满足每维最低分、原始加权 `>=9.500` 与全部 hard Gate；否则仍为未完成或 `unscored`。
 
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
 | --- | --- | --- | --- | ---: | --- |
@@ -4785,4 +11156,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **复核完成；candidate #1 `not_eligible/unscored`，按用户要求暂停** | 目标合同=`9.510`；`edd1c87` 完整矩阵因 B/C Gate 失败不合格；`e1f8aaa` identity 可合并但仅 `2/144`；七维 qualification owner 缺失，当前评分保持 `9.1` | `5-7.5 人日 + 观察窗口` | 恢复后先 `fix_now` 补机器评分 owner 与零模型 runner Gate；再以完整单一 identity `144/144` 证明两个连续候选原始加权 `>=9.500`、各维及全部硬 Gate 通过 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **`headless_ecosystem` 本地链已收口、真实 CI 已授权待稳定提交；CodeIntel 最小外键矩阵 Green** | CodeIntel receipt Schema、`11` 份 producer fixture、公共 resolver 与外键代表联合 `16/16`；六合同 complete、receipt digest/summary/selection/path/platform/shared-runtime/pair-task reject、Schema-valid Gate failed 均由公共 seam 证明；既有 P2-C 改动按总体目标保留并可调整 | `约 5.5–9.5 人日工程量 + 两个候选运行/观察窗口` | 仅补唯一 CodeIntel producer/仓库接线与联合回归，完成后立即转 `cli_tui`；稳定节点只推 `private/main` 获取真实 CI 证据，避免继续扩大 CodeIntel 边界 |

@@ -1,0 +1,739 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-candidate-coding-run-client-ci-evidence-receipt-v1.json",
+  "title": "Star Sanctuary coding agent benchmark candidate coding-run client CI evidence receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "aggregate",
+    "provider",
+    "github",
+    "lanes"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "coding-agent-benchmark-candidate-coding-run-client-ci-evidence-receipt/v1"
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "aggregate": {
+      "$ref": "#/$defs/aggregateBinding"
+    },
+    "provider": {
+      "const": "github-actions"
+    },
+    "github": {
+      "$ref": "#/$defs/githubEvidence"
+    },
+    "lanes": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/ubuntuLane"
+        },
+        {
+          "$ref": "#/$defs/windowsLane"
+        }
+      ],
+      "items": false
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "sha1": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "positiveInteger": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "safeRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    },
+    "repositoryIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "workspaceDirty",
+        "lockfileSha256",
+        "worktreeContentSha256"
+      ],
+      "properties": {
+        "commit": {
+          "$ref": "#/$defs/sha1"
+        },
+        "workspaceDirty": {
+          "const": false
+        },
+        "lockfileSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "worktreeContentSha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "aggregateBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifestSha256",
+        "reportSha256",
+        "indexSha256",
+        "source",
+        "harness"
+      ],
+      "properties": {
+        "manifestSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "reportSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "indexSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "source": {
+          "$ref": "#/$defs/repositoryIdentity"
+        },
+        "harness": {
+          "$ref": "#/$defs/repositoryIdentity"
+        }
+      }
+    },
+    "githubEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "workflow",
+        "run",
+        "apiEvidence"
+      ],
+      "properties": {
+        "repository": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "fullName",
+            "private"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/positiveInteger"
+            },
+            "fullName": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+              "maxLength": 200
+            },
+            "private": {
+              "const": true
+            }
+          }
+        },
+        "workflow": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "name",
+            "path"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/positiveInteger"
+            },
+            "name": {
+              "const": "Quality Gates"
+            },
+            "path": {
+              "const": ".github/workflows/quality-gates.yml"
+            }
+          }
+        },
+        "run": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "attempt",
+            "event",
+            "headBranch",
+            "headSha",
+            "status",
+            "conclusion",
+            "createdAt",
+            "updatedAt",
+            "htmlUrl"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/positiveInteger"
+            },
+            "attempt": {
+              "$ref": "#/$defs/positiveInteger"
+            },
+            "event": {
+              "enum": [
+                "push",
+                "pull_request",
+                "workflow_dispatch"
+              ]
+            },
+            "headBranch": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            },
+            "headSha": {
+              "$ref": "#/$defs/sha1"
+            },
+            "status": {
+              "const": "completed"
+            },
+            "conclusion": {
+              "enum": [
+                "success",
+                "failure",
+                "cancelled",
+                "timed_out",
+                "action_required",
+                "stale",
+                "startup_failure",
+                "neutral",
+                "skipped"
+              ]
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "updatedAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "htmlUrl": {
+              "type": "string",
+              "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/runs/[1-9][0-9]*$",
+              "maxLength": 500
+            }
+          }
+        },
+        "apiEvidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "run",
+            "jobs",
+            "artifacts"
+          ],
+          "properties": {
+            "run": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/githubApiReference"
+                },
+                {
+                  "properties": {
+                    "path": {
+                      "const": "candidate-evidence/coding-run-client/ci/github-run.json"
+                    }
+                  }
+                }
+              ]
+            },
+            "jobs": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/githubApiReference"
+                },
+                {
+                  "properties": {
+                    "path": {
+                      "const": "candidate-evidence/coding-run-client/ci/github-jobs.json"
+                    }
+                  }
+                }
+              ]
+            },
+            "artifacts": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/githubApiReference"
+                },
+                {
+                  "properties": {
+                    "path": {
+                      "const": "candidate-evidence/coding-run-client/ci/github-artifacts.json"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "githubApiReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "format": {
+          "const": "github-rest-json/2022-11-28"
+        },
+        "path": {
+          "$ref": "#/$defs/safeRelativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "job": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "headSha",
+        "status",
+        "conclusion",
+        "startedAt",
+        "completedAt"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "headSha": {
+          "$ref": "#/$defs/sha1"
+        },
+        "status": {
+          "const": "completed"
+        },
+        "conclusion": {
+          "enum": [
+            "success",
+            "failure"
+          ]
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "successfulStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "number",
+        "name",
+        "status",
+        "conclusion",
+        "startedAt",
+        "completedAt"
+      ],
+      "properties": {
+        "number": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "status": {
+          "const": "completed"
+        },
+        "conclusion": {
+          "const": "success"
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "terminalVerificationStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "number",
+        "name",
+        "status",
+        "conclusion",
+        "startedAt",
+        "completedAt"
+      ],
+      "properties": {
+        "number": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "status": {
+          "const": "completed"
+        },
+        "conclusion": {
+          "enum": [
+            "success",
+            "failure"
+          ]
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "digest",
+        "sizeInBytes",
+        "expired",
+        "createdAt",
+        "expiresAt",
+        "workflowRun"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "sizeInBytes": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "expired": {
+          "const": false
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "workflowRun": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "repositoryId",
+            "headRepositoryId",
+            "headBranch",
+            "headSha"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/positiveInteger"
+            },
+            "repositoryId": {
+              "$ref": "#/$defs/positiveInteger"
+            },
+            "headRepositoryId": {
+              "$ref": "#/$defs/positiveInteger"
+            },
+            "headBranch": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            },
+            "headSha": {
+              "$ref": "#/$defs/sha1"
+            }
+          }
+        }
+      }
+    },
+    "archive": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "format": {
+          "const": "zip"
+        },
+        "path": {
+          "$ref": "#/$defs/safeRelativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "laneReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifactSchemaVersion",
+        "entry",
+        "sha256"
+      ],
+      "properties": {
+        "artifactSchemaVersion": {
+          "const": "coding-agent-benchmark-coding-run-client-ci-lane-evidence/v1"
+        },
+        "entry": {
+          "const": "lane-receipt.json"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "nativeTestReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "framework",
+        "format",
+        "runnerVersion",
+        "entry",
+        "sha256"
+      ],
+      "properties": {
+        "framework": {
+          "const": "vitest"
+        },
+        "format": {
+          "const": "vitest-json/v3.2.7"
+        },
+        "runnerVersion": {
+          "const": "3.2.7"
+        },
+        "entry": {
+          "const": "vitest-report.json"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "auditTestFiles": {
+      "const": [
+        "packages/belldandy-core/src/coding-run/stdio.test.ts",
+        "packages/belldandy-core/src/coding-run/client.test.ts",
+        "apps/vscode-extension/src/stdio-client.test.js",
+        "scripts/coding-run-client-conformance.test.mjs",
+        "scripts/coding-run-client-failure-conformance.test.mjs",
+        "scripts/run-coding-run-client-external-consumer.test.mjs",
+        "scripts/run-coding-run-client-typescript-consumer.test.mjs"
+      ]
+    },
+    "lane": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "runnerOs",
+        "job",
+        "verificationStep",
+        "uploadStep",
+        "artifact",
+        "archive",
+        "laneReceipt",
+        "nativeTestReport",
+        "testFiles"
+      ],
+      "properties": {
+        "platform": {
+          "enum": [
+            "ubuntu-latest",
+            "windows-latest"
+          ]
+        },
+        "runnerOs": {
+          "enum": [
+            "Linux",
+            "Windows"
+          ]
+        },
+        "job": {
+          "$ref": "#/$defs/job"
+        },
+        "verificationStep": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/terminalVerificationStep"
+            },
+            {
+              "properties": {
+                "name": {
+                  "const": "Verify coding-run client conformance"
+                }
+              }
+            }
+          ]
+        },
+        "uploadStep": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/successfulStep"
+            },
+            {
+              "properties": {
+                "name": {
+                  "const": "Upload coding-run client CI evidence"
+                }
+              }
+            }
+          ]
+        },
+        "artifact": {
+          "$ref": "#/$defs/artifact"
+        },
+        "archive": {
+          "$ref": "#/$defs/archive"
+        },
+        "laneReceipt": {
+          "$ref": "#/$defs/laneReceipt"
+        },
+        "nativeTestReport": {
+          "$ref": "#/$defs/nativeTestReport"
+        },
+        "testFiles": {
+          "$ref": "#/$defs/auditTestFiles"
+        }
+      }
+    },
+    "ubuntuLane": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/lane"
+        },
+        {
+          "properties": {
+            "platform": {
+              "const": "ubuntu-latest"
+            },
+            "runnerOs": {
+              "const": "Linux"
+            },
+            "job": {
+              "properties": {
+                "name": {
+                  "const": "Coding CI contract (ubuntu-latest)"
+                }
+              }
+            },
+            "artifact": {
+              "properties": {
+                "name": {
+                  "const": "coding-run-client-ci-ubuntu-latest"
+                }
+              }
+            },
+            "archive": {
+              "properties": {
+                "path": {
+                  "const": "candidate-evidence/coding-run-client/ci/ubuntu-latest/artifact.zip"
+                }
+              }
+            },
+            "laneReceipt": {},
+            "nativeTestReport": {}
+          }
+        }
+      ]
+    },
+    "windowsLane": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/lane"
+        },
+        {
+          "properties": {
+            "platform": {
+              "const": "windows-latest"
+            },
+            "runnerOs": {
+              "const": "Windows"
+            },
+            "job": {
+              "properties": {
+                "name": {
+                  "const": "Coding CI contract (windows-latest)"
+                }
+              }
+            },
+            "artifact": {
+              "properties": {
+                "name": {
+                  "const": "coding-run-client-ci-windows-latest"
+                }
+              }
+            },
+            "archive": {
+              "properties": {
+                "path": {
+                  "const": "candidate-evidence/coding-run-client/ci/windows-latest/artifact.zip"
+                }
+              }
+            },
+            "laneReceipt": {},
+            "nativeTestReport": {}
+          }
+        }
+      ]
+    }
+  }
+}

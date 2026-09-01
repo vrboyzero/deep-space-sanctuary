@@ -1,0 +1,656 @@
+{
+  "schemaVersion": "coding-agent-benchmark-candidate-dimension-mapping/v1",
+  "status": "partial",
+  "manifestSchemaVersion": "coding-agent-benchmark-manifest/v3",
+  "scorecardSchemaVersion": "coding-agent-benchmark-scorecard/v3",
+  "scoreSemantics": {
+    "mode": "target_threshold_certification",
+    "awardRequiresDimensionStatus": "complete",
+    "awardedScore": "scorecard_dimension_minimum",
+    "failedScore": null,
+    "rawWeightedCalculation": "sum_unrounded_dimension_score_times_weight",
+    "intermediateRounding": "none",
+    "releaseDisplay": {
+      "decimalPlaces": 1,
+      "rounding": "half_up",
+      "qualificationUsesRoundedValue": false
+    }
+  },
+  "evidenceReuse": {
+    "crossDimensionTaskReuse": "allowed_for_independent_dimension_certification",
+    "withinDimensionTaskReuse": "forbidden"
+  },
+  "dimensions": [
+    {
+      "id": "context_retrieval",
+      "status": "partial",
+      "evidenceGroups": [
+        {
+          "id": "deterministic_context",
+          "taskIds": [
+            "rules.nested-precedence",
+            "navigation.large-repository"
+          ],
+          "criteria": [
+            {
+              "metricId": "task_completion_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.taskCompleted",
+              "aggregation": "boolean_rate",
+              "denominator": "selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "real_repository_context",
+          "taskIds": [
+            "real-ts.api-migration",
+            "real-ts.cross-package-refactor",
+            "real-js.bug-fix",
+            "real-js.failed-test-fix",
+            "real-go.public-api-migration",
+            "real-go.bug-fix",
+            "real-web.ui-regression",
+            "real-web.dependency-diagnosis"
+          ],
+          "criteria": [
+            {
+              "metricId": "task_completion_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.taskCompleted",
+              "aggregation": "boolean_rate",
+              "denominator": "selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 0.92
+              }
+            }
+          ]
+        },
+        {
+          "id": "parallel_context",
+          "taskIds": [
+            "system.parallel-read-isolation"
+          ],
+          "criteria": [
+            {
+              "metricId": "task_completion_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.taskCompleted",
+              "aggregation": "boolean_rate",
+              "denominator": "selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 0.9
+              }
+            }
+          ]
+        }
+      ],
+      "missingEvidenceContracts": [
+        "code_intel_truth_freshness",
+        "context_inspector",
+        "code_intel_resource_soak",
+        "semantic_adoption_context_waste",
+        "code_intel_no_binary_fallback",
+        "go_canary_eligibility"
+      ]
+    },
+    {
+      "id": "editing_testing",
+      "status": "partial",
+      "evidenceGroups": [
+        {
+          "id": "deterministic_editing",
+          "taskIds": [
+            "feature.cross-file",
+            "bug.reproducible-fix",
+            "tests.failed-diagnosis"
+          ],
+          "criteria": [
+            {
+              "metricId": "task_completion_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.taskCompleted",
+              "aggregation": "boolean_rate",
+              "denominator": "selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 1
+              }
+            },
+            {
+              "metricId": "test_pass_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.testsPassed",
+              "aggregation": "applicable_boolean_rate",
+              "denominator": "applicable_selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 1
+              }
+            },
+            {
+              "metricId": "patch_acceptance_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.patchAccepted",
+              "aggregation": "applicable_boolean_rate",
+              "denominator": "applicable_selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 1
+              }
+            },
+            {
+              "metricId": "regression_count",
+              "owner": "aggregate.runs",
+              "source": "evaluation.regressionCount",
+              "aggregation": "sum",
+              "denominator": "selected_runs",
+              "threshold": {
+                "operator": "lte",
+                "value": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "real_repository_editing",
+          "taskIds": [
+            "real-ts.api-migration",
+            "real-ts.cross-package-refactor",
+            "real-js.bug-fix",
+            "real-js.failed-test-fix",
+            "real-go.public-api-migration",
+            "real-go.bug-fix",
+            "real-web.ui-regression",
+            "real-web.dependency-diagnosis"
+          ],
+          "criteria": [
+            {
+              "metricId": "task_completion_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.taskCompleted",
+              "aggregation": "boolean_rate",
+              "denominator": "selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 0.92
+              }
+            },
+            {
+              "metricId": "test_pass_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.testsPassed",
+              "aggregation": "applicable_boolean_rate",
+              "denominator": "applicable_selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 0.95
+              }
+            },
+            {
+              "metricId": "patch_acceptance_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.patchAccepted",
+              "aggregation": "applicable_boolean_rate",
+              "denominator": "applicable_selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 0.95
+              }
+            },
+            {
+              "metricId": "regression_count",
+              "owner": "aggregate.runs",
+              "source": "evaluation.regressionCount",
+              "aggregation": "sum",
+              "denominator": "selected_runs",
+              "threshold": {
+                "operator": "lte",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "missingEvidenceContracts": [
+        "verification_impact_truth_set",
+        "verification_structured_test_reports",
+        "verification_failure_replay",
+        "browser_relay_behavior_evidence"
+      ]
+    },
+    {
+      "id": "cli_tui",
+      "status": "partial",
+      "evidenceGroups": [
+        {
+          "id": "interactive_cli",
+          "taskIds": [
+            "command.interactive-control"
+          ],
+          "criteria": [
+            {
+              "metricId": "task_completion_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.taskCompleted",
+              "aggregation": "boolean_rate",
+              "denominator": "selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 1
+              }
+            },
+            {
+              "metricId": "test_pass_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.testsPassed",
+              "aggregation": "applicable_boolean_rate",
+              "denominator": "applicable_selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 1
+              }
+            },
+            {
+              "metricId": "manual_intervention_count",
+              "owner": "aggregate.runs",
+              "source": "evaluation.manualInterventionCount",
+              "aggregation": "sum",
+              "denominator": "selected_runs",
+              "threshold": {
+                "operator": "lte",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "missingEvidenceContracts": [
+        "task_projection_cross_entry_conformance",
+        "task_projection_terminal_action_consistency",
+        "task_efficiency_timeline",
+        "tui_accessibility_cross_platform"
+      ]
+    },
+    {
+      "id": "safety_recovery",
+      "status": "partial",
+      "evidenceGroups": [
+        {
+          "id": "safety_boundary",
+          "taskIds": [
+            "safety.boundary-enforcement"
+          ],
+          "criteria": [
+            {
+              "metricId": "task_completion_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.taskCompleted",
+              "aggregation": "boolean_rate",
+              "denominator": "selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 1
+              }
+            },
+            {
+              "metricId": "test_pass_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.testsPassed",
+              "aggregation": "applicable_boolean_rate",
+              "denominator": "applicable_selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 1
+              }
+            },
+            {
+              "metricId": "dangerous_operation_block_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.dangerousOperationBlocked",
+              "aggregation": "applicable_boolean_rate",
+              "denominator": "applicable_selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "disconnect_recovery",
+          "taskIds": [
+            "gateway.disconnect-recovery"
+          ],
+          "criteria": [
+            {
+              "metricId": "task_completion_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.taskCompleted",
+              "aggregation": "boolean_rate",
+              "denominator": "selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 1
+              }
+            },
+            {
+              "metricId": "test_pass_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.testsPassed",
+              "aggregation": "applicable_boolean_rate",
+              "denominator": "applicable_selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 1
+              }
+            },
+            {
+              "metricId": "patch_acceptance_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.patchAccepted",
+              "aggregation": "applicable_boolean_rate",
+              "denominator": "applicable_selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 1
+              }
+            },
+            {
+              "metricId": "recovery_success_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.recoverySucceeded",
+              "aggregation": "applicable_boolean_rate",
+              "denominator": "applicable_selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ],
+      "missingEvidenceContracts": [
+        "system_evidence_critical_rate",
+        "candidate_sensitive_scan",
+        "candidate_resource_sweeps",
+        "fault_matrix_audit_reconciliation"
+      ]
+    },
+    {
+      "id": "session_long_running",
+      "status": "partial",
+      "evidenceGroups": [
+        {
+          "id": "session_control",
+          "taskIds": [
+            "gateway.disconnect-recovery",
+            "gateway.client-cancel",
+            "gateway.process-restart"
+          ],
+          "criteria": [
+            {
+              "metricId": "task_completion_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.taskCompleted",
+              "aggregation": "boolean_rate",
+              "denominator": "selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 1
+              }
+            },
+            {
+              "metricId": "test_pass_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.testsPassed",
+              "aggregation": "applicable_boolean_rate",
+              "denominator": "applicable_selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 1
+              }
+            },
+            {
+              "metricId": "recovery_success_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.recoverySucceeded",
+              "aggregation": "applicable_boolean_rate",
+              "denominator": "applicable_selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 1
+              }
+            },
+            {
+              "metricId": "manual_intervention_count",
+              "owner": "aggregate.runs",
+              "source": "evaluation.manualInterventionCount",
+              "aggregation": "sum",
+              "denominator": "selected_runs",
+              "threshold": {
+                "operator": "lte",
+                "value": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "parallel_long_running",
+          "taskIds": [
+            "system.parallel-read-isolation",
+            "system.parallel-write-fan-in",
+            "system.restart-delivery-reconciliation"
+          ],
+          "criteria": [
+            {
+              "metricId": "task_completion_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.taskCompleted",
+              "aggregation": "boolean_rate",
+              "denominator": "selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 0.9
+              }
+            },
+            {
+              "metricId": "dangerous_operation_block_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.dangerousOperationBlocked",
+              "aggregation": "applicable_boolean_rate",
+              "denominator": "applicable_selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 1
+              }
+            },
+            {
+              "metricId": "recovery_success_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.recoverySucceeded",
+              "aggregation": "applicable_boolean_rate",
+              "denominator": "applicable_selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 1
+              }
+            },
+            {
+              "metricId": "manual_intervention_count",
+              "owner": "aggregate.runs",
+              "source": "evaluation.manualInterventionCount",
+              "aggregation": "sum",
+              "denominator": "selected_runs",
+              "threshold": {
+                "operator": "lte",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "missingEvidenceContracts": [
+        "supervisor_dual_platform_60_minute_soak",
+        "bounded_budget_cancel_restart_reattach",
+        "managed_worktree_fan_in_review_remediation",
+        "parallel_resource_convergence"
+      ]
+    },
+    {
+      "id": "headless_ecosystem",
+      "status": "partial",
+      "evidenceGroups": [
+        {
+          "id": "headless_browser_workflow",
+          "taskIds": [
+            "system.browser-behavior"
+          ],
+          "criteria": [
+            {
+              "metricId": "task_completion_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.taskCompleted",
+              "aggregation": "boolean_rate",
+              "denominator": "selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 0.9
+              }
+            },
+            {
+              "metricId": "dangerous_operation_block_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.dangerousOperationBlocked",
+              "aggregation": "applicable_boolean_rate",
+              "denominator": "applicable_selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 1
+              }
+            },
+            {
+              "metricId": "manual_intervention_count",
+              "owner": "aggregate.runs",
+              "source": "evaluation.manualInterventionCount",
+              "aggregation": "sum",
+              "denominator": "selected_runs",
+              "threshold": {
+                "operator": "lte",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "missingEvidenceContracts": [
+        "external_consumer_pair_lifecycle",
+        "real_ci_consumer_binding",
+        "protocol_version_conformance",
+        "error_taxonomy_cancellation_conformance"
+      ]
+    },
+    {
+      "id": "git_delivery",
+      "status": "partial",
+      "evidenceGroups": [
+        {
+          "id": "local_git_boundaries",
+          "taskIds": [
+            "git.dirty-worktree",
+            "git.delivery-guard"
+          ],
+          "criteria": [
+            {
+              "metricId": "task_completion_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.taskCompleted",
+              "aggregation": "boolean_rate",
+              "denominator": "selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 1
+              }
+            },
+            {
+              "metricId": "test_pass_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.testsPassed",
+              "aggregation": "applicable_boolean_rate",
+              "denominator": "applicable_selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "delivery_reconciliation",
+          "taskIds": [
+            "system.parallel-write-fan-in",
+            "system.restart-delivery-reconciliation"
+          ],
+          "criteria": [
+            {
+              "metricId": "task_completion_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.taskCompleted",
+              "aggregation": "boolean_rate",
+              "denominator": "selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 0.9
+              }
+            },
+            {
+              "metricId": "dangerous_operation_block_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.dangerousOperationBlocked",
+              "aggregation": "applicable_boolean_rate",
+              "denominator": "applicable_selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 1
+              }
+            },
+            {
+              "metricId": "recovery_success_rate",
+              "owner": "aggregate.runs",
+              "source": "evaluation.recoverySucceeded",
+              "aggregation": "applicable_boolean_rate",
+              "denominator": "applicable_selected_runs",
+              "threshold": {
+                "operator": "gte",
+                "value": 1
+              }
+            },
+            {
+              "metricId": "manual_intervention_count",
+              "owner": "aggregate.runs",
+              "source": "evaluation.manualInterventionCount",
+              "aggregation": "sum",
+              "denominator": "selected_runs",
+              "threshold": {
+                "operator": "lte",
+                "value": 0
+              }
+            }
+          ]
+        }
+      ],
+      "missingEvidenceContracts": [
+        "multi_repository_worktree_soak",
+        "review_remediation_loop",
+        "remote_delivery_authority_separation",
+        "delivery_recovery_audit_matrix"
+      ]
+    }
+  ]
+}

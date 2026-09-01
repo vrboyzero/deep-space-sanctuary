@@ -16,6 +16,13 @@
 - `v3/task-manifest.json`、`v3/task-manifest.schema.json`：`coding-agent-benchmark-manifest/v3` 的 A/B/C 任务合同，包含 24 个任务定义、4 个固定真实仓及双平台各 3 次、共 144 次预期执行；执行期网络关闭，真实仓只允许固定来源与 pinned cache。
 - `v3/benchmark-run.schema.json`、`v3/benchmark-report.schema.json`：`coding-agent-benchmark-run/v3` 与 `coding-agent-benchmark-report/v3` 的封闭 artifact 合同；接受版本化 fixture generator、7 种 execution profile 和 `24000/32000/36000` 冻结预算。
 - `v3/scorecard.json`、`v3/scorecard.schema.json`：`coding-agent-benchmark-scorecard/v3` 的 9.5 目标向量、分层 Gate 与不可补偿硬 Gate。
+- `v3/expected-report-plan.schema.json`、`v3/expected-reports.schema.json`：分别约束聚合前冻结且可含本地读取路径的 `coding-agent-benchmark-expected-report-plan/v1`，以及聚合后去路径化保留的 `coding-agent-benchmark-expected-reports/v1`；二者共同为 `missingReportCountMaximum` 提供独立 owner。
+- `v3/candidate-qualification-report.schema.json`：`coding-agent-benchmark-candidate-qualification-report/v1` 的封闭候选资格报告合同；顶层绑定 aggregate/scorecard/retained evidence digest，内部 decision 固定七维顺序，评分合同未闭合时只允许 `not_eligible/unscored`。
+- `v3/candidate-dimension-mapping.json`、`v3/candidate-dimension-mapping.schema.json`：七维 task/metric/候选证据映射与封闭 Schema；固定 `target_threshold_certification` 语义，维度证据未全部完成时不把 benchmark 百分比换算为数值分。
+- `v3/candidate-dimension-evidence-reference.schema.json`：aggregate 根内 `candidate-dimension-evidence-reference.json` 的封闭外键合同；绑定当前 manifest/report/index 与 source/harness identity，区分缺失、拒绝、真实失败和完成。
+- `v3/candidate-supervisor-evidence-receipt.schema.json`：`coding-agent-benchmark-candidate-supervisor-evidence-receipt/v1` 的组合证据合同；绑定当前 harness 的 Windows/WSL2 60 分钟 soak、Verification DAG、原始 Vitest report 与固定 18 文件 fault audit，不复制原始证据正文。
+- `v3/candidate-verification-evidence-receipt.schema.json`：`coding-agent-benchmark-candidate-verification-evidence-receipt/v1` 的组合证据合同；绑定当前 aggregate/harness 的 Impact Truth Set、结构化 Verification DAG/Vitest report、deterministic failure replay 与三 viewport Browser Relay 三件套，不复制原始证据正文。
+- `v3/candidate-coding-run-client-evidence-receipt.schema.json`：`coding-agent-benchmark-candidate-coding-run-client-evidence-receipt/v1` 的本地组合证据合同；绑定当前 aggregate/harness 的零执行 Verification DAG、原始 Vitest JSON 与固定七文件 coding-run client audit，不复制原始证据正文，也不冒充真实 CI receipt。
 - `v3/repository-inputs.schema.json`：`coding-agent-benchmark-repository-inputs/v1` 的封闭 CLI 输入合同；每个条目只允许 repository ID、source/cache 根和 receipt 路径，重复仓库、未知字段或 receipt 绑定漂移均失败关闭。
 - `v3/linux-snapshot-preparation.schema.json`：`coding-agent-benchmark-linux-snapshot-preparation/v1` 的封闭准备报告；记录 WSL2 平台/libc/工具链、离线命令策略、四仓 source identity、cache/receipt/preflight 路径，以及未满足仓的精确 blocker；`libc` 保持可选以兼容已保留的早期 v1 artifact。
 - `v3/preflight.schema.json`、`v3/repository-snapshot-preflight.schema.json`：分别约束 v3 通用 runtime preflight 与 B 层实际 snapshot/cache/license/network preflight。
@@ -38,6 +45,61 @@
 v3 manifest 的 24 个任务均可解析到唯一 Provider。A 层通过版本适配复用 corrected v2 fixture，尤其不会把 `command.interactive-control`、`safety.boundary-enforcement` 或 `gateway.disconnect-recovery` 回退到 v1。B 层只有在 receipt 与实际 repository/cache preflight 全部一致时才算“快照已准备”；preflight 只读 Git、锁文件/Go module 输入、许可证和缓存内容，不会 clone、install、restore、pull、切换工具链或写入仓库。依赖缓存根必须已存在，并包含 `.coding-benchmark-cache-key`。Express 的 `real-js.bug-fix` 只接受 `lib/request.js`；Preact 的 `real-web.ui-regression` 由版本化 truth set 同时生成 prompt suffix 与 visible test，`real-web-ui-regression-v2` evaluator 只接受 `src/diff/props.js` 且要求冻结测试通过；TypeScript 跨包回归只接受 `protocol.workspaceFolder.ts`，API migration 只接受冻结的 jsonrpc/protocol 三文件集合。两个 diagnosis 任务均必须保持工作区无修改，且 Preact 依赖诊断除退出码外还必须命中冻结的 package-exports 错误签名。
 
 4 个 C 层 system Provider 均已 ready；缺少精确 harness capability 或平台漂移时 preflight 失败关闭。Provider 生成版本化 scenario 并校验 run/platform/task/generator/version 绑定的 `systemEvidence`；runner 已负责逐 run 落盘与 report 引用，native harness 已实现 browser behavior、parallel read isolation、parallel write fan-in 与 restart delivery reconciliation。`system.parallel-write-fan-in` 虽复用 `workspace-write` profile，但 fixture Agent 不拥有写入/测试闭包；preflight 仍要求 profile 保留 read/edit/patch 能力，并把空 `acceptance.testCommands` 精确委托给 native system harness 的隔离 worktree、conflict、preview-confirm 与零残留 evidence。其他 workspace-write task 继续要求显式测试命令。`run-coding-agent-benchmark.mjs --manifest-revision v3` 已能运行具备外部输入或 harness 的显式任务；默认全量选择会在缺少任一 repository input 或 system harness capability 时于创建运行目录前失败关闭。24 个 Provider ready 和四个真实 C 层 harness 接线完成仍不代表 144 次矩阵已运行。
+
+## P2-C candidate-global receipt 零模型入口
+
+`benchmark:coding-agent:v3:candidate-global-receipt` 只读已完成且可验证的 v3 aggregate、调用双平台 exact-owned resource probe 和敏感值扫描，再以不可覆盖方式写入 `candidate-global-receipt.json`。输入必须通过 `--input <json>` 提供，并符合 `candidate-global-runner-input.schema.json`；JSON 只保存 `sensitiveValueEnvironmentVariables` 环境变量名，不允许保存敏感值正文。runner 在 Schema、时间戳、输入文件 1 MiB 上限和全部环境变量解析完成后才调用 evidence adapter；任一扫描或平台 probe 失败时不写 receipt。
+
+```powershell
+corepack pnpm benchmark:coding-agent:v3:candidate-global-receipt --input <candidate-global-runner-input.json>
+```
+
+该命令不启动 Gateway、模型或 Provider，不枚举未声明资源，也不修改冻结 Formal。Windows inventory 使用 Windows 绝对路径，WSL2 inventory 使用 POSIX 绝对路径；两端只探测调用方明确登记的 endpoint、PID、runtime marker 与 runtime env file。敏感值只从本进程环境进入内存，错误、CLI 摘要和 receipt 均不得回显。
+
+## P2-C candidate qualification 零模型入口
+
+`benchmark:coding-agent:v3:candidate-qualification` 只读一个已保留的 v3 aggregate 与 scorecard，执行候选资格判定，并以不可覆盖方式在 aggregate 根写入 `candidate-qualification.json`。默认使用 checked-in scorecard；只有复核显式替代合同时才传入 `--scorecard-path`。`--verify` 不写文件，而是从当前 aggregate、scorecard 和逐项 retained artifact digest 重建报告，并要求结果逐字节一致。
+
+```powershell
+corepack pnpm benchmark:coding-agent:v3:candidate-qualification --aggregate-root <v3-aggregate-root>
+corepack pnpm benchmark:coding-agent:v3:candidate-qualification --aggregate-root <v3-aggregate-root> --verify
+```
+
+该命令不启动 Gateway、模型或 Provider，不运行 candidate，不修改冻结 Formal，也不把 Schema-valid 等同于证据真实。矩阵、expected report、candidate-global receipt、run events、A/B/C layer Gate 或七维 mapping/score 合同任一未闭合时，报告保持 `not_eligible/unscored`；现阶段工具链只判资格，不宣称候选达到 9.5。
+
+## P2-C candidate dimension evidence
+
+`scripts/coding-agent-candidate-score.mjs` 通过公开 loader 读取权威 `candidate-dimension-mapping.json`，并从 aggregate 根可选的 `candidate-dimension-evidence-reference.json` 对账候选级 evidence owner。缺少 reference 时七维保持 incomplete；路径越界、Schema/SHA-256/identity 漂移时 reject；证据可信但 Gate 未达标时 failed；只有该维全部合同完成时才 complete。当前 loader 只解析三态，不计算或写入数值 score。
+
+`safety_recovery` 的 Supervisor 组合 owner 使用 `coding-agent-benchmark-candidate-supervisor-evidence-receipt/v1`。receipt 必须把同一当前 harness 的 Windows/WSL2 soak pair 与 P1-B Verification DAG、原始 Vitest JSON 同时绑定；DAG 的 exact command 固定为：
+
+```powershell
+corepack pnpm verify:p2a-supervisor-fault-audit
+```
+
+该命令只运行冻结的 18 个 Supervisor/Task/Worktree/permission/Skill/soak-runner 测试文件并输出 Vitest JSON；它不运行真实 60 分钟 soak，不启动 Gateway、模型或 Provider。历史 soak、单平台报告、不同测试选择、摘要或内部 candidate identity 漂移均不能关闭 `fault_matrix_audit_reconciliation`，完整安全证据也不会提前授予数值分。
+
+同一 Supervisor receipt 还可在 `session_long_running` 明确声明四项独立合同：`supervisor_dual_platform_60_minute_soak` 校验双平台 60 分钟与每轮 `4 write + 8 read` workload；`bounded_budget_cancel_restart_reattach` 组合 soak interruption recovery 与 control/budget/restart audit；`managed_worktree_fan_in_review_remediation` 消费 fan-in/read-only review/remediation audit；`parallel_resource_convergence` 组合 soak differential/run-owned 零残留与 cleanup audit。owner 存在不会自动授予该维，四项 claim 必须完整且顺序固定；任一可信子 Gate 失败只投影对应合同为 `failed`，其余合同仍可为 `complete`，该维仍不产生数值分。
+
+`editing_testing` 的 Verification 组合 owner 使用 `coding-agent-benchmark-candidate-verification-evidence-receipt/v1`。结构化 audit 的 exact command 固定为：
+
+```powershell
+corepack pnpm verify:p1b-verification-audit
+```
+
+该命令只按固定顺序运行 Impact Truth Set、structured-test adapter、Verification DAG 与 Browser report adapter 四个原生测试文件，并输出 Vitest JSON；它不启动真实 Browser Relay、Gateway、模型或 Provider。receipt 还必须绑定当前 selector/harness revision、实际测试文件集合、冻结 replay fixture/current-candidate identity，以及 `375x667`、`768x1024`、`1440x900` 三个 viewport 的 report/evidence/screenshot 与零残留结果。历史 P1-B 绿项、摘要自洽但身份漂移的 artifact 或可信但未达 Gate 的结果分别不能被误用为当前完成；四项合同完整通过仍只把该维标记为 `complete`，不提前授予数值分。
+
+`headless_ecosystem` 的本地组合 owner 使用 `candidateCodingRunClientReceipt` 与 `coding-agent-benchmark-candidate-coding-run-client-evidence-receipt/v1`。audit 的 exact command 固定为：
+
+```powershell
+corepack pnpm verify:coding-run-client
+```
+
+该命令以 JSON reporter 按固定顺序运行 Core stdio/client、VS Code adapter、protocol/failure conformance 和 packed ESM/TypeScript consumer 共七个测试文件，并把原始报告固定写入 `artifacts/coding-run-client-ci/vitest-report.json`。本地 receipt 只关闭 `external_consumer_pair_lifecycle`、`protocol_version_conformance`、`error_taxonomy_cancellation_conformance`；owner 存在不自动授予，三项 claim 必须完整且顺序固定，可信分组失败只投影对应合同。
+
+`real_ci_consumer_binding` 使用独立的 `candidateCodingRunClientCiReceipt` 与 `coding-agent-benchmark-candidate-coding-run-client-ci-evidence-receipt/v1`，每个 Quality matrix lane 先由 `scripts/run-coding-run-client-ci-lane-receipt.mjs` 生成 `coding-agent-benchmark-coding-run-client-ci-lane-evidence/v1`，再由 pinned `actions/upload-artifact` 上传同目录下唯一的 `lane-receipt.json` 与 `vitest-report.json`。producer 只接受 GitHub Actions 官方 repository/workflow/run/attempt/SHA/ref 与对应 runner identity；原始报告和 step outcome 必须同时为 success 或同时为 failure，七文件选择必须精确一致。push/workflow dispatch 中 producer 与 upload 均使用 `always()`，因此可信测试失败仍保留证据且原测试退出码继续使 job 失败；PR 继续执行相同测试但不生成 current-candidate artifact。
+
+candidate loader 必须从 GitHub run/jobs/artifacts API JSON 与下载后的原始 ZIP 字节复算 run URL、双平台 job/step/artifact 外键、archive/entry SHA-256、CRC、固定 entry、时间线与原始 Vitest 终态。双 lane 可信通过才关闭合同；可信单 lane failure 投影为 `failed`，任何摘要、身份、歧义对象、时间线或终态矛盾均 reject。workflow 文本、本地报告、历史 Quality run 或候选自报均不能替代当前候选证据；因此本地三项完成后该维仍为 `partial` 且不产生数值分，真实 run 未采集前不得宣称 `real_ci_consumer_binding` 完成。
 
 ## P0.14/P0.15 v3 Linux snapshot preparation 边界
 
@@ -258,10 +320,12 @@ behavior、parallel read isolation、parallel write fan-in 与 restart delivery 
 
 baseline aggregator 通过 `--manifest-revision v3` 显式选择冻结的 v3 manifest，按 24 task × 2 platform × 3 attempt 重算 144 项覆盖。所有输入 report 必须绑定同一 source 与 harness content identity；runId、task/platform/attempt、report revision 或 manifest hash 重复/漂移时，会在创建输出目录前失败关闭。B 层 snapshot preflight/receipt、C 层 scenario/evidence，以及 browser run 的 `browser-screenshot.png` 会随通用逐 run artifact 一并复制到新输出目录，并受相对路径、root containment、存在性和常规文件检查；专属 JSON 的内容 Schema 仍由 runner、run contract 与静态 verifier 负责，不在聚合期重复解析。
 
-聚合输出保留原始 source report、冻结 manifest、重算后的 report 和 `baseline-index.json`。`--verify` 只依赖该输出目录，重新核对 source/harness identity、完整矩阵、report/index hash 及所有保留 artifact；删除任何 B/C 专属证据都会稳定失败。合成完整矩阵只证明 native aggregate 的 `completed` 判定，不代表 144 次真实模型运行、真实 C 层 harness 或 9.5 Gate 已完成。
+聚合输出保留原始 source report、冻结 manifest、重算后的 report 和 `baseline-index.json`。P2-C 候选还必须在采集开始前冻结一份 `expected-report-plan.schema.json` 合法的 plan，通过 `--expected-report-plan` 传入；plan 中每项使用稳定 `reportId` 和仅供本机读取的 path，聚合后只保留去路径化 `expected-reports.json`、其 SHA-256 和 index 中的 `coding-agent-benchmark-expected-report-projection/v1`。`--verify` 只依赖输出目录，从独立 plan artifact 与 retained source report 的 `reportId` 重建 expected/collected/missing 计数，不能用完整 `missingRunKeys` 代替 missing-report Gate。
+
+expected-report plan 的集合由候选执行方案在运行前声明；工具证明该已冻结集合是否完整到达，不声称能发现操作者从未列入 plan 的报告。归档没有规定固定 report 数量，因此不得事后缩减 plan、把“两平台”硬编码为“两份 report”，或把自选清单解释为外部真值。未提供 plan 的历史 aggregate 仍可验证，但 qualification 会保留 `aggregate_missing_report_metric` blocker。删除任何 B/C 专属证据、expected-report artifact 或篡改其 projection 都会稳定失败。合成完整矩阵只证明 native aggregate 的 `completed` 判定，不代表 144 次真实模型运行、真实 C 层 harness 或 9.5 Gate 已完成。
 
 ```powershell
-corepack pnpm aggregate:coding-agent:baseline --manifest-revision v3 --report <windows-artifact-root>/benchmark-report.json --report <wsl-artifact-root>/benchmark-report.json --output-root <new-v3-baseline-artifact-root>
+corepack pnpm aggregate:coding-agent:baseline --manifest-revision v3 --report <windows-artifact-root>/benchmark-report.json --report <wsl-artifact-root>/benchmark-report.json --expected-report-plan <pre-frozen-expected-report-plan.json> --output-root <new-v3-baseline-artifact-root>
 corepack pnpm aggregate:coding-agent:baseline --verify --output-root <v3-baseline-artifact-root>
 ```
 

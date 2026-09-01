@@ -1,0 +1,629 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-candidate-dimension-evidence-reference-v1.json",
+  "title": "Star Sanctuary coding agent benchmark candidate dimension evidence reference v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "aggregate",
+    "failureSemantics",
+    "owners",
+    "claims"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "coding-agent-benchmark-candidate-dimension-evidence-reference/v1"
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "aggregate": {
+      "$ref": "#/$defs/aggregateBinding"
+    },
+    "failureSemantics": {
+      "const": {
+        "missingReference": "incomplete",
+        "missingArtifact": "reject",
+        "digestMismatch": "reject",
+        "schemaOrBindingMismatch": "reject",
+        "unmetCompletion": "failed"
+      }
+    },
+    "owners": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "systemEvidence",
+        "candidateGlobalReceipt"
+      ],
+      "properties": {
+        "systemEvidence": {
+          "$ref": "#/$defs/systemEvidenceOwner"
+        },
+        "candidateGlobalReceipt": {
+          "$ref": "#/$defs/candidateGlobalReceiptOwner"
+        },
+        "candidateSupervisorReceipt": {
+          "$ref": "#/$defs/candidateSupervisorReceiptOwner"
+        },
+        "candidateVerificationReceipt": {
+          "$ref": "#/$defs/candidateVerificationReceiptOwner"
+        },
+        "candidateCodingRunClientReceipt": {
+          "$ref": "#/$defs/candidateCodingRunClientReceiptOwner"
+        },
+        "candidateCodingRunClientCiReceipt": {
+          "$ref": "#/$defs/candidateCodingRunClientCiReceiptOwner"
+        },
+        "candidateCodeIntelReceipt": {
+          "$ref": "#/$defs/candidateCodeIntelReceiptOwner"
+        }
+      }
+    },
+    "claims": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 22,
+      "uniqueItems": true,
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/safetyClaim"
+          },
+          {
+            "$ref": "#/$defs/editingTestingClaim"
+          },
+          {
+            "$ref": "#/$defs/sessionLongRunningClaim"
+          },
+          {
+            "$ref": "#/$defs/headlessEcosystemClaim"
+          },
+          {
+            "$ref": "#/$defs/contextRetrievalClaim"
+          }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "safeRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    },
+    "repositoryIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "workspaceDirty",
+        "lockfileSha256",
+        "worktreeContentSha256"
+      ],
+      "properties": {
+        "commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "workspaceDirty": {
+          "const": false
+        },
+        "lockfileSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "worktreeContentSha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "aggregateBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifestSha256",
+        "reportSha256",
+        "indexSha256",
+        "source",
+        "harness"
+      ],
+      "properties": {
+        "manifestSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "reportSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "indexSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "source": {
+          "$ref": "#/$defs/repositoryIdentity"
+        },
+        "harness": {
+          "$ref": "#/$defs/repositoryIdentity"
+        }
+      }
+    },
+    "systemEvidenceOwner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "artifactKey",
+        "scope",
+        "artifactSchemaVersion",
+        "artifacts"
+      ],
+      "properties": {
+        "kind": {
+          "const": "retained_run_artifacts"
+        },
+        "artifactKey": {
+          "const": "systemEvidence"
+        },
+        "scope": {
+          "const": "layer_c_runs"
+        },
+        "artifactSchemaVersion": {
+          "const": "coding-agent-benchmark-system-evidence/v1"
+        },
+        "artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "runId",
+              "taskId",
+              "platform",
+              "path",
+              "sha256"
+            ],
+            "properties": {
+              "runId": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                "maxLength": 200
+              },
+              "taskId": {
+                "enum": [
+                  "system.browser-behavior",
+                  "system.parallel-read-isolation",
+                  "system.parallel-write-fan-in",
+                  "system.restart-delivery-reconciliation"
+                ]
+              },
+              "platform": {
+                "enum": [
+                  "windows-native",
+                  "wsl2-linux"
+                ]
+              },
+              "path": {
+                "$ref": "#/$defs/safeRelativePath"
+              },
+              "sha256": {
+                "$ref": "#/$defs/sha256"
+              }
+            }
+          }
+        }
+      }
+    },
+    "candidateGlobalReceiptOwner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "scope",
+        "artifactSchemaVersion",
+        "artifact"
+      ],
+      "properties": {
+        "kind": {
+          "const": "candidate_artifact"
+        },
+        "scope": {
+          "const": "candidate"
+        },
+        "artifactSchemaVersion": {
+          "const": "coding-agent-benchmark-candidate-global-receipt/v1"
+        },
+        "artifact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "sha256"
+          ],
+          "properties": {
+            "path": {
+              "const": "candidate-global-receipt.json"
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        }
+      }
+    },
+    "candidateSupervisorReceiptOwner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "scope",
+        "artifactSchemaVersion",
+        "artifact"
+      ],
+      "properties": {
+        "kind": {
+          "const": "candidate_artifact"
+        },
+        "scope": {
+          "const": "candidate_harness"
+        },
+        "artifactSchemaVersion": {
+          "const": "coding-agent-benchmark-candidate-supervisor-evidence-receipt/v1"
+        },
+        "artifact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "sha256"
+          ],
+          "properties": {
+            "path": {
+              "const": "candidate-supervisor-evidence-receipt.json"
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        }
+      }
+    },
+    "candidateVerificationReceiptOwner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "scope",
+        "artifactSchemaVersion",
+        "artifact"
+      ],
+      "properties": {
+        "kind": {
+          "const": "candidate_artifact"
+        },
+        "scope": {
+          "const": "candidate_harness"
+        },
+        "artifactSchemaVersion": {
+          "const": "coding-agent-benchmark-candidate-verification-evidence-receipt/v1"
+        },
+        "artifact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "sha256"
+          ],
+          "properties": {
+            "path": {
+              "const": "candidate-verification-evidence-receipt.json"
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        }
+      }
+    },
+    "candidateCodingRunClientReceiptOwner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "scope",
+        "artifactSchemaVersion",
+        "artifact"
+      ],
+      "properties": {
+        "kind": {
+          "const": "candidate_artifact"
+        },
+        "scope": {
+          "const": "candidate_harness"
+        },
+        "artifactSchemaVersion": {
+          "const": "coding-agent-benchmark-candidate-coding-run-client-evidence-receipt/v1"
+        },
+        "artifact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "sha256"
+          ],
+          "properties": {
+            "path": {
+              "const": "candidate-coding-run-client-evidence-receipt.json"
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        }
+      }
+    },
+    "candidateCodingRunClientCiReceiptOwner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "scope",
+        "artifactSchemaVersion",
+        "artifact"
+      ],
+      "properties": {
+        "kind": {
+          "const": "candidate_artifact"
+        },
+        "scope": {
+          "const": "candidate_harness"
+        },
+        "artifactSchemaVersion": {
+          "const": "coding-agent-benchmark-candidate-coding-run-client-ci-evidence-receipt/v1"
+        },
+        "artifact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "sha256"
+          ],
+          "properties": {
+            "path": {
+              "const": "candidate-coding-run-client-ci-evidence-receipt.json"
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        }
+      }
+    },
+    "candidateCodeIntelReceiptOwner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "scope",
+        "artifactSchemaVersion",
+        "artifact"
+      ],
+      "properties": {
+        "kind": {
+          "const": "candidate_artifact"
+        },
+        "scope": {
+          "const": "candidate_harness"
+        },
+        "artifactSchemaVersion": {
+          "const": "coding-agent-benchmark-candidate-code-intel-evidence-receipt/v1"
+        },
+        "artifact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "sha256"
+          ],
+          "properties": {
+            "path": {
+              "const": "candidate-code-intel-evidence-receipt.json"
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        }
+      }
+    },
+    "safetyClaim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dimensionId",
+        "contractId",
+        "owner",
+        "completion"
+      ],
+      "properties": {
+        "dimensionId": {
+          "const": "safety_recovery"
+        },
+        "contractId": {
+          "enum": [
+            "system_evidence_critical_rate",
+            "candidate_sensitive_scan",
+            "candidate_resource_sweeps",
+            "fault_matrix_audit_reconciliation"
+          ]
+        },
+        "owner": {
+          "enum": [
+            "systemEvidence",
+            "candidateGlobalReceipt",
+            "candidateSupervisorReceipt"
+          ]
+        },
+        "completion": {
+          "enum": [
+            "all_layer_c_runs_valid",
+            "completed_zero_findings",
+            "required_platforms_completed_zero_orphans",
+            "current_harness_dual_platform_soak_and_fault_audit_passed"
+          ]
+        }
+      }
+    },
+    "editingTestingClaim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dimensionId",
+        "contractId",
+        "owner",
+        "completion"
+      ],
+      "properties": {
+        "dimensionId": {
+          "const": "editing_testing"
+        },
+        "contractId": {
+          "enum": [
+            "verification_impact_truth_set",
+            "verification_structured_test_reports",
+            "verification_failure_replay",
+            "browser_relay_behavior_evidence"
+          ]
+        },
+        "owner": {
+          "const": "candidateVerificationReceipt"
+        },
+        "completion": {
+          "enum": [
+            "current_selector_truth_set_gate_passed",
+            "current_harness_structured_test_audit_passed",
+            "current_harness_reproducible_failure_replay_preserved",
+            "current_harness_three_viewport_browser_relay_passed_zero_residue"
+          ]
+        }
+      }
+    },
+    "sessionLongRunningClaim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dimensionId",
+        "contractId",
+        "owner",
+        "completion"
+      ],
+      "properties": {
+        "dimensionId": {
+          "const": "session_long_running"
+        },
+        "contractId": {
+          "enum": [
+            "supervisor_dual_platform_60_minute_soak",
+            "bounded_budget_cancel_restart_reattach",
+            "managed_worktree_fan_in_review_remediation",
+            "parallel_resource_convergence"
+          ]
+        },
+        "owner": {
+          "const": "candidateSupervisorReceipt"
+        },
+        "completion": {
+          "enum": [
+            "current_harness_dual_platform_60_minute_soak_passed",
+            "current_harness_bounded_budget_cancel_restart_reattach_audit_passed",
+            "current_harness_managed_worktree_fan_in_review_remediation_audit_passed",
+            "current_harness_parallel_resources_converged_zero_residue"
+          ]
+        }
+      }
+    },
+    "headlessEcosystemClaim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dimensionId",
+        "contractId",
+        "owner",
+        "completion"
+      ],
+      "properties": {
+        "dimensionId": {
+          "const": "headless_ecosystem"
+        },
+        "contractId": {
+          "enum": [
+            "external_consumer_pair_lifecycle",
+            "real_ci_consumer_binding",
+            "protocol_version_conformance",
+            "error_taxonomy_cancellation_conformance"
+          ]
+        },
+        "owner": {
+          "enum": [
+            "candidateCodingRunClientReceipt",
+            "candidateCodingRunClientCiReceipt"
+          ]
+        },
+        "completion": {
+          "enum": [
+            "current_harness_packed_esm_and_typescript_consumers_passed",
+            "current_harness_dual_platform_github_actions_coding_run_client_passed",
+            "current_harness_protocol_version_conformance_passed",
+            "current_harness_error_taxonomy_and_cancellation_conformance_passed"
+          ]
+        }
+      }
+    },
+    "contextRetrievalClaim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dimensionId",
+        "contractId",
+        "owner",
+        "completion"
+      ],
+      "properties": {
+        "dimensionId": {
+          "const": "context_retrieval"
+        },
+        "contractId": {
+          "enum": [
+            "code_intel_truth_freshness",
+            "context_inspector",
+            "code_intel_resource_soak",
+            "semantic_adoption_context_waste",
+            "code_intel_no_binary_fallback",
+            "go_canary_eligibility"
+          ]
+        },
+        "owner": {
+          "const": "candidateCodeIntelReceipt"
+        },
+        "completion": {
+          "enum": [
+            "current_source_dual_platform_truth_and_freshness_passed",
+            "current_harness_read_only_projection_audit_passed",
+            "current_source_dual_platform_resource_soak_passed",
+            "current_harness_semantic_adoption_and_context_waste_gate_passed",
+            "current_harness_binary_outcome_no_regression_passed",
+            "current_source_go_canary_eligibility_proven"
+          ]
+        }
+      }
+    }
+  }
+}

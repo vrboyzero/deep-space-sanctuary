@@ -14,6 +14,75 @@ const EXPECTED_LAYERS = Object.freeze({
   C: Object.freeze({ taskDefinitionCount: 4, expectedExecutionCount: 24 }),
 });
 
+const EXPECTED_QUALIFICATION_EVIDENCE = Object.freeze({
+  schemaVersion: "coding-agent-benchmark-qualification-evidence/v1",
+  sources: {
+    aggregate: {
+      kind: "verified_aggregate",
+      reportSchemaVersion: "coding-agent-benchmark-report/v3",
+      indexSchemaVersion: "coding-agent-benchmark-baseline-index/v1",
+      reportPath: "benchmark-report.json",
+      indexPath: "baseline-index.json",
+    },
+    expectedReports: {
+      kind: "verified_aggregate_artifact",
+      path: "expected-reports.json",
+      indexPath: "baseline-index.json",
+      projectionProperty: "expectedReports",
+      artifactSchemaVersion: "coding-agent-benchmark-expected-reports/v1",
+      projectionSchemaVersion: "coding-agent-benchmark-expected-report-projection/v1",
+      required: true,
+    },
+    runEvents: {
+      kind: "retained_run_artifact",
+      artifactKey: "events",
+      scope: "all_runs",
+      eventVersion: "v1",
+      capabilitiesSchemaVersion: "coding-run-capabilities/v1",
+      traceSchemaVersion: "coding-run-trace/v1",
+      usageCompletenessSource: "terminal_event",
+    },
+    systemEvidence: {
+      kind: "retained_run_artifact",
+      artifactKey: "systemEvidence",
+      scope: "layer_c_runs",
+      schemaVersion: "coding-agent-benchmark-system-evidence/v1",
+    },
+    candidateGlobalReceipt: {
+      kind: "candidate_artifact",
+      path: "candidate-global-receipt.json",
+      scope: "candidate",
+      schemaVersion: "coding-agent-benchmark-candidate-global-receipt/v1",
+      required: true,
+    },
+  },
+  hardGateMetricOwners: {
+    nativeAggregate: "aggregate",
+    singleSourceIdentity: "aggregate",
+    crossRevisionProjectionAllowed: "aggregate",
+    selectedInfrastructureErrorCountMaximum: "aggregate",
+    missingReportCountMaximum: "expectedReports",
+    incompleteTraceCountMaximum: "runEvents",
+    incompleteProviderUsageCountMaximum: "runEvents",
+    sensitiveFindingCountMaximum: "candidateGlobalReceipt",
+    orphanResourceCountMaximum: "candidateGlobalReceipt",
+  },
+  layerGateMetricOwners: {
+    A: { requiredPassedExecutions: "aggregate" },
+    B: {
+      successRateMinimum: "aggregate",
+      requiredLanguageSuccessRateMinimum: "aggregate",
+      testPassRateMinimum: "aggregate",
+      patchAcceptanceRateMinimum: "aggregate",
+      regressionCountMaximum: "aggregate",
+    },
+    C: {
+      criticalGateRateMinimum: "systemEvidence",
+      otherSystemSuccessRateMinimum: "aggregate",
+    },
+  },
+});
+
 const EXPECTED_A_TASK_IDS = new Set([
   "rules.nested-precedence",
   "feature.cross-file",
@@ -358,6 +427,9 @@ export function validateCodingAgentBenchmarkScorecardV3(scorecard) {
     },
   })) {
     throw new Error("Coding benchmark v3 scorecard layer gates drifted.");
+  }
+  if (JSON.stringify(scorecard.qualificationEvidence) !== JSON.stringify(EXPECTED_QUALIFICATION_EVIDENCE)) {
+    throw new Error("Coding benchmark v3 scorecard qualification evidence drifted.");
   }
   return scorecard;
 }

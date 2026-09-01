@@ -1,0 +1,416 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-candidate-verification-evidence-receipt-v1.json",
+  "title": "Star Sanctuary coding agent benchmark candidate Verification evidence receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "aggregate",
+    "impactTruthSet",
+    "structuredTestAudit",
+    "failureReplay",
+    "browserRelay"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "coding-agent-benchmark-candidate-verification-evidence-receipt/v1"
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "aggregate": {
+      "$ref": "#/$defs/aggregateBinding"
+    },
+    "impactTruthSet": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/artifactReference"
+        },
+        {
+          "properties": {
+            "artifactSchemaVersion": {
+              "const": "verification-impact-truth-set-report/v1"
+            },
+            "path": {
+              "const": "candidate-evidence/verification/impact-truth-set-report.json"
+            }
+          }
+        }
+      ]
+    },
+    "structuredTestAudit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verificationDag",
+        "nativeTestReport",
+        "testFiles"
+      ],
+      "properties": {
+        "verificationDag": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/artifactReference"
+            },
+            {
+              "properties": {
+                "artifactSchemaVersion": {
+                  "const": "verification-dag/v1"
+                },
+                "path": {
+                  "const": "candidate-evidence/verification/structured-test-verification-dag.json"
+                }
+              }
+            }
+          ]
+        },
+        "nativeTestReport": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "framework",
+            "format",
+            "runnerVersion",
+            "path",
+            "sha256"
+          ],
+          "properties": {
+            "framework": {
+              "const": "vitest"
+            },
+            "format": {
+              "const": "vitest-json/v3.2.7"
+            },
+            "runnerVersion": {
+              "const": "3.2.7"
+            },
+            "path": {
+              "const": "candidate-evidence/verification/structured-test-vitest-report.json"
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "testFiles": {
+          "const": [
+            "scripts/run-verification-impact-truth-set.test.mjs",
+            "scripts/verification-test-report-adapter.test.mjs",
+            "scripts/run-verification-dag.test.mjs",
+            "scripts/verification-browser-report-adapter.test.mjs"
+          ]
+        }
+      }
+    },
+    "failureReplay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fixtureId",
+        "nodeId",
+        "expectedClassification",
+        "replayBinding",
+        "initialFailureFingerprint",
+        "verificationDag"
+      ],
+      "properties": {
+        "fixtureId": {
+          "const": "verification-dag-reproducible-failure-v1"
+        },
+        "nodeId": {
+          "const": "verification.failure-replay"
+        },
+        "expectedClassification": {
+          "const": "reproducible_failure"
+        },
+        "replayBinding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "environmentHash",
+            "inputHash"
+          ],
+          "properties": {
+            "environmentHash": {
+              "$ref": "#/$defs/sha256"
+            },
+            "inputHash": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "initialFailureFingerprint": {
+          "$ref": "#/$defs/sha256"
+        },
+        "verificationDag": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/artifactReference"
+            },
+            {
+              "properties": {
+                "artifactSchemaVersion": {
+                  "const": "verification-dag/v1"
+                },
+                "path": {
+                  "const": "candidate-evidence/verification/failure-replay-verification-dag.json"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "browserRelay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifactSchemaVersion",
+        "runs"
+      ],
+      "properties": {
+        "artifactSchemaVersion": {
+          "const": "verification-browser-evidence/v1"
+        },
+        "runs": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/mobileBrowserRun"
+            },
+            {
+              "$ref": "#/$defs/tabletBrowserRun"
+            },
+            {
+              "$ref": "#/$defs/desktopBrowserRun"
+            }
+          ],
+          "items": false
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "safeRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    },
+    "repositoryIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "workspaceDirty",
+        "lockfileSha256",
+        "worktreeContentSha256"
+      ],
+      "properties": {
+        "commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "workspaceDirty": {
+          "const": false
+        },
+        "lockfileSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "worktreeContentSha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "aggregateBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifestSha256",
+        "reportSha256",
+        "indexSha256",
+        "source",
+        "harness"
+      ],
+      "properties": {
+        "manifestSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "reportSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "indexSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "source": {
+          "$ref": "#/$defs/repositoryIdentity"
+        },
+        "harness": {
+          "$ref": "#/$defs/repositoryIdentity"
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/safeRelativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "artifactReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifactSchemaVersion",
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "artifactSchemaVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "path": {
+          "$ref": "#/$defs/safeRelativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "viewport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "width",
+        "height",
+        "deviceScaleFactor"
+      ],
+      "properties": {
+        "width": {
+          "type": "integer"
+        },
+        "height": {
+          "type": "integer"
+        },
+        "deviceScaleFactor": {
+          "const": 1
+        }
+      }
+    },
+    "browserRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runId",
+        "viewport",
+        "report",
+        "evidence",
+        "screenshot"
+      ],
+      "properties": {
+        "runId": {
+          "enum": [
+            "mobile",
+            "tablet",
+            "desktop"
+          ]
+        },
+        "viewport": {
+          "$ref": "#/$defs/viewport"
+        },
+        "report": {
+          "$ref": "#/$defs/artifact"
+        },
+        "evidence": {
+          "$ref": "#/$defs/artifact"
+        },
+        "screenshot": {
+          "$ref": "#/$defs/artifact"
+        }
+      }
+    },
+    "mobileBrowserRun": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/browserRun"
+        },
+        {
+          "properties": {
+            "runId": {
+              "const": "mobile"
+            },
+            "viewport": {
+              "const": {
+                "width": 375,
+                "height": 667,
+                "deviceScaleFactor": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "tabletBrowserRun": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/browserRun"
+        },
+        {
+          "properties": {
+            "runId": {
+              "const": "tablet"
+            },
+            "viewport": {
+              "const": {
+                "width": 768,
+                "height": 1024,
+                "deviceScaleFactor": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "desktopBrowserRun": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/browserRun"
+        },
+        {
+          "properties": {
+            "runId": {
+              "const": "desktop"
+            },
+            "viewport": {
+              "const": {
+                "width": 1440,
+                "height": 900,
+                "deviceScaleFactor": 1
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

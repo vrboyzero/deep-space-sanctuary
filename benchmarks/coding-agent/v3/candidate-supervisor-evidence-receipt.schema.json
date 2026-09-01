@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-candidate-supervisor-evidence-receipt-v1.json",
+  "title": "Star Sanctuary coding agent benchmark candidate Supervisor evidence receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "aggregate",
+    "soak",
+    "faultAudit"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "coding-agent-benchmark-candidate-supervisor-evidence-receipt/v1"
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "aggregate": {
+      "$ref": "#/$defs/aggregateBinding"
+    },
+    "soak": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifactSchemaVersion",
+        "reports"
+      ],
+      "properties": {
+        "artifactSchemaVersion": {
+          "const": "p2a-subtask-supervisor-soak-report/v1"
+        },
+        "reports": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "platform",
+              "path",
+              "sha256"
+            ],
+            "properties": {
+              "platform": {
+                "enum": [
+                  "windows-native",
+                  "wsl2-linux"
+                ]
+              },
+              "path": {
+                "$ref": "#/$defs/safeRelativePath"
+              },
+              "sha256": {
+                "$ref": "#/$defs/sha256"
+              }
+            }
+          }
+        }
+      }
+    },
+    "faultAudit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verificationDag",
+        "nativeTestReport",
+        "testFiles"
+      ],
+      "properties": {
+        "verificationDag": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/artifactReference"
+            },
+            {
+              "properties": {
+                "artifactSchemaVersion": {
+                  "const": "verification-dag/v1"
+                }
+              }
+            }
+          ]
+        },
+        "nativeTestReport": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "framework",
+            "format",
+            "runnerVersion",
+            "path",
+            "sha256"
+          ],
+          "properties": {
+            "framework": {
+              "const": "vitest"
+            },
+            "format": {
+              "const": "vitest-json/v3.2.7"
+            },
+            "runnerVersion": {
+              "const": "3.2.7"
+            },
+            "path": {
+              "$ref": "#/$defs/safeRelativePath"
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "testFiles": {
+          "const": [
+            "packages/belldandy-core/src/subtask-supervisor-runtime.test.ts",
+            "packages/belldandy-core/src/subtask-supervisor-control-runtime.test.ts",
+            "packages/belldandy-core/src/subtask-supervisor-fan-in-runtime.test.ts",
+            "packages/belldandy-core/src/subtask-supervisor-fan-in-resolution-runtime.test.ts",
+            "packages/belldandy-core/src/subtask-supervisor-fan-in-process-recovery.test.ts",
+            "packages/belldandy-core/src/subtask-supervisor-approval-crash-recovery.test.ts",
+            "packages/belldandy-core/src/subtask-supervisor-worktree-disposal-runtime.test.ts",
+            "packages/belldandy-core/src/subtask-supervisor-worktree-disposal-process-recovery.test.ts",
+            "packages/belldandy-core/src/managed-worktree.test.ts",
+            "packages/belldandy-core/src/worktree-runtime.test.ts",
+            "packages/belldandy-core/src/task-runtime.test.ts",
+            "packages/belldandy-core/src/bridge-subtask-runtime.test.ts",
+            "packages/belldandy-core/src/coding-run/pending-tool-permission-runtime.test.ts",
+            "packages/belldandy-core/src/coding-run/reconciliation-journal.test.ts",
+            "packages/belldandy-skills/src/builtin/session/session-tools.test.ts",
+            "packages/belldandy-skills/src/tool-behavior-contract.test.ts",
+            "packages/belldandy-skills/src/tool-contract-v2.test.ts",
+            "scripts/run-subtask-supervisor-soak.test.mjs"
+          ]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "safeRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    },
+    "repositoryIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "workspaceDirty",
+        "lockfileSha256",
+        "worktreeContentSha256"
+      ],
+      "properties": {
+        "commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "workspaceDirty": {
+          "const": false
+        },
+        "lockfileSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "worktreeContentSha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "aggregateBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifestSha256",
+        "reportSha256",
+        "indexSha256",
+        "source",
+        "harness"
+      ],
+      "properties": {
+        "manifestSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "reportSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "indexSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "source": {
+          "$ref": "#/$defs/repositoryIdentity"
+        },
+        "harness": {
+          "$ref": "#/$defs/repositoryIdentity"
+        }
+      }
+    },
+    "artifactReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifactSchemaVersion",
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "artifactSchemaVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "path": {
+          "$ref": "#/$defs/safeRelativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    }
+  }
+}

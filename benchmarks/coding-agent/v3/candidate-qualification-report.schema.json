@@ -1,0 +1,474 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-candidate-qualification-report-v1.json",
+  "title": "Star Sanctuary coding agent benchmark candidate qualification report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "generatedAt", "source", "decision"],
+  "properties": {
+    "schemaVersion": { "const": "coding-agent-benchmark-candidate-qualification-report/v1" },
+    "generatedAt": { "$ref": "#/$defs/timestamp" },
+    "source": { "$ref": "#/$defs/source" },
+    "decision": { "$ref": "#/$defs/partialDecision" }
+  },
+  "$defs": {
+    "timestamp": { "type": "string", "format": "date-time" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifestSha256", "reportSha256", "indexSha256", "scorecardSha256", "evidence"],
+      "properties": {
+        "manifestSha256": { "$ref": "#/$defs/sha256" },
+        "reportSha256": { "$ref": "#/$defs/sha256" },
+        "indexSha256": { "$ref": "#/$defs/sha256" },
+        "scorecardSha256": { "$ref": "#/$defs/sha256" },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "entryCount", "sha256"],
+          "properties": {
+            "schemaVersion": { "const": "coding-agent-benchmark-qualification-evidence-digest/v1" },
+            "entryCount": { "type": "integer", "minimum": 1 },
+            "sha256": { "$ref": "#/$defs/sha256" }
+          }
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expectedRunCount", "collectedRunCount", "missingRunCount"],
+      "properties": {
+        "expectedRunCount": { "type": "integer", "minimum": 1 },
+        "collectedRunCount": { "type": "integer", "minimum": 0 },
+        "missingRunCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "dimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "score", "status"],
+      "properties": {
+        "id": {
+          "enum": [
+            "context_retrieval",
+            "editing_testing",
+            "cli_tui",
+            "safety_recovery",
+            "session_long_running",
+            "headless_ecosystem",
+            "git_delivery"
+          ]
+        },
+        "score": { "type": "null" },
+        "status": { "const": "unscored" }
+      }
+    },
+    "scores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dimensions", "rawWeighted", "status"],
+      "properties": {
+        "dimensions": {
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "prefixItems": [
+            {
+              "allOf": [
+                { "$ref": "#/$defs/dimension" },
+                { "properties": { "id": { "const": "context_retrieval" } } }
+              ]
+            },
+            {
+              "allOf": [
+                { "$ref": "#/$defs/dimension" },
+                { "properties": { "id": { "const": "editing_testing" } } }
+              ]
+            },
+            {
+              "allOf": [
+                { "$ref": "#/$defs/dimension" },
+                { "properties": { "id": { "const": "cli_tui" } } }
+              ]
+            },
+            {
+              "allOf": [
+                { "$ref": "#/$defs/dimension" },
+                { "properties": { "id": { "const": "safety_recovery" } } }
+              ]
+            },
+            {
+              "allOf": [
+                { "$ref": "#/$defs/dimension" },
+                { "properties": { "id": { "const": "session_long_running" } } }
+              ]
+            },
+            {
+              "allOf": [
+                { "$ref": "#/$defs/dimension" },
+                { "properties": { "id": { "const": "headless_ecosystem" } } }
+              ]
+            },
+            {
+              "allOf": [
+                { "$ref": "#/$defs/dimension" },
+                { "properties": { "id": { "const": "git_delivery" } } }
+              ]
+            }
+          ],
+          "items": false
+        },
+        "rawWeighted": { "type": "null" },
+        "status": { "const": "unscored" }
+      }
+    },
+    "aggregateHardGateFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "observed", "maximum"],
+      "properties": {
+        "id": {
+          "enum": [
+            "missingReportCountMaximum",
+            "selectedInfrastructureErrorCountMaximum"
+          ]
+        },
+        "observed": { "type": "integer", "minimum": 0 },
+        "maximum": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "candidateGlobalHardGateFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "observed", "maximum"],
+      "properties": {
+        "id": {
+          "enum": [
+            "sensitiveFindingCountMaximum",
+            "orphanResourceCountMaximum"
+          ]
+        },
+        "observed": { "type": "integer", "minimum": 0 },
+        "maximum": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "runEventHardGateFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "observed", "maximum"],
+      "properties": {
+        "id": {
+          "enum": [
+            "incompleteTraceCountMaximum",
+            "incompleteProviderUsageCountMaximum"
+          ]
+        },
+        "observed": { "type": "integer", "minimum": 0 },
+        "maximum": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "cCriticalLayerGateFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["layer", "id", "numerator", "denominator", "observed", "minimum"],
+      "properties": {
+        "layer": { "const": "C" },
+        "id": { "const": "criticalGateRateMinimum" },
+        "numerator": { "type": "integer", "minimum": 0 },
+        "denominator": { "type": "integer", "minimum": 1 },
+        "observed": { "type": "number", "minimum": 0, "maximum": 1 },
+        "minimum": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "aRequiredExecutionsLayerGateFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["layer", "id", "numerator", "denominator", "observed", "minimum"],
+      "properties": {
+        "layer": { "const": "A" },
+        "id": { "const": "requiredPassedExecutions" },
+        "numerator": { "type": "integer", "minimum": 0 },
+        "denominator": { "type": "integer", "minimum": 1 },
+        "observed": { "type": "integer", "minimum": 0 },
+        "minimum": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "bSuccessLayerGateFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["layer", "id", "numerator", "denominator", "observed", "minimum"],
+      "properties": {
+        "layer": { "const": "B" },
+        "id": { "const": "successRateMinimum" },
+        "numerator": { "type": "integer", "minimum": 0 },
+        "denominator": { "type": "integer", "minimum": 1 },
+        "observed": { "type": "number", "minimum": 0, "maximum": 1 },
+        "minimum": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "bEcosystemLayerGateFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["layer", "id", "ecosystem", "numerator", "denominator", "observed", "minimum"],
+      "properties": {
+        "layer": { "const": "B" },
+        "id": { "const": "requiredLanguageSuccessRateMinimum" },
+        "ecosystem": { "enum": ["javascript", "web-mixed", "go", "typescript"] },
+        "numerator": { "type": "integer", "minimum": 0 },
+        "denominator": { "type": "integer", "minimum": 1 },
+        "observed": { "type": "number", "minimum": 0, "maximum": 1 },
+        "minimum": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "bTestPassLayerGateFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["layer", "id", "numerator", "denominator", "observed", "minimum"],
+      "properties": {
+        "layer": { "const": "B" },
+        "id": { "const": "testPassRateMinimum" },
+        "numerator": { "type": "integer", "minimum": 0 },
+        "denominator": { "type": "integer", "minimum": 1 },
+        "observed": { "type": "number", "minimum": 0, "maximum": 1 },
+        "minimum": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "bPatchAcceptanceLayerGateFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["layer", "id", "numerator", "denominator", "observed", "minimum"],
+      "properties": {
+        "layer": { "const": "B" },
+        "id": { "const": "patchAcceptanceRateMinimum" },
+        "numerator": { "type": "integer", "minimum": 0 },
+        "denominator": { "type": "integer", "minimum": 1 },
+        "observed": { "type": "number", "minimum": 0, "maximum": 1 },
+        "minimum": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "bRegressionLayerGateFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["layer", "id", "observed", "maximum"],
+      "properties": {
+        "layer": { "const": "B" },
+        "id": { "const": "regressionCountMaximum" },
+        "observed": { "type": "integer", "minimum": 0 },
+        "maximum": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "cSuccessLayerGateFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["layer", "id", "numerator", "denominator", "observed", "minimum"],
+      "properties": {
+        "layer": { "const": "C" },
+        "id": { "const": "otherSystemSuccessRateMinimum" },
+        "numerator": { "type": "integer", "minimum": 0 },
+        "denominator": { "type": "integer", "minimum": 1 },
+        "observed": { "type": "number", "minimum": 0, "maximum": 1 },
+        "minimum": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "blockingReason": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "expectedRunCount", "collectedRunCount", "missingRunCount"],
+          "properties": {
+            "code": { "const": "incomplete_matrix" },
+            "expectedRunCount": { "type": "integer", "minimum": 1 },
+            "collectedRunCount": { "type": "integer", "minimum": 0 },
+            "missingRunCount": { "type": "integer", "minimum": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "failedGates"],
+          "properties": {
+            "code": { "const": "candidate_aggregate_hard_gate_failed" },
+            "failedGates": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/aggregateHardGateFailure" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "missingContracts"],
+          "properties": {
+            "code": { "const": "qualification_contract_incomplete" },
+            "missingContracts": {
+              "oneOf": [
+                {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 1,
+                  "prefixItems": [
+                    { "const": "dimension_evidence_mapping" }
+                  ],
+                  "items": false
+                },
+                {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "prefixItems": [
+                    { "const": "aggregate_missing_report_metric" },
+                    { "const": "dimension_evidence_mapping" }
+                  ],
+                  "items": false
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "path", "schemaVersion"],
+          "properties": {
+            "code": { "const": "candidate_global_receipt_missing" },
+            "path": { "type": "string", "minLength": 1 },
+            "schemaVersion": { "const": "coding-agent-benchmark-candidate-global-receipt/v1" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "path", "reason"],
+          "properties": {
+            "code": { "const": "candidate_global_receipt_invalid" },
+            "path": { "type": "string", "minLength": 1 },
+            "reason": { "const": "schema_validation_failed" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "path", "reason", "mismatchedFields"],
+          "properties": {
+            "code": { "const": "candidate_global_receipt_invalid" },
+            "path": { "type": "string", "minLength": 1 },
+            "reason": { "const": "aggregate_binding_mismatch" },
+            "mismatchedFields": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "aggregate.manifestSha256",
+                  "aggregate.reportSha256",
+                  "aggregate.indexSha256",
+                  "aggregate.source",
+                  "aggregate.harness"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "path", "reason", "unreadableFileCount"],
+          "properties": {
+            "code": { "const": "candidate_global_receipt_invalid" },
+            "path": { "type": "string", "minLength": 1 },
+            "reason": { "const": "sensitive_scan_incomplete" },
+            "unreadableFileCount": { "type": "integer", "minimum": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "path", "reason", "platforms"],
+          "properties": {
+            "code": { "const": "candidate_global_receipt_invalid" },
+            "path": { "type": "string", "minLength": 1 },
+            "reason": { "const": "resource_sweep_inconsistent" },
+            "platforms": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "enum": ["windows-native", "wsl2-linux"] }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "failedGates"],
+          "properties": {
+            "code": { "const": "candidate_global_hard_gate_failed" },
+            "failedGates": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/candidateGlobalHardGateFailure" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "failedGates"],
+          "properties": {
+            "code": { "const": "candidate_run_events_hard_gate_failed" },
+            "failedGates": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/runEventHardGateFailure" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "failedGates"],
+          "properties": {
+            "code": { "const": "candidate_layer_gate_failed" },
+            "failedGates": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "oneOf": [
+                  { "$ref": "#/$defs/cCriticalLayerGateFailure" },
+                  { "$ref": "#/$defs/aRequiredExecutionsLayerGateFailure" },
+                  { "$ref": "#/$defs/bSuccessLayerGateFailure" },
+                  { "$ref": "#/$defs/bEcosystemLayerGateFailure" },
+                  { "$ref": "#/$defs/bTestPassLayerGateFailure" },
+                  { "$ref": "#/$defs/bPatchAcceptanceLayerGateFailure" },
+                  { "$ref": "#/$defs/bRegressionLayerGateFailure" },
+                  { "$ref": "#/$defs/cSuccessLayerGateFailure" }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "partialDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "status", "generatedAt", "coverage", "scores", "blockingReasons"],
+      "properties": {
+        "schemaVersion": { "const": "coding-agent-benchmark-candidate-qualification/v1" },
+        "status": { "const": "not_eligible" },
+        "generatedAt": { "$ref": "#/$defs/timestamp" },
+        "coverage": { "$ref": "#/$defs/coverage" },
+        "scores": { "$ref": "#/$defs/scores" },
+        "blockingReasons": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": { "$ref": "#/$defs/blockingReason" }
+        }
+      }
+    }
+  }
+}

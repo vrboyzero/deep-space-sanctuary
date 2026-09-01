@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-candidate-coding-run-client-evidence-receipt-v1.json",
+  "title": "Star Sanctuary coding agent benchmark candidate coding-run client evidence receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "aggregate",
+    "audit"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "coding-agent-benchmark-candidate-coding-run-client-evidence-receipt/v1"
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "aggregate": {
+      "$ref": "#/$defs/aggregateBinding"
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verificationDag",
+        "nativeTestReport",
+        "testFiles"
+      ],
+      "properties": {
+        "verificationDag": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/artifactReference"
+            },
+            {
+              "properties": {
+                "artifactSchemaVersion": {
+                  "const": "verification-dag/v1"
+                },
+                "path": {
+                  "const": "candidate-evidence/coding-run-client/audit-verification-dag.json"
+                }
+              }
+            }
+          ]
+        },
+        "nativeTestReport": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "framework",
+            "format",
+            "runnerVersion",
+            "path",
+            "sha256"
+          ],
+          "properties": {
+            "framework": {
+              "const": "vitest"
+            },
+            "format": {
+              "const": "vitest-json/v3.2.7"
+            },
+            "runnerVersion": {
+              "const": "3.2.7"
+            },
+            "path": {
+              "const": "candidate-evidence/coding-run-client/audit-vitest-report.json"
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "testFiles": {
+          "const": [
+            "packages/belldandy-core/src/coding-run/stdio.test.ts",
+            "packages/belldandy-core/src/coding-run/client.test.ts",
+            "apps/vscode-extension/src/stdio-client.test.js",
+            "scripts/coding-run-client-conformance.test.mjs",
+            "scripts/coding-run-client-failure-conformance.test.mjs",
+            "scripts/run-coding-run-client-external-consumer.test.mjs",
+            "scripts/run-coding-run-client-typescript-consumer.test.mjs"
+          ]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "safeRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    },
+    "repositoryIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "workspaceDirty",
+        "lockfileSha256",
+        "worktreeContentSha256"
+      ],
+      "properties": {
+        "commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "workspaceDirty": {
+          "const": false
+        },
+        "lockfileSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "worktreeContentSha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "aggregateBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifestSha256",
+        "reportSha256",
+        "indexSha256",
+        "source",
+        "harness"
+      ],
+      "properties": {
+        "manifestSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "reportSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "indexSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "source": {
+          "$ref": "#/$defs/repositoryIdentity"
+        },
+        "harness": {
+          "$ref": "#/$defs/repositoryIdentity"
+        }
+      }
+    },
+    "artifactReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifactSchemaVersion",
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "artifactSchemaVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "path": {
+          "$ref": "#/$defs/safeRelativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    }
+  }
+}

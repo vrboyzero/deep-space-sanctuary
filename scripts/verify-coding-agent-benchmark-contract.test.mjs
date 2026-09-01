@@ -392,6 +392,197 @@ describe("coding agent benchmark repository contract", () => {
     }
   });
 
+  it("fails closed when the candidate qualification report Schema does not compile", async () => {
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-qualification-schema-"));
+    const schemaPath = path.join(
+      fixtureRoot,
+      "benchmarks",
+      "coding-agent",
+      "v3",
+      "candidate-qualification-report.schema.json",
+    );
+    try {
+      await fs.mkdir(path.dirname(schemaPath), { recursive: true });
+      await fs.writeFile(schemaPath, JSON.stringify({ type: 7 }), "utf-8");
+
+      const failures = await collectCodingAgentBenchmarkContractFailures({ workspaceRoot: fixtureRoot });
+      expect(failures).toEqual(expect.arrayContaining([
+        expect.stringMatching(/v3 candidate qualification report Schema does not compile/i),
+      ]));
+    } finally {
+      await fs.rm(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when candidate qualification report Schema versions drift", async () => {
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-qualification-version-"));
+    const schemaPath = path.join(
+      fixtureRoot,
+      "benchmarks",
+      "coding-agent",
+      "v3",
+      "candidate-qualification-report.schema.json",
+    );
+    const schema = JSON.parse(await fs.readFile(path.join(
+      workspaceRoot,
+      "benchmarks",
+      "coding-agent",
+      "v3",
+      "candidate-qualification-report.schema.json",
+    ), "utf-8"));
+    try {
+      await fs.mkdir(path.dirname(schemaPath), { recursive: true });
+
+      const reportVersionDrift = structuredClone(schema);
+      reportVersionDrift.properties.schemaVersion.const = "candidate-qualification-report/drifted";
+      await fs.writeFile(schemaPath, JSON.stringify(reportVersionDrift), "utf-8");
+      const reportFailures = await collectCodingAgentBenchmarkContractFailures({ workspaceRoot: fixtureRoot });
+      expect(reportFailures).toEqual(expect.arrayContaining([
+        expect.stringMatching(/candidate qualification report Schema version drifted/i),
+      ]));
+
+      const decisionVersionDrift = structuredClone(schema);
+      decisionVersionDrift.$defs.partialDecision.properties.schemaVersion.const =
+        "candidate-qualification/drifted";
+      await fs.writeFile(schemaPath, JSON.stringify(decisionVersionDrift), "utf-8");
+      const decisionFailures = await collectCodingAgentBenchmarkContractFailures({ workspaceRoot: fixtureRoot });
+      expect(decisionFailures).toEqual(expect.arrayContaining([
+        expect.stringMatching(/candidate qualification decision Schema version drifted/i),
+      ]));
+
+      const digestVersionDrift = structuredClone(schema);
+      digestVersionDrift.$defs.source.properties.evidence.properties.schemaVersion.const =
+        "qualification-evidence-digest/drifted";
+      await fs.writeFile(schemaPath, JSON.stringify(digestVersionDrift), "utf-8");
+      const digestFailures = await collectCodingAgentBenchmarkContractFailures({ workspaceRoot: fixtureRoot });
+      expect(digestFailures).toEqual(expect.arrayContaining([
+        expect.stringMatching(/qualification evidence digest Schema version drifted/i),
+      ]));
+    } finally {
+      await fs.rm(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when candidate qualification repository wiring is absent", async () => {
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-qualification-wiring-"));
+    try {
+      await fs.mkdir(path.join(fixtureRoot, "benchmarks", "coding-agent"), { recursive: true });
+      await fs.mkdir(path.join(fixtureRoot, "docs"), { recursive: true });
+      await fs.writeFile(path.join(fixtureRoot, "package.json"), JSON.stringify({ scripts: {} }), "utf-8");
+      await fs.writeFile(path.join(fixtureRoot, "benchmarks", "coding-agent", "README.md"), "", "utf-8");
+      await fs.writeFile(path.join(fixtureRoot, "docs", "project-map.md"), "", "utf-8");
+
+      const failures = await collectCodingAgentBenchmarkContractFailures({ workspaceRoot: fixtureRoot });
+      expect(failures).toEqual(expect.arrayContaining([
+        "package.json must expose benchmark:coding-agent:v3:candidate-qualification.",
+        "coding benchmark README must document benchmark:coding-agent:v3:candidate-qualification.",
+        "coding benchmark README must document coding-agent-benchmark-candidate-qualification-report/v1.",
+        "coding benchmark README must document candidate-qualification.json.",
+        "docs/project-map.md must describe scripts/run-coding-agent-candidate-qualification.mjs.",
+        "docs/project-map.md must describe benchmarks/coding-agent/v3/candidate-qualification-report.schema.json.",
+      ]));
+    } finally {
+      await fs.rm(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when candidate dimension and Supervisor repository wiring is absent", async () => {
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-dimension-wiring-"));
+    try {
+      await fs.mkdir(path.join(fixtureRoot, "benchmarks", "coding-agent"), { recursive: true });
+      await fs.mkdir(path.join(fixtureRoot, "docs"), { recursive: true });
+      await fs.writeFile(path.join(fixtureRoot, "package.json"), JSON.stringify({ scripts: {} }), "utf-8");
+      await fs.writeFile(path.join(fixtureRoot, "benchmarks", "coding-agent", "README.md"), "", "utf-8");
+      await fs.writeFile(path.join(fixtureRoot, "docs", "project-map.md"), "", "utf-8");
+
+      const failures = await collectCodingAgentBenchmarkContractFailures({ workspaceRoot: fixtureRoot });
+      expect(failures).toEqual(expect.arrayContaining([
+        expect.stringMatching(/v3\/candidate-dimension-mapping\.json is missing/i),
+        expect.stringMatching(/v3\/candidate-dimension-mapping\.schema\.json is missing/i),
+        expect.stringMatching(/v3\/candidate-dimension-evidence-reference\.schema\.json is missing/i),
+        expect.stringMatching(/v3\/candidate-supervisor-evidence-receipt\.schema\.json is missing/i),
+        expect.stringMatching(/scripts\/coding-agent-candidate-score\.mjs is missing/i),
+        "package.json must expose verify:p2a-supervisor-fault-audit.",
+        "coding benchmark README must document candidate-dimension-mapping.json.",
+        "coding benchmark README must document candidate-dimension-evidence-reference.json.",
+        "coding benchmark README must document coding-agent-benchmark-candidate-supervisor-evidence-receipt/v1.",
+        "coding benchmark README must document session_long_running.",
+        "coding benchmark README must document supervisor_dual_platform_60_minute_soak.",
+        "coding benchmark README must document bounded_budget_cancel_restart_reattach.",
+        "coding benchmark README must document managed_worktree_fan_in_review_remediation.",
+        "coding benchmark README must document parallel_resource_convergence.",
+        "coding benchmark README must document verify:p2a-supervisor-fault-audit.",
+        "docs/project-map.md must describe scripts/coding-agent-candidate-score.mjs.",
+        "docs/project-map.md must describe benchmarks/coding-agent/v3/candidate-dimension-mapping.json.",
+        "docs/project-map.md must describe benchmarks/coding-agent/v3/candidate-dimension-mapping.schema.json.",
+        "docs/project-map.md must describe benchmarks/coding-agent/v3/candidate-dimension-evidence-reference.schema.json.",
+        "docs/project-map.md must describe benchmarks/coding-agent/v3/candidate-supervisor-evidence-receipt.schema.json.",
+      ]));
+    } finally {
+      await fs.rm(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when candidate Verification repository wiring is absent", async () => {
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-verification-wiring-"));
+    try {
+      await fs.mkdir(path.join(fixtureRoot, "benchmarks", "coding-agent"), { recursive: true });
+      await fs.mkdir(path.join(fixtureRoot, "docs"), { recursive: true });
+      await fs.writeFile(path.join(fixtureRoot, "package.json"), JSON.stringify({ scripts: {} }), "utf-8");
+      await fs.writeFile(path.join(fixtureRoot, "benchmarks", "coding-agent", "README.md"), "", "utf-8");
+      await fs.writeFile(path.join(fixtureRoot, "docs", "project-map.md"), "", "utf-8");
+
+      const failures = await collectCodingAgentBenchmarkContractFailures({ workspaceRoot: fixtureRoot });
+      expect(failures).toEqual(expect.arrayContaining([
+        expect.stringMatching(/v3\/candidate-verification-evidence-receipt\.schema\.json is missing/i),
+        "package.json must expose verify:p1b-verification-audit.",
+        "coding benchmark README must document coding-agent-benchmark-candidate-verification-evidence-receipt/v1.",
+        "coding benchmark README must document verify:p1b-verification-audit.",
+        "docs/project-map.md must describe benchmarks/coding-agent/v3/candidate-verification-evidence-receipt.schema.json.",
+      ]));
+    } finally {
+      await fs.rm(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when candidate coding-run client repository wiring is absent", async () => {
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-coding-run-client-wiring-"));
+    try {
+      await fs.mkdir(path.join(fixtureRoot, "benchmarks", "coding-agent"), { recursive: true });
+      await fs.mkdir(path.join(fixtureRoot, "docs"), { recursive: true });
+      await fs.writeFile(path.join(fixtureRoot, "package.json"), JSON.stringify({ scripts: {} }), "utf-8");
+      await fs.writeFile(path.join(fixtureRoot, "benchmarks", "coding-agent", "README.md"), "", "utf-8");
+      await fs.writeFile(path.join(fixtureRoot, "docs", "project-map.md"), "", "utf-8");
+
+      const failures = await collectCodingAgentBenchmarkContractFailures({ workspaceRoot: fixtureRoot });
+      expect(failures).toEqual(expect.arrayContaining([
+        expect.stringMatching(/v3\/candidate-coding-run-client-evidence-receipt\.schema\.json is missing/i),
+        expect.stringMatching(/v3\/candidate-coding-run-client-ci-evidence-receipt\.schema\.json is missing/i),
+        expect.stringMatching(/v3\/coding-run-client-ci-lane-evidence\.schema\.json is missing/i),
+        expect.stringMatching(/scripts\/run-coding-run-client-ci-lane-receipt\.mjs is missing/i),
+        "package.json must expose verify:coding-run-client.",
+        "coding benchmark README must document coding-agent-benchmark-candidate-coding-run-client-evidence-receipt/v1.",
+        "coding benchmark README must document coding-agent-benchmark-candidate-coding-run-client-ci-evidence-receipt/v1.",
+        "coding benchmark README must document coding-agent-benchmark-coding-run-client-ci-lane-evidence/v1.",
+        "coding benchmark README must document headless_ecosystem.",
+        "coding benchmark README must document external_consumer_pair_lifecycle.",
+        "coding benchmark README must document protocol_version_conformance.",
+        "coding benchmark README must document error_taxonomy_cancellation_conformance.",
+        "coding benchmark README must document real_ci_consumer_binding.",
+        "coding benchmark README must document verify:coding-run-client.",
+        "docs/project-map.md must describe benchmarks/coding-agent/v3/candidate-coding-run-client-evidence-receipt.schema.json.",
+        "docs/project-map.md must describe benchmarks/coding-agent/v3/candidate-coding-run-client-ci-evidence-receipt.schema.json.",
+        "docs/project-map.md must describe benchmarks/coding-agent/v3/coding-run-client-ci-lane-evidence.schema.json.",
+        "docs/project-map.md must describe scripts/run-coding-run-client-ci-lane-receipt.mjs.",
+        "docs/project-map.md must describe candidateCodingRunClientReceipt.",
+        "quality-gates.yml must produce coding-run client CI lane receipts after verification.",
+        "quality-gates.yml must always upload both coding-run client CI evidence files.",
+      ]));
+    } finally {
+      await fs.rm(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when the public v3 schemas are absent", async () => {
     const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-v3-contract-"));
     try {
@@ -401,6 +592,7 @@ describe("coding agent benchmark repository contract", () => {
         expect.stringMatching(/v3\/benchmark-run\.schema\.json is missing/i),
         expect.stringMatching(/v3\/benchmark-report\.schema\.json is missing/i),
         expect.stringMatching(/v3\/scorecard\.schema\.json is missing/i),
+        expect.stringMatching(/v3\/candidate-qualification-report\.schema\.json is missing/i),
         expect.stringMatching(/v3\/repository-inputs\.schema\.json is missing/i),
         expect.stringMatching(/v3\/linux-snapshot-preparation\.schema\.json is missing/i),
         expect.stringMatching(/v3\/preflight\.schema\.json is missing/i),

@@ -97,6 +97,44 @@ test("quality gate verifies coding CI compatibility on Windows and Linux", () =>
   expect(codingCiJob).not.toMatch(/\b(?:contents|packages|actions|attestations|id-token): write\b/);
 });
 
+test("coding CI lanes retain native reports and receipts after trustworthy test failures", () => {
+  const workflow = readQualityGatesWorkflow();
+  const codingCiJob = readWorkflowJob(workflow, "coding-ci-contract");
+  const rootPackage = readRootPackageJson();
+
+  expect(rootPackage.scripts?.["verify:coding-run-client"]).toMatch(
+    /--reporter=json --outputFile=artifacts\/coding-run-client-ci\/vitest-report\.json$/,
+  );
+  expect(codingCiJob).toMatch(
+    /name: Verify coding-run client conformance\s+id: coding-run-client-verification\s+run: pnpm verify:coding-run-client/,
+  );
+  expect(codingCiJob).toMatch(
+    /name: Produce coding-run client CI lane receipt\s+if: always\(\) && github\.event_name != 'pull_request'\s+run: >-\s+node --import tsx scripts\/run-coding-run-client-ci-lane-receipt\.mjs/,
+  );
+  expect(codingCiJob).toContain("--report artifacts/coding-run-client-ci/vitest-report.json");
+  expect(codingCiJob).toContain("--output artifacts/coding-run-client-ci/lane-receipt.json");
+  expect(codingCiJob).toContain("--platform ${{ matrix.os }}");
+  expect(codingCiJob).toContain(
+    "--test-outcome ${{ steps.coding-run-client-verification.outcome }}",
+  );
+  expect(codingCiJob).toMatch(
+    /name: Upload coding-run client CI evidence\s+if: always\(\) && github\.event_name != 'pull_request'\s+uses: actions\/upload-artifact@[0-9a-f]{40}/,
+  );
+  expect(codingCiJob).toContain("name: coding-run-client-ci-${{ matrix.os }}");
+  expect(codingCiJob).toMatch(
+    /path: \|\s+artifacts\/coding-run-client-ci\/lane-receipt\.json\s+artifacts\/coding-run-client-ci\/vitest-report\.json/,
+  );
+  expect(codingCiJob).toContain("if-no-files-found: error");
+
+  const verificationIndex = codingCiJob.indexOf("name: Verify coding-run client conformance");
+  const producerIndex = codingCiJob.indexOf("name: Produce coding-run client CI lane receipt");
+  const uploadIndex = codingCiJob.indexOf("name: Upload coding-run client CI evidence");
+  expect(verificationIndex).toBeGreaterThan(-1);
+  expect(producerIndex).toBeGreaterThan(verificationIndex);
+  expect(uploadIndex).toBeGreaterThan(producerIndex);
+  expect(codingCiJob.slice(verificationIndex, producerIndex)).not.toContain("continue-on-error");
+});
+
 test("Docker workflow grants repository write permission only to the GitHub Release job", () => {
   const workflow = readDockerWorkflow();
   const buildAndTestJob = readWorkflowJob(workflow, "build-and-test");

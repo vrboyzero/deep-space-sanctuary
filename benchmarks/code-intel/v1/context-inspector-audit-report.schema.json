@@ -1,0 +1,499 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.local/schemas/code-intel/context-inspector-audit-report-v1.schema.json",
+  "title": "Star Sanctuary CodeIntel Context Inspector audit report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "harness",
+    "sourceIdentity",
+    "contract",
+    "scenarios",
+    "execution",
+    "gate"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "code-intel-context-inspector-audit-report/v1"
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "harness": {
+      "$ref": "#/$defs/repositoryIdentity"
+    },
+    "sourceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["aggregateSha256", "files"],
+      "properties": {
+        "aggregateSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "files": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/projectionSourceFile"
+            },
+            {
+              "$ref": "#/$defs/typesSourceFile"
+            }
+          ],
+          "items": false
+        }
+      }
+    },
+    "contract": {
+      "const": {
+        "version": "code-intel/v1",
+        "projection": "projectCodeIntelQueryResult",
+        "coordinateSystem": "zero-based-line-column",
+        "mutationAuthority": "none"
+      }
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "prefixItems": [
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/scenario"
+            },
+            {
+              "properties": {
+                "id": { "const": "fresh-completed" },
+                "input": {
+                  "properties": {
+                    "status": { "const": "completed" },
+                    "freshness": {
+                      "const": { "status": "fresh" }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/scenario"
+            },
+            {
+              "properties": {
+                "id": { "const": "stale-partial" },
+                "input": {
+                  "properties": {
+                    "status": { "const": "partial" },
+                    "freshness": {
+                      "const": {
+                        "status": "stale",
+                        "reason": "workspace_revision_changed"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/scenario"
+            },
+            {
+              "properties": {
+                "id": { "const": "unknown-partial" },
+                "input": {
+                  "properties": {
+                    "status": { "const": "partial" },
+                    "freshness": {
+                      "const": {
+                        "status": "unknown",
+                        "reason": "provider_refresh_pending"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "items": false
+    },
+    "execution": {
+      "const": {
+        "mode": "read-only",
+        "gatewayCalls": 0,
+        "modelCalls": 0,
+        "providerCalls": 0,
+        "networkCalls": 0,
+        "credentialsRead": false,
+        "workspaceMutations": 0
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "failures"],
+      "properties": {
+        "passed": {
+          "type": "boolean"
+        },
+        "failures": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "projection_shape_mismatch",
+              "coordinate_system_mismatch",
+              "mutation_authority_exposed"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha1": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "safeRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    },
+    "repositoryIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "workspaceDirty",
+        "lockfileSha256",
+        "worktreeContentSha256"
+      ],
+      "properties": {
+        "commit": {
+          "$ref": "#/$defs/sha1"
+        },
+        "workspaceDirty": {
+          "const": false
+        },
+        "lockfileSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "worktreeContentSha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "sourceFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "runtimePath", "runtimeSha256"],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/safeRelativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "runtimePath": {
+          "$ref": "#/$defs/safeRelativePath"
+        },
+        "runtimeSha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "projectionSourceFile": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/sourceFile"
+        },
+        {
+          "properties": {
+            "path": {
+              "const": "packages/belldandy-skills/src/code-intel/projection.ts"
+            },
+            "runtimePath": {
+              "const": "packages/belldandy-skills/dist/code-intel/projection.js"
+            }
+          }
+        }
+      ]
+    },
+    "typesSourceFile": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/sourceFile"
+        },
+        {
+          "properties": {
+            "path": {
+              "const": "packages/belldandy-skills/src/code-intel/types.ts"
+            },
+            "runtimePath": {
+              "const": "packages/belldandy-skills/dist/code-intel/types.js"
+            }
+          }
+        }
+      ]
+    },
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["line", "column"],
+      "properties": {
+        "line": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "evidenceItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["location", "symbolKind", "documentRevision"],
+      "properties": {
+        "location": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["scope", "path", "range"],
+          "properties": {
+            "scope": {
+              "enum": ["workspace", "external"]
+            },
+            "path": {
+              "$ref": "#/$defs/safeRelativePath"
+            },
+            "range": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["start", "end"],
+              "properties": {
+                "start": {
+                  "$ref": "#/$defs/position"
+                },
+                "end": {
+                  "$ref": "#/$defs/position"
+                }
+              }
+            }
+          }
+        },
+        "symbolKind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "documentRevision": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        }
+      }
+    },
+    "freshness": {
+      "oneOf": [
+        {
+          "const": { "status": "fresh" }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason"],
+          "properties": {
+            "status": {
+              "const": "stale"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason"],
+          "properties": {
+            "status": {
+              "const": "unknown"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ]
+    },
+    "queryResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "operation",
+        "status",
+        "items",
+        "page",
+        "freshness",
+        "provenance",
+        "diagnostics"
+      ],
+      "properties": {
+        "contractVersion": {
+          "const": "code-intel/v1"
+        },
+        "operation": {
+          "enum": ["symbols", "definition", "references", "implementation"]
+        },
+        "status": {
+          "enum": ["completed", "partial"]
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidenceItem"
+          }
+        },
+        "page": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["returned", "truncated"],
+          "properties": {
+            "returned": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "nextCursor": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "freshness": {
+          "$ref": "#/$defs/freshness"
+        },
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "providerId",
+            "providerVersion",
+            "capability",
+            "workspaceRevision",
+            "observedAtMs"
+          ],
+          "properties": {
+            "providerId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "providerVersion": {
+              "type": "string",
+              "minLength": 1
+            },
+            "capability": {
+              "enum": [
+                "semantic-live",
+                "semantic-snapshot",
+                "syntax-fallback",
+                "text-search"
+              ]
+            },
+            "workspaceRevision": {
+              "type": "string",
+              "minLength": 1
+            },
+            "observedAtMs": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "message"],
+            "properties": {
+              "code": {
+                "type": "string",
+                "minLength": 1
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "coordinateSystem": {
+          "const": "zero-based-line-column"
+        }
+      }
+    },
+    "queryInput": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/queryResult"
+        },
+        {
+          "not": {
+            "required": ["coordinateSystem"]
+          }
+        }
+      ]
+    },
+    "observedProjection": {
+      "type": "object"
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "inputSha256", "projectionSha256", "input", "projection"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "inputSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "projectionSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "input": {
+          "$ref": "#/$defs/queryInput"
+        },
+        "projection": {
+          "$ref": "#/$defs/observedProjection"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-coding-run-client-ci-lane-evidence-v1.json",
+  "title": "Star Sanctuary coding agent benchmark coding-run client CI lane evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "command",
+    "github",
+    "runner",
+    "report"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "coding-agent-benchmark-coding-run-client-ci-lane-evidence/v1"
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "command": {
+      "const": "corepack pnpm verify:coding-run-client"
+    },
+    "github": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repositoryId",
+        "repository",
+        "workflow",
+        "workflowRef",
+        "job",
+        "runId",
+        "runAttempt",
+        "sha",
+        "ref"
+      ],
+      "properties": {
+        "repositoryId": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "repository": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          "maxLength": 200
+        },
+        "workflow": {
+          "const": "Quality Gates"
+        },
+        "workflowRef": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/\\.github/workflows/quality-gates\\.yml@refs/(?:heads|tags)/[^\\s]+$",
+          "maxLength": 500
+        },
+        "job": {
+          "const": "coding-ci-contract"
+        },
+        "runId": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "runAttempt": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "sha": {
+          "$ref": "#/$defs/sha1"
+        },
+        "ref": {
+          "type": "string",
+          "pattern": "^refs/(?:heads|tags)/[^\\s]+$",
+          "maxLength": 500
+        }
+      }
+    },
+    "runner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "os",
+        "arch"
+      ],
+      "properties": {
+        "platform": {
+          "enum": [
+            "ubuntu-latest",
+            "windows-latest"
+          ]
+        },
+        "os": {
+          "enum": [
+            "Linux",
+            "Windows"
+          ]
+        },
+        "arch": {
+          "const": "X64"
+        }
+      }
+    },
+    "report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "framework",
+        "format",
+        "runnerVersion",
+        "path",
+        "sha256",
+        "testFiles"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "passed",
+            "failed"
+          ]
+        },
+        "framework": {
+          "const": "vitest"
+        },
+        "format": {
+          "const": "vitest-json/v3.2.7"
+        },
+        "runnerVersion": {
+          "const": "3.2.7"
+        },
+        "path": {
+          "const": "vitest-report.json"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "testFiles": {
+          "$ref": "#/$defs/auditTestFiles"
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "runner": {
+          "properties": {
+            "platform": {
+              "const": "ubuntu-latest"
+            },
+            "os": {
+              "const": "Linux"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "runner": {
+          "properties": {
+            "platform": {
+              "const": "windows-latest"
+            },
+            "os": {
+              "const": "Windows"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "positiveInteger": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "sha1": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "auditTestFiles": {
+      "const": [
+        "packages/belldandy-core/src/coding-run/stdio.test.ts",
+        "packages/belldandy-core/src/coding-run/client.test.ts",
+        "apps/vscode-extension/src/stdio-client.test.js",
+        "scripts/coding-run-client-conformance.test.mjs",
+        "scripts/coding-run-client-failure-conformance.test.mjs",
+        "scripts/run-coding-run-client-external-consumer.test.mjs",
+        "scripts/run-coding-run-client-typescript-consumer.test.mjs"
+      ]
+    }
+  }
+}

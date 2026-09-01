@@ -86,7 +86,28 @@ jobs:
         run: pnpm verify:coding-ci
 
       - name: Verify coding-run client conformance
+        id: coding-run-client-verification
         run: pnpm verify:coding-run-client
+
+      - name: Produce coding-run client CI lane receipt
+        if: always() && github.event_name != 'pull_request'
+        run: >-
+          node --import tsx scripts/run-coding-run-client-ci-lane-receipt.mjs
+          --report artifacts/coding-run-client-ci/vitest-report.json
+          --output artifacts/coding-run-client-ci/lane-receipt.json
+          --platform ${{ matrix.os }}
+          --test-outcome ${{ steps.coding-run-client-verification.outcome }}
+
+      - name: Upload coding-run client CI evidence
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: coding-run-client-ci-${{ matrix.os }}
+          path: |
+            artifacts/coding-run-client-ci/lane-receipt.json
+            artifacts/coding-run-client-ci/vitest-report.json
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Verify coding benchmark contracts
         run: pnpm verify:coding-benchmark

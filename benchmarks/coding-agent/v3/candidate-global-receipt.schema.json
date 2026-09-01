@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-candidate-global-receipt-v1.json",
+  "title": "Star Sanctuary coding agent benchmark candidate-global receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "aggregate",
+    "sensitiveScan",
+    "resourceSweeps"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "coding-agent-benchmark-candidate-global-receipt/v1" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "aggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifestSha256",
+        "reportSha256",
+        "indexSha256",
+        "source",
+        "harness"
+      ],
+      "properties": {
+        "manifestSha256": { "$ref": "#/$defs/sha256" },
+        "reportSha256": { "$ref": "#/$defs/sha256" },
+        "indexSha256": { "$ref": "#/$defs/sha256" },
+        "source": { "$ref": "#/$defs/repositoryIdentity" },
+        "harness": { "$ref": "#/$defs/repositoryIdentity" }
+      }
+    },
+    "sensitiveScan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "scope",
+        "linkPolicy",
+        "contentPolicy",
+        "rootCount",
+        "regularFileCount",
+        "unreadableFileCount",
+        "symlinkOrReparsePointCount",
+        "findingCount"
+      ],
+      "properties": {
+        "status": { "const": "completed" },
+        "scope": { "const": "candidate_declared_roots" },
+        "linkPolicy": { "const": "count_do_not_follow" },
+        "contentPolicy": { "const": "exact_values_non_echoing" },
+        "rootCount": { "type": "integer", "minimum": 1 },
+        "regularFileCount": { "type": "integer", "minimum": 1 },
+        "unreadableFileCount": { "type": "integer", "minimum": 0 },
+        "symlinkOrReparsePointCount": { "type": "integer", "minimum": 0 },
+        "findingCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "resourceSweeps": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "allOf": [
+            { "$ref": "#/$defs/resourceSweep" },
+            { "properties": { "platform": { "const": "windows-native" } } }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/resourceSweep" },
+            { "properties": { "platform": { "const": "wsl2-linux" } } }
+          ]
+        }
+      ],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "repositoryIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "workspaceDirty",
+        "lockfileSha256",
+        "worktreeContentSha256"
+      ],
+      "properties": {
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "workspaceDirty": { "const": false },
+        "lockfileSha256": { "$ref": "#/$defs/sha256" },
+        "worktreeContentSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "resourceSweep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "status",
+        "scope",
+        "remainingListenerCount",
+        "remainingOwnedProcessCount",
+        "remainingRuntimeMarkerCount",
+        "remainingRuntimeEnvFileCount",
+        "orphanResourceCount"
+      ],
+      "properties": {
+        "platform": { "enum": ["windows-native", "wsl2-linux"] },
+        "status": { "const": "completed" },
+        "scope": { "const": "candidate_owned_resources" },
+        "remainingListenerCount": { "type": "integer", "minimum": 0 },
+        "remainingOwnedProcessCount": { "type": "integer", "minimum": 0 },
+        "remainingRuntimeMarkerCount": { "type": "integer", "minimum": 0 },
+        "remainingRuntimeEnvFileCount": { "type": "integer", "minimum": 0 },
+        "orphanResourceCount": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

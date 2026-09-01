@@ -21,6 +21,10 @@ import {
   validateCodingAgentBenchmarkScorecardV3,
 } from "./coding-agent-benchmark-v3-contract.mjs";
 import {
+  CODING_AGENT_EXPECTED_REPORT_EVIDENCE_VERSION,
+  CODING_AGENT_EXPECTED_REPORT_PLAN_VERSION,
+} from "./aggregate-coding-agent-benchmark.mjs";
+import {
   CODING_AGENT_BENCHMARK_SNAPSHOT_RECEIPT_VERSION,
   validateCodingAgentBenchmarkV3SnapshotReceipt,
 } from "./coding-agent-benchmark-v3-fixtures.mjs";
@@ -70,9 +74,70 @@ import {
 import {
   CODING_AGENT_BENCHMARK_FAILURE_ANALYSIS_VERSION,
 } from "./run-coding-agent-benchmark-failure-analysis.mjs";
+import {
+  CODING_AGENT_CANDIDATE_GLOBAL_RUNNER_INPUT_VERSION,
+} from "./run-coding-agent-candidate-global-receipt.mjs";
+import {
+  CODING_AGENT_CANDIDATE_QUALIFICATION_VERSION,
+} from "./coding-agent-candidate-qualification.mjs";
+import {
+  CODING_AGENT_CANDIDATE_QUALIFICATION_REPORT_VERSION,
+  CODING_AGENT_QUALIFICATION_EVIDENCE_DIGEST_VERSION,
+} from "./run-coding-agent-candidate-qualification.mjs";
+import {
+  CODING_AGENT_CANDIDATE_CODING_RUN_CLIENT_EVIDENCE_RECEIPT_VERSION,
+  CODING_AGENT_CANDIDATE_CODING_RUN_CLIENT_CI_EVIDENCE_RECEIPT_VERSION,
+  CODING_AGENT_CANDIDATE_DIMENSION_EVIDENCE_REFERENCE_VERSION,
+  CODING_AGENT_CANDIDATE_DIMENSION_MAPPING_VERSION,
+  CODING_AGENT_CANDIDATE_SUPERVISOR_EVIDENCE_RECEIPT_VERSION,
+  CODING_AGENT_CANDIDATE_VERIFICATION_EVIDENCE_RECEIPT_VERSION,
+} from "./coding-agent-candidate-score.mjs";
+import { CODING_RUN_CLIENT_CI_LANE_EVIDENCE_VERSION } from "./run-coding-run-client-ci-lane-receipt.mjs";
 import { resolveCodingCiProfile } from "./run-coding-agent-ci.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
+const EXPECTED_CODING_RUN_CLIENT_AUDIT_SCRIPT = [
+  "vitest run",
+  "packages/belldandy-core/src/coding-run/stdio.test.ts",
+  "packages/belldandy-core/src/coding-run/client.test.ts",
+  "apps/vscode-extension/src/stdio-client.test.js",
+  "scripts/coding-run-client-conformance.test.mjs",
+  "scripts/coding-run-client-failure-conformance.test.mjs",
+  "scripts/run-coding-run-client-external-consumer.test.mjs",
+  "scripts/run-coding-run-client-typescript-consumer.test.mjs",
+  "--reporter=json",
+  "--outputFile=artifacts/coding-run-client-ci/vitest-report.json",
+].join(" ");
+const EXPECTED_P1B_VERIFICATION_AUDIT_SCRIPT = [
+  "vitest run",
+  "scripts/run-verification-impact-truth-set.test.mjs",
+  "scripts/verification-test-report-adapter.test.mjs",
+  "scripts/run-verification-dag.test.mjs",
+  "scripts/verification-browser-report-adapter.test.mjs",
+  "--reporter=json",
+].join(" ");
+const EXPECTED_P2A_SUPERVISOR_FAULT_AUDIT_SCRIPT = [
+  "vitest run",
+  "packages/belldandy-core/src/subtask-supervisor-runtime.test.ts",
+  "packages/belldandy-core/src/subtask-supervisor-control-runtime.test.ts",
+  "packages/belldandy-core/src/subtask-supervisor-fan-in-runtime.test.ts",
+  "packages/belldandy-core/src/subtask-supervisor-fan-in-resolution-runtime.test.ts",
+  "packages/belldandy-core/src/subtask-supervisor-fan-in-process-recovery.test.ts",
+  "packages/belldandy-core/src/subtask-supervisor-approval-crash-recovery.test.ts",
+  "packages/belldandy-core/src/subtask-supervisor-worktree-disposal-runtime.test.ts",
+  "packages/belldandy-core/src/subtask-supervisor-worktree-disposal-process-recovery.test.ts",
+  "packages/belldandy-core/src/managed-worktree.test.ts",
+  "packages/belldandy-core/src/worktree-runtime.test.ts",
+  "packages/belldandy-core/src/task-runtime.test.ts",
+  "packages/belldandy-core/src/bridge-subtask-runtime.test.ts",
+  "packages/belldandy-core/src/coding-run/pending-tool-permission-runtime.test.ts",
+  "packages/belldandy-core/src/coding-run/reconciliation-journal.test.ts",
+  "packages/belldandy-skills/src/builtin/session/session-tools.test.ts",
+  "packages/belldandy-skills/src/tool-behavior-contract.test.ts",
+  "packages/belldandy-skills/src/tool-contract-v2.test.ts",
+  "scripts/run-subtask-supervisor-soak.test.mjs",
+  "--reporter=json",
+].join(" ");
 
 export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   const workspaceRoot = input.workspaceRoot
@@ -124,6 +189,45 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   const runV3Schema = await readJson("benchmarks/coding-agent/v3/benchmark-run.schema.json");
   const reportV3Schema = await readJson("benchmarks/coding-agent/v3/benchmark-report.schema.json");
   const scorecardV3Schema = await readJson("benchmarks/coding-agent/v3/scorecard.schema.json");
+  const expectedReportPlanV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/expected-report-plan.schema.json",
+  );
+  const expectedReportsV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/expected-reports.schema.json",
+  );
+  const candidateDimensionMappingV3 = await readJson(
+    "benchmarks/coding-agent/v3/candidate-dimension-mapping.json",
+  );
+  const candidateDimensionMappingV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/candidate-dimension-mapping.schema.json",
+  );
+  const candidateDimensionEvidenceReferenceV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/candidate-dimension-evidence-reference.schema.json",
+  );
+  const candidateSupervisorEvidenceReceiptV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/candidate-supervisor-evidence-receipt.schema.json",
+  );
+  const candidateVerificationEvidenceReceiptV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/candidate-verification-evidence-receipt.schema.json",
+  );
+  const candidateCodingRunClientEvidenceReceiptV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/candidate-coding-run-client-evidence-receipt.schema.json",
+  );
+  const candidateCodingRunClientCiEvidenceReceiptV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/candidate-coding-run-client-ci-evidence-receipt.schema.json",
+  );
+  const codingRunClientCiLaneEvidenceV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/coding-run-client-ci-lane-evidence.schema.json",
+  );
+  const candidateGlobalRunnerInputV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/candidate-global-runner-input.schema.json",
+  );
+  const candidateGlobalReceiptV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/candidate-global-receipt.schema.json",
+  );
+  const candidateQualificationReportV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/candidate-qualification-report.schema.json",
+  );
   const repositoryInputsV3Schema = await readJson(
     "benchmarks/coding-agent/v3/repository-inputs.schema.json",
   );
@@ -217,6 +321,12 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   await readText("scripts/run-coding-agent-benchmark-failure-analysis.mjs");
   await readText("scripts/run-coding-agent-benchmark-navigation-candidate-v2.mjs");
   await readText("scripts/run-coding-agent-benchmark-navigation-candidate-v3.mjs");
+  await readText("scripts/coding-agent-candidate-evidence.mjs");
+  await readText("scripts/coding-agent-candidate-score.mjs");
+  await readText("scripts/coding-agent-candidate-qualification.mjs");
+  await readText("scripts/run-coding-agent-candidate-global-receipt.mjs");
+  await readText("scripts/run-coding-agent-candidate-qualification.mjs");
+  await readText("scripts/run-coding-run-client-ci-lane-receipt.mjs");
   const projectMap = await readText("docs/project-map.md");
   const qualityGates = await readText(".github/workflows/quality-gates.yml");
 
@@ -314,6 +424,8 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   validateSchema(failures, "v3 benchmark run", runV3Schema);
   validateSchema(failures, "v3 benchmark report", reportV3Schema);
   validateSchema(failures, "v3 scorecard", scorecardV3Schema, scorecardV3);
+  validateSchema(failures, "v3 expected report plan", expectedReportPlanV3Schema);
+  validateSchema(failures, "v3 retained expected reports", expectedReportsV3Schema);
   validateSchema(failures, "v3 repository inputs", repositoryInputsV3Schema);
   validateSchema(failures, "v3 Linux snapshot preparation", linuxSnapshotPreparationV3Schema);
   validateSchema(failures, "v3 runtime preflight", runtimePreflightV3Schema);
@@ -345,6 +457,45 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   validateSchema(failures, "v3 failure analysis", failureAnalysisV3Schema);
   validateSchema(failures, "v3 navigation candidate v2", navigationCandidateV2V3Schema);
   validateSchema(failures, "v3 navigation candidate v3", navigationCandidateV3V3Schema);
+  validateSchema(failures, "v3 candidate-global runner input", candidateGlobalRunnerInputV3Schema);
+  validateSchema(failures, "v3 candidate-global receipt", candidateGlobalReceiptV3Schema);
+  validateSchema(failures, "v3 candidate qualification report", candidateQualificationReportV3Schema);
+  validateSchema(
+    failures,
+    "v3 candidate dimension mapping",
+    candidateDimensionMappingV3Schema,
+    candidateDimensionMappingV3,
+  );
+  validateSchema(
+    failures,
+    "v3 candidate dimension evidence reference",
+    candidateDimensionEvidenceReferenceV3Schema,
+  );
+  validateSchema(
+    failures,
+    "v3 candidate Supervisor evidence receipt",
+    candidateSupervisorEvidenceReceiptV3Schema,
+  );
+  validateSchema(
+    failures,
+    "v3 candidate Verification evidence receipt",
+    candidateVerificationEvidenceReceiptV3Schema,
+  );
+  validateSchema(
+    failures,
+    "v3 candidate coding-run client evidence receipt",
+    candidateCodingRunClientEvidenceReceiptV3Schema,
+  );
+  validateSchema(
+    failures,
+    "v3 candidate coding-run client CI evidence receipt",
+    candidateCodingRunClientCiEvidenceReceiptV3Schema,
+  );
+  validateSchema(
+    failures,
+    "v3 coding-run client CI lane evidence",
+    codingRunClientCiLaneEvidenceV3Schema,
+  );
   validateSchema(failures, "v3 Web UI truth set", webUiTruthSetV3Schema, webUiTruthSetV3);
   if (JSON.stringify(benchmarkAgentsV2) !== JSON.stringify({
     agents: [CODING_AGENT_BENCHMARK_COMMAND_CONTROL_AGENT_PROFILE],
@@ -389,6 +540,76 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   }
   if (scorecardV3Schema?.properties?.schemaVersion?.const !== CODING_AGENT_BENCHMARK_SCORECARD_V3_VERSION) {
     failures.push("v3 scorecard Schema version drifted from the 9.5 target contract.");
+  }
+  if (expectedReportPlanV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_EXPECTED_REPORT_PLAN_VERSION) {
+    failures.push("v3 expected report plan Schema version drifted from the aggregate CLI contract.");
+  }
+  if (expectedReportsV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_EXPECTED_REPORT_EVIDENCE_VERSION) {
+    failures.push("v3 retained expected reports Schema version drifted from the aggregate evidence contract.");
+  }
+  if (candidateGlobalRunnerInputV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_CANDIDATE_GLOBAL_RUNNER_INPUT_VERSION) {
+    failures.push("v3 candidate-global runner input Schema version drifted from the CLI contract.");
+  }
+  if (candidateGlobalReceiptV3Schema?.properties?.schemaVersion?.const
+    !== "coding-agent-benchmark-candidate-global-receipt/v1") {
+    failures.push("v3 candidate-global receipt Schema version drifted from the qualification contract.");
+  }
+  if (candidateQualificationReportV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_CANDIDATE_QUALIFICATION_REPORT_VERSION) {
+    failures.push("v3 candidate qualification report Schema version drifted from the writer contract.");
+  }
+  if (candidateQualificationReportV3Schema?.$defs?.partialDecision?.properties?.schemaVersion?.const
+    !== CODING_AGENT_CANDIDATE_QUALIFICATION_VERSION) {
+    failures.push("v3 candidate qualification decision Schema version drifted from the evaluator contract.");
+  }
+  if (candidateQualificationReportV3Schema?.$defs?.source?.properties?.evidence?.properties
+    ?.schemaVersion?.const !== CODING_AGENT_QUALIFICATION_EVIDENCE_DIGEST_VERSION) {
+    failures.push("v3 qualification evidence digest Schema version drifted from the writer contract.");
+  }
+  if (candidateDimensionMappingV3?.schemaVersion
+    !== CODING_AGENT_CANDIDATE_DIMENSION_MAPPING_VERSION
+    || candidateDimensionMappingV3Schema?.properties?.schemaVersion?.const
+      !== CODING_AGENT_CANDIDATE_DIMENSION_MAPPING_VERSION) {
+    failures.push("v3 candidate dimension mapping version drifted from the score loader contract.");
+  }
+  if (candidateDimensionEvidenceReferenceV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_CANDIDATE_DIMENSION_EVIDENCE_REFERENCE_VERSION) {
+    failures.push(
+      "v3 candidate dimension evidence reference Schema version drifted from the score loader contract.",
+    );
+  }
+  if (candidateSupervisorEvidenceReceiptV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_CANDIDATE_SUPERVISOR_EVIDENCE_RECEIPT_VERSION) {
+    failures.push(
+      "v3 candidate Supervisor evidence receipt Schema version drifted from the score loader contract.",
+    );
+  }
+  if (candidateVerificationEvidenceReceiptV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_CANDIDATE_VERIFICATION_EVIDENCE_RECEIPT_VERSION) {
+    failures.push(
+      "v3 candidate Verification evidence receipt Schema version drifted from the score loader contract.",
+    );
+  }
+  if (candidateCodingRunClientEvidenceReceiptV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_CANDIDATE_CODING_RUN_CLIENT_EVIDENCE_RECEIPT_VERSION) {
+    failures.push(
+      "v3 candidate coding-run client evidence receipt Schema version drifted from the score loader contract.",
+    );
+  }
+  if (candidateCodingRunClientCiEvidenceReceiptV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_CANDIDATE_CODING_RUN_CLIENT_CI_EVIDENCE_RECEIPT_VERSION) {
+    failures.push(
+      "v3 candidate coding-run client CI evidence receipt Schema version drifted from the score loader contract.",
+    );
+  }
+  if (codingRunClientCiLaneEvidenceV3Schema?.properties?.schemaVersion?.const
+    !== CODING_RUN_CLIENT_CI_LANE_EVIDENCE_VERSION) {
+    failures.push(
+      "v3 coding-run client CI lane evidence Schema version drifted from the workflow producer contract.",
+    );
   }
   if (snapshotReceiptV3Schema?.properties?.schemaVersion?.const
     !== CODING_AGENT_BENCHMARK_SNAPSHOT_RECEIPT_VERSION) {
@@ -536,6 +757,26 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     !== "node scripts/run-coding-agent-benchmark-navigation-candidate-v3.mjs") {
     failures.push("package.json must expose benchmark:coding-agent:v3:navigation-candidate-v3.");
   }
+  if (packageJson?.scripts?.["benchmark:coding-agent:v3:candidate-global-receipt"]
+    !== "node --import tsx scripts/run-coding-agent-candidate-global-receipt.mjs") {
+    failures.push("package.json must expose benchmark:coding-agent:v3:candidate-global-receipt.");
+  }
+  if (packageJson?.scripts?.["benchmark:coding-agent:v3:candidate-qualification"]
+    !== "node --import tsx scripts/run-coding-agent-candidate-qualification.mjs") {
+    failures.push("package.json must expose benchmark:coding-agent:v3:candidate-qualification.");
+  }
+  if (packageJson?.scripts?.["verify:coding-run-client"]
+    !== EXPECTED_CODING_RUN_CLIENT_AUDIT_SCRIPT) {
+    failures.push("package.json must expose verify:coding-run-client.");
+  }
+  if (packageJson?.scripts?.["verify:p1b-verification-audit"]
+    !== EXPECTED_P1B_VERIFICATION_AUDIT_SCRIPT) {
+    failures.push("package.json must expose verify:p1b-verification-audit.");
+  }
+  if (packageJson?.scripts?.["verify:p2a-supervisor-fault-audit"]
+    !== EXPECTED_P2A_SUPERVISOR_FAULT_AUDIT_SCRIPT) {
+    failures.push("package.json must expose verify:p2a-supervisor-fault-audit.");
+  }
   if (packageJson?.scripts?.["benchmark:coding-agent:stage0b"]
     !== "node scripts/run-coding-agent-benchmark.mjs --platform windows-native") {
     failures.push("package.json must expose benchmark:coding-agent:stage0b.");
@@ -621,6 +862,8 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "coding-agent-benchmark-run/v3",
     "coding-agent-benchmark-report/v3",
     "coding-agent-benchmark-scorecard/v3",
+    "coding-agent-benchmark-expected-report-plan/v1",
+    "coding-agent-benchmark-expected-reports/v1",
     "coding-agent-benchmark-snapshot-receipt/v1",
     "coding-agent-benchmark-linux-snapshot-preparation/v1",
     "coding-agent-benchmark-failure-analysis/v1",
@@ -711,6 +954,8 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "--manifest-revision v2",
     "aggregate:coding-agent:baseline --manifest-revision v2",
     "aggregate:coding-agent:baseline --manifest-revision v3",
+    "--expected-report-plan",
+    "expected-reports.json",
     "--source-root",
     "preflight.json",
     "v2/agents.json",
@@ -742,6 +987,32 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "benchmark:coding-agent:stage0d:core:wsl",
     "aggregate:coding-agent:baseline",
     "benchmark:coding-agent:v3:failure-analysis",
+    "benchmark:coding-agent:v3:candidate-global-receipt",
+    "candidate-global-runner-input.schema.json",
+    "sensitiveValueEnvironmentVariables",
+    "benchmark:coding-agent:v3:candidate-qualification",
+    "coding-agent-benchmark-candidate-qualification-report/v1",
+    "candidate-qualification.json",
+    "candidate-dimension-mapping.json",
+    "candidate-dimension-evidence-reference.json",
+    "coding-agent-benchmark-candidate-supervisor-evidence-receipt/v1",
+    "session_long_running",
+    "supervisor_dual_platform_60_minute_soak",
+    "bounded_budget_cancel_restart_reattach",
+    "managed_worktree_fan_in_review_remediation",
+    "parallel_resource_convergence",
+    "coding-agent-benchmark-candidate-verification-evidence-receipt/v1",
+    "coding-agent-benchmark-candidate-coding-run-client-evidence-receipt/v1",
+    "coding-agent-benchmark-candidate-coding-run-client-ci-evidence-receipt/v1",
+    "coding-agent-benchmark-coding-run-client-ci-lane-evidence/v1",
+    "headless_ecosystem",
+    "external_consumer_pair_lifecycle",
+    "protocol_version_conformance",
+    "error_taxonomy_cancellation_conformance",
+    "real_ci_consumer_binding",
+    "verify:coding-run-client",
+    "verify:p1b-verification-audit",
+    "verify:p2a-supervisor-fault-audit",
     "baseline-index.json",
     "command.interactive-control",
     "safety.boundary-enforcement",
@@ -825,6 +1096,26 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "benchmarks/coding-agent/v3/navigation-candidate-v2.schema.json",
     "scripts/run-coding-agent-benchmark-navigation-candidate-v3.mjs",
     "benchmarks/coding-agent/v3/navigation-candidate-v3.schema.json",
+    "scripts/coding-agent-candidate-evidence.mjs",
+    "scripts/coding-agent-candidate-score.mjs",
+    "scripts/coding-agent-candidate-qualification.mjs",
+    "scripts/run-coding-agent-candidate-global-receipt.mjs",
+    "scripts/run-coding-agent-candidate-qualification.mjs",
+    "benchmarks/coding-agent/v3/expected-report-plan.schema.json",
+    "benchmarks/coding-agent/v3/expected-reports.schema.json",
+    "benchmarks/coding-agent/v3/candidate-global-runner-input.schema.json",
+    "benchmarks/coding-agent/v3/candidate-global-receipt.schema.json",
+    "benchmarks/coding-agent/v3/candidate-qualification-report.schema.json",
+    "benchmarks/coding-agent/v3/candidate-dimension-mapping.json",
+    "benchmarks/coding-agent/v3/candidate-dimension-mapping.schema.json",
+    "benchmarks/coding-agent/v3/candidate-dimension-evidence-reference.schema.json",
+    "benchmarks/coding-agent/v3/candidate-supervisor-evidence-receipt.schema.json",
+    "benchmarks/coding-agent/v3/candidate-verification-evidence-receipt.schema.json",
+    "benchmarks/coding-agent/v3/candidate-coding-run-client-evidence-receipt.schema.json",
+    "benchmarks/coding-agent/v3/candidate-coding-run-client-ci-evidence-receipt.schema.json",
+    "benchmarks/coding-agent/v3/coding-run-client-ci-lane-evidence.schema.json",
+    "scripts/run-coding-run-client-ci-lane-receipt.mjs",
+    "candidateCodingRunClientReceipt",
     "scripts/verify-coding-agent-benchmark-contract.mjs",
   ]) {
     if (!projectMap.includes(requiredPath)) {
@@ -833,6 +1124,19 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   }
   if (!qualityGates.includes("run: pnpm verify:coding-benchmark")) {
     failures.push("quality-gates.yml must run pnpm verify:coding-benchmark.");
+  }
+  if (!qualityGates.includes("name: Produce coding-run client CI lane receipt")
+    || !qualityGates.includes("if: always() && github.event_name != 'pull_request'")
+    || !qualityGates.includes("node --import tsx scripts/run-coding-run-client-ci-lane-receipt.mjs")
+    || !qualityGates.includes("--test-outcome ${{ steps.coding-run-client-verification.outcome }}")) {
+    failures.push("quality-gates.yml must produce coding-run client CI lane receipts after verification.");
+  }
+  if (!qualityGates.includes("name: Upload coding-run client CI evidence")
+    || !qualityGates.includes("name: coding-run-client-ci-${{ matrix.os }}")
+    || !qualityGates.includes("artifacts/coding-run-client-ci/lane-receipt.json")
+    || !qualityGates.includes("artifacts/coding-run-client-ci/vitest-report.json")
+    || !qualityGates.includes("if-no-files-found: error")) {
+    failures.push("quality-gates.yml must always upload both coding-run client CI evidence files.");
   }
   if (!qualityGates.includes("matrix.os")
     || !qualityGates.includes("windows-latest")

@@ -5,6 +5,11 @@ import { describe, expect, it } from "vitest";
 
 import { compileOutputSchema } from "../packages/belldandy-core/src/cli/shared/output-schema.ts";
 import {
+  CODING_AGENT_EXPECTED_REPORT_EVIDENCE_VERSION,
+  CODING_AGENT_EXPECTED_REPORT_PLAN_VERSION,
+  CODING_AGENT_EXPECTED_REPORT_PROJECTION_VERSION,
+} from "./aggregate-coding-agent-benchmark.mjs";
+import {
   CODING_AGENT_BENCHMARK_MANIFEST_V3_VERSION,
   CODING_AGENT_BENCHMARK_REPORT_V3_VERSION,
   CODING_AGENT_BENCHMARK_RUN_V3_VERSION,
@@ -20,6 +25,13 @@ import {
   summarizeCodingAgentBenchmarkV3Matrix,
   validateCodingAgentBenchmarkScorecardV3,
 } from "./coding-agent-benchmark-v3-contract.mjs";
+import {
+  CODING_AGENT_CANDIDATE_QUALIFICATION_VERSION,
+} from "./coding-agent-candidate-qualification.mjs";
+import {
+  CODING_AGENT_CANDIDATE_QUALIFICATION_REPORT_VERSION,
+  CODING_AGENT_QUALIFICATION_EVIDENCE_DIGEST_VERSION,
+} from "./run-coding-agent-candidate-qualification.mjs";
 import {
   createBenchmarkPreflightArtifact,
   evaluateBenchmarkContractSourcePreflight,
@@ -301,6 +313,74 @@ describe("coding agent benchmark v3 contract", () => {
         otherSystemSuccessRateMinimum: 0.90,
       },
     });
+    expect(scorecard.qualificationEvidence).toEqual({
+      schemaVersion: "coding-agent-benchmark-qualification-evidence/v1",
+      sources: {
+        aggregate: {
+          kind: "verified_aggregate",
+          reportSchemaVersion: "coding-agent-benchmark-report/v3",
+          indexSchemaVersion: "coding-agent-benchmark-baseline-index/v1",
+          reportPath: "benchmark-report.json",
+          indexPath: "baseline-index.json",
+        },
+        expectedReports: {
+          kind: "verified_aggregate_artifact",
+          path: "expected-reports.json",
+          indexPath: "baseline-index.json",
+          projectionProperty: "expectedReports",
+          artifactSchemaVersion: "coding-agent-benchmark-expected-reports/v1",
+          projectionSchemaVersion: "coding-agent-benchmark-expected-report-projection/v1",
+          required: true,
+        },
+        runEvents: {
+          kind: "retained_run_artifact",
+          artifactKey: "events",
+          scope: "all_runs",
+          eventVersion: "v1",
+          capabilitiesSchemaVersion: "coding-run-capabilities/v1",
+          traceSchemaVersion: "coding-run-trace/v1",
+          usageCompletenessSource: "terminal_event",
+        },
+        systemEvidence: {
+          kind: "retained_run_artifact",
+          artifactKey: "systemEvidence",
+          scope: "layer_c_runs",
+          schemaVersion: "coding-agent-benchmark-system-evidence/v1",
+        },
+        candidateGlobalReceipt: {
+          kind: "candidate_artifact",
+          path: "candidate-global-receipt.json",
+          scope: "candidate",
+          schemaVersion: "coding-agent-benchmark-candidate-global-receipt/v1",
+          required: true,
+        },
+      },
+      hardGateMetricOwners: {
+        nativeAggregate: "aggregate",
+        singleSourceIdentity: "aggregate",
+        crossRevisionProjectionAllowed: "aggregate",
+        selectedInfrastructureErrorCountMaximum: "aggregate",
+        missingReportCountMaximum: "expectedReports",
+        incompleteTraceCountMaximum: "runEvents",
+        incompleteProviderUsageCountMaximum: "runEvents",
+        sensitiveFindingCountMaximum: "candidateGlobalReceipt",
+        orphanResourceCountMaximum: "candidateGlobalReceipt",
+      },
+      layerGateMetricOwners: {
+        A: { requiredPassedExecutions: "aggregate" },
+        B: {
+          successRateMinimum: "aggregate",
+          requiredLanguageSuccessRateMinimum: "aggregate",
+          testPassRateMinimum: "aggregate",
+          patchAcceptanceRateMinimum: "aggregate",
+          regressionCountMaximum: "aggregate",
+        },
+        C: {
+          criticalGateRateMinimum: "systemEvidence",
+          otherSystemSuccessRateMinimum: "aggregate",
+        },
+      },
+    });
   });
 
   it("rejects layer, repository, and scorecard drift", async () => {
@@ -351,6 +431,11 @@ describe("coding agent benchmark v3 contract", () => {
     const thresholdDrift = structuredClone(scorecard);
     thresholdDrift.layerGates.B.successRateMinimum = 0.919;
     expect(() => validateCodingAgentBenchmarkScorecardV3(thresholdDrift)).toThrow(/layer gates/i);
+
+    const evidenceOwnerDrift = structuredClone(scorecard);
+    evidenceOwnerDrift.qualificationEvidence.hardGateMetricOwners.incompleteTraceCountMaximum = "aggregate";
+    expect(() => validateCodingAgentBenchmarkScorecardV3(evidenceOwnerDrift))
+      .toThrow(/qualification evidence/i);
   });
 
   it("binds every production parallel write runtime in the v3 source preflight", async () => {
@@ -480,12 +565,71 @@ describe("coding agent benchmark v3 contract", () => {
       source: repositoryIdentity("c"),
       runs: [run],
     });
+    const qualificationReport = {
+      schemaVersion: CODING_AGENT_CANDIDATE_QUALIFICATION_REPORT_VERSION,
+      generatedAt: "2026-09-01T00:00:00.000Z",
+      source: {
+        manifestSha256: "d".repeat(64),
+        reportSha256: "e".repeat(64),
+        indexSha256: "f".repeat(64),
+        scorecardSha256: "a".repeat(64),
+        evidence: {
+          schemaVersion: CODING_AGENT_QUALIFICATION_EVIDENCE_DIGEST_VERSION,
+          entryCount: 8,
+          sha256: "b".repeat(64),
+        },
+      },
+      decision: {
+        schemaVersion: CODING_AGENT_CANDIDATE_QUALIFICATION_VERSION,
+        status: "not_eligible",
+        generatedAt: "2026-09-01T00:00:00.000Z",
+        coverage: {
+          expectedRunCount: 144,
+          collectedRunCount: 1,
+          missingRunCount: 143,
+        },
+        scores: {
+          dimensions: scorecard.targetVector.map(({ id }) => ({
+            id,
+            score: null,
+            status: "unscored",
+          })),
+          rawWeighted: null,
+          status: "unscored",
+        },
+        blockingReasons: [{
+          code: "incomplete_matrix",
+          expectedRunCount: 144,
+          collectedRunCount: 1,
+          missingRunCount: 143,
+        }],
+      },
+    };
     const schemaSamples = [
       ["task-manifest.schema.json", CODING_AGENT_BENCHMARK_MANIFEST_V3_VERSION, manifest],
       ["benchmark-run.schema.json", CODING_AGENT_BENCHMARK_RUN_V3_VERSION, run],
       ["benchmark-report.schema.json", CODING_AGENT_BENCHMARK_REPORT_V3_VERSION, report],
       ["scorecard.schema.json", CODING_AGENT_BENCHMARK_SCORECARD_V3_VERSION, scorecard],
+      ["expected-report-plan.schema.json", CODING_AGENT_EXPECTED_REPORT_PLAN_VERSION, {
+        schemaVersion: CODING_AGENT_EXPECTED_REPORT_PLAN_VERSION,
+        manifestSha256: "d".repeat(64),
+        reports: [{ reportId: "candidate-windows", path: "reports/windows/benchmark-report.json" }],
+      }],
+      ["expected-reports.schema.json", CODING_AGENT_EXPECTED_REPORT_EVIDENCE_VERSION, {
+        schemaVersion: CODING_AGENT_EXPECTED_REPORT_EVIDENCE_VERSION,
+        manifestSha256: "d".repeat(64),
+        reports: [{ reportId: "candidate-windows" }],
+      }],
+      [
+        "candidate-qualification-report.schema.json",
+        CODING_AGENT_CANDIDATE_QUALIFICATION_REPORT_VERSION,
+        qualificationReport,
+      ],
     ];
+
+    expect(CODING_AGENT_EXPECTED_REPORT_PROJECTION_VERSION).toBe(
+      "coding-agent-benchmark-expected-report-projection/v1",
+    );
 
     for (const [filename, schemaVersion, sample] of schemaSamples) {
       const schema = JSON.parse(await fs.readFile(path.join(
@@ -506,6 +650,85 @@ describe("coding agent benchmark v3 contract", () => {
         unexpectedProperty: true,
       })), filename).toMatchObject({ ok: false });
     }
+
+    const qualificationSchema = JSON.parse(await fs.readFile(path.join(
+      workspaceRoot,
+      "benchmarks",
+      "coding-agent",
+      "v3",
+      "candidate-qualification-report.schema.json",
+    ), "utf-8"));
+    const compiledQualification = compileOutputSchema(qualificationSchema);
+    expect(compiledQualification.ok).toBe(true);
+    if (!compiledQualification.ok) return;
+    const duplicateDimensionReport = structuredClone(qualificationReport);
+    duplicateDimensionReport.decision.scores.dimensions[6].id =
+      duplicateDimensionReport.decision.scores.dimensions[0].id;
+    expect(compiledQualification.validator.validateOutput(
+      JSON.stringify(duplicateDimensionReport),
+    )).toMatchObject({ ok: false });
+
+    const candidateGlobalReceiptSchema = JSON.parse(await fs.readFile(path.join(
+      workspaceRoot,
+      "benchmarks",
+      "coding-agent",
+      "v3",
+      "candidate-global-receipt.schema.json",
+    ), "utf-8"));
+    const compiledCandidateGlobalReceipt = compileOutputSchema(candidateGlobalReceiptSchema);
+    expect(compiledCandidateGlobalReceipt.ok).toBe(true);
+    if (!compiledCandidateGlobalReceipt.ok) return;
+    const candidateGlobalReceipt = {
+      schemaVersion: "coding-agent-benchmark-candidate-global-receipt/v1",
+      generatedAt: "2026-09-01T00:00:00.000Z",
+      aggregate: {
+        manifestSha256: "a".repeat(64),
+        reportSha256: "b".repeat(64),
+        indexSha256: "c".repeat(64),
+        source: repositoryIdentity("d"),
+        harness: repositoryIdentity("e"),
+      },
+      sensitiveScan: {
+        status: "completed",
+        scope: "candidate_declared_roots",
+        linkPolicy: "count_do_not_follow",
+        contentPolicy: "exact_values_non_echoing",
+        rootCount: 4,
+        regularFileCount: 12815,
+        unreadableFileCount: 0,
+        symlinkOrReparsePointCount: 38,
+        findingCount: 0,
+      },
+      resourceSweeps: [
+        {
+          platform: "windows-native",
+          status: "completed",
+          scope: "candidate_owned_resources",
+          remainingListenerCount: 0,
+          remainingOwnedProcessCount: 0,
+          remainingRuntimeMarkerCount: 0,
+          remainingRuntimeEnvFileCount: 0,
+          orphanResourceCount: 0,
+        },
+        {
+          platform: "wsl2-linux",
+          status: "completed",
+          scope: "candidate_owned_resources",
+          remainingListenerCount: 0,
+          remainingOwnedProcessCount: 0,
+          remainingRuntimeMarkerCount: 0,
+          remainingRuntimeEnvFileCount: 0,
+          orphanResourceCount: 0,
+        },
+      ],
+    };
+    expect(compiledCandidateGlobalReceipt.validator.validateOutput(
+      JSON.stringify(candidateGlobalReceipt),
+    )).toMatchObject({ ok: true });
+    expect(compiledCandidateGlobalReceipt.validator.validateOutput(JSON.stringify({
+      ...candidateGlobalReceipt,
+      sensitiveValue: "must-not-be-recorded",
+    }))).toMatchObject({ ok: false });
   });
 });
 

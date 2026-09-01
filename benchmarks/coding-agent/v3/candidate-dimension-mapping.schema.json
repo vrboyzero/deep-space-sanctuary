@@ -1,0 +1,505 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-candidate-dimension-mapping-v1.json",
+  "title": "Star Sanctuary coding agent benchmark candidate dimension mapping v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "status",
+    "manifestSchemaVersion",
+    "scorecardSchemaVersion",
+    "scoreSemantics",
+    "evidenceReuse",
+    "dimensions"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "coding-agent-benchmark-candidate-dimension-mapping/v1"
+    },
+    "status": {
+      "const": "partial"
+    },
+    "manifestSchemaVersion": {
+      "const": "coding-agent-benchmark-manifest/v3"
+    },
+    "scorecardSchemaVersion": {
+      "const": "coding-agent-benchmark-scorecard/v3"
+    },
+    "scoreSemantics": {
+      "const": {
+        "mode": "target_threshold_certification",
+        "awardRequiresDimensionStatus": "complete",
+        "awardedScore": "scorecard_dimension_minimum",
+        "failedScore": null,
+        "rawWeightedCalculation": "sum_unrounded_dimension_score_times_weight",
+        "intermediateRounding": "none",
+        "releaseDisplay": {
+          "decimalPlaces": 1,
+          "rounding": "half_up",
+          "qualificationUsesRoundedValue": false
+        }
+      }
+    },
+    "evidenceReuse": {
+      "const": {
+        "crossDimensionTaskReuse": "allowed_for_independent_dimension_certification",
+        "withinDimensionTaskReuse": "forbidden"
+      }
+    },
+    "dimensions": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "prefixItems": [
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/contextDimension"
+            },
+            {
+              "properties": {
+                "id": {
+                  "const": "context_retrieval"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/editingDimension"
+            },
+            {
+              "properties": {
+                "id": {
+                  "const": "editing_testing"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/cliTuiDimension"
+            },
+            {
+              "properties": {
+                "id": {
+                  "const": "cli_tui"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/safetyRecoveryDimension"
+            },
+            {
+              "properties": {
+                "id": {
+                  "const": "safety_recovery"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/sessionLongRunningDimension"
+            },
+            {
+              "properties": {
+                "id": {
+                  "const": "session_long_running"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/headlessEcosystemDimension"
+            },
+            {
+              "properties": {
+                "id": {
+                  "const": "headless_ecosystem"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/gitDeliveryDimension"
+            },
+            {
+              "properties": {
+                "id": {
+                  "const": "git_delivery"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "items": false
+    }
+  },
+  "$defs": {
+    "criterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "metricId",
+        "owner",
+        "source",
+        "aggregation",
+        "denominator",
+        "threshold"
+      ],
+      "properties": {
+        "metricId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owner": {
+          "const": "aggregate.runs"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "aggregation": {
+          "enum": [
+            "boolean_rate",
+            "applicable_boolean_rate",
+            "sum",
+            "distribution",
+            "nullable_sum"
+          ]
+        },
+        "denominator": {
+          "enum": [
+            "selected_runs",
+            "applicable_selected_runs"
+          ]
+        },
+        "threshold": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "operator",
+            "value"
+          ],
+          "properties": {
+            "operator": {
+              "enum": [
+                "gte",
+                "lte"
+              ]
+            },
+            "value": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        }
+      }
+    },
+    "evidenceGroup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "taskIds",
+        "criteria"
+      ],
+      "properties": {
+        "id": {
+          "enum": [
+            "deterministic_context",
+            "real_repository_context",
+            "parallel_context",
+            "deterministic_editing",
+            "real_repository_editing",
+            "interactive_cli",
+            "safety_boundary",
+            "disconnect_recovery",
+            "session_control",
+            "parallel_long_running",
+            "headless_browser_workflow",
+            "local_git_boundaries",
+            "delivery_reconciliation"
+          ]
+        },
+        "taskIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "criteria": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/criterion"
+          }
+        }
+      }
+    },
+    "contextDimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "evidenceGroups",
+        "missingEvidenceContracts"
+      ],
+      "properties": {
+        "id": {
+          "const": "context_retrieval"
+        },
+        "status": {
+          "const": "partial"
+        },
+        "evidenceGroups": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/$defs/evidenceGroup"
+          }
+        },
+        "missingEvidenceContracts": {
+          "const": [
+            "code_intel_truth_freshness",
+            "context_inspector",
+            "code_intel_resource_soak",
+            "semantic_adoption_context_waste",
+            "code_intel_no_binary_fallback",
+            "go_canary_eligibility"
+          ]
+        }
+      }
+    },
+    "editingDimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "evidenceGroups",
+        "missingEvidenceContracts"
+      ],
+      "properties": {
+        "id": {
+          "const": "editing_testing"
+        },
+        "status": {
+          "const": "partial"
+        },
+        "evidenceGroups": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "$ref": "#/$defs/evidenceGroup"
+          }
+        },
+        "missingEvidenceContracts": {
+          "const": [
+            "verification_impact_truth_set",
+            "verification_structured_test_reports",
+            "verification_failure_replay",
+            "browser_relay_behavior_evidence"
+          ]
+        }
+      }
+    },
+    "cliTuiDimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "evidenceGroups",
+        "missingEvidenceContracts"
+      ],
+      "properties": {
+        "id": {
+          "const": "cli_tui"
+        },
+        "status": {
+          "const": "partial"
+        },
+        "evidenceGroups": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "$ref": "#/$defs/evidenceGroup"
+          }
+        },
+        "missingEvidenceContracts": {
+          "const": [
+            "task_projection_cross_entry_conformance",
+            "task_projection_terminal_action_consistency",
+            "task_efficiency_timeline",
+            "tui_accessibility_cross_platform"
+          ]
+        }
+      }
+    },
+    "safetyRecoveryDimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "evidenceGroups",
+        "missingEvidenceContracts"
+      ],
+      "properties": {
+        "id": {
+          "const": "safety_recovery"
+        },
+        "status": {
+          "const": "partial"
+        },
+        "evidenceGroups": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "$ref": "#/$defs/evidenceGroup"
+          }
+        },
+        "missingEvidenceContracts": {
+          "const": [
+            "system_evidence_critical_rate",
+            "candidate_sensitive_scan",
+            "candidate_resource_sweeps",
+            "fault_matrix_audit_reconciliation"
+          ]
+        }
+      }
+    },
+    "sessionLongRunningDimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "evidenceGroups",
+        "missingEvidenceContracts"
+      ],
+      "properties": {
+        "id": {
+          "const": "session_long_running"
+        },
+        "status": {
+          "const": "partial"
+        },
+        "evidenceGroups": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "$ref": "#/$defs/evidenceGroup"
+          }
+        },
+        "missingEvidenceContracts": {
+          "const": [
+            "supervisor_dual_platform_60_minute_soak",
+            "bounded_budget_cancel_restart_reattach",
+            "managed_worktree_fan_in_review_remediation",
+            "parallel_resource_convergence"
+          ]
+        }
+      }
+    },
+    "headlessEcosystemDimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "evidenceGroups",
+        "missingEvidenceContracts"
+      ],
+      "properties": {
+        "id": {
+          "const": "headless_ecosystem"
+        },
+        "status": {
+          "const": "partial"
+        },
+        "evidenceGroups": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "$ref": "#/$defs/evidenceGroup"
+          }
+        },
+        "missingEvidenceContracts": {
+          "const": [
+            "external_consumer_pair_lifecycle",
+            "real_ci_consumer_binding",
+            "protocol_version_conformance",
+            "error_taxonomy_cancellation_conformance"
+          ]
+        }
+      }
+    },
+    "gitDeliveryDimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "evidenceGroups",
+        "missingEvidenceContracts"
+      ],
+      "properties": {
+        "id": {
+          "const": "git_delivery"
+        },
+        "status": {
+          "const": "partial"
+        },
+        "evidenceGroups": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "$ref": "#/$defs/evidenceGroup"
+          }
+        },
+        "missingEvidenceContracts": {
+          "const": [
+            "multi_repository_worktree_soak",
+            "review_remediation_loop",
+            "remote_delivery_authority_separation",
+            "delivery_recovery_audit_matrix"
+          ]
+        }
+      }
+    }
+  }
+}

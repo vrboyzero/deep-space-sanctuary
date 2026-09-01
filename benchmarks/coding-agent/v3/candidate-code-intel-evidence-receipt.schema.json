@@ -1,0 +1,455 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-candidate-code-intel-evidence-receipt-v1.json",
+  "title": "Star Sanctuary coding agent benchmark candidate CodeIntel evidence receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "aggregate",
+    "sourceIdentity",
+    "selection",
+    "summary",
+    "truthSet",
+    "contextInspector",
+    "resourceSoak",
+    "agentUplift",
+    "goCanary"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "coding-agent-benchmark-candidate-code-intel-evidence-receipt/v1"
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "aggregate": {
+      "$ref": "#/$defs/aggregateBinding"
+    },
+    "sourceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["harness", "files", "aggregateSha256"],
+      "properties": {
+        "harness": {
+          "$ref": "#/$defs/repositoryIdentity"
+        },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/sourceFile"
+          }
+        },
+        "aggregateSha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "truthSet",
+        "contextInspector",
+        "resourceSoak",
+        "agentUplift",
+        "goCanary"
+      ],
+      "properties": {
+        "truthSet": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "manifestSha256", "platforms"],
+          "properties": {
+            "id": { "const": "p1-a1-ts-js-core-v1" },
+            "manifestSha256": { "$ref": "#/$defs/sha256" },
+            "platforms": {
+              "const": ["windows-native", "wsl2-linux"]
+            }
+          }
+        },
+        "contextInspector": {
+          "const": {
+            "contractVersion": "code-intel/v1",
+            "projection": "projectCodeIntelQueryResult",
+            "coordinateSystem": "zero-based-line-column",
+            "mutationAuthority": "none"
+          }
+        },
+        "resourceSoak": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "configSha256", "platforms"],
+          "properties": {
+            "id": { "const": "p1-a1-typescript-provider-resource-soak-v1" },
+            "configSha256": { "$ref": "#/$defs/sha256" },
+            "platforms": {
+              "const": ["windows-native", "wsl2-linux"]
+            }
+          }
+        },
+        "agentUplift": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["candidateId", "attempt", "taskIds", "platforms"],
+          "properties": {
+            "candidateId": { "const": "code-intel-semantic-live-v1" },
+            "attempt": { "type": "integer", "minimum": 1 },
+            "taskIds": {
+              "const": [
+                "real-ts.api-migration",
+                "real-ts.cross-package-refactor",
+                "real-js.bug-fix",
+                "real-js.failed-test-fix"
+              ]
+            },
+            "platforms": {
+              "const": ["windows-native", "wsl2-linux"]
+            }
+          }
+        },
+        "goCanary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["truthSetId", "manifestSha256", "sharedRuntimeFileCount"],
+          "properties": {
+            "truthSetId": { "const": "p1-a2-go-canary-v1" },
+            "manifestSha256": { "$ref": "#/$defs/sha256" },
+            "sharedRuntimeFileCount": { "const": 9 }
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["truthSet", "contextInspector", "resourceSoak", "agentUplift", "goCanary"],
+      "properties": {
+        "truthSet": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["platformCount", "caseCount", "expected", "passed"],
+          "properties": {
+            "platformCount": { "const": 2 },
+            "caseCount": { "type": "integer", "minimum": 0 },
+            "expected": { "type": "integer", "minimum": 0 },
+            "passed": { "type": "boolean" }
+          }
+        },
+        "contextInspector": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["scenarioCount", "passed"],
+          "properties": {
+            "scenarioCount": { "type": "integer", "minimum": 0 },
+            "passed": { "type": "boolean" }
+          }
+        },
+        "resourceSoak": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["platformCount", "attemptsPerPlatform", "expectedRejectedPerPlatform", "passed"],
+          "properties": {
+            "platformCount": { "const": 2 },
+            "attemptsPerPlatform": { "type": "integer", "minimum": 0 },
+            "expectedRejectedPerPlatform": { "type": "integer", "minimum": 0 },
+            "passed": { "type": "boolean" }
+          }
+        },
+        "agentUplift": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "pairCount",
+            "semanticSuccessfulRuns",
+            "binaryOutcomeRegressionCount",
+            "contextWasteNoRegression",
+            "contextWasteImprovementAlternativePassed"
+          ],
+          "properties": {
+            "pairCount": { "type": "integer", "minimum": 0, "maximum": 8 },
+            "semanticSuccessfulRuns": { "type": "integer", "minimum": 0, "maximum": 8 },
+            "binaryOutcomeRegressionCount": { "type": "integer", "minimum": 0, "maximum": 24 },
+            "contextWasteNoRegression": { "type": "boolean" },
+            "contextWasteImprovementAlternativePassed": { "type": "boolean" }
+          }
+        },
+        "goCanary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["caseCount", "positionCount", "goCanaryEligible", "productionEligible"],
+          "properties": {
+            "caseCount": { "type": "integer", "minimum": 0 },
+            "positionCount": { "type": "integer", "minimum": 0 },
+            "goCanaryEligible": { "type": "boolean" },
+            "productionEligible": { "const": false }
+          }
+        }
+      }
+    },
+    "truthSet": {
+      "$ref": "#/$defs/truthSetPair"
+    },
+    "contextInspector": {
+      "allOf": [
+        { "$ref": "#/$defs/artifactReference" },
+        {
+          "properties": {
+            "artifactSchemaVersion": {
+              "const": "code-intel-context-inspector-audit-report/v1"
+            },
+            "path": {
+              "const": "candidate-evidence/code-intel/context-inspector-audit-report.json"
+            }
+          }
+        }
+      ]
+    },
+    "resourceSoak": {
+      "$ref": "#/$defs/resourceSoakPair"
+    },
+    "agentUplift": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["aggregate", "platformReports"],
+      "properties": {
+        "aggregate": {
+          "allOf": [
+            { "$ref": "#/$defs/artifactReference" },
+            {
+              "properties": {
+                "artifactSchemaVersion": {
+                  "const": "code-intel-agent-uplift-report/v1"
+                },
+                "path": {
+                  "const": "candidate-evidence/code-intel/agent-uplift/aggregate-report.json"
+                }
+              }
+            }
+          ]
+        },
+        "platformReports": {
+          "$ref": "#/$defs/agentUpliftPlatformPair"
+        }
+      }
+    },
+    "goCanary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["comparator", "windowsNative", "wsl2Oci"],
+      "properties": {
+        "comparator": {
+          "allOf": [
+            { "$ref": "#/$defs/artifactReference" },
+            {
+              "properties": {
+                "artifactSchemaVersion": {
+                  "const": "code-intel-go-canary-comparator-report/v1"
+                },
+                "path": {
+                  "const": "candidate-evidence/code-intel/go-canary/comparator-report.json"
+                }
+              }
+            }
+          ]
+        },
+        "windowsNative": {
+          "allOf": [
+            { "$ref": "#/$defs/artifactReference" },
+            {
+              "properties": {
+                "artifactSchemaVersion": {
+                  "const": "code-intel-go-truth-set-report/v1"
+                },
+                "path": {
+                  "const": "candidate-evidence/code-intel/go-canary/windows-native-report.json"
+                }
+              }
+            }
+          ]
+        },
+        "wsl2Oci": {
+          "allOf": [
+            { "$ref": "#/$defs/artifactReference" },
+            {
+              "properties": {
+                "artifactSchemaVersion": {
+                  "const": "code-intel-go-oci-promotion-gate-report/v1"
+                },
+                "path": {
+                  "const": "candidate-evidence/code-intel/go-canary/wsl2-oci-report.json"
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "safeRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    },
+    "repositoryIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "workspaceDirty", "lockfileSha256", "worktreeContentSha256"],
+      "properties": {
+        "commit": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+        "workspaceDirty": { "const": false },
+        "lockfileSha256": { "$ref": "#/$defs/sha256" },
+        "worktreeContentSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "aggregateBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifestSha256", "reportSha256", "indexSha256", "source", "harness"],
+      "properties": {
+        "manifestSha256": { "$ref": "#/$defs/sha256" },
+        "reportSha256": { "$ref": "#/$defs/sha256" },
+        "indexSha256": { "$ref": "#/$defs/sha256" },
+        "source": { "$ref": "#/$defs/repositoryIdentity" },
+        "harness": { "$ref": "#/$defs/repositoryIdentity" }
+      }
+    },
+    "sourceFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/safeRelativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "artifactReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifactSchemaVersion", "path", "sha256"],
+      "properties": {
+        "artifactSchemaVersion": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "path": { "$ref": "#/$defs/safeRelativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "platformArtifactReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "artifactSchemaVersion", "path", "sha256"],
+      "properties": {
+        "platform": { "enum": ["windows-native", "wsl2-linux"] },
+        "artifactSchemaVersion": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "path": { "$ref": "#/$defs/safeRelativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "truthSetPair": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        {
+          "allOf": [
+            { "$ref": "#/$defs/platformArtifactReference" },
+            {
+              "properties": {
+                "platform": { "const": "windows-native" },
+                "artifactSchemaVersion": { "const": "code-intel-truth-set-report/v1" },
+                "path": { "const": "candidate-evidence/code-intel/truth-set/windows-native-report.json" }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/platformArtifactReference" },
+            {
+              "properties": {
+                "platform": { "const": "wsl2-linux" },
+                "artifactSchemaVersion": { "const": "code-intel-truth-set-report/v1" },
+                "path": { "const": "candidate-evidence/code-intel/truth-set/wsl2-linux-report.json" }
+              }
+            }
+          ]
+        }
+      ],
+      "items": false
+    },
+    "resourceSoakPair": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        {
+          "allOf": [
+            { "$ref": "#/$defs/platformArtifactReference" },
+            {
+              "properties": {
+                "platform": { "const": "windows-native" },
+                "artifactSchemaVersion": { "const": "code-intel-resource-soak-report/v1" },
+                "path": { "const": "candidate-evidence/code-intel/resource-soak/windows-native-report.json" }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/platformArtifactReference" },
+            {
+              "properties": {
+                "platform": { "const": "wsl2-linux" },
+                "artifactSchemaVersion": { "const": "code-intel-resource-soak-report/v1" },
+                "path": { "const": "candidate-evidence/code-intel/resource-soak/wsl2-linux-report.json" }
+              }
+            }
+          ]
+        }
+      ],
+      "items": false
+    },
+    "agentUpliftPlatformPair": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        {
+          "allOf": [
+            { "$ref": "#/$defs/platformArtifactReference" },
+            {
+              "properties": {
+                "platform": { "const": "windows-native" },
+                "artifactSchemaVersion": { "const": "code-intel-agent-uplift-platform/v1" },
+                "path": { "const": "candidate-evidence/code-intel/agent-uplift/windows-native-report.json" }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/platformArtifactReference" },
+            {
+              "properties": {
+                "platform": { "const": "wsl2-linux" },
+                "artifactSchemaVersion": { "const": "code-intel-agent-uplift-platform/v1" },
+                "path": { "const": "candidate-evidence/code-intel/agent-uplift/wsl2-linux-report.json" }
+              }
+            }
+          ]
+        }
+      ],
+      "items": false
+    }
+  }
+}

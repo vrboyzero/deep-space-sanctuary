@@ -543,7 +543,7 @@ async function evaluateSystemFixture(input, task) {
       `System fixture workspace changed ${changedPaths.length} path(s): ${changedPaths.join(", ")}.`,
     );
   }
-  const evidenceFailures = validateSystemEvidence({
+  const evidenceFailures = validateCodingAgentBenchmarkV3SystemEvidence({
     evidence: input.systemEvidence,
     task,
     runId: input.runId,
@@ -580,7 +580,7 @@ async function evaluateSystemFixture(input, task) {
   };
 }
 
-function validateSystemEvidence(input) {
+export function validateCodingAgentBenchmarkV3SystemEvidence(input) {
   try {
     const evidence = input.evidence;
     assertExactKeys(evidence, [
