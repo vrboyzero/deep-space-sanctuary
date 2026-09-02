@@ -304,6 +304,110 @@ export async function addCandidateCodingRunClientCiEvidence(aggregateRoot, optio
   await writeEvidenceReference(aggregateRoot, reference);
 }
 
+export async function addCandidateCliTuiEvidence(aggregateRoot, options = {}) {
+  const reference = await readEvidenceReference(aggregateRoot);
+  const aggregate = reference.aggregate;
+  const sourceIdentity = {
+    harness: aggregate.harness,
+    files: [
+      { path: "packages/belldandy-core/src/coding-run/task-projection.ts", sha256: "1".repeat(64) },
+      { path: "packages/belldandy-core/src/coding-run/task-efficiency-metrics.ts", sha256: "2".repeat(64) },
+      { path: "packages/belldandy-core/src/tui/runtime.ts", sha256: "3".repeat(64) },
+    ],
+  };
+  sourceIdentity.aggregateSha256 = sha256(JSON.stringify(sourceIdentity.files));
+  const clients = ["cli", "tui", "webchat", "vscode"];
+  const projection = {
+    schemaVersion: "task-projection-cross-entry-conformance/v1",
+    aggregate,
+    sourceIdentity,
+    entries: clients.map((client) => ({
+      client,
+      sequence: [
+        { status: "running", allowedActions: ["observe", "cancel"], observedAtMs: 1000 },
+        { status: "completed", allowedActions: ["observe", "verify"], observedAtMs: 2000 },
+      ],
+    })),
+  };
+  const efficiency = {
+    schemaVersion: "task-efficiency-evidence/v1",
+    aggregate,
+    sourceIdentity,
+    status: "complete",
+    evidence: {
+      status: "complete",
+      projectionTimeline: {
+        coverage: "complete",
+        items: [{ status: "running", observedAtMs: 1000 }, { status: "completed", observedAtMs: 2000 }],
+      },
+    },
+    metrics: {
+      schemaVersion: "task-efficiency-metrics/v1",
+      status: "complete",
+      missingMetrics: [],
+      usageCompleteness: { status: "complete", reason: "provider_reported", modelCalls: 0, providerReportedModelCalls: 0 },
+    },
+  };
+  const files = [
+    ["candidate-evidence/cli-tui/task-projection-conformance.json", projection],
+    ["candidate-evidence/cli-tui/task-efficiency-evidence.json", efficiency],
+  ];
+  for (const platform of ["windows-native", "wsl2-linux"]) {
+    files.push([`candidate-evidence/cli-tui/accessibility/${platform}.json`, {
+      schemaVersion: "tui-accessibility-cross-platform/v1",
+      platform,
+      sourceIdentity,
+      status: options.accessibilityStatusByPlatform?.[platform] ?? "complete",
+      accessibility: { keyboardNavigation: true, focusVisible: true, labelsPresent: true },
+      lifecycle: { firstFrame: true, narrowFallback: true, wideLayoutRestored: true, mouseTabNavigation: true, inputReplayRendered: true, residualProcessCount: 0 },
+      gate: { passed: options.accessibilityStatusByPlatform?.[platform] !== "failed", failures: options.accessibilityStatusByPlatform?.[platform] === "failed" ? ["fixture failure"] : [] },
+    }]);
+  }
+  const refs = {};
+  for (const [relativePath, value] of files) {
+    const text = serializeJson(value);
+    await writeRelativeFile(aggregateRoot, relativePath, text);
+    refs[relativePath] = { path: relativePath, sha256: sha256(text) };
+  }
+  const receipt = {
+    schemaVersion: "coding-agent-benchmark-candidate-cli-tui-evidence-receipt/v1",
+    generatedAt: "2026-09-02T14:00:00.000Z",
+    aggregate,
+    sourceIdentity,
+    taskProjection: refs["candidate-evidence/cli-tui/task-projection-conformance.json"],
+    efficiency: refs["candidate-evidence/cli-tui/task-efficiency-evidence.json"],
+    accessibility: [refs["candidate-evidence/cli-tui/accessibility/windows-native.json"], refs["candidate-evidence/cli-tui/accessibility/wsl2-linux.json"]],
+    summary: {
+      taskProjectionCrossEntryConformance: true,
+      taskProjectionTerminalActionConsistency: true,
+      taskEfficiencyTimeline: true,
+      tuiAccessibilityCrossPlatform: ["windows-native", "wsl2-linux"].every(
+        (platform) => (options.accessibilityStatusByPlatform?.[platform] ?? "complete") === "complete",
+      ),
+    },
+  };
+  if (options.writeReceipt !== false) {
+    const receiptText = serializeJson(receipt);
+    await writeRelativeFile(aggregateRoot, "candidate-cli-tui-evidence-receipt.json", receiptText);
+    reference.owners.candidateCliTuiReceipt = {
+      kind: "candidate_artifact", scope: "candidate_harness",
+      artifactSchemaVersion: receipt.schemaVersion,
+      artifact: { path: "candidate-cli-tui-evidence-receipt.json", sha256: sha256(receiptText) },
+    };
+    const insertAt = reference.claims.findIndex(({ dimensionId }) => [
+      "editing_testing", "session_long_running", "headless_ecosystem",
+    ].includes(dimensionId));
+    reference.claims.splice(insertAt < 0 ? reference.claims.length : insertAt, 0,
+      ...[
+        { dimensionId: "cli_tui", contractId: "task_projection_cross_entry_conformance", owner: "candidateCliTuiReceipt", completion: "current_harness_task_projection_four_entry_conformance_passed" },
+        { dimensionId: "cli_tui", contractId: "task_projection_terminal_action_consistency", owner: "candidateCliTuiReceipt", completion: "current_harness_task_projection_terminal_action_consistency_passed" },
+        { dimensionId: "cli_tui", contractId: "task_efficiency_timeline", owner: "candidateCliTuiReceipt", completion: "current_harness_task_efficiency_timeline_complete" },
+        { dimensionId: "cli_tui", contractId: "tui_accessibility_cross_platform", owner: "candidateCliTuiReceipt", completion: "current_harness_dual_platform_tui_accessibility_passed" },
+      ]);
+  }
+  await writeEvidenceReference(aggregateRoot, reference);
+}
+
 export async function writeRelativeFile(root, relativePath, value) {
   const target = path.join(root, ...relativePath.split("/"));
   await fs.mkdir(path.dirname(target), { recursive: true });

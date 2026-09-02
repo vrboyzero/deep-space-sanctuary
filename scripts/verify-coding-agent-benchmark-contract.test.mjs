@@ -589,6 +589,58 @@ describe("coding agent benchmark repository contract", () => {
     }
   });
 
+  it("fails closed when candidate CLI/TUI producer repository wiring is absent", async () => {
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-cli-tui-wiring-"));
+    try {
+      await fs.mkdir(path.join(fixtureRoot, "benchmarks", "coding-agent"), { recursive: true });
+      await fs.mkdir(path.join(fixtureRoot, "docs"), { recursive: true });
+      await fs.writeFile(path.join(fixtureRoot, "package.json"), JSON.stringify({ scripts: {} }), "utf-8");
+      await fs.writeFile(path.join(fixtureRoot, "benchmarks", "coding-agent", "README.md"), "", "utf-8");
+      await fs.writeFile(path.join(fixtureRoot, "docs", "project-map.md"), "", "utf-8");
+
+      const failures = await collectCodingAgentBenchmarkContractFailures({ workspaceRoot: fixtureRoot });
+      expect(failures).toEqual(expect.arrayContaining([
+        expect.stringMatching(/scripts\/coding-agent-candidate-cli-tui-receipt\.mjs is missing/i),
+        expect.stringMatching(/scripts\/run-coding-agent-candidate-cli-tui-receipt\.mjs is missing/i),
+        "package.json must expose benchmark:coding-agent:v3:candidate-cli-tui-receipt.",
+        "docs/project-map.md must describe candidateCliTuiReceipt.",
+      ]));
+    } finally {
+      await fs.rm(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when the candidate CLI/TUI receipt Schema version drifts", async () => {
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-cli-tui-version-"));
+    const schemaPath = path.join(
+      fixtureRoot,
+      "benchmarks",
+      "coding-agent",
+      "v3",
+      "candidate-cli-tui-evidence-receipt.schema.json",
+    );
+    try {
+      const schema = JSON.parse(await fs.readFile(path.join(
+        workspaceRoot,
+        "benchmarks",
+        "coding-agent",
+        "v3",
+        "candidate-cli-tui-evidence-receipt.schema.json",
+      ), "utf-8"));
+      schema.properties.schemaVersion.const =
+        "coding-agent-benchmark-candidate-cli-tui-evidence-receipt/drifted";
+      await fs.mkdir(path.dirname(schemaPath), { recursive: true });
+      await fs.writeFile(schemaPath, JSON.stringify(schema), "utf-8");
+
+      const failures = await collectCodingAgentBenchmarkContractFailures({ workspaceRoot: fixtureRoot });
+      expect(failures).toEqual(expect.arrayContaining([
+        "v3 candidate CLI/TUI receipt Schema version drifted from the producer and score loader contracts.",
+      ]));
+    } finally {
+      await fs.rm(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when candidate Verification repository wiring is absent", async () => {
     const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-verification-wiring-"));
     try {

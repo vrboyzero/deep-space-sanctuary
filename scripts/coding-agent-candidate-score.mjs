@@ -19,6 +19,11 @@ import { projectStructuredTestReport } from "./verification-test-report-adapter.
 import {
   resolveCandidateCodeIntelReceiptOwner,
 } from "./coding-agent-candidate-code-intel-receipt.mjs";
+import {
+  CODING_AGENT_CANDIDATE_CLI_TUI_CLAIMS,
+  CODING_AGENT_CANDIDATE_CLI_TUI_RECEIPT_VERSION,
+  resolveCandidateCliTuiReceiptOwner,
+} from "./coding-agent-candidate-cli-tui-receipt.mjs";
 
 export const CODING_AGENT_CANDIDATE_DIMENSION_MAPPING_VERSION =
   "coding-agent-benchmark-candidate-dimension-mapping/v1";
@@ -36,6 +41,8 @@ export const CODING_AGENT_CANDIDATE_CODING_RUN_CLIENT_CI_EVIDENCE_RECEIPT_VERSIO
   "coding-agent-benchmark-candidate-coding-run-client-ci-evidence-receipt/v1";
 export const CODING_AGENT_CANDIDATE_CODE_INTEL_EVIDENCE_RECEIPT_VERSION =
   "coding-agent-benchmark-candidate-code-intel-evidence-receipt/v1";
+export const CODING_AGENT_CANDIDATE_CLI_TUI_EVIDENCE_RECEIPT_VERSION =
+  CODING_AGENT_CANDIDATE_CLI_TUI_RECEIPT_VERSION;
 
 const mappingPath = path.resolve(
   import.meta.dirname,
@@ -108,6 +115,14 @@ const candidateCodingRunClientCiReceiptSchemaPath = path.resolve(
   "coding-agent",
   "v3",
   "candidate-coding-run-client-ci-evidence-receipt.schema.json",
+);
+const candidateCliTuiReceiptSchemaPath = path.resolve(
+  import.meta.dirname,
+  "..",
+  "benchmarks",
+  "coding-agent",
+  "v3",
+  "candidate-cli-tui-evidence-receipt.schema.json",
 );
 const verificationImpactTruthSetReportSchemaPath = path.resolve(
   import.meta.dirname,
@@ -612,6 +627,16 @@ export async function loadCodingAgentCandidateDimensionEvidence(input) {
       owner: reference.owners.candidateCodeIntelReceipt,
     });
     for (const [contractId, complete] of Object.entries(codeIntelCompletion)) {
+      completedContracts.set(contractId, complete);
+    }
+  }
+  if (reference.owners.candidateCliTuiReceipt !== undefined) {
+    const cliTuiCompletion = await resolveCandidateCliTuiReceiptOwner({
+      aggregateRoot,
+      expectedAggregateBinding,
+      owner: reference.owners.candidateCliTuiReceipt,
+    });
+    for (const [contractId, complete] of Object.entries(cliTuiCompletion)) {
       completedContracts.set(contractId, complete);
     }
   }
@@ -1665,9 +1690,13 @@ function requireExactDimensionClaims(reference) {
   const contextRetrievalClaims = reference.owners.candidateCodeIntelReceipt === undefined
     ? []
     : EXPECTED_CONTEXT_RETRIEVAL_CLAIMS;
+  const cliTuiClaims = reference.owners.candidateCliTuiReceipt === undefined
+    ? []
+    : CODING_AGENT_CANDIDATE_CLI_TUI_CLAIMS;
   const expectedClaims = [
     ...safetyClaims,
     ...contextRetrievalClaims,
+    ...cliTuiClaims,
     ...editingTestingClaims,
     ...sessionLongRunningClaims,
     ...headlessEcosystemClaims,

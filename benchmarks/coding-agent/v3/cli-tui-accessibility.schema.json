@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/cli-tui-accessibility-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "platform", "sourceIdentity", "status", "accessibility", "lifecycle", "gate"],
+  "properties": {
+    "schemaVersion": { "const": "tui-accessibility-cross-platform/v1" },
+    "platform": { "enum": ["windows-native", "wsl2-linux"] },
+    "sourceIdentity": { "type": "object" },
+    "status": { "enum": ["complete", "incomplete", "failed"] },
+    "accessibility": {
+      "type": "object", "additionalProperties": false,
+      "required": ["keyboardNavigation", "focusVisible", "labelsPresent"],
+      "properties": {
+        "keyboardNavigation": { "type": "boolean" },
+        "focusVisible": { "type": "boolean" },
+        "labelsPresent": { "type": "boolean" }
+      }
+    },
+    "lifecycle": {
+      "type": "object", "additionalProperties": false,
+      "required": ["firstFrame", "narrowFallback", "wideLayoutRestored", "mouseTabNavigation", "inputReplayRendered", "residualProcessCount"],
+      "properties": {
+        "firstFrame": { "type": "boolean" },
+        "narrowFallback": { "type": "boolean" },
+        "wideLayoutRestored": { "type": "boolean" },
+        "mouseTabNavigation": { "type": "boolean" },
+        "inputReplayRendered": { "type": "boolean" },
+        "residualProcessCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "gate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["passed", "failures"],
+      "properties": { "passed": { "type": "boolean" }, "failures": { "type": "array", "items": { "type": "string" } } }
+    }
+  }
+}

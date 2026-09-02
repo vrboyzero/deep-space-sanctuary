@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/cli-tui-task-projection-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "aggregate", "sourceIdentity", "entries"],
+  "properties": {
+    "schemaVersion": { "const": "task-projection-cross-entry-conformance/v1" },
+    "aggregate": { "type": "object" },
+    "sourceIdentity": { "type": "object" },
+    "entries": {
+      "type": "array", "minItems": 4, "maxItems": 4,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["client", "sequence"],
+        "properties": {
+          "client": { "enum": ["cli", "tui", "webchat", "vscode"] },
+          "sequence": {
+            "type": "array", "minItems": 2,
+            "items": {
+              "type": "object", "additionalProperties": false,
+              "required": ["status", "allowedActions", "observedAtMs"],
+              "properties": {
+                "status": { "enum": ["queued", "running", "needs_input", "blocked", "verifying", "completed", "failed", "cancelled", "interrupted", "uncertain"] },
+                "allowedActions": { "type": "array", "items": { "enum": ["observe", "respond", "resume", "cancel", "retry", "verify"] } },
+                "observedAtMs": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

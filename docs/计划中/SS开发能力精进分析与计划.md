@@ -11099,6 +11099,41 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：CodeIntel 的唯一 producer、仓库 verifier 和联合回归已经收口，继续增加旁支不会更接近总体目标；`cli_tui` 是当前链路中下一个未闭合的能力维度。
 - **当前还缺的关键闭环**：真实 CI 仍需绑定未来稳定候选的官方 run/API/ZIP 证据，fixture 不能替代它；后续还需完成 `cli_tui`、`git_delivery`、七维 evaluator/report、完整回归与两个连续候选。推进始终以“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 评分 → 连续候选”为核心，必要时调整既有 P2-C 改动，但不扩大边界。
 
+#### P2-C `cli_tui` 实现结论：current-candidate TaskProjection/效率与双平台 accessibility receipt（2026-09-02）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-cli-tui-receipt.mjs` 与 `scripts/run-coding-agent-candidate-cli-tui-receipt.mjs` 新建**：
+   - 建立唯一 `candidateCliTuiReceipt` producer/resolver，固定绑定四入口 TaskProjection conformance、终态/允许动作一致性、TaskProjection 驱动的效率时间线，以及 Windows/WSL2 TUI accessibility/lifecycle evidence；
+   - 通过 aggregate、source/harness identity、source inventory digest、固定相对路径、artifact SHA-256、Schema 与平台外键逐层验真；缺失、漂移、可信 Gate 未达标分别保持 `incomplete / reject / failed`，全部闭合才为 `complete`；
+   - producer 只组合既有 artifact，不启动 TUI、Gateway、模型或 Provider；owner/reference 写入采用 exclusive-create 与失败回滚，不覆盖已有 candidate receipt。
+
+2. **CLI/TUI artifact Schema 与 fixture 接入**：
+   - 新增 `candidate-cli-tui-evidence-receipt.schema.json`、`cli-tui-task-projection.schema.json`、`cli-tui-task-efficiency.schema.json`、`cli-tui-accessibility.schema.json`，分别约束组合 receipt、四入口 projection、效率 completeness 与双平台可达性；
+   - `addCandidateCliTuiEvidence()` 复用 aggregate fixture、TaskProjection/效率数据和双平台 accessibility fixture，修正 claims 顺序，并允许在不写 receipt 时供唯一 producer 测试消费。
+
+3. **公共 loader、仓库接线与文档**：
+   - `loadCodingAgentCandidateDimensionEvidence()` 接入 `candidateCliTuiReceipt`，四项 claim 按公共 seam 投影，不产生 numeric score；`candidate-dimension-evidence-reference.schema.json` 增加 owner/claims 合同并清理重复定义；
+   - `package.json`、`verify-coding-agent-benchmark-contract.mjs`、`benchmarks/coding-agent/README.md` 与 `docs/project-map.md` 登记 producer、命令、Schema、artifact owner 和三态边界；
+   - 保留既有 `tui-performance` 为性能/生命周期 owner，不将其冒充 accessibility，双平台 accessibility 由新窄组合 receipt 持有。
+
+4. **效果**：
+   - fixture 中四项 `cli_tui` contract 可通过 current-candidate binding 进入 `complete`；单端 accessibility Gate 失败只投影 `tui_accessibility_cross_platform=failed`，缺 artifact/路径/摘要或身份漂移 fail-closed 为 `reject`；
+   - 真实性与能力结果分离，CLI/TUI 证据不能由历史 aggregate、单平台报告、重复路径或自报 summary 获得资格；本实现不宣称真实 current-candidate 已完成，也不提前授予七维数值分。
+
+##### 验证结果
+
+- `corepack pnpm exec vitest run scripts/run-coding-agent-candidate-cli-tui-receipt.test.mjs --pool forks --poolOptions.forks.singleFork --reporter verbose`：`6/6` 通过（成功绑定、accessibility failed、终态动作不一致 failed、source inventory 自洽漂移 reject、缺 artifact 回滚、existing owner 拒绝覆盖）；
+- CLI/TUI 及既有公共链联合定向测试：`4` 个测试文件、`86/86` 通过（含既有 score、dimension evidence、repository verifier）；
+- `corepack pnpm verify:coding-benchmark` 与 `corepack pnpm build:incremental` 通过；新增四个 JSON Schema 可编译/解析；相关脚本 `node --check`、`git diff --check` 通过；
+- 未运行真实 TUI/PTY accessibility、Gateway、模型/Provider、真实 CI 或冻结 Formal；Provider calls/cost=`0/$0`，fixture 不替代真实双平台 current-candidate 证据。
+
+##### 后续计划
+
+- **下一步准备做什么**：在稳定 current-candidate 提交与执行前 Gate 后，先运行既有 `benchmark:tui-performance:windows` / `benchmark:tui-performance:wsl` 采集真实 PTY lifecycle/accessibility 观测，再由 CLI/TUI producer 将其与真实 TaskProjection/效率 timeline 回填；随后转入 `git_delivery` Adapter。
+- **为什么先做它**：当前实现已闭合 `cli_tui` 的合同、验真、三态和仓库发现/消费链，但 fixture 仍未证明真实平台可达性；先采集原生证据可避免把测试形状误当产品能力。
+- **当前还缺的关键闭环**：真实双平台 PTY/accessibility run、稳定候选 identity 下的真实 artifact、`git_delivery` 维度、七维 evaluator/report、完整回归及两个连续候选；`headless_ecosystem` 真实 CI receipt 仍待稳定提交后按授权回填。
+
 ## 实施计划进度表
 
 ### 前提：总体核心目标、当前推进目标与工作链路（2026-09-02）
@@ -11151,7 +11186,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
   -> 两个连续冻结候选最终复核
 ```
 
-当前本地推进点位于 `context_retrieval` 统一 candidate-bound CodeIntel receipt：Context Inspector producer、receipt Schema、公共 loader 六合同 resolver、最小外键攻击矩阵以及唯一 producer/仓库 verifier 接线均已收口，`incomplete / reject / failed / complete` 主链由公共 seam 和仓库 Gate 证明；本环节完成后不再扩展 CodeIntel，下一恢复点转入 `cli_tui`。推进以总体核心目标为准，必要时可调整或提交既有 P2-C 实现，以达成真实能力与可信证据闭环为优先，不为保留既有改动或假想场景无止境扩大边界。`headless_ecosystem` 唯一剩余项仍是一份绑定未来 current-candidate commit 的真实 GitHub Actions run/API/ZIP receipt；真实 CI 现已获授权，可在形成稳定提交与执行前 Gate 后只推送 `private/main` 触发，但本地 fixture 不能代替真实证据。主要顺序为：`cli_tui` -> `git_delivery` -> 数值 evaluator/report -> 完整回归 -> 两个连续候选；真实 CI 在合适检查点插入并回填。若候选运行暴露真实产品缺陷，流程应回到产品修复与重新冻结，而不是继续授分。
+当前本地推进点已转入 `cli_tui` candidate-bound receipt：TaskProjection 四入口/终态动作、效率时间线与 Windows/WSL2 accessibility 的 receipt Schema、公共 loader、真实性/三态 resolver、唯一 producer/仓库 verifier 接线均已收口；`incomplete / reject / failed / complete` 主链由公共 seam 和仓库 Gate 证明，但真实双平台 PTY/accessibility artifact 仍待稳定 current-candidate 采集。推进以总体核心目标为准，必要时可调整或提交既有 P2-C 实现，以达成真实能力与可信证据闭环为优先，不为保留既有改动或假想场景无止境扩大边界。`headless_ecosystem` 唯一剩余项仍是一份绑定未来 current-candidate commit 的真实 GitHub Actions run/API/ZIP receipt；真实 CI 现已获授权，可在形成稳定提交与执行前 Gate 后只推送 `private/main` 触发，但本地 fixture 不能代替真实证据。主要顺序为：真实 `cli_tui` artifact -> `git_delivery` -> 数值 evaluator/report -> 完整回归 -> 两个连续候选；真实 CI 在合适检查点插入并回填。若候选运行暴露真实产品缺陷，流程应回到产品修复与重新冻结，而不是继续授分。
 
 #### 后续工作量估算
 
@@ -11193,4 +11228,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **CodeIntel producer/仓库接线完成；`headless_ecosystem` 真实 CI 待稳定提交** | CodeIntel receipt Schema、`11` 份 producer fixture、公共 resolver、外键代表与唯一 producer/仓库 verifier 联合 `21/21`；六合同 complete、receipt digest/summary/selection/path/platform/shared-runtime/pair-task reject、Schema-valid Gate failed 均由公共 seam 证明；既有 P2-C 改动以总体目标为准可调整或提交 | `约 5–8.5 人日工程量 + 两个连续候选运行/观察窗口` | 下一恢复点为 `cli_tui`；真实 CI 仅在稳定 current-candidate 检查点按授权推 `private/main` 获取官方证据，fixture 不替代真实证据，不继续扩大 CodeIntel 边界 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **CodeIntel 与 `cli_tui` candidate receipt/仓库接线完成；真实双平台 CLI/TUI 与 `headless_ecosystem` CI 待稳定提交** | CodeIntel receipt Schema、`11` 份 producer fixture、公共 resolver、外键代表与唯一 producer/仓库 verifier 联合 `21/21`；CLI/TUI receipt/四项 contract/三态与公共联合回归 `86/86`；真实 TaskProjection/效率/accessibility artifact 仍未采集；既有 P2-C 改动以总体目标为准可调整或提交 | `约 5–8.5 人日工程量 + 两个连续候选运行/观察窗口` | 下一步采集真实 Windows-native/WSL2 CLI/TUI artifact，再转 `git_delivery`；真实 CI 仅在稳定 current-candidate 检查点按授权推 `private/main` 获取官方证据，fixture 不替代真实证据 |

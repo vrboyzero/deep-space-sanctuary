@@ -60,13 +60,16 @@
         },
         "candidateCodeIntelReceipt": {
           "$ref": "#/$defs/candidateCodeIntelReceiptOwner"
+        },
+        "candidateCliTuiReceipt": {
+          "$ref": "#/$defs/candidateCliTuiReceiptOwner"
         }
       }
     },
     "claims": {
       "type": "array",
       "minItems": 3,
-      "maxItems": 22,
+      "maxItems": 30,
       "uniqueItems": true,
       "items": {
         "oneOf": [
@@ -84,6 +87,9 @@
           },
           {
             "$ref": "#/$defs/contextRetrievalClaim"
+          },
+          {
+            "$ref": "#/$defs/cliTuiClaim"
           }
         ]
       }
@@ -444,6 +450,21 @@
         }
       }
     },
+    "candidateCliTuiReceiptOwner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "scope", "artifactSchemaVersion", "artifact"],
+      "properties": {
+        "kind": { "const": "candidate_artifact" },
+        "scope": { "const": "candidate_harness" },
+        "artifactSchemaVersion": { "const": "coding-agent-benchmark-candidate-cli-tui-evidence-receipt/v1" },
+        "artifact": {
+          "type": "object", "additionalProperties": false,
+          "required": ["path", "sha256"],
+          "properties": { "path": { "const": "candidate-cli-tui-evidence-receipt.json" }, "sha256": { "$ref": "#/$defs/sha256" } }
+        }
+      }
+    },
     "safetyClaim": {
       "type": "object",
       "additionalProperties": false,
@@ -623,6 +644,17 @@
             "current_source_go_canary_eligibility_proven"
           ]
         }
+      }
+    },
+    "cliTuiClaim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dimensionId", "contractId", "owner", "completion"],
+      "properties": {
+        "dimensionId": { "const": "cli_tui" },
+        "contractId": { "enum": ["task_projection_cross_entry_conformance", "task_projection_terminal_action_consistency", "task_efficiency_timeline", "tui_accessibility_cross_platform"] },
+        "owner": { "const": "candidateCliTuiReceipt" },
+        "completion": { "enum": ["current_harness_task_projection_four_entry_conformance_passed", "current_harness_task_projection_terminal_action_consistency_passed", "current_harness_task_efficiency_timeline_complete", "current_harness_dual_platform_tui_accessibility_passed"] }
       }
     }
   }

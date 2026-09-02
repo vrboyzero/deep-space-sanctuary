@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/cli-tui-task-efficiency-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "aggregate", "sourceIdentity", "status", "evidence", "metrics"],
+  "properties": {
+    "schemaVersion": { "const": "task-efficiency-evidence/v1" },
+    "aggregate": { "type": "object" },
+    "sourceIdentity": { "type": "object" },
+    "status": { "enum": ["complete", "incomplete"] },
+    "evidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "projectionTimeline"],
+      "properties": {
+        "status": { "enum": ["complete", "incomplete"] },
+        "projectionTimeline": {
+          "type": "object", "additionalProperties": false,
+          "required": ["coverage", "items"],
+          "properties": { "coverage": { "const": "complete" }, "items": { "type": "array", "minItems": 2 } }
+        }
+      }
+    },
+    "metrics": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schemaVersion", "status", "missingMetrics", "usageCompleteness"],
+      "properties": {
+        "schemaVersion": { "const": "task-efficiency-metrics/v1" },
+        "status": { "enum": ["complete", "incomplete"] },
+        "missingMetrics": { "type": "array", "items": { "type": "string" } },
+        "usageCompleteness": { "type": "object" }
+      }
+    }
+  }
+}
