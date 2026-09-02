@@ -11653,6 +11653,43 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：attempt 1 已证明双平台路径可用，attempt 2 能在不改变 source/harness identity 的前提下扩大样本并尽早发现跨 attempt 的 recovery、system harness 或费用异常；失败仍必须保留在分母。
 - **当前还缺的关键闭环**：attempt 2/3 双平台剩余 `96` 个有效 report、必要时唯一基础设施重试、完整 `144/144` aggregate、CLI/TUI/Git delivery/private CI receipt、qualification/七维原始加权，以及第二个连续候选。
 
+#### P2-C current-candidate attempt 2/3 与完整矩阵实现结论：`df54f67` 双平台 `144/144` aggregate（2026-09-03）
+
+##### 已完成内容
+
+1. **双平台剩余矩阵采集**：
+   - 沿用冻结的 Windows `.tmp/p2c-candidate-df54f67-harness` 与 WSL2 `/var/tmp/star-sanctuary-p2c-candidate-df54f67`，使用一字符 collection root `r` 完成 attempt 2/3；Windows 与 WSL2 各补齐 `48` 个 logical run，连同 attempt 1 合计形成 `144/144` 正式 report；
+   - attempt 2：Windows `16 passed / 8 failed`、WSL2 `16 passed / 8 failed`；attempt 3：Windows `18 passed / 6 failed`、WSL2 `17 passed / 7 failed`；三轮合计 Windows `51 passed / 21 failed`、WSL2 `46 passed / 26 failed`；
+   - 所有正式 report 的 source/harness commit=`df54f672…`、canonical worktree=`505219ab…`，`execution.infrastructureRetries=0`；没有把产品/模型失败误用为 retry，也没有正式 `infrastructure_error` run。
+
+2. **v3 aggregate producer 与分母边界**：
+   - `artifacts/p2c-df54f67/candidate-1/aggregate-v3` 收纳 `144` 份唯一 `task/platform/attempt` report，生产状态=`completed`、`eligibleForProductComparison=true`、`missingRunKeys=0`；
+   - aggregate 结果为 `97 passed + 47 failed/product_workflow`，`infrastructureErrorRunCount=0`；正式 usage 为 `132 provider_reported`、`6 unavailable`、`6 not_reached`，aggregate provider-reported cost=`$0.09653989`；
+   - attempt 1 Windows 长路径失败仍作为 global ledger 的唯一 `unreportedInfrastructure` 保留，usage=`7494/1469` tokens、4 model calls、`$0.00059841`，不进入 `144` 项 aggregate 分母；global ledger candidate cost=`$0.09713830`、observed=`$2.37476740`、reserved unknown=`$2.04221000`，按当前汇率 guard 上界=`35.33581920 RMB < 80 RMB`。
+
+3. **证据与资源收口**：
+   - 生产 `--verify` 从 retained source reports、声明 artifact 与 identity 逐字节重建成功：`verified completed 144 run(s)`；aggregate report SHA-256=`78e1a8efe4342c0f0a048f580e76ee9288c2e10c25a096730f8c960d4744a922`，baseline index SHA-256=`2dd2d32d760513940391b0717fc414e8f91e5fcef665e1d64bdc0cad674d9af6`，manifest canonical SHA-256=`ecfdb6fb…`；
+   - `28891/28892` 无监听，未发现可归属本任务的 Gateway/runner/OCI 残留，Docker 容器为空；候选 runtime 下 `286` 个 `.env/.env.local` 均完成 containment、常规文件、非 reparse 与 SHA-256 校验后送入 Windows 回收站，cleanup log=`artifacts/cleanup/p2c-df54f67-matrix-env-2026-09-03.json`、SHA-256=`0594644078b6a0d9d5bd904677316f3fcce56c8319268b9953383f56afa252cd`，仓库根 `.env.local` 未处理。
+
+4. **效果**：
+   - `df54f67` 现在具备可复算的双平台完整矩阵和 aggregate，产品失败保留在真实分母，基础设施 usage 与正式产品结果物理分离；
+   - 本结果只证明 benchmark 层 `144/144` coverage 与 aggregate Gate 闭合，不等同于七维资格、9.5 数值分数或第二个连续候选完成。
+
+##### 验证结果
+
+- TypeScript 编译状态沿用冻结 identity 的双平台完整 `corepack pnpm build`，均已通过；
+- 冻结 `df54f67` 前相关定向回归 `198/198` 通过，完整 Vitest 为 `6370/6370` 个执行测试通过（另 `3` 个跳过）；本轮仅采集与聚合证据，未改源码；
+- v3 aggregate producer 写入 `144/144`，状态=`completed`、缺失=`0`，生产 `--verify` 通过；唯一键、source/harness identity 与 `infrastructureRetries=0` 全量复算通过；
+- aggregate 机器摘要为 `97/144` task completion、`78/108` test pass、`25/54` patch acceptance、regression=`30`、manual intervention=`63`、dangerous-operation block=`30/30`、recovery=`12/12`；
+- 端口、任务进程与 OCI 资源收敛检查通过，运行环境文件清理 `286/286`、失败=`0`、剩余=`0`；
+- 本轮没有新增源码或 Provider retry；保留既有 `punycode` warning，不将其归类为失败。
+
+##### 后续计划
+
+- **下一步准备做什么**：以已验真的 `aggregate-v3` 作为唯一输入，继续生成并验真 candidate-global、CodeIntel、CLI/TUI、Git delivery 与 private CI evidence receipt，再运行 qualification/七维原始加权；随后以新的 clean identity 组织第二个连续候选。
+- **为什么先做它**：`144/144` 只闭合 benchmark coverage，higher-dimension hard Gate 仍要求 current-candidate 的跨层外键、双平台交互/交付证据和绿色 private CI，必须在同一 aggregate 上继续绑定，避免把局部成功当作资格结论。
+- **当前还缺的关键闭环**：candidate-global receipt、CodeIntel/CLI/TUI/Git delivery/private CI official API/ZIP receipt、qualification 与七维最低分/原始加权 `>=9.500`，以及第二个连续冻结候选；当前不宣称 9.5 已达成。
+
 #### 后续工作量估算
 
 **本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；CLI/TUI 双平台首帧与退出收敛也已修复并通过真实 PTY 验证；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
@@ -11693,4 +11730,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **candidate bootstrap、本地原生 collector/可恢复 runner、同 identity Linux staging、CodeIntel、`cli_tui`、`git_delivery` receipt/仓库接线、七维 evaluator/report、双平台 TUI 首帧与 WSL recovery 修复、v2 recovery fixture、CodeIntel canonical LF/frozen-input 边界及 infrastructure retry provenance 已完成；`df54f67…` 已仅推送 `private/main`，双平台 staging/Gate 与 attempt 1 矩阵已完成 `48/144` 有效报告** | `df54f67…` Windows/WSL2 identity=`505219ab…`、各 `4` receipt/`8` preflight、完整 build 通过；attempt 1 有效 report=`48/48`（Windows `17 passed/7 failed`、WSL2 `13 passed/11 failed`），均 `infrastructureRetries=0`；另 1 个 Windows 长路径无 report infrastructure 诊断的 usage `$0.00059841` 已计入 global ledger；全局 observed=`$2.31293587`、reserved=`$1.64221000`、candidate=`$0.03530677`、下一单最坏上界约 `32.44116696 RMB`；尚无 `144/144` aggregate/资格 artifact | `1.75–3.5 人日剩余基线 + 两个连续候选运行/观察窗口` | 下一恢复点：继续使用短 collection root `r` 完成 attempt 2/3 双平台剩余 `96` 个有效报告，默认 `infrastructureRetries=0`；只有同 identity 真实 infrastructure failure 才显式以 `1` 重试，完成 `144/144` 后回填 aggregate、CLI/TUI、Git delivery 与 private CI artifact |
+| P2-C：9.5 稳定化与最终复核 | P2 | **candidate bootstrap、本地原生 collector/可恢复 runner、同 identity Linux staging、CodeIntel、`cli_tui`、`git_delivery` receipt/仓库接线、七维 evaluator/report、双平台 TUI 首帧与 WSL recovery 修复、v2 recovery fixture、CodeIntel canonical LF/frozen-input 边界及 infrastructure retry provenance 已完成；`df54f67…` 已仅推送 `private/main`，双平台 `144/144` 矩阵与 aggregate 已完成并验真** | `df54f67…` Windows/WSL2 identity=`505219ab…`、各 `4` receipt/`8` preflight、完整 build 通过；正式 report=`144/144`（Windows `51 passed/21 failed`、WSL2 `46 passed/26 failed`），全部 `infrastructureRetries=0`、正式 infrastructure error=`0`；aggregate=`completed`、`eligibleForProductComparison=true`，aggregate provider usage=`132`、unavailable=`6`、not_reached=`6`、product failure=`47`；另 1 个 Windows 长路径无 report infrastructure 诊断 usage `$0.00059841` 保留在 global ledger 但不进入 aggregate 分母；global observed=`$2.37476740`、reserved=`$2.04221000`、candidate=`$0.09713830`、guard=`35.33581920 RMB < 80 RMB`；aggregate report/index SHA-256=`78e1a8ef…/2dd2d32d…`，尚无 qualification/七维 score/第二连续候选 | `1.75–3.5 人日剩余基线 + 两个连续候选运行/观察窗口` | 下一恢复点：以已验真的 `aggregate-v3` 为唯一输入，回填 candidate-global、CodeIntel、CLI/TUI、Git delivery 与 private CI receipt，再运行 qualification/七维原始加权并组织第二个连续候选 |
