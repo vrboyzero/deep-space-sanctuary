@@ -93,11 +93,13 @@ import {
   CODING_AGENT_CANDIDATE_SUPERVISOR_EVIDENCE_RECEIPT_VERSION,
   CODING_AGENT_CANDIDATE_VERIFICATION_EVIDENCE_RECEIPT_VERSION,
   CODING_AGENT_CANDIDATE_CLI_TUI_EVIDENCE_RECEIPT_VERSION,
+  CODING_AGENT_CANDIDATE_GIT_DELIVERY_EVIDENCE_RECEIPT_VERSION,
 } from "./coding-agent-candidate-score.mjs";
 import {
   CODING_AGENT_CANDIDATE_CODE_INTEL_RECEIPT_VERSION,
 } from "./coding-agent-candidate-code-intel-receipt.mjs";
 import { CODING_AGENT_CANDIDATE_CLI_TUI_RECEIPT_VERSION } from "./coding-agent-candidate-cli-tui-receipt.mjs";
+import { CODING_AGENT_CANDIDATE_GIT_DELIVERY_RECEIPT_VERSION } from "./coding-agent-candidate-git-delivery-receipt.mjs";
 import { CODING_RUN_CLIENT_CI_LANE_EVIDENCE_VERSION } from "./run-coding-run-client-ci-lane-receipt.mjs";
 import { resolveCodingCiProfile } from "./run-coding-agent-ci.mjs";
 
@@ -227,6 +229,9 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   );
   const candidateCliTuiEvidenceReceiptV3Schema = await readJson(
     "benchmarks/coding-agent/v3/candidate-cli-tui-evidence-receipt.schema.json",
+  );
+  const candidateGitDeliveryEvidenceReceiptV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/candidate-git-delivery-evidence-receipt.schema.json",
   );
   const cliTuiTaskProjectionV3Schema = await readJson(
     "benchmarks/coding-agent/v3/cli-tui-task-projection.schema.json",
@@ -657,6 +662,12 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
       !== CODING_AGENT_CANDIDATE_CLI_TUI_EVIDENCE_RECEIPT_VERSION) {
     failures.push("v3 candidate CLI/TUI receipt Schema version drifted from the producer and score loader contracts.");
   }
+  if (candidateGitDeliveryEvidenceReceiptV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_CANDIDATE_GIT_DELIVERY_RECEIPT_VERSION
+    || CODING_AGENT_CANDIDATE_GIT_DELIVERY_RECEIPT_VERSION
+      !== CODING_AGENT_CANDIDATE_GIT_DELIVERY_EVIDENCE_RECEIPT_VERSION) {
+    failures.push("v3 candidate Git delivery receipt Schema version drifted from the producer and score loader contracts.");
+  }
   if (cliTuiTaskProjectionV3Schema?.properties?.schemaVersion?.const
     !== "task-projection-cross-entry-conformance/v1") {
     failures.push("v3 CLI/TUI TaskProjection evidence Schema version drifted from the producer contract.");
@@ -836,6 +847,10 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   if (packageJson?.scripts?.["benchmark:coding-agent:v3:candidate-cli-tui-receipt"]
     !== "node --import tsx scripts/run-coding-agent-candidate-cli-tui-receipt.mjs") {
     failures.push("package.json must expose benchmark:coding-agent:v3:candidate-cli-tui-receipt.");
+  }
+  if (packageJson?.scripts?.["benchmark:coding-agent:v3:candidate-git-delivery-receipt"]
+    !== "node --import tsx scripts/run-coding-agent-candidate-git-delivery-receipt.mjs") {
+    failures.push("package.json must expose benchmark:coding-agent:v3:candidate-git-delivery-receipt.");
   }
   if (packageJson?.scripts?.["verify:coding-run-client"]
     !== EXPECTED_CODING_RUN_CLIENT_AUDIT_SCRIPT) {
@@ -1203,6 +1218,11 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "scripts/coding-agent-candidate-cli-tui-receipt.mjs",
     "scripts/run-coding-agent-candidate-cli-tui-receipt.mjs",
     "benchmarks/coding-agent/v3/candidate-cli-tui-evidence-receipt.schema.json",
+    "scripts/coding-agent-candidate-git-delivery-receipt.mjs",
+    "scripts/run-coding-agent-candidate-git-delivery-receipt.mjs",
+    "benchmarks/coding-agent/v3/candidate-git-delivery-evidence-receipt.schema.json",
+    "benchmarks/coding-agent/v3/git-delivery-evidence.schema.json",
+    "candidateGitDeliveryReceipt",
     "benchmarks/coding-agent/v3/cli-tui-task-projection.schema.json",
     "benchmarks/coding-agent/v3/cli-tui-task-efficiency.schema.json",
     "benchmarks/coding-agent/v3/cli-tui-accessibility.schema.json",

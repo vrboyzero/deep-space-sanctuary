@@ -408,6 +408,80 @@ export async function addCandidateCliTuiEvidence(aggregateRoot, options = {}) {
   await writeEvidenceReference(aggregateRoot, reference);
 }
 
+export async function addCandidateGitDeliveryEvidence(aggregateRoot, options = {}) {
+  const reference = await readEvidenceReference(aggregateRoot);
+  const aggregate = reference.aggregate;
+  const sourceIdentity = {
+    harness: aggregate.harness,
+    files: [
+      { path: "packages/belldandy-core/src/user-worktree-runtime.ts", sha256: "4".repeat(64) },
+      { path: "packages/belldandy-core/src/remote-delivery-runtime.ts", sha256: "5".repeat(64) },
+      { path: "packages/belldandy-core/src/workspace-change-review.ts", sha256: "6".repeat(64) },
+      { path: "packages/belldandy-core/src/coding-run/reconciliation-journal.ts", sha256: "7".repeat(64) },
+    ],
+  };
+  sourceIdentity.files.sort((left, right) => left.path.localeCompare(right.path));
+  sourceIdentity.aggregateSha256 = sha256(JSON.stringify(sourceIdentity.files));
+  const platformResults = ["windows-native", "wsl2-linux"].map((platform) => ({ platform, passed: options.failedPlatform !== platform }));
+  const status = options.failedPlatform ? "failed" : "complete";
+  const gate = { passed: !options.failedPlatform, failures: options.failedPlatform ? [`${options.failedPlatform} fixture failure`] : [] };
+  const remoteStatus = "complete";
+  const remoteGate = { passed: true, failures: [] };
+  const observations = ["windows-native", "wsl2-linux"].map((platform) => ({
+    platform,
+    dirty: false,
+    residualWorktreeCount: 0,
+    mutationCount: 0,
+    reviewVerdict: "needs_changes",
+    remediationApplied: true,
+    recheckVerdict: "approved",
+    diffHashStable: true,
+    parallelWrite: { fanInConfirmed: true, mainWorkspaceChangedBeforeFanIn: false, conflictDetected: true },
+    restartDelivery: { reattached: true, replayedSideEffectCount: 0, remoteWriteCount: 0, terminalStatus: "completed" },
+  }));
+  const base = { schemaVersion: "coding-agent-benchmark-git-delivery-evidence/v1", generatedAt: "2026-09-02T16:00:00.000Z", aggregate, sourceIdentity, status, gate };
+  const values = {
+    worktreeSoak: { ...base, artifactKind: "multi_repository_worktree_soak", repositories: ["star-sanctuary", "reference-repository"], platforms: platformResults, observations },
+    reviewRemediation: { ...base, artifactKind: "review_remediation_loop", platforms: platformResults, observations },
+    remoteAuthority: { ...base, status: remoteStatus, gate: remoteGate, artifactKind: "remote_delivery_authority_separation", repositories: ["star-sanctuary", "reference-repository"], platforms: ["windows-native", "wsl2-linux"].map((platform) => ({ platform, passed: true })), authority: { delegable: false, rememberable: false, userApprovalRequired: true, remoteWritePerformed: false, credentialsRead: false }, targets: [{ remoteUrlHash: "8".repeat(64), branch: "main", baseBranch: "main" }, { remoteUrlHash: "9".repeat(64), branch: "main", baseBranch: "main" }] },
+    recoveryAudit: { ...base, artifactKind: "delivery_recovery_audit_matrix", platforms: platformResults, observations },
+  };
+  const paths = {
+    worktreeSoak: "candidate-evidence/git-delivery/multi-repository-worktree-soak.json",
+    reviewRemediation: "candidate-evidence/git-delivery/review-remediation-loop.json",
+    remoteAuthority: "candidate-evidence/git-delivery/remote-delivery-authority-separation.json",
+    recoveryAudit: "candidate-evidence/git-delivery/delivery-recovery-audit-matrix.json",
+  };
+  const systemRefs = (reference.owners.systemEvidence?.artifacts ?? [])
+    .filter(({ taskId }) => taskId === "system.parallel-write-fan-in" || taskId === "system.restart-delivery-reconciliation")
+    .filter(({ platform }) => platform === "windows-native" || platform === "wsl2-linux")
+    .filter((item, index, items) => items.findIndex((candidate) => candidate.taskId === item.taskId && candidate.platform === item.platform) === index)
+    .slice(0, 4);
+  values.recoveryAudit.systemEvidence = systemRefs.map(({ path, sha256: digest }) => ({ path, sha256: digest }));
+  for (const [key, value] of Object.entries(values)) await writeRelativeFile(aggregateRoot, paths[key], serializeJson(value));
+  const refs = Object.fromEntries(Object.entries(paths).map(([key, relativePath]) => [key, { path: relativePath, sha256: sha256(serializeJson(values[key])) }]));
+  if (options.writeReceipt === false) return;
+  const receipt = {
+    schemaVersion: "coding-agent-benchmark-candidate-git-delivery-evidence-receipt/v1",
+    generatedAt: "2026-09-02T16:01:00.000Z", aggregate, sourceIdentity,
+    worktreeSoak: refs.worktreeSoak, reviewRemediation: refs.reviewRemediation, remoteAuthority: refs.remoteAuthority, recoveryAudit: refs.recoveryAudit,
+    summary: { multiRepositoryWorktreeSoak: !options.failedPlatform, reviewRemediationLoop: !options.failedPlatform, remoteDeliveryAuthoritySeparation: true, deliveryRecoveryAuditMatrix: !options.failedPlatform },
+  };
+  const receiptText = serializeJson(receipt);
+  await writeRelativeFile(aggregateRoot, "candidate-git-delivery-evidence-receipt.json", receiptText);
+  reference.owners.candidateGitDeliveryReceipt = { kind: "candidate_artifact", scope: "candidate_harness", artifactSchemaVersion: receipt.schemaVersion, artifact: { path: "candidate-git-delivery-evidence-receipt.json", sha256: sha256(receiptText) } };
+  const insertAt = reference.claims.findIndex(({ dimensionId }) => [
+    "editing_testing", "session_long_running", "headless_ecosystem",
+  ].includes(dimensionId));
+  reference.claims.splice(insertAt < 0 ? reference.claims.length : insertAt, 0,
+    { dimensionId: "git_delivery", contractId: "multi_repository_worktree_soak", owner: "candidateGitDeliveryReceipt", completion: "current_harness_multi_repository_worktree_soak_passed" },
+    { dimensionId: "git_delivery", contractId: "review_remediation_loop", owner: "candidateGitDeliveryReceipt", completion: "current_harness_review_remediation_loop_passed" },
+    { dimensionId: "git_delivery", contractId: "remote_delivery_authority_separation", owner: "candidateGitDeliveryReceipt", completion: "current_harness_remote_delivery_authority_separation_passed" },
+    { dimensionId: "git_delivery", contractId: "delivery_recovery_audit_matrix", owner: "candidateGitDeliveryReceipt", completion: "current_harness_delivery_recovery_audit_matrix_passed" },
+  );
+  await writeEvidenceReference(aggregateRoot, reference);
+}
+
 export async function writeRelativeFile(root, relativePath, value) {
   const target = path.join(root, ...relativePath.split("/"));
   await fs.mkdir(path.dirname(target), { recursive: true });

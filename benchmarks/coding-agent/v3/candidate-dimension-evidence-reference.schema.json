@@ -63,6 +63,9 @@
         },
         "candidateCliTuiReceipt": {
           "$ref": "#/$defs/candidateCliTuiReceiptOwner"
+        },
+        "candidateGitDeliveryReceipt": {
+          "$ref": "#/$defs/candidateGitDeliveryReceiptOwner"
         }
       }
     },
@@ -90,6 +93,9 @@
           },
           {
             "$ref": "#/$defs/cliTuiClaim"
+          },
+          {
+            "$ref": "#/$defs/gitDeliveryClaim"
           }
         ]
       }
@@ -465,6 +471,21 @@
         }
       }
     },
+    "candidateGitDeliveryReceiptOwner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "scope", "artifactSchemaVersion", "artifact"],
+      "properties": {
+        "kind": { "const": "candidate_artifact" },
+        "scope": { "const": "candidate_harness" },
+        "artifactSchemaVersion": { "const": "coding-agent-benchmark-candidate-git-delivery-evidence-receipt/v1" },
+        "artifact": {
+          "type": "object", "additionalProperties": false,
+          "required": ["path", "sha256"],
+          "properties": { "path": { "const": "candidate-git-delivery-evidence-receipt.json" }, "sha256": { "$ref": "#/$defs/sha256" } }
+        }
+      }
+    },
     "safetyClaim": {
       "type": "object",
       "additionalProperties": false,
@@ -655,6 +676,17 @@
         "contractId": { "enum": ["task_projection_cross_entry_conformance", "task_projection_terminal_action_consistency", "task_efficiency_timeline", "tui_accessibility_cross_platform"] },
         "owner": { "const": "candidateCliTuiReceipt" },
         "completion": { "enum": ["current_harness_task_projection_four_entry_conformance_passed", "current_harness_task_projection_terminal_action_consistency_passed", "current_harness_task_efficiency_timeline_complete", "current_harness_dual_platform_tui_accessibility_passed"] }
+      }
+    },
+    "gitDeliveryClaim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dimensionId", "contractId", "owner", "completion"],
+      "properties": {
+        "dimensionId": { "const": "git_delivery" },
+        "contractId": { "enum": ["multi_repository_worktree_soak", "review_remediation_loop", "remote_delivery_authority_separation", "delivery_recovery_audit_matrix"] },
+        "owner": { "const": "candidateGitDeliveryReceipt" },
+        "completion": { "enum": ["current_harness_multi_repository_worktree_soak_passed", "current_harness_review_remediation_loop_passed", "current_harness_remote_delivery_authority_separation_passed", "current_harness_delivery_recovery_audit_matrix_passed"] }
       }
     }
   }

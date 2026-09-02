@@ -113,6 +113,16 @@ candidate loader 必须从 GitHub run/jobs/artifacts API JSON 与下载后的原
 corepack pnpm benchmark:coding-agent:v3:candidate-code-intel-receipt --aggregate-root <v3-aggregate-root> --generated-at <ISO-8601>
 ```
 
+## P2-C candidate Git delivery receipt
+
+`benchmark:coding-agent:v3:candidate-git-delivery-receipt` 是 `candidateGitDeliveryReceipt` 的唯一仓库 producer。它只组合 current-candidate 根中固定路径的 multi-repository worktree soak、review/remediation、remote authority separation 与 delivery recovery audit artifact；后者必须逐项引用当前 aggregate report 中 Windows/WSL2 的 `parallel-write-fan-in` 和 `restart-delivery-reconciliation` system evidence。producer 不执行 push、PR、模型、Provider 或新的 soak。
+
+公共 loader 校验 aggregate/harness identity、source inventory、artifact SHA-256/Schema、双仓/双平台和 run/path 外键。缺 owner 保持 `incomplete`，缺失或漂移 `reject`，可信 Gate 未通过 `failed`，四项合同全绿才 `complete`；fixture 只验证接线，不能替代真实 current-candidate artifact。
+
+```powershell
+corepack pnpm benchmark:coding-agent:v3:candidate-git-delivery-receipt --aggregate-root <v3-aggregate-root> --generated-at <ISO-8601>
+```
+
 ## P0.14/P0.15 v3 Linux snapshot preparation 边界
 
 `benchmark:coding-agent:v3:prepare-linux` 必须在目标 WSL2 发行版内执行，并显式接收四仓 source parent、本机只读 npm tarball cache、可选 exact dependency seed、可选 Go module cache 和此前不存在的 ext4 output root。准备期只执行本地 Git clone 与 `npm ci --offline --ignore-scripts --no-audit --no-fund --update-notifier=false`；Express 无 checked-in lockfile，只允许用既有 `node_modules/.package-lock.json` 生成根 lock，且派生前后的精确 package set 和根 `package.json` 必须一致。挂载盘工作树可能因 CRLF 被 WSL Git 误报 dirty，因此只校验其 origin/HEAD/commit object；receipt 只绑定重新 clone 后的 ext4 clean worktree。

@@ -42,6 +42,7 @@
     "benchmark:coding-agent:v3:candidate-global-receipt": "node --import tsx scripts/run-coding-agent-candidate-global-receipt.mjs",
     "benchmark:coding-agent:v3:candidate-qualification": "node --import tsx scripts/run-coding-agent-candidate-qualification.mjs",
     "benchmark:coding-agent:v3:candidate-code-intel-receipt": "node --import tsx scripts/run-coding-agent-candidate-code-intel-receipt.mjs",
+    "benchmark:coding-agent:v3:candidate-git-delivery-receipt": "node --import tsx scripts/run-coding-agent-candidate-git-delivery-receipt.mjs",
     "benchmark:coding-agent:stage0b": "node scripts/run-coding-agent-benchmark.mjs --platform windows-native",
     "benchmark:coding-agent:stage0c:wsl": "node scripts/run-coding-agent-benchmark-wsl.mjs",
     "benchmark:coding-agent:stage0c:interactive:windows": "node scripts/run-coding-agent-benchmark.mjs --platform windows-native --task-id command.interactive-control",

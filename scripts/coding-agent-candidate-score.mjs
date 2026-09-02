@@ -24,6 +24,11 @@ import {
   CODING_AGENT_CANDIDATE_CLI_TUI_RECEIPT_VERSION,
   resolveCandidateCliTuiReceiptOwner,
 } from "./coding-agent-candidate-cli-tui-receipt.mjs";
+import {
+  CODING_AGENT_CANDIDATE_GIT_DELIVERY_CLAIMS,
+  CODING_AGENT_CANDIDATE_GIT_DELIVERY_RECEIPT_VERSION,
+  resolveCandidateGitDeliveryReceiptOwner,
+} from "./coding-agent-candidate-git-delivery-receipt.mjs";
 
 export const CODING_AGENT_CANDIDATE_DIMENSION_MAPPING_VERSION =
   "coding-agent-benchmark-candidate-dimension-mapping/v1";
@@ -43,6 +48,8 @@ export const CODING_AGENT_CANDIDATE_CODE_INTEL_EVIDENCE_RECEIPT_VERSION =
   "coding-agent-benchmark-candidate-code-intel-evidence-receipt/v1";
 export const CODING_AGENT_CANDIDATE_CLI_TUI_EVIDENCE_RECEIPT_VERSION =
   CODING_AGENT_CANDIDATE_CLI_TUI_RECEIPT_VERSION;
+export const CODING_AGENT_CANDIDATE_GIT_DELIVERY_EVIDENCE_RECEIPT_VERSION =
+  CODING_AGENT_CANDIDATE_GIT_DELIVERY_RECEIPT_VERSION;
 
 const mappingPath = path.resolve(
   import.meta.dirname,
@@ -291,6 +298,7 @@ const EXPECTED_CONTEXT_RETRIEVAL_CLAIMS = Object.freeze([
     completion: "current_source_go_canary_eligibility_proven",
   }),
 ]);
+const EXPECTED_GIT_DELIVERY_CLAIMS = CODING_AGENT_CANDIDATE_GIT_DELIVERY_CLAIMS;
 const EXPECTED_CODING_RUN_CLIENT_AUDIT_COMMAND =
   "corepack pnpm verify:coding-run-client";
 const EXPECTED_CODING_RUN_CLIENT_AUDIT_TEST_FILES = Object.freeze([
@@ -637,6 +645,16 @@ export async function loadCodingAgentCandidateDimensionEvidence(input) {
       owner: reference.owners.candidateCliTuiReceipt,
     });
     for (const [contractId, complete] of Object.entries(cliTuiCompletion)) {
+      completedContracts.set(contractId, complete);
+    }
+  }
+  if (reference.owners.candidateGitDeliveryReceipt !== undefined) {
+    const gitDeliveryCompletion = await resolveCandidateGitDeliveryReceiptOwner({
+      aggregateRoot,
+      expectedAggregateBinding,
+      owner: reference.owners.candidateGitDeliveryReceipt,
+    });
+    for (const [contractId, complete] of Object.entries(gitDeliveryCompletion)) {
       completedContracts.set(contractId, complete);
     }
   }
@@ -1693,10 +1711,14 @@ function requireExactDimensionClaims(reference) {
   const cliTuiClaims = reference.owners.candidateCliTuiReceipt === undefined
     ? []
     : CODING_AGENT_CANDIDATE_CLI_TUI_CLAIMS;
+  const gitDeliveryClaims = reference.owners.candidateGitDeliveryReceipt === undefined
+    ? []
+    : EXPECTED_GIT_DELIVERY_CLAIMS;
   const expectedClaims = [
     ...safetyClaims,
     ...contextRetrievalClaims,
     ...cliTuiClaims,
+    ...gitDeliveryClaims,
     ...editingTestingClaims,
     ...sessionLongRunningClaims,
     ...headlessEcosystemClaims,
