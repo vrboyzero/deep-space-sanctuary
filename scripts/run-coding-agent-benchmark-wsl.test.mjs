@@ -149,6 +149,7 @@ describe("coding agent benchmark WSL launcher", () => {
       modelId: "deepseek-v4-flash",
       credentialsConfigured: true,
       attempt: 2,
+      infrastructureRetries: 1,
       taskId: "command.interactive-control",
       priorObservedCostUsd: 0.75,
       maxTotalCostUsd: 2.5,
@@ -181,6 +182,7 @@ describe("coding agent benchmark WSL launcher", () => {
       "--model-id", "deepseek-v4-flash",
       "--credentials-configured", "true",
       "--attempt", "2",
+      "--infrastructure-retries", "1",
       "--task-id", "command.interactive-control",
       "--prior-observed-cost-usd", "0.75",
       "--max-total-cost-usd", "2.5",
@@ -189,6 +191,20 @@ describe("coding agent benchmark WSL launcher", () => {
       "--source-root", "/mnt/e/project/star-sanctuary-source-fd70990",
     ]);
     expect(invocation.args.join(" ")).not.toContain("api-key");
+  });
+
+  it("rejects infrastructure retry counts above the frozen manifest limit", () => {
+    expect(() => buildWslBenchmarkInvocation({
+      distribution: "Ubuntu-22.04",
+      workspaceRoot: "E:/project/star-sanctuary",
+      fixtureRoot: "E:/project/star-sanctuary/.tmp/coding-agent-fixtures-wsl",
+      artifactRoot: "E:/project/star-sanctuary/artifacts/coding-agent-wsl",
+      stateRoot: "E:/project/star-sanctuary/artifacts/coding-agent-state-wsl",
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      credentialsConfigured: false,
+      infrastructureRetries: 2,
+    }, windowsPathDependencies())).toThrow(/infrastructure retries.*0-1/i);
   });
 
   it("passes token auth through WSLENV without placing the token in command arguments", () => {

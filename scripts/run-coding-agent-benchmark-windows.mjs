@@ -10,6 +10,7 @@ import { parseEnv } from "node:util";
 import WebSocket from "ws";
 
 import {
+  resolveBenchmarkInfrastructureRetries,
   resolveBenchmarkMaximumCostUsd,
   resolvePriorObservedCostUsd,
 } from "./run-coding-agent-benchmark.mjs";
@@ -261,6 +262,9 @@ export function buildWindowsBenchmarkInvocation(input, dependencies = {}) {
   if (!Number.isSafeInteger(attempt) || attempt < 1) {
     throw new Error("attempt must be a positive integer.");
   }
+  const infrastructureRetries = input.infrastructureRetries === undefined
+    ? undefined
+    : resolveBenchmarkInfrastructureRetries(input.infrastructureRetries);
   const priorObservedCostUsd = input.priorObservedCostUsd === undefined
     ? undefined
     : resolvePriorObservedCostUsd(input.priorObservedCostUsd);
@@ -330,6 +334,9 @@ export function buildWindowsBenchmarkInvocation(input, dependencies = {}) {
         "--model-id", modelId,
         "--credentials-configured", String(credentialsConfigured),
         "--attempt", String(attempt),
+        ...(infrastructureRetries === undefined
+          ? []
+          : ["--infrastructure-retries", String(infrastructureRetries)]),
         ...(input.taskId ? ["--task-id", requireInput(input, "taskId")] : []),
         ...(priorObservedCostUsd === undefined
           ? []
@@ -691,6 +698,9 @@ async function main() {
     modelId: requireValue(values, "model-id"),
     credentialsConfigured: credentialsValue === "true",
     attempt: Number(values.get("attempt") ?? 1),
+    ...(values.has("infrastructure-retries") ? {
+      infrastructureRetries: Number(requireValue(values, "infrastructure-retries")),
+    } : {}),
     host: values.get("host"),
     gatewayAccess: values.get("gateway-access") ?? "loopback",
     port: values.has("port") ? Number(requireValue(values, "port")) : undefined,

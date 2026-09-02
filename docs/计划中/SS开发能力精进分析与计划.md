@@ -11534,6 +11534,49 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：本轮修改改变了 benchmark 与 CodeIntel harness identity；只有先形成 clean stable commit，后续 canary、aggregate、CLI/TUI、Git delivery 和 private CI artifact 才能绑定同一份 source/harness bytes。
 - **当前还缺的关键闭环**：新 stable identity 的绿色 private CI、Windows `tests.failed-diagnosis` canary、双平台 `144/144` aggregate、CLI/TUI/Git delivery/private CI complete receipt、完整 qualification/七维原始加权，以及第二个连续候选。
 
+#### P2-C 候选执行诊断与 infrastructure retry provenance 实现结论：保留失败并支持唯一重试（2026-09-03）
+
+##### 已完成内容
+
+1. **`scripts/run-coding-agent-benchmark.mjs` 扩展**：
+   - 新增 `resolveBenchmarkInfrastructureRetries()`，按所选 manifest 的 `retryPolicy.maxInfrastructureRetries` 校验非负整数；当前仅接受 `0` 或 `1`，默认保持 `0`；
+   - CLI 接受显式 `--infrastructure-retries`，并把实际计数传入 task runner、写入 `execution.infrastructureRetries`，不再把重试 provenance 固定写成 `0`；
+   - 超出冻结上限、负数或小数均在 fixture/Agent/Provider 前失败关闭。
+
+2. **`scripts/run-coding-agent-benchmark-windows.mjs` 与 `scripts/run-coding-agent-benchmark-wsl.mjs` 扩展**：
+   - Windows/WSL launcher 只在显式请求时转发 `--infrastructure-retries`，并在启动 Gateway 或 Linux runner 前复用同一上限校验；
+   - 默认命令、Provider retry=`0`、凭据隔离、OCI 与 host/port 安全边界保持不变；
+   - retry 使用全新 fixture/state/artifact 根，原始 `infrastructure_error` report 与费用继续保留，不与同一 `task/platform/attempt` 的 retry report 同时送入 aggregate。
+
+3. **测试与文档同步**：
+   - `scripts/run-coding-agent-benchmark.test.mjs`、`scripts/coding-agent-benchmark-v2.test.mjs`、Windows/WSL launcher 测试新增默认值、显式 `1`、转发和越界失败关闭覆盖；
+   - `benchmarks/coding-agent/README.md` 与 `docs/project-map.md` 记录 retry 选择、原始失败保留、selected 唯一性和 `execution.infrastructureRetries=1` 语义；
+   - 旧 `75502b6` staging/诊断产物未覆盖，仍仅作历史诊断证据。
+
+4. **`e05ddc4` current-candidate 诊断证据**：
+   - 新建 Windows detached harness、Windows/WSL2 原生依赖 staging 与 `4` 个 repository receipt、`8` 个通过的 task preflight；两端 commit=`e05ddc46…`、canonical worktree=`e3b905b9…`、lockfile=`844c0021…`；
+   - Windows candidate-1 已处理 `37/72` 个 logical run：`26` 个 `passed`、`10` 个 `failed/product_workflow`、`1` 个 `infrastructure_error`；所有 report identity 均通过复算，未形成可消费的 `144/144` aggregate 或资格 receipt；
+   - `gateway.disconnect-recovery` attempt 2 的唯一基础设施失败为 `fault_precondition_not_reached`：模型在目标 `file_write` 前结束，原始 fault/preflight/trace 保留，未误归类为产品失败；新 stable identity 必须从 `infrastructureRetries=0` 重新采集，只有同一新 identity 再出现 infrastructure failure 时才允许显式重试。
+
+5. **效果**：
+   - infrastructure retry 不再依赖手工改 JSON，原始失败、重试次数、费用和 selected 选择均可由机器 artifact 复算；
+   - 产品/模型失败不会借 retry 入口扩大样本，aggregate 仍拒绝重复 logical attempt；
+   - 当前候选执行在 `37/72` 安全暂停，未继续消费旧 identity 或把不完整证据写入资格链。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` 与完整 `corepack pnpm build` 均通过；
+- runner、v2 recovery、Windows launcher、WSL launcher 联合回归 `91/91` 通过；合同、aggregate、repository verifier、CI runner 扩展回归 `107/107` 通过，合计本轮相关定向测试 `198/198`；
+- `corepack pnpm verify:coding-benchmark`、`corepack pnpm verify:coding-ci`、修改脚本 `node --check` 与 `git diff --check` 通过；仅保留既有 AJV `date-time` format warning；
+- `e05ddc4` candidate ledger：新增候选 Provider reported cost=`$0.02110179`，全周期 observed=`$2.27762910`、reserved unknown=`$1.44221000`，当前 guard 上界约 `29.75871280 RMB < 80 RMB`；
+- 完整 Vitest 已在本次 retry provenance 改动后通过：`984` 个测试文件通过、`2` 个跳过，`6370` 个测试通过、`3` 个跳过，exit code=`0`；`e05ddc4` 对应 private Quality run 的 dependency audit=`findings_present`，full-test job 为 `984` 文件通过、`2` 跳过后出现 `lsp-process-host.test.ts` 相关未处理 `EPIPE`，Docker run 终态为 `cancelled`，均未形成绿色 private CI receipt。
+
+##### 后续计划
+
+- **下一步准备做什么**：以本实现结论所在 stable commit 重建 Windows/WSL2 detached harness、原生依赖、repository inputs 和收费前 Gate，从 `infrastructureRetries=0` 重新采集 Windows canary/矩阵；若同 identity 再出现 infrastructure failure，才以 `1` 执行唯一重试，并继续完成仅推送 `private/main` 的私有交付链。
+- **为什么先做它**：当前 `e05ddc4` 的 candidate artifact 已绑定旧 runner 且包含未完成的 retry provenance；必须先冻结新 source/harness identity，才能让 retry、aggregate、CLI/TUI、Git delivery 与 private CI 指向同一份字节。
+- **当前还缺的关键闭环**：新 stable identity 的完整 `144/144` 双平台 aggregate、retry 选择与费用复算、绿色 private CI official API/ZIP receipt、CLI/TUI/Git delivery complete receipt、完整 qualification/七维原始加权，以及第二个连续候选。
+
 #### 后续工作量估算
 
 **本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；CLI/TUI 双平台首帧与退出收敛也已修复并通过真实 PTY 验证；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
@@ -11574,4 +11617,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **candidate bootstrap、本地原生 collector/可恢复 runner、同 identity Linux staging、CodeIntel、`cli_tui`、`git_delivery` receipt/仓库接线、七维 evaluator/report、双平台 TUI 首帧与 WSL recovery 修复完成；v2 recovery fixture 与 CodeIntel canonical LF/frozen-input 边界已修复，稳定提交待创建/推送** | `75502b6…` Windows canary=`infrastructure_error`、OCI=`invalid_configuration`、usage=`not_reached`、新增费用=`$0`，artifact 已冻结；本轮 v2/CodeIntel focused=`166/166`、CodeIntel 全套=`98/98`、build/verifier/语法 Gate 通过；标准全量仅有并发资源争用超时，相关文件单独复跑通过，未形成新的 candidate receipt | `1.75–3.5 人日剩余基线 + 两个连续候选运行/观察窗口` | 下一恢复点：创建只含本轮修复的 stable commit 并仅推送 `private/main`；随后重建双平台 staging/Gate，重跑 Windows canary，生成 `144/144` aggregate 并回填 CLI/TUI、Git delivery 与 private CI artifact |
+| P2-C：9.5 稳定化与最终复核 | P2 | **candidate bootstrap、本地原生 collector/可恢复 runner、同 identity Linux staging、CodeIntel、`cli_tui`、`git_delivery` receipt/仓库接线、七维 evaluator/report、双平台 TUI 首帧与 WSL recovery 修复、v2 recovery fixture、CodeIntel canonical LF/frozen-input 边界及 infrastructure retry provenance 已完成；本地定向与完整回归全绿，并由本实现结论所在稳定提交冻结，候选重采待启动** | `e05ddc4…` Windows candidate-1 已处理 `37/72`：`26 passed`、`10 failed/product_workflow`、`1 infrastructure_error`；新增候选 cost=`$0.02110179`，全周期 observed=`$2.27762910`、reserved=`$1.44221000`；双平台新 staging/preflight、`198/198` 本地定向回归、完整 Vitest `984` 文件与 `6370` 测试通过（另 `2` 文件、`3` 测试跳过）；private CI dependency audit=`findings_present`、full-test=`EPIPE`、Docker=`cancelled`，未形成绿色 receipt 或新 aggregate/资格 artifact | `1.75–3.5 人日剩余基线 + 两个连续候选运行/观察窗口` | 下一恢复点：以本实现结论所在 stable identity 重建双平台 staging/Gate，从 `infrastructureRetries=0` 重新采集；只有同 identity infrastructure failure 才以 `1` 重试，随后回填 aggregate、CLI/TUI、Git delivery 与 private CI artifact，并仅推进 `private/main` 私有交付链 |

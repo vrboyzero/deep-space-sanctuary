@@ -359,7 +359,7 @@ repository config 示例：
 $env:BELLDANDY_MODEL_CACHE_READ_USD_PER_1M = "<verified-cache-read-usd-per-1m>"
 $env:BELLDANDY_MODEL_INPUT_USD_PER_1M = "<verified-input-usd-per-1m>"
 $env:BELLDANDY_MODEL_OUTPUT_USD_PER_1M = "<verified-output-usd-per-1m>"
-node scripts/run-coding-agent-benchmark-windows.mjs --workspace-root <clean-harness> --source-root <clean-harness> --manifest-revision v3 --task-id real-js.bug-fix --v3-repository-config <repository-inputs.json> --fixture-root <fixture-root> --artifact-root <artifact-root> --state-root <gateway-state-root> --provider <provider-id> --model-id <model-id> --credentials-configured true --provider-env-file <control-.env.local>
+node scripts/run-coding-agent-benchmark-windows.mjs --workspace-root <clean-harness> --source-root <clean-harness> --manifest-revision v3 --task-id real-js.bug-fix --v3-repository-config <repository-inputs.json> --fixture-root <fixture-root> --artifact-root <artifact-root> --state-root <gateway-state-root> --provider <provider-id> --model-id <model-id> --credentials-configured true --provider-env-file <control-.env.local> [--infrastructure-retries 1]
 ```
 
 上述 pricing 必须来自当前 Provider/路由的已核对价格，不能使用示例值或沿用其他模型的费率。零凭证
@@ -376,6 +376,8 @@ repository config 不保存 receipt 内容或任何凭据；receipt 由独立文
 artifact 均限制为 1 MiB，并拒绝常见 credential 字段。命令行会为 v3 装配 native system harness；browser
 behavior、parallel read isolation、parallel write fan-in 与 restart delivery reconciliation 均按本机生产
 构建可用性声明 capability。
+
+`--infrastructure-retries` 只用于 manifest `retryPolicy.maxInfrastructureRetries` 允许的基础设施重试，默认且首次执行固定为 `0`，当前唯一允许的重试值为 `1`。原始 `infrastructure_error` report、artifact 与费用必须永久保留，但不得与 retry report 同时送入 aggregate；retry 使用全新且不可覆盖的 fixture/state/artifact 根，保持同一 logical `task/platform/attempt`，并在 selected run 的 `execution.infrastructureRetries` 记录 `1`。模型、权限、工具或 `product_workflow` 失败不得借此重试；aggregate 继续拒绝重复 `task/platform/attempt`。
 
 ## P0.7 v3 native aggregate 边界
 
@@ -629,6 +631,8 @@ corepack pnpm benchmark:coding-agent:stage0c:safety:wsl --distribution Ubuntu-22
 ## 阶段 0C gateway-recovery 失败矩阵
 
 `gateway.disconnect-recovery` 只允许把 `src/recovery-target.txt` 从初始标记改为完成标记一次。外部 `scripts/coding-agent-recovery-harness.mjs` 在首个目标写工具事件已转发后断开 Headless WebSocket，再通过现有 `bdd coding-run stdio` 从最后确认 cursor 续读；它不会重放 prompt、模型请求或工具调用。corrected v2 使用独立的 `gateway-recovery-v2` fixture，只接受一次写入完整目标内容的 `file_write`，不再把 `apply_patch` 格式能力混入恢复测量；目标固定为 31 UTF-8 bytes，以真实 LF 结尾而非字面反斜杠加 `n`，终态必须只返回一个 raw JSON object。它只在已绑定的目标写工具成功、文件 hash 确实变化后注入断线，并要求恢复事件中恰好一个成功 workspace mutation。失败的写工具尝试和非 raw JSON 终态仍原样保留，由 evaluator 分别归类为产品工作流或模型失败，不得升级成 infrastructure error。`fault-injection.json` 必须通过独立 Schema，且 evaluator 同时核对连续事件、唯一完成终态、唯一写副作用、Git diff 和固定 verifier。模型自报“已恢复”不能替代这些证据。v1 的 `gateway-recovery-v1` fixture 与 profile 保持不变。
+
+若模型在目标 mutation 前结束，fault owner 无法建立注入前置条件，样本按冻结分类保持 `infrastructure_error`；只有这种基础设施分类可在同 source/harness identity 下执行一次显式 retry。原失败不得删除或改写，retry 不重放旧 binding，而是从全新 fixture/state 重新执行，并由 selected run 的 `execution.infrastructureRetries=1` 证明已消费唯一重试额度。
 
 Windows 与 WSL2 使用显式入口，运行参数和隔离 Gateway 要求与前述任务相同：
 

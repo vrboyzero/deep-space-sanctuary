@@ -23,6 +23,7 @@ import {
   loadCodingAgentBenchmarkV3RepositoryInputs,
   resolveBenchmarkCliSourceRoot,
   resolveGatewayWorkspacePath,
+  resolveBenchmarkInfrastructureRetries,
   resolveBenchmarkRuntimePlatform,
   resolveRecoveryGatewayTarget,
   resolveBenchmarkShadowCandidate,
@@ -50,6 +51,15 @@ afterEach(async () => {
 });
 
 describe("coding agent benchmark stage 0B runner", () => {
+  it("bounds explicit infrastructure retry provenance to the manifest policy", () => {
+    expect(resolveBenchmarkInfrastructureRetries()).toBe(0);
+    expect(resolveBenchmarkInfrastructureRetries(1)).toBe(1);
+    expect(() => resolveBenchmarkInfrastructureRetries(-1)).toThrow(/within 0-1/i);
+    expect(() => resolveBenchmarkInfrastructureRetries(0.5)).toThrow(/within 0-1/i);
+    expect(() => resolveBenchmarkInfrastructureRetries(2)).toThrow(/within 0-1/i);
+    expect(() => resolveBenchmarkInfrastructureRetries(0, -1)).toThrow(/retry limit is invalid/i);
+  });
+
   it("allows recovery through only the exact WSL2 default Gateway", () => {
     const route = [
       "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask",

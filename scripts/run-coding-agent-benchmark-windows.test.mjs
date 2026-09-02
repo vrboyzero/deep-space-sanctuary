@@ -141,6 +141,7 @@ describe("coding agent benchmark Windows launcher", () => {
       modelId: "deepseek-v4-flash",
       credentialsConfigured: true,
       attempt: 1,
+      infrastructureRetries: 1,
       taskId: "real-ts.api-migration",
       manifestRevision: "v3",
       sourceRoot: workspaceRoot,
@@ -192,12 +193,29 @@ describe("coding agent benchmark Windows launcher", () => {
       "--platform", "windows-native",
       "--model-id", "deepseek-v4-flash",
       "--credentials-configured", "true",
+      "--infrastructure-retries", "1",
       "--manifest-revision", "v3",
       "--task-id", "real-ts.api-migration",
       "--max-total-cost-usd", "0.1",
     ]));
     expect(invocation.benchmark.args.join(" ")).not.toContain("ephemeral-gateway-token");
     expect(invocation.benchmark.args.join(" ")).not.toContain("sensitive-provider-key");
+  });
+
+  it("rejects infrastructure retry counts above the frozen manifest limit", () => {
+    expect(() => buildWindowsBenchmarkInvocation({
+      workspaceRoot,
+      fixtureRoot: "E:/project/star-sanctuary/tmp/fixtures",
+      artifactRoot: "E:/project/star-sanctuary/artifacts/windows-formal",
+      stateRoot: "E:/project/star-sanctuary/tmp/runtime",
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      credentialsConfigured: false,
+      infrastructureRetries: 2,
+    }, {
+      baseEnv: {},
+      resolvePath: (value) => path.win32.resolve(value),
+    })).toThrow(/infrastructure retries.*0-1/i);
   });
 
   it("uses no auth secret for an explicit auth-none diagnostic run", () => {

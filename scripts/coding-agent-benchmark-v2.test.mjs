@@ -627,6 +627,7 @@ describe("coding agent benchmark v2 preflight", () => {
       artifactRoot: path.join(root, "artifacts"),
       stateRoot: path.join(root, "state"),
       attempt: 1,
+      infrastructureRetries: 1,
       runIds: { "rules.nested-precedence": "rules-v2-windows-a1" },
       model: { provider: "fixture", id: "fixture-model", credentialsConfigured: false },
       generatedAt: "2026-07-28T00:00:00.000Z",
@@ -654,6 +655,7 @@ describe("coding agent benchmark v2 preflight", () => {
       source,
       runs: [{
         schemaVersion: CODING_AGENT_BENCHMARK_RUN_V2_VERSION,
+        execution: { infrastructureRetries: 1 },
         artifacts: { preflight: "rules-v2-windows-a1/preflight.json" },
       }],
     });

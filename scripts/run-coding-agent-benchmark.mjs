@@ -160,6 +160,16 @@ export function resolveBenchmarkMaximumCostUsd(value = STAGE_0D_BENCHMARK_USAGE_
   return roundCostUsd(value);
 }
 
+export function resolveBenchmarkInfrastructureRetries(value = 0, maximum = 1) {
+  if (!Number.isSafeInteger(maximum) || maximum < 0) {
+    throw new Error("Benchmark infrastructure retry limit is invalid.");
+  }
+  if (!Number.isSafeInteger(value) || value < 0 || value > maximum) {
+    throw new Error(`Benchmark infrastructure retries must be an integer within 0-${maximum}.`);
+  }
+  return value;
+}
+
 export function createBenchmarkUsageBudget(model, options = {}) {
   const maxCostUsd = resolveBenchmarkMaximumCostUsd(options.maxCostUsd);
   const priorObservedCostUsd = resolvePriorObservedCostUsd(options.priorObservedCostUsd);
@@ -219,6 +229,10 @@ export async function runStage0BSuite(input, dependencies = {}) {
   const selectedManifestPath = resolveCodingAgentBenchmarkManifestPath(manifestRevision);
   const manifestText = await fs.readFile(selectedManifestPath, "utf-8");
   const manifest = await loadCodingAgentBenchmarkManifest(selectedManifestPath);
+  const infrastructureRetries = resolveBenchmarkInfrastructureRetries(
+    input.infrastructureRetries,
+    manifest.suite.retryPolicy.maxInfrastructureRetries,
+  );
   const taskIds = resolveTaskIds(input.taskIds, manifestRevision, manifest);
   const shadowCandidateId = resolveBenchmarkShadowCandidate({
     candidateId: input.shadowCandidateId,
@@ -267,6 +281,7 @@ export async function runStage0BSuite(input, dependencies = {}) {
       taskId,
       runId,
       attempt,
+      infrastructureRetries,
       manifest,
       manifestRevision,
       contract,
@@ -310,6 +325,10 @@ export async function runStage0BTask(input, dependencies = {}) {
   }
   const task = input.manifest.tasks.find((candidate) => candidate.id === input.taskId);
   const contract = input.contract ?? resolveCodingAgentBenchmarkContract(input.manifestRevision ?? "v1");
+  const infrastructureRetries = resolveBenchmarkInfrastructureRetries(
+    input.infrastructureRetries,
+    input.manifest.suite.retryPolicy.maxInfrastructureRetries,
+  );
   const executionBudgets = resolveCodingAgentBenchmarkTaskBudgets(input.manifest, task?.id);
   const isV3Task = input.manifestRevision === "v3";
   const isInteractiveTask = task?.id === STAGE_0C_INTERACTIVE_TASK_ID;
@@ -600,7 +619,7 @@ export async function runStage0BTask(input, dependencies = {}) {
     execution: {
       profile: task.executionProfile,
       budgets: executionBudgets,
-      infrastructureRetries: 0,
+      infrastructureRetries,
       ...(input.maxCostUsd === undefined || (contract.revision !== "v1" && isProcessRestartTask)
         ? {}
         : { maxCostUsd: input.maxCostUsd }),
@@ -1546,6 +1565,7 @@ async function main() {
     artifactRoot: requireValue(values, "artifact-root"),
     stateRoot: requireValue(values, "state-root"),
     attempt: Number(values.get("attempt") ?? 1),
+    infrastructureRetries: Number(values.get("infrastructure-retries") ?? 0),
     ...(values.has("task-id") ? {
       taskIds: requireValue(values, "task-id").split(",").map((taskId) => taskId.trim()),
     } : {}),

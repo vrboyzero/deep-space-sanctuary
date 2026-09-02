@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  resolveBenchmarkInfrastructureRetries,
   resolveBenchmarkMaximumCostUsd,
   resolvePriorObservedCostUsd,
 } from "./run-coding-agent-benchmark.mjs";
@@ -51,6 +52,9 @@ export function buildWslBenchmarkInvocation(input, dependencies = {}) {
     throw new Error("credentialsConfigured must be a boolean.");
   }
   const attempt = Number.isInteger(input.attempt) ? input.attempt : 1;
+  const infrastructureRetries = input.infrastructureRetries === undefined
+    ? undefined
+    : resolveBenchmarkInfrastructureRetries(input.infrastructureRetries);
   const priorObservedCostUsd = input.priorObservedCostUsd === undefined
     ? undefined
     : resolvePriorObservedCostUsd(input.priorObservedCostUsd);
@@ -107,6 +111,9 @@ export function buildWslBenchmarkInvocation(input, dependencies = {}) {
       "--model-id", requireInput(input, "modelId"),
       "--credentials-configured", String(credentialsConfigured),
       "--attempt", String(attempt),
+      ...(infrastructureRetries === undefined
+        ? []
+        : ["--infrastructure-retries", String(infrastructureRetries)]),
       ...(input.taskId ? ["--task-id", requireInput(input, "taskId")] : []),
       ...(priorObservedCostUsd === undefined
         ? []
@@ -267,6 +274,7 @@ export async function runWslBenchmark(input, dependencies = {}) {
     authMode: input.authMode ?? "token",
     taskId: input.taskId,
     manifestRevision: input.manifestRevision,
+    infrastructureRetries: input.infrastructureRetries,
     sourceRoot: gatewayWorkspaceRoot,
     providerEnvFile: input.providerEnvFile,
     priorObservedCostUsd: input.priorObservedCostUsd,
@@ -321,6 +329,9 @@ async function main() {
     modelId: requireValue(values, "model-id"),
     credentialsConfigured: credentialsValue === "true",
     attempt: Number(values.get("attempt") ?? 1),
+    ...(values.has("infrastructure-retries") ? {
+      infrastructureRetries: Number(requireValue(values, "infrastructure-retries")),
+    } : {}),
     host: values.get("host") ?? resolveWslGatewayHost(distribution),
     port: values.get("port"),
     authMode: values.get("auth-mode"),
