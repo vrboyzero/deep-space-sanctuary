@@ -102,6 +102,7 @@ import {
   CODING_AGENT_CANDIDATE_CODE_INTEL_RECEIPT_VERSION,
 } from "./coding-agent-candidate-code-intel-receipt.mjs";
 import { CODING_AGENT_CANDIDATE_CLI_TUI_RECEIPT_VERSION } from "./coding-agent-candidate-cli-tui-receipt.mjs";
+import { CODING_AGENT_CANDIDATE_TUI_ACCESSIBILITY_VERSION } from "./run-coding-agent-candidate-tui-accessibility.mjs";
 import { CODING_AGENT_CANDIDATE_GIT_DELIVERY_RECEIPT_VERSION } from "./coding-agent-candidate-git-delivery-receipt.mjs";
 import { CODING_RUN_CLIENT_CI_LANE_EVIDENCE_VERSION } from "./run-coding-run-client-ci-lane-receipt.mjs";
 import { resolveCodingCiProfile } from "./run-coding-agent-ci.mjs";
@@ -361,6 +362,8 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   await readText("scripts/run-coding-agent-candidate-code-intel-receipt.mjs");
   await readText("scripts/coding-agent-candidate-cli-tui-receipt.mjs");
   await readText("scripts/run-coding-agent-candidate-cli-tui-receipt.mjs");
+  await readText("scripts/run-coding-agent-candidate-tui-accessibility.mjs");
+  await readText("scripts/run-tui-accessibility-native-worker.mjs");
   const projectMap = await readText("docs/project-map.md");
   const qualityGates = await readText(".github/workflows/quality-gates.yml");
 
@@ -693,7 +696,7 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     failures.push("v3 CLI/TUI task efficiency evidence Schema version drifted from the producer contract.");
   }
   if (cliTuiAccessibilityV3Schema?.properties?.schemaVersion?.const
-    !== "tui-accessibility-cross-platform/v1") {
+    !== CODING_AGENT_CANDIDATE_TUI_ACCESSIBILITY_VERSION) {
     failures.push("v3 CLI/TUI accessibility evidence Schema version drifted from the producer contract.");
   }
   if (codingRunClientCiLaneEvidenceV3Schema?.properties?.schemaVersion?.const
@@ -863,6 +866,12 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   if (packageJson?.scripts?.["benchmark:coding-agent:v3:candidate-cli-tui-receipt"]
     !== "node --import tsx scripts/run-coding-agent-candidate-cli-tui-receipt.mjs") {
     failures.push("package.json must expose benchmark:coding-agent:v3:candidate-cli-tui-receipt.");
+  }
+  if (packageJson?.scripts?.["benchmark:coding-agent:v3:candidate-tui-accessibility:windows"]
+    !== "node --import tsx scripts/run-coding-agent-candidate-tui-accessibility.mjs --platform windows-native"
+    || packageJson?.scripts?.["benchmark:coding-agent:v3:candidate-tui-accessibility:wsl"]
+      !== "node --import tsx scripts/run-coding-agent-candidate-tui-accessibility.mjs --platform wsl2-linux") {
+    failures.push("package.json must expose both candidate TUI accessibility platform producers.");
   }
   if (packageJson?.scripts?.["benchmark:coding-agent:v3:candidate-git-delivery-receipt"]
     !== "node --import tsx scripts/run-coding-agent-candidate-git-delivery-receipt.mjs") {
@@ -1237,6 +1246,10 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "candidateCodeIntelReceipt",
     "scripts/coding-agent-candidate-cli-tui-receipt.mjs",
     "scripts/run-coding-agent-candidate-cli-tui-receipt.mjs",
+    "scripts/run-coding-agent-candidate-tui-accessibility.mjs",
+    "scripts/run-tui-accessibility-native-worker.mjs",
+    "benchmark:coding-agent:v3:candidate-tui-accessibility:windows",
+    "benchmark:coding-agent:v3:candidate-tui-accessibility:wsl",
     "benchmarks/coding-agent/v3/candidate-cli-tui-evidence-receipt.schema.json",
     "scripts/coding-agent-candidate-git-delivery-receipt.mjs",
     "scripts/run-coding-agent-candidate-git-delivery-receipt.mjs",

@@ -24,7 +24,7 @@
 - `v3/candidate-verification-evidence-receipt.schema.json`：`coding-agent-benchmark-candidate-verification-evidence-receipt/v1` 的组合证据合同；绑定当前 aggregate/harness 的 Impact Truth Set、结构化 Verification DAG/Vitest report、deterministic failure replay 与三 viewport Browser Relay 三件套，不复制原始证据正文。
 - `v3/candidate-coding-run-client-evidence-receipt.schema.json`：`coding-agent-benchmark-candidate-coding-run-client-evidence-receipt/v1` 的本地组合证据合同；绑定当前 aggregate/harness 的零执行 Verification DAG、原始 Vitest JSON 与固定七文件 coding-run client audit，不复制原始证据正文，也不冒充真实 CI receipt。
 - `v3/candidate-code-intel-evidence-receipt.schema.json`：`coding-agent-benchmark-candidate-code-intel-evidence-receipt/v1` 的 current-candidate CodeIntel 组合 receipt 合同；固定绑定 11 份既有 CodeIntel artifact、selection/source inventory 与 aggregate/harness identity，不保存模型或 Provider 正文。
-- `v3/candidate-cli-tui-evidence-receipt.schema.json`：`coding-agent-benchmark-candidate-cli-tui-evidence-receipt/v1` 的 `cli_tui` 组合 receipt；固定绑定四入口 TaskProjection、exact-bound `task-efficiency-metrics/v1` 与 Windows/WSL2 accessibility evidence，缺失/漂移/失败分别保持 incomplete/reject/failed，不产生数值分。使用 `corepack pnpm benchmark:coding-agent:v3:candidate-cli-tui-receipt --aggregate-root <aggregate-root>` 由唯一 producer 写入 current-candidate receipt 与 evidence reference；producer 不执行 TUI、模型或 Provider。
+- `v3/candidate-cli-tui-evidence-receipt.schema.json`：`coding-agent-benchmark-candidate-cli-tui-evidence-receipt/v1` 的 `cli_tui` 组合 receipt；固定绑定四入口 TaskProjection、exact-bound `task-efficiency-metrics/v1` 与 Windows/WSL2 accessibility evidence，缺失/漂移/失败分别保持 incomplete/reject/failed，不产生数值分。`benchmark:coding-agent:v3:candidate-tui-accessibility:windows|wsl` 复用真实 ConPTY/Unix PTY lifecycle，额外执行键盘 Tab 并从 ANSI inverse 状态验证可见焦点与固定标签；每个平台只写 current-candidate 根内固定 artifact，identity/Schema 漂移失败关闭。随后使用 `corepack pnpm benchmark:coding-agent:v3:candidate-cli-tui-receipt --aggregate-root <aggregate-root>` 由唯一组合 producer 写入 receipt 与 evidence reference；全链不启动 Gateway、模型或 Provider。
 - `v3/repository-inputs.schema.json`：`coding-agent-benchmark-repository-inputs/v1` 的封闭 CLI 输入合同；每个条目只允许 repository ID、source/cache 根和 receipt 路径，重复仓库、未知字段或 receipt 绑定漂移均失败关闭。
 - `v3/linux-snapshot-preparation.schema.json`：`coding-agent-benchmark-linux-snapshot-preparation/v1` 的封闭准备报告；记录 WSL2 平台/libc/工具链、离线命令策略、四仓 source identity、cache/receipt/preflight 路径，以及未满足仓的精确 blocker；`libc` 保持可选以兼容已保留的早期 v1 artifact。
 - `v3/preflight.schema.json`、`v3/repository-snapshot-preflight.schema.json`：分别约束 v3 通用 runtime preflight 与 B 层实际 snapshot/cache/license/network preflight。
@@ -111,6 +111,16 @@ candidate loader 必须从 GitHub run/jobs/artifacts API JSON 与下载后的原
 
 ```powershell
 corepack pnpm benchmark:coding-agent:v3:candidate-code-intel-receipt --aggregate-root <v3-aggregate-root> --generated-at <ISO-8601>
+```
+
+## P2-C candidate TUI accessibility evidence
+
+双平台 producer 在 current-candidate aggregate 建立后分别执行。它先要求当前仓库 identity 与 aggregate harness 精确一致，再以真实 PTY 执行首帧、窄屏/恢复、键盘 Tab、鼠标切页、输入回放与 `Ctrl+C`；只有键盘导航、ANSI inverse 可见焦点、固定标签、terminal mode/state dir 与进程零残留全部通过时才写 `complete`。可信观察失败写 `failed`，缺 aggregate、identity 漂移、环境不符或已有同平台 artifact 均拒绝，不覆盖证据。
+
+```powershell
+corepack pnpm benchmark:coding-agent:v3:candidate-tui-accessibility:windows --aggregate-root <v3-aggregate-root>
+corepack pnpm benchmark:coding-agent:v3:candidate-tui-accessibility:wsl --aggregate-root <v3-aggregate-root>
+corepack pnpm benchmark:coding-agent:v3:candidate-cli-tui-receipt --aggregate-root <v3-aggregate-root>
 ```
 
 ## P2-C candidate Git delivery receipt

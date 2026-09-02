@@ -4,6 +4,7 @@ import json
 import os
 import platform as host_platform
 import pty
+import re
 import select
 import shutil
 import signal
@@ -112,6 +113,36 @@ def drain_pty(fd, data):
         append_capture(data, chunk)
 
 
+def strip_ansi(value):
+    return re.sub(rb"\x1b\[[0-?]*[ -/]*[@-~]", b"", value)
+
+
+def has_inverse_label(value, label):
+    inverse = False
+    index = 0
+    while index < len(value):
+        match = re.match(rb"\x1b\[([0-9;]*)m", value[index:])
+        if match:
+            codes = [0] if not match.group(1) else [int(item) for item in match.group(1).split(b";")]
+            if 0 in codes or 27 in codes:
+                inverse = False
+            if 7 in codes:
+                inverse = True
+            index += len(match.group(0))
+            continue
+        if inverse and value.startswith(label, index):
+            return True
+        index += 1
+    return False
+
+
+def has_required_labels(value):
+    visible = strip_ansi(value)
+    return all(label in visible for label in [
+        b"Star Sanctuary", b"CHAT", b"SESSIONS", b"CHANGES", b"RUNTIME",
+    ])
+
+
 def run_sample(repo, startup_timeout, replay_input, sequence):
     entry = os.path.join(repo, "packages", "belldandy-core", "dist", "bin", "bdd.js")
     if not os.path.isfile(entry):
@@ -140,6 +171,8 @@ def run_sample(repo, startup_timeout, replay_input, sequence):
     wide_layout_restored = False
     mouse_changes_rendered = False
     mouse_tab_navigation = False
+    keyboard_navigation = False
+    focus_visible = False
     input_replay_rendered = False
     ctrl_c_sent = False
     wait_status = None
@@ -181,9 +214,16 @@ def run_sample(repo, startup_timeout, replay_input, sequence):
             elif stage == "restore" and b"Star Sanctuary" in current:
                 wide_layout_restored = True
                 durations["resize"] = (now - resize_started_at) * 1000
-                mouse_changes_ready_at = now + 0.5
-                stage = "mouse_changes_wait"
-            elif stage == "mouse_changes_wait" and now >= mouse_changes_ready_at:
+                stage_offset = len(data)
+                os.write(fd, b"\t")
+                mouse_changes_ready_at = now + 1.0
+                stage = "keyboard_sessions"
+            elif stage == "keyboard_sessions" and (
+                b"No persisted conversations." in strip_ansi(current)
+                or now >= mouse_changes_ready_at
+            ):
+                keyboard_navigation = b"No persisted conversations." in strip_ansi(current)
+                focus_visible = has_inverse_label(current, b"SESSIONS")
                 stage_offset = len(data)
                 os.write(fd, b"\x1b[<0;18;2M")
                 stage = "mouse_changes"
@@ -243,6 +283,11 @@ def run_sample(repo, startup_timeout, replay_input, sequence):
         "sequence": sequence,
         "durationsMs": durations,
         "capturedBytes": len(data),
+        "accessibility": {
+            "keyboardNavigation": keyboard_navigation,
+            "focusVisible": focus_visible,
+            "labelsPresent": has_required_labels(bytes(data)),
+        },
         "lifecycle": {
             "firstFrame": first_frame,
             "narrowFallback": narrow_fallback,

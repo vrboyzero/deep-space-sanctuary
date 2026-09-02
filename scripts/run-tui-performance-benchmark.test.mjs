@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   createTuiPerformanceReplayInput,
+  hasAnsiInverseLabel,
+  hasRequiredTuiLabels,
   isPathAbsent,
   parseTuiPerformanceBenchmarkArgs,
+  stripAnsi,
 } from "./run-tui-performance-benchmark.mjs";
 
 describe("TUI performance benchmark runner", () => {
@@ -64,5 +67,14 @@ describe("TUI performance benchmark runner", () => {
     await expect(isPathAbsent("state", async () => {
       throw Object.assign(new Error("denied"), { code: "EACCES" });
     })).rejects.toMatchObject({ code: "EACCES" });
+  });
+
+  it("recognizes keyboard focus only from a visible ANSI inverse label", () => {
+    const frame = "Star Sanctuary CHAT \u001b[7mSESSIONS\u001b[27m CHANGES RUNTIME";
+    expect(stripAnsi(frame)).toBe("Star Sanctuary CHAT SESSIONS CHANGES RUNTIME");
+    expect(hasRequiredTuiLabels(frame)).toBe(true);
+    expect(hasAnsiInverseLabel(frame, "SESSIONS")).toBe(true);
+    expect(hasAnsiInverseLabel("Star Sanctuary CHAT SESSIONS CHANGES RUNTIME", "SESSIONS"))
+      .toBe(false);
   });
 });

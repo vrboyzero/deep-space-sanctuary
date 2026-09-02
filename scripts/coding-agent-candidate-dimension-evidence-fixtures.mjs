@@ -355,11 +355,16 @@ export async function addCandidateCliTuiEvidence(aggregateRoot, options = {}) {
   for (const platform of ["windows-native", "wsl2-linux"]) {
     files.push([`candidate-evidence/cli-tui/accessibility/${platform}.json`, {
       schemaVersion: "tui-accessibility-cross-platform/v1",
+      generatedAt: "2026-09-02T14:00:00.000Z",
       platform,
+      environment: platform === "windows-native"
+        ? { runtimePlatform: "win32", arch: "x64", release: "fixture", nodeVersion: "v22.0.0", terminalBackend: "conpty", wsl: false }
+        : { runtimePlatform: "linux", arch: "x64", release: "fixture", nodeVersion: "v22.0.0", terminalBackend: "unix-pty", wsl: true, distribution: "fixture" },
       sourceIdentity,
       status: options.accessibilityStatusByPlatform?.[platform] ?? "complete",
+      observation: { schemaVersion: "tui-native-accessibility-observation/v1", sequence: 1, capturedBytes: 1024 },
       accessibility: { keyboardNavigation: true, focusVisible: true, labelsPresent: true },
-      lifecycle: { firstFrame: true, narrowFallback: true, wideLayoutRestored: true, mouseTabNavigation: true, inputReplayRendered: true, residualProcessCount: 0 },
+      lifecycle: { firstFrame: true, narrowFallback: true, wideLayoutRestored: true, mouseTabNavigation: true, inputReplayRendered: true, ctrlCSent: true, inputModesRestoredBeforeScreen: true, stateDirRemoved: true, exitCode: 0, timedOut: false, residualProcessCount: 0 },
       gate: { passed: options.accessibilityStatusByPlatform?.[platform] !== "failed", failures: options.accessibilityStatusByPlatform?.[platform] === "failed" ? ["fixture failure"] : [] },
     }]);
   }

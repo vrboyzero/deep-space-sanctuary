@@ -71,7 +71,7 @@ export async function runCodingAgentCandidateCliTuiReceipt(input) {
   const referenceText = await readBoundedRegularFile(referencePath, "candidate dimension evidence reference");
   const reference = JSON.parse(referenceText);
   await validateSchema(reference, REFERENCE_SCHEMA_PATH, "candidate dimension evidence reference");
-  const aggregate = await loadAggregateBinding(aggregateRoot);
+  const aggregate = await loadCodingAgentCandidateCliTuiAggregateBinding(aggregateRoot);
   if (!jsonEqual(reference.aggregate, aggregate)) throw reject("candidate dimension evidence aggregate binding drifted");
   if (reference.owners?.candidateCliTuiReceipt !== undefined
     || reference.claims?.some(({ owner, contractId }) => owner === "candidateCliTuiReceipt" || CODING_AGENT_CANDIDATE_CLI_TUI_CLAIMS.some((claim) => claim.contractId === contractId))) {
@@ -141,7 +141,7 @@ function collectSourceFiles(artifacts) {
   return [...files.entries()].map(([filePath, digest]) => ({ path: filePath, sha256: digest })).sort((a, b) => a.path.localeCompare(b.path));
 }
 
-async function loadAggregateBinding(root) {
+export async function loadCodingAgentCandidateCliTuiAggregateBinding(root) {
   const reportText = await readBoundedRegularFile(resolveInside(root, "benchmark-report.json"), "benchmark report");
   const indexText = await readBoundedRegularFile(resolveInside(root, "baseline-index.json"), "baseline index");
   const manifestText = await readBoundedRegularFile(resolveInside(root, "task-manifest.json"), "task manifest");
@@ -185,7 +185,7 @@ function isEfficiencyComplete(value, binding) {
   return value.schemaVersion === "task-efficiency-evidence/v1" && jsonEqual(value.aggregate, binding) && jsonEqual(value.sourceIdentity?.harness, binding.harness) && value.status === "complete" && value.evidence?.status === "complete" && value.evidence.projectionTimeline?.coverage === "complete" && Array.isArray(value.evidence.projectionTimeline.items) && value.evidence.projectionTimeline.items.length >= 2 && metrics?.schemaVersion === "task-efficiency-metrics/v1" && metrics.status === "complete" && Array.isArray(metrics.missingMetrics) && metrics.missingMetrics.length === 0 && metrics.usageCompleteness?.status === "complete";
 }
 function isAccessibilityComplete(value) {
-  return value.schemaVersion === "tui-accessibility-cross-platform/v1" && value.status === "complete" && value.gate?.passed === true && value.gate.failures?.length === 0 && value.lifecycle?.residualProcessCount === 0 && value.lifecycle?.firstFrame === true && value.lifecycle?.narrowFallback === true && value.lifecycle?.wideLayoutRestored === true && value.lifecycle?.mouseTabNavigation === true && value.lifecycle?.inputReplayRendered === true && value.accessibility?.keyboardNavigation === true && value.accessibility?.focusVisible === true && value.accessibility?.labelsPresent === true;
+  return value.schemaVersion === "tui-accessibility-cross-platform/v1" && value.status === "complete" && value.observation?.schemaVersion === "tui-native-accessibility-observation/v1" && value.gate?.passed === true && value.gate.failures?.length === 0 && value.lifecycle?.residualProcessCount === 0 && value.lifecycle?.firstFrame === true && value.lifecycle?.narrowFallback === true && value.lifecycle?.wideLayoutRestored === true && value.lifecycle?.mouseTabNavigation === true && value.lifecycle?.inputReplayRendered === true && value.lifecycle?.ctrlCSent === true && value.lifecycle?.inputModesRestoredBeforeScreen === true && value.lifecycle?.stateDirRemoved === true && value.lifecycle?.exitCode === 0 && value.lifecycle?.timedOut === false && value.accessibility?.keyboardNavigation === true && value.accessibility?.focusVisible === true && value.accessibility?.labelsPresent === true;
 }
 async function loadArtifact(input) {
   const reference = requireObject(input.reference, `${input.label} reference`);

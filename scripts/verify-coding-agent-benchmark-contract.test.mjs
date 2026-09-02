@@ -624,7 +624,9 @@ describe("coding agent benchmark repository contract", () => {
       expect(failures).toEqual(expect.arrayContaining([
         expect.stringMatching(/scripts\/coding-agent-candidate-cli-tui-receipt\.mjs is missing/i),
         expect.stringMatching(/scripts\/run-coding-agent-candidate-cli-tui-receipt\.mjs is missing/i),
+        expect.stringMatching(/scripts\/run-coding-agent-candidate-tui-accessibility\.mjs is missing/i),
         "package.json must expose benchmark:coding-agent:v3:candidate-cli-tui-receipt.",
+        "package.json must expose both candidate TUI accessibility platform producers.",
         "docs/project-map.md must describe candidateCliTuiReceipt.",
       ]));
     } finally {

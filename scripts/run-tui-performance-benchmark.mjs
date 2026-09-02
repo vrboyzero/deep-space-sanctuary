@@ -140,8 +140,19 @@ function loadNodePty() {
   }
 }
 
-async function runWindowsSample({ pty, entry, startupTimeoutSeconds, replayInput, sequence }) {
-  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-tui-performance-"));
+async function runWindowsSample({
+  pty,
+  entry,
+  startupTimeoutSeconds,
+  replayInput,
+  sequence,
+  stateDir: providedStateDir,
+  preserveFailureObservation = false,
+}) {
+  const stateDir = providedStateDir
+    ? path.resolve(providedStateDir)
+    : await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-tui-performance-"));
+  if (providedStateDir) await fs.mkdir(stateDir, { recursive: true });
   const startedAt = performance.now();
   const child = pty.spawn(process.execPath, [entry, "tui", "--state-dir", stateDir, "--cwd", workspaceRoot], {
     name: "xterm-256color",
@@ -163,6 +174,8 @@ async function runWindowsSample({ pty, entry, startupTimeoutSeconds, replayInput
   let wideLayoutRestored = false;
   let mouseChangesRendered = false;
   let mouseTabNavigation = false;
+  let keyboardNavigation = false;
+  let focusVisible = false;
   let inputReplayRendered = false;
   let ctrlCSent = false;
   const durationsMs = {};
@@ -173,89 +186,111 @@ async function runWindowsSample({ pty, entry, startupTimeoutSeconds, replayInput
   let timeout;
   let interactionTimer;
   let exited = false;
+  let timedOut = false;
   try {
-    const exit = await new Promise((resolve, reject) => {
-      let settled = false;
-      const fail = (error) => {
-        if (settled) return;
-        settled = true;
-        reject(error);
-      };
-      timeout = setTimeout(() => {
-        fail(new Error(`windows-native TUI sample ${sequence} timed out during ${stage}.`));
-      }, startupTimeoutSeconds * 1000);
-      dataDisposable = child.onData((chunk) => {
-        capturedBytes += Buffer.byteLength(chunk, "utf-8");
-        if (capturedBytes > maxCaptureBytes) {
-          fail(new Error(`windows-native TUI sample ${sequence} exceeded the capture limit.`));
-          return;
-        }
-        transcript += chunk;
-        const current = transcript.slice(stageOffset);
-        const now = performance.now();
-        if (stage === "startup" && current.includes("Star Sanctuary")) {
-          firstFrame = true;
-          durationsMs.startup = now - startedAt;
-          resizeStartedAt = now;
-          stageOffset = transcript.length;
-          child.resize(24, 8);
-          stage = "narrow";
-        } else if (stage === "narrow" && current.includes("Terminal too small.")) {
-          narrowFallback = true;
-          stageOffset = transcript.length;
-          child.resize(72, 20);
-          stage = "restore";
-        } else if (stage === "restore" && current.includes("Star Sanctuary")) {
-          wideLayoutRestored = true;
-          durationsMs.resize = now - resizeStartedAt;
-          stage = "mouse_changes_wait";
-          interactionTimer = setTimeout(() => {
-            if (stage !== "mouse_changes_wait") return;
+    let exit;
+    try {
+      exit = await new Promise((resolve, reject) => {
+        let settled = false;
+        const fail = (error) => {
+          if (settled) return;
+          settled = true;
+          reject(error);
+        };
+        timeout = setTimeout(() => {
+          timedOut = true;
+          fail(new Error(`windows-native TUI sample ${sequence} timed out during ${stage}.`));
+        }, startupTimeoutSeconds * 1000);
+        dataDisposable = child.onData((chunk) => {
+          capturedBytes += Buffer.byteLength(chunk, "utf-8");
+          if (capturedBytes > maxCaptureBytes) {
+            fail(new Error(`windows-native TUI sample ${sequence} exceeded the capture limit.`));
+            return;
+          }
+          transcript += chunk;
+          const current = transcript.slice(stageOffset);
+          const now = performance.now();
+          if (stage === "startup" && current.includes("Star Sanctuary")) {
+            firstFrame = true;
+            durationsMs.startup = now - startedAt;
+            resizeStartedAt = now;
+            stageOffset = transcript.length;
+            child.resize(24, 8);
+            stage = "narrow";
+          } else if (stage === "narrow" && current.includes("Terminal too small.")) {
+            narrowFallback = true;
+            stageOffset = transcript.length;
+            child.resize(72, 20);
+            stage = "restore";
+          } else if (stage === "restore" && current.includes("Star Sanctuary")) {
+            wideLayoutRestored = true;
+            durationsMs.resize = now - resizeStartedAt;
+            stageOffset = transcript.length;
+            child.write("\t");
+            stage = "keyboard_sessions";
+            interactionTimer = setTimeout(() => {
+              if (stage !== "keyboard_sessions") return;
+              const keyboardOutput = transcript.slice(stageOffset);
+              keyboardNavigation = stripAnsi(keyboardOutput).includes("No persisted conversations.");
+              focusVisible = hasAnsiInverseLabel(keyboardOutput, "SESSIONS");
+              stageOffset = transcript.length;
+              child.write("\x1b[<0;18;2M");
+              stage = "mouse_changes";
+            }, 1_000);
+          } else if (stage === "keyboard_sessions"
+            && stripAnsi(current).includes("No persisted conversations.")) {
+            keyboardNavigation = true;
+            focusVisible = hasAnsiInverseLabel(current, "SESSIONS");
+            clearTimeout(interactionTimer);
             stageOffset = transcript.length;
             child.write("\x1b[<0;18;2M");
             stage = "mouse_changes";
-          }, 500);
-        } else if (stage === "mouse_changes" && current.includes("Revision Checkpoints")) {
-          mouseChangesRendered = true;
-          stage = "mouse_chat_wait";
-          interactionTimer = setTimeout(() => {
-            if (stage !== "mouse_chat_wait") return;
+          } else if (stage === "mouse_changes" && current.includes("Revision Checkpoints")) {
+            mouseChangesRendered = true;
+            stage = "mouse_chat_wait";
+            interactionTimer = setTimeout(() => {
+              if (stage !== "mouse_chat_wait") return;
+              stageOffset = transcript.length;
+              child.write("\x1b[<0;3;2M");
+              stage = "mouse_chat";
+            }, 500);
+          } else if (stage === "mouse_chat" && current.includes("Activity")) {
+            mouseTabNavigation = mouseChangesRendered;
+            inputStartedAt = now;
             stageOffset = transcript.length;
-            child.write("\x1b[<0;3;2M");
-            stage = "mouse_chat";
-          }, 500);
-        } else if (stage === "mouse_chat" && current.includes("Activity")) {
-          mouseTabNavigation = mouseChangesRendered;
-          inputStartedAt = now;
-          stageOffset = transcript.length;
-          child.write(replayInput);
-          stage = "input";
-        } else if (stage === "input" && current.includes(replayMarker)) {
-          inputReplayRendered = true;
-          durationsMs.inputReplay = now - inputStartedAt;
-          stage = "exit_wait";
-          interactionTimer = setTimeout(() => {
-            if (stage !== "exit_wait") return;
-            ctrlCSent = true;
-            exitStartedAt = performance.now();
-            child.write("\x03");
-            stage = "exit";
-            clearTimeout(timeout);
-            timeout = setTimeout(() => {
-              fail(new Error(`windows-native TUI sample ${sequence} did not exit after Ctrl+C.`));
-            }, 8_000);
-          }, 500);
-        }
+            child.write(replayInput);
+            stage = "input";
+          } else if (stage === "input" && current.includes(replayMarker)) {
+            inputReplayRendered = true;
+            durationsMs.inputReplay = now - inputStartedAt;
+            stage = "exit_wait";
+            interactionTimer = setTimeout(() => {
+              if (stage !== "exit_wait") return;
+              ctrlCSent = true;
+              exitStartedAt = performance.now();
+              child.write("\x03");
+              stage = "exit";
+              clearTimeout(timeout);
+              timeout = setTimeout(() => {
+                timedOut = true;
+                fail(new Error(`windows-native TUI sample ${sequence} did not exit after Ctrl+C.`));
+              }, 8_000);
+            }, 500);
+          }
+        });
+        exitDisposable = child.onExit((event) => {
+          exited = true;
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          if (exitStartedAt !== undefined) durationsMs.exit = performance.now() - exitStartedAt;
+          setTimeout(() => resolve(event), 75);
+        });
       });
-      exitDisposable = child.onExit((event) => {
-        exited = true;
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        if (exitStartedAt !== undefined) durationsMs.exit = performance.now() - exitStartedAt;
-        setTimeout(() => resolve(event), 75);
-      });
-    });
+    } catch (error) {
+      if (!preserveFailureObservation || !timedOut) throw error;
+      exit = { exitCode: -1 };
+    }
 
     await new Promise((resolve) => setTimeout(resolve, 100));
     const alternateScreenLeaveAt = transcript.lastIndexOf("\x1b[?1049l");
@@ -266,6 +301,11 @@ async function runWindowsSample({ pty, entry, startupTimeoutSeconds, replayInput
       sequence,
       durationsMs,
       capturedBytes,
+      accessibility: {
+        keyboardNavigation,
+        focusVisible,
+        labelsPresent: hasRequiredTuiLabels(transcript),
+      },
       lifecycle: {
         firstFrame,
         narrowFallback,
@@ -282,7 +322,7 @@ async function runWindowsSample({ pty, entry, startupTimeoutSeconds, replayInput
           && mouseTrackingLeaveAt >= 0 && mouseTrackingLeaveAt < alternateScreenLeaveAt
           && sgrMouseLeaveAt >= 0 && sgrMouseLeaveAt < alternateScreenLeaveAt,
         exitCode: exit.exitCode,
-        timedOut: false,
+        timedOut,
         observedProcessCount: 1,
         residualProcessCount: isProcessAlive(child.pid) ? 1 : 0,
         stateDirRemoved: false,
@@ -301,8 +341,37 @@ async function runWindowsSample({ pty, entry, startupTimeoutSeconds, replayInput
     await fs.rm(stateDir, { recursive: true, force: true });
     if (collected) {
       collected.lifecycle.stateDirRemoved = await isPathAbsent(stateDir);
+      collected.lifecycle.residualProcessCount = isProcessAlive(child.pid) ? 1 : 0;
     }
   }
+}
+
+export function stripAnsi(value) {
+  return String(value ?? "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+}
+
+export function hasAnsiInverseLabel(value, label) {
+  const text = String(value ?? "");
+  let inverse = false;
+  for (let index = 0; index < text.length;) {
+    const match = text.slice(index).match(/^\x1b\[([0-9;]*)m/);
+    if (match) {
+      const codes = match[1] === "" ? [0] : match[1].split(";").map(Number);
+      if (codes.includes(0) || codes.includes(27)) inverse = false;
+      if (codes.includes(7)) inverse = true;
+      index += match[0].length;
+      continue;
+    }
+    if (inverse && text.startsWith(label, index)) return true;
+    index += 1;
+  }
+  return false;
+}
+
+export function hasRequiredTuiLabels(value) {
+  const visible = stripAnsi(value);
+  return ["Star Sanctuary", "CHAT", "SESSIONS", "CHANGES", "RUNTIME"]
+    .every((label) => visible.includes(label));
 }
 
 async function collectWindowsPlatform(args) {
@@ -383,7 +452,7 @@ function toWslPath(windowsPath) {
   return `/mnt/${match[1].toLowerCase()}${match[2]}`;
 }
 
-function collectWslPlatform(args) {
+function collectWslRaw(args) {
   if (process.platform !== "win32") {
     throw new Error("wsl2-linux TUI performance Gate requires a Windows host with WSL.");
   }
@@ -419,10 +488,61 @@ function collectWslPlatform(args) {
   } catch (error) {
     throw new Error(`wsl2-linux collector returned invalid JSON: ${error.message}`);
   }
+  return payload;
+}
+
+function collectWslPlatform(args) {
   return createTuiPerformancePlatformResult({
-    ...payload,
+    ...collectWslRaw(args),
     minimumSampleCount: 5,
   });
+}
+
+export async function collectTuiAccessibilityPlatformObservation(platform, input = {}) {
+  const startupTimeoutSeconds = input.startupTimeoutSeconds ?? 30;
+  if (!Number.isSafeInteger(startupTimeoutSeconds)
+    || startupTimeoutSeconds < 5 || startupTimeoutSeconds > 120) {
+    throw new Error("startupTimeoutSeconds must be an integer between 5 and 120.");
+  }
+  if (platform === "windows-native") {
+    if (process.platform !== "win32") {
+      throw new Error("windows-native TUI accessibility Gate requires a Windows host.");
+    }
+    const entry = path.join(workspaceRoot, "packages", "belldandy-core", "dist", "bin", "bdd.js");
+    await fs.access(entry).catch(() => {
+      throw new Error(`Built CLI entry is missing: ${entry}. Run corepack pnpm build first.`);
+    });
+    const sample = await runWindowsSample({
+      pty: loadNodePty(),
+      entry,
+      startupTimeoutSeconds,
+      replayInput: createTuiPerformanceReplayInput(),
+      sequence: 1,
+      preserveFailureObservation: true,
+      ...(input.stateDir ? { stateDir: input.stateDir } : {}),
+    });
+    return {
+      platform,
+      environment: {
+        platform: process.platform,
+        arch: process.arch,
+        release: os.release(),
+        nodeVersion: process.version,
+        terminalBackend: "conpty",
+        wsl: false,
+      },
+      sample,
+    };
+  }
+  if (platform === "wsl2-linux") {
+    const payload = collectWslRaw({
+      warmupRuns: 0,
+      sampleRuns: 1,
+      startupTimeoutSeconds,
+    });
+    return { platform, environment: payload.environment, sample: payload.samples[0] };
+  }
+  throw new Error("TUI accessibility platform must be windows-native or wsl2-linux.");
 }
 
 function readGit(args) {
