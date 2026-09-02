@@ -104,6 +104,7 @@ import {
 import { CODING_AGENT_CANDIDATE_CLI_TUI_RECEIPT_VERSION } from "./coding-agent-candidate-cli-tui-receipt.mjs";
 import { CODING_AGENT_CANDIDATE_TUI_ACCESSIBILITY_VERSION } from "./run-coding-agent-candidate-tui-accessibility.mjs";
 import { CODING_AGENT_CANDIDATE_GIT_DELIVERY_RECEIPT_VERSION } from "./coding-agent-candidate-git-delivery-receipt.mjs";
+import { CODING_AGENT_CANDIDATE_LOCAL_EVIDENCE_RUN_VERSION } from "./run-coding-agent-candidate-local-evidence.mjs";
 import { CODING_RUN_CLIENT_CI_LANE_EVIDENCE_VERSION } from "./run-coding-run-client-ci-lane-receipt.mjs";
 import { resolveCodingCiProfile } from "./run-coding-agent-ci.mjs";
 
@@ -148,6 +149,19 @@ const EXPECTED_P2A_SUPERVISOR_FAULT_AUDIT_SCRIPT = [
   "packages/belldandy-skills/src/tool-behavior-contract.test.ts",
   "packages/belldandy-skills/src/tool-contract-v2.test.ts",
   "scripts/run-subtask-supervisor-soak.test.mjs",
+  "--reporter=json",
+].join(" ");
+const EXPECTED_P2C_GIT_DELIVERY_AUDIT_SCRIPT = [
+  "vitest run",
+  "packages/belldandy-core/src/managed-worktree.test.ts",
+  "packages/belldandy-core/src/user-worktree-runtime.test.ts",
+  "packages/belldandy-core/src/workspace-change-review.test.ts",
+  "packages/belldandy-core/src/subtask-supervisor-fan-in-runtime.test.ts",
+  "packages/belldandy-core/src/subtask-supervisor-fan-in-resolution-runtime.test.ts",
+  "packages/belldandy-core/src/server-methods/remote-delivery.test.ts",
+  "packages/belldandy-core/src/remote-delivery-runtime.test.ts",
+  "packages/belldandy-core/src/remote-delivery-process-recovery.test.ts",
+  "packages/belldandy-core/src/user-worktree-process-recovery.test.ts",
   "--reporter=json",
 ].join(" ");
 
@@ -364,6 +378,10 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   await readText("scripts/run-coding-agent-candidate-cli-tui-receipt.mjs");
   await readText("scripts/run-coding-agent-candidate-tui-accessibility.mjs");
   await readText("scripts/run-tui-accessibility-native-worker.mjs");
+  await readText("scripts/coding-agent-candidate-git-delivery-receipt.mjs");
+  await readText("scripts/run-coding-agent-candidate-git-delivery-receipt.mjs");
+  await readText("scripts/coding-agent-candidate-local-evidence.mjs");
+  await readText("scripts/run-coding-agent-candidate-local-evidence.mjs");
   const projectMap = await readText("docs/project-map.md");
   const qualityGates = await readText(".github/workflows/quality-gates.yml");
 
@@ -877,6 +895,12 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     !== "node --import tsx scripts/run-coding-agent-candidate-git-delivery-receipt.mjs") {
     failures.push("package.json must expose benchmark:coding-agent:v3:candidate-git-delivery-receipt.");
   }
+  if (packageJson?.scripts?.["benchmark:coding-agent:v3:candidate-local-evidence"]
+    !== "node --import tsx scripts/run-coding-agent-candidate-local-evidence.mjs"
+    || CODING_AGENT_CANDIDATE_LOCAL_EVIDENCE_RUN_VERSION
+      !== "coding-agent-benchmark-candidate-local-evidence-run/v1") {
+    failures.push("package.json must expose benchmark:coding-agent:v3:candidate-local-evidence.");
+  }
   if (packageJson?.scripts?.["verify:coding-run-client"]
     !== EXPECTED_CODING_RUN_CLIENT_AUDIT_SCRIPT) {
     failures.push("package.json must expose verify:coding-run-client.");
@@ -888,6 +912,10 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   if (packageJson?.scripts?.["verify:p2a-supervisor-fault-audit"]
     !== EXPECTED_P2A_SUPERVISOR_FAULT_AUDIT_SCRIPT) {
     failures.push("package.json must expose verify:p2a-supervisor-fault-audit.");
+  }
+  if (packageJson?.scripts?.["verify:p2c-git-delivery-audit"]
+    !== EXPECTED_P2C_GIT_DELIVERY_AUDIT_SCRIPT) {
+    failures.push("package.json must expose verify:p2c-git-delivery-audit.");
   }
   if (packageJson?.scripts?.["benchmark:coding-agent:stage0b"]
     !== "node scripts/run-coding-agent-benchmark.mjs --platform windows-native") {
@@ -1121,6 +1149,10 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "coding-agent-benchmark-candidate-coding-run-client-ci-evidence-receipt/v1",
     "coding-agent-benchmark-coding-run-client-ci-lane-evidence/v1",
     "benchmark:coding-agent:v3:candidate-code-intel-receipt",
+    "benchmark:coding-agent:v3:candidate-local-evidence",
+    "coding-agent-benchmark-candidate-local-evidence-run/v1",
+    "--wsl-workspace-root",
+    "core.fileMode=false",
     "coding-agent-benchmark-candidate-code-intel-evidence-receipt/v1",
     "candidate-code-intel-evidence-receipt.schema.json",
     "context_retrieval",
@@ -1136,6 +1168,11 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "verify:coding-run-client",
     "verify:p1b-verification-audit",
     "verify:p2a-supervisor-fault-audit",
+    "verify:p2c-git-delivery-audit",
+    "deterministic_conformance_fixture",
+    "candidateRunEvidence=false",
+    "providerCalls=0",
+    "external_required",
     "baseline-index.json",
     "command.interactive-control",
     "safety.boundary-enforcement",
@@ -1253,6 +1290,9 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "benchmarks/coding-agent/v3/candidate-cli-tui-evidence-receipt.schema.json",
     "scripts/coding-agent-candidate-git-delivery-receipt.mjs",
     "scripts/run-coding-agent-candidate-git-delivery-receipt.mjs",
+    "scripts/coding-agent-candidate-local-evidence.mjs",
+    "scripts/run-coding-agent-candidate-local-evidence.mjs",
+    "--wsl-workspace-root",
     "benchmarks/coding-agent/v3/candidate-git-delivery-evidence-receipt.schema.json",
     "benchmarks/coding-agent/v3/git-delivery-evidence.schema.json",
     "candidateGitDeliveryReceipt",

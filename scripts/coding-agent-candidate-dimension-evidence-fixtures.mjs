@@ -8,6 +8,21 @@ import {
   loadCodingAgentBenchmarkManifest,
   resolveCodingAgentBenchmarkManifestPath,
 } from "./coding-agent-benchmark-contract.mjs";
+import {
+  CODING_AGENT_CANDIDATE_GIT_DELIVERY_ARTIFACT_PATHS,
+  CODING_AGENT_CANDIDATE_GIT_DELIVERY_AUDIT_COMMAND,
+  CODING_AGENT_CANDIDATE_GIT_DELIVERY_AUDIT_GROUPS,
+  CODING_AGENT_CANDIDATE_GIT_DELIVERY_AUDIT_PATHS,
+  CODING_AGENT_CANDIDATE_GIT_DELIVERY_AUDIT_TEST_FILES,
+  CODING_AGENT_CANDIDATE_GIT_DELIVERY_SOURCE_FILES,
+  createCandidateGitDeliveryRemoteTargets,
+  projectCandidateGitDeliveryPlatformResults,
+  runCodingAgentCandidateGitDeliveryReceipt,
+} from "./coding-agent-candidate-git-delivery-receipt.mjs";
+import {
+  createVerificationDagPlan,
+  replayCommandJobSnapshots,
+} from "./run-verification-dag.mjs";
 
 const CODING_RUN_CLIENT_CI_TEST_FILES = Object.freeze([
   "packages/belldandy-core/src/coding-run/stdio.test.ts",
@@ -333,6 +348,11 @@ export async function addCandidateCliTuiEvidence(aggregateRoot, options = {}) {
     schemaVersion: "task-efficiency-evidence/v1",
     aggregate,
     sourceIdentity,
+    provenance: {
+      evidenceKind: "deterministic_conformance_fixture",
+      candidateRunEvidence: false,
+      providerCalls: 0,
+    },
     status: "complete",
     evidence: {
       status: "complete",
@@ -418,73 +438,227 @@ export async function addCandidateGitDeliveryEvidence(aggregateRoot, options = {
   const aggregate = reference.aggregate;
   const sourceIdentity = {
     harness: aggregate.harness,
-    files: [
-      { path: "packages/belldandy-core/src/user-worktree-runtime.ts", sha256: "4".repeat(64) },
-      { path: "packages/belldandy-core/src/remote-delivery-runtime.ts", sha256: "5".repeat(64) },
-      { path: "packages/belldandy-core/src/workspace-change-review.ts", sha256: "6".repeat(64) },
-      { path: "packages/belldandy-core/src/coding-run/reconciliation-journal.ts", sha256: "7".repeat(64) },
-    ],
+    files: CODING_AGENT_CANDIDATE_GIT_DELIVERY_SOURCE_FILES.map((relativePath) => ({
+      path: relativePath,
+      sha256: sha256(`candidate-git-delivery-fixture:${relativePath}`),
+    })),
   };
-  sourceIdentity.files.sort((left, right) => left.path.localeCompare(right.path));
   sourceIdentity.aggregateSha256 = sha256(JSON.stringify(sourceIdentity.files));
-  const platformResults = ["windows-native", "wsl2-linux"].map((platform) => ({ platform, passed: options.failedPlatform !== platform }));
-  const status = options.failedPlatform ? "failed" : "complete";
-  const gate = { passed: !options.failedPlatform, failures: options.failedPlatform ? [`${options.failedPlatform} fixture failure`] : [] };
-  const remoteStatus = "complete";
-  const remoteGate = { passed: true, failures: [] };
-  const observations = ["windows-native", "wsl2-linux"].map((platform) => ({
-    platform,
-    dirty: false,
-    residualWorktreeCount: 0,
-    mutationCount: 0,
-    reviewVerdict: "needs_changes",
-    remediationApplied: true,
-    recheckVerdict: "approved",
-    diffHashStable: true,
-    parallelWrite: { fanInConfirmed: true, mainWorkspaceChangedBeforeFanIn: false, conflictDetected: true },
-    restartDelivery: { reattached: true, replayedSideEffectCount: 0, remoteWriteCount: 0, terminalStatus: "completed" },
-  }));
-  const base = { schemaVersion: "coding-agent-benchmark-git-delivery-evidence/v1", generatedAt: "2026-09-02T16:00:00.000Z", aggregate, sourceIdentity, status, gate };
-  const values = {
-    worktreeSoak: { ...base, artifactKind: "multi_repository_worktree_soak", repositories: ["star-sanctuary", "reference-repository"], platforms: platformResults, observations },
-    reviewRemediation: { ...base, artifactKind: "review_remediation_loop", platforms: platformResults, observations },
-    remoteAuthority: { ...base, status: remoteStatus, gate: remoteGate, artifactKind: "remote_delivery_authority_separation", repositories: ["star-sanctuary", "reference-repository"], platforms: ["windows-native", "wsl2-linux"].map((platform) => ({ platform, passed: true })), authority: { delegable: false, rememberable: false, userApprovalRequired: true, remoteWritePerformed: false, credentialsRead: false }, targets: [{ remoteUrlHash: "8".repeat(64), branch: "main", baseBranch: "main" }, { remoteUrlHash: "9".repeat(64), branch: "main", baseBranch: "main" }] },
-    recoveryAudit: { ...base, artifactKind: "delivery_recovery_audit_matrix", platforms: platformResults, observations },
-  };
-  const paths = {
-    worktreeSoak: "candidate-evidence/git-delivery/multi-repository-worktree-soak.json",
-    reviewRemediation: "candidate-evidence/git-delivery/review-remediation-loop.json",
-    remoteAuthority: "candidate-evidence/git-delivery/remote-delivery-authority-separation.json",
-    recoveryAudit: "candidate-evidence/git-delivery/delivery-recovery-audit-matrix.json",
-  };
-  const systemRefs = (reference.owners.systemEvidence?.artifacts ?? [])
-    .filter(({ taskId }) => taskId === "system.parallel-write-fan-in" || taskId === "system.restart-delivery-reconciliation")
-    .filter(({ platform }) => platform === "windows-native" || platform === "wsl2-linux")
-    .filter((item, index, items) => items.findIndex((candidate) => candidate.taskId === item.taskId && candidate.platform === item.platform) === index)
-    .slice(0, 4);
-  values.recoveryAudit.systemEvidence = systemRefs.map(({ path, sha256: digest }) => ({ path, sha256: digest }));
-  for (const [key, value] of Object.entries(values)) await writeRelativeFile(aggregateRoot, paths[key], serializeJson(value));
-  const refs = Object.fromEntries(Object.entries(paths).map(([key, relativePath]) => [key, { path: relativePath, sha256: sha256(serializeJson(values[key])) }]));
-  if (options.writeReceipt === false) return;
-  const receipt = {
-    schemaVersion: "coding-agent-benchmark-candidate-git-delivery-evidence-receipt/v1",
-    generatedAt: "2026-09-02T16:01:00.000Z", aggregate, sourceIdentity,
-    worktreeSoak: refs.worktreeSoak, reviewRemediation: refs.reviewRemediation, remoteAuthority: refs.remoteAuthority, recoveryAudit: refs.recoveryAudit,
-    summary: { multiRepositoryWorktreeSoak: !options.failedPlatform, reviewRemediationLoop: !options.failedPlatform, remoteDeliveryAuthoritySeparation: true, deliveryRecoveryAuditMatrix: !options.failedPlatform },
-  };
-  const receiptText = serializeJson(receipt);
-  await writeRelativeFile(aggregateRoot, "candidate-git-delivery-evidence-receipt.json", receiptText);
-  reference.owners.candidateGitDeliveryReceipt = { kind: "candidate_artifact", scope: "candidate_harness", artifactSchemaVersion: receipt.schemaVersion, artifact: { path: "candidate-git-delivery-evidence-receipt.json", sha256: sha256(receiptText) } };
-  const insertAt = reference.claims.findIndex(({ dimensionId }) => [
-    "editing_testing", "session_long_running", "headless_ecosystem",
-  ].includes(dimensionId));
-  reference.claims.splice(insertAt < 0 ? reference.claims.length : insertAt, 0,
-    { dimensionId: "git_delivery", contractId: "multi_repository_worktree_soak", owner: "candidateGitDeliveryReceipt", completion: "current_harness_multi_repository_worktree_soak_passed" },
-    { dimensionId: "git_delivery", contractId: "review_remediation_loop", owner: "candidateGitDeliveryReceipt", completion: "current_harness_review_remediation_loop_passed" },
-    { dimensionId: "git_delivery", contractId: "remote_delivery_authority_separation", owner: "candidateGitDeliveryReceipt", completion: "current_harness_remote_delivery_authority_separation_passed" },
-    { dimensionId: "git_delivery", contractId: "delivery_recovery_audit_matrix", owner: "candidateGitDeliveryReceipt", completion: "current_harness_delivery_recovery_audit_matrix_passed" },
+  const platforms = ["windows-native", "wsl2-linux"];
+  const resultsByGroup = Object.fromEntries(
+    Object.keys(CODING_AGENT_CANDIDATE_GIT_DELIVERY_AUDIT_GROUPS)
+      .map((key) => [key, []]),
   );
-  await writeEvidenceReference(aggregateRoot, reference);
+  const auditRuns = [];
+  for (const platform of platforms) {
+    const failedFiles = options.failedPlatform === platform
+      ? new Set([
+        ...CODING_AGENT_CANDIDATE_GIT_DELIVERY_AUDIT_GROUPS.worktreeSoak,
+        ...CODING_AGENT_CANDIDATE_GIT_DELIVERY_AUDIT_GROUPS.reviewRemediation,
+        ...CODING_AGENT_CANDIDATE_GIT_DELIVERY_AUDIT_GROUPS.recoveryAudit,
+      ])
+      : new Set();
+    const report = createGitDeliveryVitestReport(platform, failedFiles);
+    const reportText = `${JSON.stringify(report)}\n`;
+    const paths = CODING_AGENT_CANDIDATE_GIT_DELIVERY_AUDIT_PATHS[platform];
+    await writeRelativeFile(aggregateRoot, paths.report, reportText);
+    const reportReference = {
+      framework: "vitest",
+      format: "vitest-json/v3.2.7",
+      runnerVersion: "3.2.7",
+      path: paths.report,
+      sha256: sha256(reportText),
+    };
+    const groupResults = projectCandidateGitDeliveryPlatformResults(report);
+    for (const [key, passed] of Object.entries(groupResults)) {
+      resultsByGroup[key].push({ platform, passed });
+    }
+    const failed = !report.success;
+    const dag = replayCommandJobSnapshots(createVerificationDagPlan({
+      runId: `candidate-git-delivery-${platform}-audit`,
+      taskId: "p2c-git-delivery-audit",
+      generatedAt: "2026-09-02T16:00:00.000Z",
+      commit: aggregate.harness.commit,
+      workspaceHash: aggregate.harness.worktreeContentSha256,
+      verificationCommands: [{
+        id: "git-delivery.audit",
+        kind: "acceptance",
+        scope: "full",
+        command: CODING_AGENT_CANDIDATE_GIT_DELIVERY_AUDIT_COMMAND,
+      }],
+    }), [{
+      id: "git-delivery.audit",
+      snapshot: {
+        jobId: platform === "windows-native"
+          ? "73345678-1234-4234-8234-123456789abc"
+          : "83345678-1234-4234-8234-123456789abc",
+        status: failed ? "failed" : "completed",
+        terminationReason: null,
+        exitCode: failed ? 1 : 0,
+        signal: null,
+        timeoutMs: 900_000,
+        deadlineAt: 1_788_236_100_000,
+        endedAt: 1_788_235_201_000,
+        recovery: { lifecycle: "settled" },
+      },
+      testReport: {
+        framework: reportReference.framework,
+        format: reportReference.format,
+        runnerVersion: reportReference.runnerVersion,
+        artifact: { path: reportReference.path, sha256: reportReference.sha256 },
+        content: reportText,
+      },
+    }]);
+    const dagText = serializeJson(dag);
+    await writeRelativeFile(aggregateRoot, paths.dag, dagText);
+    auditRuns.push({
+      platform,
+      verificationDag: {
+        artifactSchemaVersion: "verification-dag/v1",
+        path: paths.dag,
+        sha256: sha256(dagText),
+      },
+      nativeTestReport: reportReference,
+    });
+  }
+  const audit = {
+    command: CODING_AGENT_CANDIDATE_GIT_DELIVERY_AUDIT_COMMAND,
+    testFiles: [...CODING_AGENT_CANDIDATE_GIT_DELIVERY_AUDIT_TEST_FILES],
+    runs: auditRuns,
+  };
+  const artifactKinds = {
+    worktreeSoak: "multi_repository_worktree_soak",
+    reviewRemediation: "review_remediation_loop",
+    remoteAuthority: "remote_delivery_authority_separation",
+    recoveryAudit: "delivery_recovery_audit_matrix",
+  };
+  const base = (key) => {
+    const platformResults = resultsByGroup[key];
+    const failures = platformResults.filter(({ passed }) => !passed)
+      .map(({ platform }) => `${platform}:${artifactKinds[key]}:native_audit_failed`);
+    return {
+      schemaVersion: "coding-agent-benchmark-git-delivery-evidence/v1",
+      artifactKind: artifactKinds[key],
+      generatedAt: "2026-09-02T16:00:00.000Z",
+      aggregate,
+      sourceIdentity,
+      audit,
+      status: failures.length === 0 ? "complete" : "failed",
+      gate: { passed: failures.length === 0, failures },
+      platforms: platformResults,
+    };
+  };
+  const systemEvidence = [
+    "system.parallel-write-fan-in",
+    "system.restart-delivery-reconciliation",
+  ].flatMap((taskId) => platforms.map((platform) => {
+    const selected = reference.owners.systemEvidence.artifacts.find((item) => (
+      item.taskId === taskId && item.platform === platform
+    ));
+    return { path: selected.path, sha256: selected.sha256 };
+  }));
+  const values = {
+    worktreeSoak: {
+      ...base("worktreeSoak"),
+      repositories: ["star-sanctuary", "reference-repository"],
+      observations: platforms.map((platform) => ({
+        platform, dirty: false, residualWorktreeCount: 0, mutationCount: 0,
+      })),
+    },
+    reviewRemediation: {
+      ...base("reviewRemediation"),
+      observations: platforms.map((platform) => ({
+        platform,
+        reviewVerdict: "needs_changes",
+        remediationApplied: true,
+        recheckVerdict: "approved",
+        diffHashStable: true,
+      })),
+    },
+    remoteAuthority: {
+      ...base("remoteAuthority"),
+      repositories: ["star-sanctuary", "reference-repository"],
+      authority: {
+        delegable: false,
+        rememberable: false,
+        userApprovalRequired: true,
+        remoteWritePerformed: false,
+        credentialsRead: false,
+      },
+      targets: createCandidateGitDeliveryRemoteTargets(aggregate.harness),
+    },
+    recoveryAudit: {
+      ...base("recoveryAudit"),
+      observations: platforms.map((platform) => ({
+        platform,
+        parallelWrite: {
+          fanInConfirmed: true,
+          mainWorkspaceChangedBeforeFanIn: false,
+          conflictDetected: true,
+        },
+        restartDelivery: {
+          reattached: true,
+          replayedSideEffectCount: 0,
+          remoteWriteCount: 0,
+          terminalStatus: "completed",
+        },
+      })),
+      systemEvidence,
+    },
+  };
+  for (const [key, value] of Object.entries(values)) {
+    await writeRelativeFile(
+      aggregateRoot,
+      CODING_AGENT_CANDIDATE_GIT_DELIVERY_ARTIFACT_PATHS[key],
+      serializeJson(value),
+    );
+  }
+  if (options.writeReceipt !== false) {
+    await runCodingAgentCandidateGitDeliveryReceipt({
+      aggregateRoot,
+      generatedAt: "2026-09-02T16:01:00.000Z",
+    });
+  }
+}
+
+function createGitDeliveryVitestReport(platform, failedFiles) {
+  const root = platform === "windows-native"
+    ? "E:/project/star-sanctuary"
+    : "/mnt/e/project/star-sanctuary";
+  const testResults = CODING_AGENT_CANDIDATE_GIT_DELIVERY_AUDIT_TEST_FILES.map(
+    (relativePath, index) => {
+      const failed = failedFiles.has(relativePath);
+      return {
+        name: `${root}/${relativePath}`,
+        status: failed ? "failed" : "passed",
+        message: failed ? "deterministic Git delivery fixture failure" : "",
+        assertionResults: [{
+          ancestorTitles: [],
+          fullName: `Git delivery fixture ${index}`,
+          status: failed ? "failed" : "passed",
+          title: `Git delivery fixture ${index}`,
+          duration: 1,
+          failureMessages: failed ? ["deterministic Git delivery fixture failure"] : [],
+        }],
+      };
+    },
+  );
+  const failedCount = testResults.filter(({ status }) => status === "failed").length;
+  const passedCount = testResults.length - failedCount;
+  return {
+    numTotalTestSuites: testResults.length,
+    numPassedTestSuites: passedCount,
+    numFailedTestSuites: failedCount,
+    numPendingTestSuites: 0,
+    numTotalTests: testResults.length,
+    numPassedTests: passedCount,
+    numFailedTests: failedCount,
+    numPendingTests: 0,
+    numTodoTests: 0,
+    startTime: 1,
+    success: failedCount === 0,
+    testResults,
+  };
 }
 
 export async function writeRelativeFile(root, relativePath, value) {

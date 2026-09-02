@@ -4,27 +4,465 @@
   "title": "Star Sanctuary coding agent benchmark Git delivery evidence v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "artifactKind", "generatedAt", "aggregate", "sourceIdentity", "status", "gate"],
+  "required": [
+    "schemaVersion",
+    "artifactKind",
+    "generatedAt",
+    "aggregate",
+    "sourceIdentity",
+    "audit",
+    "status",
+    "gate",
+    "platforms"
+  ],
   "properties": {
-    "schemaVersion": { "const": "coding-agent-benchmark-git-delivery-evidence/v1" },
-    "artifactKind": { "enum": ["multi_repository_worktree_soak", "review_remediation_loop", "remote_delivery_authority_separation", "delivery_recovery_audit_matrix"] },
-    "generatedAt": { "type": "string", "format": "date-time" },
-    "aggregate": { "type": "object" },
-    "sourceIdentity": { "$ref": "#/$defs/sourceIdentity" },
-    "status": { "enum": ["complete", "failed"] },
-    "gate": { "$ref": "#/$defs/gate" },
-    "repositories": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
-    "platforms": { "type": "array", "items": { "$ref": "#/$defs/platformResult" }, "minItems": 2, "maxItems": 2, "uniqueItems": true },
-    "observations": { "type": "array", "items": { "type": "object" } },
-    "authority": { "type": "object", "additionalProperties": false, "required": ["delegable", "rememberable", "userApprovalRequired", "remoteWritePerformed", "credentialsRead"], "properties": { "delegable": { "const": false }, "rememberable": { "const": false }, "userApprovalRequired": { "const": true }, "remoteWritePerformed": { "const": false }, "credentialsRead": { "const": false } } },
-    "targets": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["remoteUrlHash", "branch", "baseBranch"], "properties": { "remoteUrlHash": { "$ref": "#/$defs/sha256" }, "branch": { "type": "string" }, "baseBranch": { "type": "string" } } } },
-    "systemEvidence": { "type": "array", "items": { "$ref": "#/$defs/artifactReference" }, "minItems": 4, "maxItems": 4, "uniqueItems": true }
+    "schemaVersion": {
+      "const": "coding-agent-benchmark-git-delivery-evidence/v1"
+    },
+    "artifactKind": {
+      "enum": [
+        "multi_repository_worktree_soak",
+        "review_remediation_loop",
+        "remote_delivery_authority_separation",
+        "delivery_recovery_audit_matrix"
+      ]
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "aggregate": {
+      "type": "object"
+    },
+    "sourceIdentity": {
+      "$ref": "#/$defs/sourceIdentity"
+    },
+    "audit": {
+      "$ref": "#/$defs/audit"
+    },
+    "status": {
+      "enum": ["complete", "failed"]
+    },
+    "gate": {
+      "$ref": "#/$defs/gate"
+    },
+    "repositories": {
+      "const": ["star-sanctuary", "reference-repository"]
+    },
+    "platforms": {
+      "$ref": "#/$defs/platformResults"
+    },
+    "observations": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "delegable",
+        "rememberable",
+        "userApprovalRequired",
+        "remoteWritePerformed",
+        "credentialsRead"
+      ],
+      "properties": {
+        "delegable": { "const": false },
+        "rememberable": { "const": false },
+        "userApprovalRequired": { "const": true },
+        "remoteWritePerformed": { "const": false },
+        "credentialsRead": { "const": false }
+      }
+    },
+    "targets": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["remoteUrlHash", "branch", "baseBranch"],
+        "properties": {
+          "remoteUrlHash": { "$ref": "#/$defs/sha256" },
+          "branch": { "const": "main" },
+          "baseBranch": { "const": "main" }
+        }
+      }
+    },
+    "systemEvidence": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifactReference" },
+      "minItems": 4,
+      "maxItems": 4
+    }
   },
+  "oneOf": [
+    {
+      "properties": {
+        "artifactKind": { "const": "multi_repository_worktree_soak" },
+        "observations": {
+          "$ref": "#/$defs/worktreeObservations"
+        }
+      },
+      "required": ["repositories", "observations"]
+    },
+    {
+      "properties": {
+        "artifactKind": { "const": "review_remediation_loop" },
+        "observations": {
+          "$ref": "#/$defs/reviewObservations"
+        }
+      },
+      "required": ["observations"]
+    },
+    {
+      "properties": {
+        "artifactKind": { "const": "remote_delivery_authority_separation" }
+      },
+      "required": ["repositories", "authority", "targets"]
+    },
+    {
+      "properties": {
+        "artifactKind": { "const": "delivery_recovery_audit_matrix" },
+        "observations": {
+          "$ref": "#/$defs/recoveryObservations"
+        }
+      },
+      "required": ["observations", "systemEvidence"]
+    }
+  ],
   "$defs": {
-    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-    "artifactReference": { "type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": { "path": { "type": "string", "minLength": 1 }, "sha256": { "$ref": "#/$defs/sha256" } } },
-    "sourceIdentity": { "type": "object", "additionalProperties": false, "required": ["harness", "files", "aggregateSha256"], "properties": { "harness": { "type": "object" }, "files": { "type": "array", "minItems": 1, "items": { "type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": { "path": { "type": "string", "minLength": 1 }, "sha256": { "$ref": "#/$defs/sha256" } } } }, "aggregateSha256": { "$ref": "#/$defs/sha256" } } },
-    "gate": { "type": "object", "additionalProperties": false, "required": ["passed", "failures"], "properties": { "passed": { "type": "boolean" }, "failures": { "type": "array", "items": { "type": "string" } } } },
-    "platformResult": { "type": "object", "additionalProperties": false, "required": ["platform", "passed"], "properties": { "platform": { "enum": ["windows-native", "wsl2-linux"] }, "passed": { "type": "boolean" } } }
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "safeRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    },
+    "artifactReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/safeRelativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "dagReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifactSchemaVersion", "path", "sha256"],
+      "properties": {
+        "artifactSchemaVersion": { "const": "verification-dag/v1" },
+        "path": { "$ref": "#/$defs/safeRelativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "nativeTestReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["framework", "format", "runnerVersion", "path", "sha256"],
+      "properties": {
+        "framework": { "const": "vitest" },
+        "format": { "const": "vitest-json/v3.2.7" },
+        "runnerVersion": { "const": "3.2.7" },
+        "path": { "$ref": "#/$defs/safeRelativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "auditRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "verificationDag", "nativeTestReport"],
+      "properties": {
+        "platform": {
+          "enum": ["windows-native", "wsl2-linux"]
+        },
+        "verificationDag": {
+          "$ref": "#/$defs/dagReference"
+        },
+        "nativeTestReport": {
+          "$ref": "#/$defs/nativeTestReport"
+        }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "testFiles", "runs"],
+      "properties": {
+        "command": {
+          "const": "corepack pnpm verify:p2c-git-delivery-audit"
+        },
+        "testFiles": {
+          "const": [
+            "packages/belldandy-core/src/managed-worktree.test.ts",
+            "packages/belldandy-core/src/user-worktree-runtime.test.ts",
+            "packages/belldandy-core/src/workspace-change-review.test.ts",
+            "packages/belldandy-core/src/subtask-supervisor-fan-in-runtime.test.ts",
+            "packages/belldandy-core/src/subtask-supervisor-fan-in-resolution-runtime.test.ts",
+            "packages/belldandy-core/src/server-methods/remote-delivery.test.ts",
+            "packages/belldandy-core/src/remote-delivery-runtime.test.ts",
+            "packages/belldandy-core/src/remote-delivery-process-recovery.test.ts",
+            "packages/belldandy-core/src/user-worktree-process-recovery.test.ts"
+          ]
+        },
+        "runs": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "allOf": [
+                { "$ref": "#/$defs/auditRun" },
+                {
+                  "properties": {
+                    "platform": { "const": "windows-native" },
+                    "verificationDag": {
+                      "properties": {
+                        "path": {
+                          "const": "candidate-evidence/git-delivery/audit-windows-native-verification-dag.json"
+                        }
+                      }
+                    },
+                    "nativeTestReport": {
+                      "properties": {
+                        "path": {
+                          "const": "candidate-evidence/git-delivery/audit-windows-native-vitest-report.json"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                { "$ref": "#/$defs/auditRun" },
+                {
+                  "properties": {
+                    "platform": { "const": "wsl2-linux" },
+                    "verificationDag": {
+                      "properties": {
+                        "path": {
+                          "const": "candidate-evidence/git-delivery/audit-wsl2-linux-verification-dag.json"
+                        }
+                      }
+                    },
+                    "nativeTestReport": {
+                      "properties": {
+                        "path": {
+                          "const": "candidate-evidence/git-delivery/audit-wsl2-linux-vitest-report.json"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "sourceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["harness", "files", "aggregateSha256"],
+      "properties": {
+        "harness": { "type": "object" },
+        "files": {
+          "type": "array",
+          "minItems": 19,
+          "maxItems": 19,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": { "$ref": "#/$defs/safeRelativePath" },
+              "sha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        },
+        "aggregateSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "failures"],
+      "properties": {
+        "passed": { "type": "boolean" },
+        "failures": {
+          "type": "array",
+          "maxItems": 2,
+          "items": { "type": "string", "minLength": 1, "maxLength": 240 }
+        }
+      }
+    },
+    "platformResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "passed"],
+      "properties": {
+        "platform": {
+          "enum": ["windows-native", "wsl2-linux"]
+        },
+        "passed": { "type": "boolean" }
+      }
+    },
+    "platformResults": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        {
+          "allOf": [
+            { "$ref": "#/$defs/platformResult" },
+            { "properties": { "platform": { "const": "windows-native" } } }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/platformResult" },
+            { "properties": { "platform": { "const": "wsl2-linux" } } }
+          ]
+        }
+      ]
+    },
+    "worktreeObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "dirty", "residualWorktreeCount", "mutationCount"],
+      "properties": {
+        "platform": {
+          "enum": ["windows-native", "wsl2-linux"]
+        },
+        "dirty": { "const": false },
+        "residualWorktreeCount": { "const": 0 },
+        "mutationCount": { "const": 0 }
+      }
+    },
+    "worktreeObservations": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        {
+          "allOf": [
+            { "$ref": "#/$defs/worktreeObservation" },
+            { "properties": { "platform": { "const": "windows-native" } } }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/worktreeObservation" },
+            { "properties": { "platform": { "const": "wsl2-linux" } } }
+          ]
+        }
+      ]
+    },
+    "reviewObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "reviewVerdict",
+        "remediationApplied",
+        "recheckVerdict",
+        "diffHashStable"
+      ],
+      "properties": {
+        "platform": {
+          "enum": ["windows-native", "wsl2-linux"]
+        },
+        "reviewVerdict": { "const": "needs_changes" },
+        "remediationApplied": { "const": true },
+        "recheckVerdict": { "const": "approved" },
+        "diffHashStable": { "const": true }
+      }
+    },
+    "reviewObservations": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        {
+          "allOf": [
+            { "$ref": "#/$defs/reviewObservation" },
+            { "properties": { "platform": { "const": "windows-native" } } }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/reviewObservation" },
+            { "properties": { "platform": { "const": "wsl2-linux" } } }
+          ]
+        }
+      ]
+    },
+    "recoveryObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "parallelWrite", "restartDelivery"],
+      "properties": {
+        "platform": {
+          "enum": ["windows-native", "wsl2-linux"]
+        },
+        "parallelWrite": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "fanInConfirmed",
+            "mainWorkspaceChangedBeforeFanIn",
+            "conflictDetected"
+          ],
+          "properties": {
+            "fanInConfirmed": { "const": true },
+            "mainWorkspaceChangedBeforeFanIn": { "const": false },
+            "conflictDetected": { "const": true }
+          }
+        },
+        "restartDelivery": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "reattached",
+            "replayedSideEffectCount",
+            "remoteWriteCount",
+            "terminalStatus"
+          ],
+          "properties": {
+            "reattached": { "const": true },
+            "replayedSideEffectCount": { "const": 0 },
+            "remoteWriteCount": { "const": 0 },
+            "terminalStatus": { "const": "completed" }
+          }
+        }
+      }
+    },
+    "recoveryObservations": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        {
+          "allOf": [
+            { "$ref": "#/$defs/recoveryObservation" },
+            { "properties": { "platform": { "const": "windows-native" } } }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/recoveryObservation" },
+            { "properties": { "platform": { "const": "wsl2-linux" } } }
+          ]
+        }
+      ]
+    }
   }
 }

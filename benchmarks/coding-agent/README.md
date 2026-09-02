@@ -133,6 +133,32 @@ corepack pnpm benchmark:coding-agent:v3:candidate-cli-tui-receipt --aggregate-ro
 corepack pnpm benchmark:coding-agent:v3:candidate-git-delivery-receipt --aggregate-root <v3-aggregate-root> --generated-at <ISO-8601>
 ```
 
+## P2-C candidate local evidence bootstrap
+
+`benchmark:coding-agent:v3:candidate-local-evidence` 是完成 `144/144` aggregate 之后的本地证据 bootstrap 与可恢复编排入口，输出合同为 `coding-agent-benchmark-candidate-local-evidence-run/v1`。入口先从 aggregate、candidate-global receipt 与 retained system evidence 创建不可覆盖的 `candidate-dimension-evidence-reference.json`，再依次绑定 `candidateCodeIntelReceipt`、`candidateCodingRunClientReceipt`、`candidateVerificationReceipt`、`candidateSupervisorReceipt`、`candidateCliTuiReceipt` 与 `candidateGitDeliveryReceipt`；已经通过公共 loader 验真的 owner 标记为 resumed，不重复采集，缺失 owner 才运行相应原生 producer。每个 collector 预声明固定 raw report、Verification DAG、artifact 与 receipt 路径，遇到测试选择、Schema、digest、source/harness identity、跨层外键或并发 reference 漂移时失败关闭并回滚本轮计划产物。
+
+CLI/TUI 的正式 candidate startup timeout 默认且最小为 `30s`、最大为 `120s`；更短窗口只允许调用低层 worker 做诊断，不能由本入口生成资格证据。task-efficiency artifact 固定声明 `evidenceKind=deterministic_conformance_fixture`、`candidateRunEvidence=false` 与 `providerCalls=0`，只验证 trace/metrics 合同，不代表真实候选调用过模型。Git delivery 原生采集固定执行以下只读 audit，并在 Windows/WSL2 各自保存原始 Vitest JSON 与 Verification DAG：
+
+```powershell
+corepack pnpm verify:p2c-git-delivery-audit
+```
+
+Supervisor 与 Git delivery 的 WSL2 原生阶段必须通过 `--wsl-workspace-root` 使用独立 Linux staging；禁止复用 Windows `node_modules` 或用全局 `NODE_PATH` 拼装 native package。staging 必须是候选 commit 的 clean clone，并按同一 `pnpm-lock.yaml` 安装 Linux 原生依赖。pnpm 会把 workspace bin 设为 executable 时，可在 clone 内设置 `core.fileMode=false` 仅忽略跨平台 mode 差异；commit、内容、lockfile 与其他 dirty 状态仍由 `resolveBenchmarkRepositoryIdentity()` 检查。示例准备流程如下，实际 source、staging 与离线 store 路径由执行环境显式提供：
+
+```powershell
+wsl.exe --distribution Ubuntu-22.04 --exec git clone --no-hardlinks <candidate-source-path> <wsl-workspace-root>
+wsl.exe --distribution Ubuntu-22.04 --exec git -C <wsl-workspace-root> config core.fileMode false
+wsl.exe --distribution Ubuntu-22.04 --cd <wsl-workspace-root> --exec corepack pnpm install --offline --frozen-lockfile --store-dir <linux-readable-pnpm-store>
+```
+
+每次 WSL2 audit/soak 执行前，producer 都在 staging 内调用 `resolveBenchmarkRepositoryIdentity(process.cwd())`，并与 aggregate harness 的 commit、`workspaceDirty=false`、lockfile SHA-256 与 worktree content SHA-256 精确比较；任一漂移都在运行前失败关闭。staging 的机器绝对路径只用于本地启动，不写入 candidate artifact。
+
+本地 runner 不触发 push、PR、GitHub Actions、模型或 Provider；未绑定可信 `candidateCodingRunClientCiReceipt` 时，private CI 保持 `external_required` 且 `executedByRunner=false`，runner 顶层同样固定 `providerCalls=0`。因此本地 owner 全部完成仍不能替代真实 private CI，也不能单独使候选进入 `eligible/scored`。
+
+```powershell
+corepack pnpm benchmark:coding-agent:v3:candidate-local-evidence --aggregate-root <v3-aggregate-root> --wsl-workspace-root <wsl-workspace-root> --generated-at <ISO-8601>
+```
+
 ## P0.14/P0.15 v3 Linux snapshot preparation 边界
 
 `benchmark:coding-agent:v3:prepare-linux` 必须在目标 WSL2 发行版内执行，并显式接收四仓 source parent、本机只读 npm tarball cache、可选 exact dependency seed、可选 Go module cache 和此前不存在的 ext4 output root。准备期只执行本地 Git clone 与 `npm ci --offline --ignore-scripts --no-audit --no-fund --update-notifier=false`；Express 无 checked-in lockfile，只允许用既有 `node_modules/.package-lock.json` 生成根 lock，且派生前后的精确 package set 和根 `package.json` 必须一致。挂载盘工作树可能因 CRLF 被 WSL Git 误报 dirty，因此只校验其 origin/HEAD/commit object；receipt 只绑定重新 clone 后的 ext4 clean worktree。

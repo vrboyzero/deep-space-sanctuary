@@ -3,11 +3,21 @@
   "$id": "https://star-sanctuary.dev/schemas/cli-tui-task-efficiency-v1.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "aggregate", "sourceIdentity", "status", "evidence", "metrics"],
+  "required": ["schemaVersion", "aggregate", "sourceIdentity", "provenance", "status", "evidence", "metrics"],
   "properties": {
     "schemaVersion": { "const": "task-efficiency-evidence/v1" },
     "aggregate": { "type": "object" },
     "sourceIdentity": { "type": "object" },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidenceKind", "candidateRunEvidence", "providerCalls"],
+      "properties": {
+        "evidenceKind": { "const": "deterministic_conformance_fixture" },
+        "candidateRunEvidence": { "const": false },
+        "providerCalls": { "const": 0 }
+      }
+    },
     "status": { "enum": ["complete", "incomplete"] },
     "evidence": {
       "type": "object", "additionalProperties": false,
@@ -17,7 +27,37 @@
         "projectionTimeline": {
           "type": "object", "additionalProperties": false,
           "required": ["coverage", "items"],
-          "properties": { "coverage": { "const": "complete" }, "items": { "type": "array", "minItems": 2 } }
+          "properties": {
+            "source": { "const": "gateway_event_broker" },
+            "coverage": { "const": "complete" },
+            "binding": { "$ref": "#/$defs/binding" },
+            "statusCoverage": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "enum": ["blocked", "needs_input", "verifying"] }
+            },
+            "items": {
+              "type": "array", "minItems": 2,
+              "items": {
+                "type": "object", "additionalProperties": false,
+                "required": ["status", "observedAtMs"],
+                "properties": {
+                  "status": { "enum": ["running", "needs_input", "blocked", "verifying", "completed", "failed", "cancelled", "interrupted"] },
+                  "observedAtMs": { "type": "integer", "minimum": 0 }
+                }
+              }
+            }
+          }
+        },
+        "humanInterventionEvidence": {
+          "type": "object", "additionalProperties": false,
+          "required": ["source", "coverage", "binding", "count"],
+          "properties": {
+            "source": { "const": "human_response" },
+            "coverage": { "const": "complete" },
+            "binding": { "$ref": "#/$defs/binding" },
+            "count": { "type": "integer", "minimum": 0 }
+          }
         }
       }
     },
@@ -26,9 +66,27 @@
       "required": ["schemaVersion", "status", "missingMetrics", "usageCompleteness"],
       "properties": {
         "schemaVersion": { "const": "task-efficiency-metrics/v1" },
+        "contentMode": { "const": "none" },
         "status": { "enum": ["complete", "incomplete"] },
+        "completionLatencyMs": { "type": "integer", "minimum": 0 },
+        "blockedDurationMs": { "type": "integer", "minimum": 0 },
+        "needsInputDurationMs": { "type": "integer", "minimum": 0 },
+        "humanInterventionCount": { "type": "integer", "minimum": 0 },
+        "contextCallCount": { "type": "integer", "minimum": 0 },
+        "toolCallCount": { "type": "integer", "minimum": 0 },
+        "validationDurationMs": { "type": "integer", "minimum": 0 },
         "missingMetrics": { "type": "array", "items": { "type": "string" } },
         "usageCompleteness": { "type": "object" }
+      }
+    }
+  },
+  "$defs": {
+    "binding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["agentRunId"],
+      "properties": {
+        "agentRunId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "conversationId": { "type": "string", "minLength": 1, "maxLength": 128 }
       }
     }
   }

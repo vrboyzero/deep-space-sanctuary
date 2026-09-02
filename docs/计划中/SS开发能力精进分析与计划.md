@@ -11252,7 +11252,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
   -> 两个连续冻结候选最终复核
 ```
 
-当前本地推进点已完成 `cli_tui` 与 `git_delivery` 两个 candidate-bound receipt：前者绑定 TaskProjection/效率/双平台 accessibility，后者绑定多仓 worktree、review/remediation、remote authority separation 与 recovery audit；两者的 Schema、公共 loader、真实性/三态 resolver、唯一 producer/仓库 verifier 接线均已收口。`cli_tui` 双平台首帧已完成诊断与修复：此前 `5s` smoke 低于 WSL2 历史首帧基线，属于不适合候选采集的超时策略；正式入口现拒绝低于 `30s` 的窗口，TUI 关闭还会取消未完成的只读 Git workspace inspection。修复后真实 PTY 在 Windows/WSL2 分别于 `4340ms`/`18321ms` 出现首帧，并于 `170ms`/`45ms` 收敛退出，进程与 state dir 均零残留；这些数据是修复验证，尚未冒充 current-candidate `complete` artifact。七维数值 evaluator/report 也已接入：`coding-agent-benchmark-candidate-score-evaluation/v1` 只在七维 aggregate criteria 与 candidate evidence 全部完成时按冻结 minimum 授分，并以十进制精确乘加得到未展示舍入的 raw weighted；qualification report 已升级为 v2，证据 digest 同时绑定 mapping、reference、owner 与 retained artifact。真实双平台 CLI/TUI 与 Git delivery artifact、`headless_ecosystem` 的 GitHub Actions run/API/ZIP receipt 仍待稳定 current-candidate 采集；fixture 不能替代真实证据。后续顺序为：稳定提交并建立 current-candidate -> 真实 artifact/CI 回填 -> 完整联合回归 -> 两个连续候选。
+当前本地推进点已补齐真实 aggregate 到七维 evidence owner 的 bootstrap：`candidate-dimension-evidence-reference.json` 可从完成的 `144/144` aggregate、candidate-global receipt 与 retained system evidence 建立，随后由同一可恢复入口编排既有 CodeIntel artifact 绑定、coding-run client、Verification、Supervisor、CLI/TUI 与 Git delivery 本地证据。Git delivery 不再只有 resolver/fixture，而是以固定 `9` 文件、`2/3/2/2` 分组的 Windows/WSL2 原始 Vitest JSON 与 Verification DAG 生成四类 artifact；selection、source inventory、system recovery 外键、并发 reference 和部分写入均失败关闭。CLI/TUI efficiency 明确标记为 `deterministic_conformance_fixture`、`candidateRunEvidence=false`、`providerCalls=0`，只证明 metrics 管道一致性，不冒充真实候选 Provider usage。统一 runner 对已验证 owner 执行 resume，private CI 始终保留为 `external_required`，不会由本地入口触发或伪造。`cli_tui` 双平台首帧修复验证仍保留 Windows/WSL2 startup=`4340ms/18321ms`、exit=`170ms/45ms` 与零残留结论，但尚未从稳定提交生成正式 current-candidate artifact。本轮还以 `--wsl-workspace-root` 关闭了 WSL2 原生依赖隔离：Supervisor/Git 在独立 Linux staging 内复算 commit/clean/lockfile/worktree identity，不再共享 Windows `node_modules` 或全局 `NODE_PATH`。clean HEAD `b233807…` 的工程验证中，Windows/WSL2 固定 Git audit 均为 `71/71`；local collector/runner=`16/16`、candidate 全组=`173/173`、增量构建、repository verifier=`22/22` 及实际 verifier 全部通过。该 staging 报告只验证本地执行合同，不是未来 stable commit 的正式候选 artifact；当前下一恢复点已推进到“冻结稳定 identity 后生成真实 aggregate，并回填 CLI/TUI、Git delivery 与 private CI evidence”。
 
 #### P2-C 七维评分实现结论：evidence-gated evaluator 与 qualification v2（2026-09-02）
 
@@ -11325,11 +11325,60 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：正式 artifact 以 source/harness identity 不可覆盖绑定，必须先冻结通过回归的提交；CLI/TUI 是当前已修复且成本为零的最近闭环，可先证明 producer 与真实产品行为一致，再进入远端 CI。
 - **当前还缺的关键闭环**：真实 current-candidate `cli_tui`/`git_delivery` complete receipt、`headless_ecosystem` private CI receipt、完整资格/七维评分回归，以及两个连续冻结候选的原始加权与 hard Gate 复核。
 
+#### P2-C candidate evidence 实现结论：aggregate bootstrap、本地原生 collector 与可恢复编排（2026-09-02）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-local-evidence.mjs` 新建并扩展**：
+   - 从完成的 `144/144` v3 aggregate、candidate-global receipt 与 `24` 份 retained system evidence 建立不可覆盖的 candidate dimension reference；
+   - 提供 coding-run client、Verification、Supervisor、CLI/TUI 与 Git delivery collector，统一绑定 current harness、原始报告、Verification DAG、source inventory 与 owner receipt；
+   - 所有 collector 预声明 artifact 路径，拒绝覆盖已有文件；metadata、selection、identity、Schema、digest 或 reference 并发漂移时回滚本轮计划产物。
+
+2. **Git delivery producer、Schema 与 fixture 修改**：
+   - `scripts/coding-agent-candidate-git-delivery-receipt.mjs` 固定 `9` 个生产测试文件及 worktree=`2`、review/remediation=`3`、remote authority=`2`、recovery=`2` 的平台分组，校验 Windows/WSL2 原始 Vitest JSON 和 Verification DAG；
+   - `benchmarks/coding-agent/v3/git-delivery-evidence.schema.json` 固定 audit、双平台路径、`19` 文件 source identity、四类 observation/Gate 与 recovery system-evidence 外键；
+   - fixture 改为生成与正式 owner 相同的 raw report/DAG/receipt 形状，可信单组失败只投影对应合同为 `failed`，不污染其他 Git delivery 合同。
+
+3. **`scripts/run-coding-agent-candidate-local-evidence.mjs` 与仓库接线新建/修改**：
+   - 新增 `benchmark:coding-agent:v3:candidate-local-evidence` 可恢复入口；每阶段先经公共 resolver 验证现有 reference，已闭合 owner 标记 `resumed`，缺失 owner 才执行 producer；
+   - 新 bootstrap 或 Supervisor/Git 任一 owner 未闭合时，`--wsl-workspace-root` 在 artifact 写入前成为必需前置；两个原生 owner 都已验真时仍允许无机器路径完成只读 resume；
+   - private CI 只返回 `external_required` 或绑定已有可信 receipt，固定 `executedByRunner=false`；本地 runner 的 Provider calls 固定为 `0`；
+   - `package.json` 新增固定 `verify:p2c-git-delivery-audit`，repository verifier 已接入命令、入口和文档完整性检查。
+
+4. **CLI/TUI efficiency provenance 与失败关闭回归**：
+   - `cli-tui-task-efficiency.schema.json` 与 resolver 要求 `deterministic_conformance_fixture`、`candidateRunEvidence=false`、`providerCalls=0`，避免把构造 trace 中的 metrics 用量误解为真实候选模型调用；
+   - 新增/扩展 `13` 个 local collector/runner 测试场景，覆盖 bootstrap、各 owner 成功路径、Git 单合同失败、测试选择漂移、并发 reference、不可覆盖、metadata 失败零残留及中断后 resume。
+
+5. **WSL2 原生 staging 与文档合同修改**：
+   - 已确认 WSL2 不能直接复用 Windows `node_modules`：缺失 Linux Rollup native package；使用通用 `NODE_PATH` overlay 又会在主 Vitest 与 crash-recovery 子进程之间产生仓库内两版 esbuild 的 host/binary 交叉错配；
+   - 单一 native overlay 方案因此判定为不可交付并移除；正式合同改为显式 `--wsl-workspace-root`，Git audit 在执行前复算 identity，Supervisor 在 Windows soak 前及真正启动 WSL2 前各复算一次，任一 commit、clean 状态、lockfile SHA-256 或 worktree content SHA-256 漂移均失败关闭；
+   - `benchmarks/coding-agent/README.md`、`docs/project-map.md` 与 repository verifier 登记 clean Linux clone、frozen offline install、跨平台 `core.fileMode=false` 边界和 staging owner；机器绝对路径不写入 candidate artifact，source/harness identity 与评分门槛均未放宽。
+
+6. **效果**：
+   - 真实 completed aggregate 现在具备生成 candidate reference 并进入本地 evidence owner 链的正式入口，不再卡在“只有 resolver/fixture、没有 producer”；
+   - 本地证据、确定性 conformance trace、private CI 与未来真实 Provider/candidate run 的 provenance 边界明确，历史或 fixture 证据不能冒充当前候选；
+   - 双平台原生测试可在各自依赖树中解析仓库内两版 esbuild，WSL2 不再依赖全局 overlay；评分阈值与七维 evaluator 未修改，缺 private CI 或任一真实 owner 时仍保持 `not_eligible/unscored`。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` exit code=`0`；
+- local collector/runner `16/16` 通过；candidate 全组 `20` 个文件、`41/41` suites、`173/173` tests 通过，failed/pending=`0/0`；
+- Windows 与 WSL2 固定 Git audit 均为 `19/19` suites、`71/71` tests，failed/pending=`0/0`；WSL2 staging 绑定 clean HEAD `b233807…`，安装后 `workspaceDirty=false`，运行后仍 clean；
+- repository verifier 测试 `22/22` 通过，`corepack pnpm verify:coding-benchmark` 通过；`8` 个修改/新增 MJS 通过 `node --check`，`3` 个 JSON 文件解析与 `git diff --check` 通过，仅保留既存 AJV `date-time` format warning；
+- 本轮 WSL2 报告是零模型、本地 clean-HEAD 工程验证，不是 future stable current-candidate artifact，不写入 aggregate 或资格报告；
+- 未运行真实 `144/144` candidate、双平台 `60` 分钟 soak、模型/Provider、private CI、push、公开发布或两个连续候选；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：按用户要求在本次回写后暂停；恢复后先审定改动范围并冻结 stable current-candidate identity，再经过执行前 Gate 生成真实 `144/144` aggregate，依次回填 CLI/TUI、Git delivery 与 private CI official run/API/ZIP receipt，最后运行资格/评分复算并组织两个连续候选。
+- **为什么先做它**：所有正式 artifact 都以不可覆盖方式绑定 commit、lockfile 与 worktree content；先冻结稳定 identity 才能确保本地原生报告、远端 CI 和 qualification 指向同一候选，避免把本轮诊断 staging 或 fixture 误用为正式证据。
+- **当前还缺的关键闭环**：稳定 current-candidate identity、真实 `144/144` aggregate、CLI/TUI/Git delivery complete receipt、`headless_ecosystem` private CI receipt、完整七维 evidence/资格/原始加权，以及两个连续候选全部 hard Gate 通过。
+
 #### 后续工作量估算
 
 **本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；CLI/TUI 双平台首帧与退出收敛也已修复并通过真实 PTY 验证；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
 
-**风险与可行性**：本地合同收口可行性高，综合风险为中高。主要风险不是算法复杂度，而是真实双平台 CLI/TUI 与 Git/worktree 采集可能暴露平台差异、private CI 检查点需要新的稳定提交，以及完整候选可能暴露新的产品缺陷；真实 CI 授权已具备，但本轮持续授权不包含 push。以下按“首轮候选不需要新增产品修复、相邻工作包共享回归”的前提估算；工程量与 CI/候选实际运行等待时间分开计算：
+**风险与可行性**：本地合同收口可行性高，综合风险为中高。同 identity Linux staging 与双版本 native dependency 隔离已完成工程验证；后续主要风险是真实双平台 CLI/TUI 与 Git/worktree 采集可能暴露平台差异、private CI 检查点需要新的稳定提交，以及完整候选可能暴露新的产品缺陷。真实 CI 授权已具备，本轮仅按用户明确要求推送本地 `main` 到 `private/main`，不触发 `origin` 或公开发布。以下按“首轮候选不需要新增产品修复、相邻工作包共享回归”的前提估算；工程量与 CI/候选实际运行等待时间分开计算：
 
 | 剩余工作包 | 包含内容与完成边界 | 预计工程量 |
 | --- | --- | ---: |
@@ -11338,10 +11387,10 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | `cli_tui` Adapter | 已完成 TaskProjection/效率、双平台 accessibility owner、真实性/三态、原生 producer、首帧/退出修复和仓库接线；剩余 stable current-candidate 双平台采集/回填 | `0.25–0.5 人日工程量`，另计双平台运行窗口 |
 | `git_delivery` Adapter | 已完成 worktree/review/remote authority/recovery audit 合同、current-candidate identity 与负例；剩真实 artifact 采集/回填 | `0.5–0.75 人日工程量`，另计双平台运行窗口 |
 | 七维数值 evaluator/report | 已完成 evidence-gated evaluator、qualification v2、原始加权、每维最低分、Schema/CLI/verify 与缺失/漂移/边界负例；不含真实候选采集 | `已完成` |
-| 全链最终接线与工程复核 | 固定命令、跨维度资格链联合回归、build、Schema/语法/diff Gate、README/project-map/verifier 同步与一轮轻量对抗复核 | `0.5–1 人日` |
+| 全链最终接线与工程复核 | 同 identity Linux 原生 staging、固定命令、跨维度资格链联合回归、build、Schema/语法/diff Gate、README/project-map/verifier 同步与一轮轻量对抗复核均已完成 | `已完成` |
 | 两个连续候选的组织与复核 | 冻结 identity，执行前 Gate，完成证据采集/聚合/资格/评分、失败分类和连续性对账；不含真实运行等待时间 | `1–2 人日工程量`，另计两个完整运行/观察窗口 |
 
-**更新后的常规计划基线**：双平台 TUI 首帧修复量现已完成，不再计入剩余工作。主要剩余量是 `headless_ecosystem` 真实 CI、CLI/TUI 与 Git delivery 原生 artifact 回填、最终联合复核和两个候选组织；七维 evaluator/report 已从剩余量移除。表内工作包共享 producer、report/CLI 和联合回归，不能把各项上限机械相加；真实 CI 排队、Provider 费用和观察窗口不折算为人日。
+**更新后的常规计划基线**：双平台 TUI 首帧、candidate bootstrap、本地原生 collector/runner、Linux staging 与最终工程 Gate 均已完成，不再计入剩余工作；剩余基线由 `2.25–4 人日` 下调为 `1.75–3.5 人日`。主要剩余量是 `headless_ecosystem` 真实 CI、CLI/TUI 与 Git delivery 原生 artifact 回填、资格复算和两个候选组织。表内工作包共享 producer、report/CLI 和联合回归，不能把各项上限机械相加；真实 CI 排队、Provider 费用和观察窗口不折算为人日。
 
 估算边界如下：
 
@@ -11365,4 +11414,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **CodeIntel、`cli_tui`、`git_delivery` candidate receipt/仓库接线、七维 evaluator/report 与双平台 TUI 首帧修复完成；真实候选证据回填中** | 修复后 Windows/WSL2 startup=`4340ms/18321ms`、exit=`170ms/45ms`，accessibility/lifecycle 与零残留全绿；正式 `complete` artifact 与 private CI 尚未闭合 | `2.75–4.5 人日剩余基线 + 两个连续候选运行/观察窗口` | 下一恢复点：从稳定提交建立 current-candidate，采集/回填 CLI/TUI、Git delivery 与 private CI 真实证据，再运行完整资格/评分回归并组织两个连续候选 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **candidate bootstrap、本地原生 collector/可恢复 runner、同 identity Linux staging、CodeIntel、`cli_tui`、`git_delivery` receipt/仓库接线、七维 evaluator/report 与双平台 TUI 首帧修复完成；真实候选证据待闭合** | local runner `16/16`、candidate 全组 `173/173`、增量构建、Windows/WSL2 Git audit 各 `71/71`、repository verifier `22/22` 与实际 verifier 均通过；正式 `complete` artifact 与 private CI 尚未采集 | `1.75–3.5 人日剩余基线 + 两个连续候选运行/观察窗口` | 下一恢复点：审定范围并冻结 stable identity，生成真实 `144/144` aggregate，回填 CLI/TUI、Git delivery 与 private CI，运行资格/评分复算并组织两个连续候选 |
