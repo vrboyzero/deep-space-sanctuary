@@ -6,10 +6,15 @@
   "additionalProperties": false,
   "required": ["schemaVersion", "generatedAt", "source", "decision"],
   "properties": {
-    "schemaVersion": { "const": "coding-agent-benchmark-candidate-qualification-report/v1" },
+    "schemaVersion": { "const": "coding-agent-benchmark-candidate-qualification-report/v2" },
     "generatedAt": { "$ref": "#/$defs/timestamp" },
     "source": { "$ref": "#/$defs/source" },
-    "decision": { "$ref": "#/$defs/partialDecision" }
+    "decision": {
+      "oneOf": [
+        { "$ref": "#/$defs/partialDecision" },
+        { "$ref": "#/$defs/eligibleDecision" }
+      ]
+    }
   },
   "$defs": {
     "timestamp": { "type": "string", "format": "date-time" },
@@ -17,18 +22,22 @@
     "source": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["manifestSha256", "reportSha256", "indexSha256", "scorecardSha256", "evidence"],
+      "required": ["manifestSha256", "reportSha256", "indexSha256", "scorecardSha256", "dimensionMappingSha256", "scoreEvaluationSchemaVersion", "evidence"],
       "properties": {
         "manifestSha256": { "$ref": "#/$defs/sha256" },
         "reportSha256": { "$ref": "#/$defs/sha256" },
         "indexSha256": { "$ref": "#/$defs/sha256" },
         "scorecardSha256": { "$ref": "#/$defs/sha256" },
+        "dimensionMappingSha256": { "$ref": "#/$defs/sha256" },
+        "scoreEvaluationSchemaVersion": {
+          "const": "coding-agent-benchmark-candidate-score-evaluation/v1"
+        },
         "evidence": {
           "type": "object",
           "additionalProperties": false,
           "required": ["schemaVersion", "entryCount", "sha256"],
           "properties": {
-            "schemaVersion": { "const": "coding-agent-benchmark-qualification-evidence-digest/v1" },
+            "schemaVersion": { "const": "coding-agent-benchmark-qualification-evidence-digest/v2" },
             "entryCount": { "type": "integer", "minimum": 1 },
             "sha256": { "$ref": "#/$defs/sha256" }
           }
@@ -122,6 +131,43 @@
         },
         "rawWeighted": { "type": "null" },
         "status": { "const": "unscored" }
+      }
+    },
+    "awardedDimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "score", "minimum", "weight", "status"],
+      "properties": {
+        "id": { "$ref": "#/$defs/dimension/properties/id" },
+        "score": { "type": "number", "minimum": 0, "maximum": 10 },
+        "minimum": { "type": "number", "minimum": 0, "maximum": 10 },
+        "weight": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "status": { "const": "awarded" }
+      }
+    },
+    "scoredScores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dimensions", "rawWeighted", "rawWeightedMinimum", "status"],
+      "properties": {
+        "dimensions": {
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "prefixItems": [
+            { "allOf": [{ "$ref": "#/$defs/awardedDimension" }, { "properties": { "id": { "const": "context_retrieval" }, "score": { "const": 9.5 }, "minimum": { "const": 9.5 }, "weight": { "const": 0.15 } } }] },
+            { "allOf": [{ "$ref": "#/$defs/awardedDimension" }, { "properties": { "id": { "const": "editing_testing" }, "score": { "const": 9.6 }, "minimum": { "const": 9.6 }, "weight": { "const": 0.2 } } }] },
+            { "allOf": [{ "$ref": "#/$defs/awardedDimension" }, { "properties": { "id": { "const": "cli_tui" }, "score": { "const": 9.4 }, "minimum": { "const": 9.4 }, "weight": { "const": 0.15 } } }] },
+            { "allOf": [{ "$ref": "#/$defs/awardedDimension" }, { "properties": { "id": { "const": "safety_recovery" }, "score": { "const": 9.5 }, "minimum": { "const": 9.5 }, "weight": { "const": 0.15 } } }] },
+            { "allOf": [{ "$ref": "#/$defs/awardedDimension" }, { "properties": { "id": { "const": "session_long_running" }, "score": { "const": 9.6 }, "minimum": { "const": 9.6 }, "weight": { "const": 0.15 } } }] },
+            { "allOf": [{ "$ref": "#/$defs/awardedDimension" }, { "properties": { "id": { "const": "headless_ecosystem" }, "score": { "const": 9.5 }, "minimum": { "const": 9.5 }, "weight": { "const": 0.1 } } }] },
+            { "allOf": [{ "$ref": "#/$defs/awardedDimension" }, { "properties": { "id": { "const": "git_delivery" }, "score": { "const": 9.4 }, "minimum": { "const": 9.4 }, "weight": { "const": 0.1 } } }] }
+          ],
+          "items": false
+        },
+        "rawWeighted": { "const": 9.51 },
+        "rawWeightedMinimum": { "const": 9.5 },
+        "status": { "const": "scored" }
       }
     },
     "aggregateHardGateFailure": {
@@ -311,17 +357,7 @@
                   "minItems": 1,
                   "maxItems": 1,
                   "prefixItems": [
-                    { "const": "dimension_evidence_mapping" }
-                  ],
-                  "items": false
-                },
-                {
-                  "type": "array",
-                  "minItems": 2,
-                  "maxItems": 2,
-                  "prefixItems": [
-                    { "const": "aggregate_missing_report_metric" },
-                    { "const": "dimension_evidence_mapping" }
+                    { "const": "aggregate_missing_report_metric" }
                   ],
                   "items": false
                 }
@@ -449,6 +485,42 @@
               }
             }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "dimensions"],
+          "properties": {
+            "code": { "const": "candidate_dimension_evidence_incomplete" },
+            "dimensions": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "status"],
+                "properties": {
+                  "id": { "$ref": "#/$defs/dimension/properties/id" },
+                  "status": { "enum": ["partial", "failed"] }
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "dimensionIds"],
+          "properties": {
+            "code": { "const": "candidate_dimension_aggregate_gate_failed" },
+            "dimensionIds": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/dimension/properties/id" }
+            }
+          }
         }
       ]
     },
@@ -457,7 +529,7 @@
       "additionalProperties": false,
       "required": ["schemaVersion", "status", "generatedAt", "coverage", "scores", "blockingReasons"],
       "properties": {
-        "schemaVersion": { "const": "coding-agent-benchmark-candidate-qualification/v1" },
+        "schemaVersion": { "const": "coding-agent-benchmark-candidate-qualification/v2" },
         "status": { "const": "not_eligible" },
         "generatedAt": { "$ref": "#/$defs/timestamp" },
         "coverage": { "$ref": "#/$defs/coverage" },
@@ -468,6 +540,29 @@
           "maxItems": 1,
           "items": { "$ref": "#/$defs/blockingReason" }
         }
+      }
+    },
+    "eligibleDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "status", "generatedAt", "coverage", "scores"],
+      "properties": {
+        "schemaVersion": { "const": "coding-agent-benchmark-candidate-qualification/v2" },
+        "status": { "const": "eligible" },
+        "generatedAt": { "$ref": "#/$defs/timestamp" },
+        "coverage": {
+          "allOf": [
+            { "$ref": "#/$defs/coverage" },
+            {
+              "properties": {
+                "expectedRunCount": { "const": 144 },
+                "collectedRunCount": { "const": 144 },
+                "missingRunCount": { "const": 0 }
+              }
+            }
+          ]
+        },
+        "scores": { "$ref": "#/$defs/scoredScores" }
       }
     }
   }

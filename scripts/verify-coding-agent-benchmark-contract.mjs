@@ -85,6 +85,9 @@ import {
   CODING_AGENT_QUALIFICATION_EVIDENCE_DIGEST_VERSION,
 } from "./run-coding-agent-candidate-qualification.mjs";
 import {
+  CODING_AGENT_CANDIDATE_SCORE_EVALUATION_VERSION,
+} from "./coding-agent-candidate-score-evaluator.mjs";
+import {
   CODING_AGENT_CANDIDATE_CODING_RUN_CLIENT_EVIDENCE_RECEIPT_VERSION,
   CODING_AGENT_CANDIDATE_CODING_RUN_CLIENT_CI_EVIDENCE_RECEIPT_VERSION,
   CODING_AGENT_CANDIDATE_CODE_INTEL_EVIDENCE_RECEIPT_VERSION,
@@ -349,6 +352,7 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   await readText("scripts/run-coding-agent-benchmark-navigation-candidate-v3.mjs");
   await readText("scripts/coding-agent-candidate-evidence.mjs");
   await readText("scripts/coding-agent-candidate-score.mjs");
+  await readText("scripts/coding-agent-candidate-score-evaluator.mjs");
   await readText("scripts/coding-agent-candidate-qualification.mjs");
   await readText("scripts/run-coding-agent-candidate-global-receipt.mjs");
   await readText("scripts/run-coding-agent-candidate-qualification.mjs");
@@ -608,9 +612,21 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     !== CODING_AGENT_CANDIDATE_QUALIFICATION_VERSION) {
     failures.push("v3 candidate qualification decision Schema version drifted from the evaluator contract.");
   }
+  if (candidateQualificationReportV3Schema?.$defs?.eligibleDecision?.properties?.schemaVersion?.const
+    !== CODING_AGENT_CANDIDATE_QUALIFICATION_VERSION) {
+    failures.push("v3 eligible candidate qualification decision Schema version drifted from the evaluator contract.");
+  }
+  if (CODING_AGENT_CANDIDATE_SCORE_EVALUATION_VERSION
+    !== "coding-agent-benchmark-candidate-score-evaluation/v1") {
+    failures.push("v3 candidate score evaluator version drifted from the repository contract.");
+  }
   if (candidateQualificationReportV3Schema?.$defs?.source?.properties?.evidence?.properties
     ?.schemaVersion?.const !== CODING_AGENT_QUALIFICATION_EVIDENCE_DIGEST_VERSION) {
     failures.push("v3 qualification evidence digest Schema version drifted from the writer contract.");
+  }
+  if (candidateQualificationReportV3Schema?.$defs?.source?.properties
+    ?.scoreEvaluationSchemaVersion?.const !== CODING_AGENT_CANDIDATE_SCORE_EVALUATION_VERSION) {
+    failures.push("v3 qualification score evaluator Schema version drifted from the writer contract.");
   }
   if (candidateDimensionMappingV3?.schemaVersion
     !== CODING_AGENT_CANDIDATE_DIMENSION_MAPPING_VERSION
@@ -1078,7 +1094,10 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "candidate-global-runner-input.schema.json",
     "sensitiveValueEnvironmentVariables",
     "benchmark:coding-agent:v3:candidate-qualification",
-    "coding-agent-benchmark-candidate-qualification-report/v1",
+    "coding-agent-benchmark-candidate-qualification-report/v2",
+    "coding-agent-benchmark-candidate-score-evaluation/v1",
+    "target_threshold_certification",
+    "9.51",
     "candidate-qualification.json",
     "candidate-dimension-mapping.json",
     "candidate-dimension-evidence-reference.json",
@@ -1193,6 +1212,7 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "benchmarks/coding-agent/v3/navigation-candidate-v3.schema.json",
     "scripts/coding-agent-candidate-evidence.mjs",
     "scripts/coding-agent-candidate-score.mjs",
+    "scripts/coding-agent-candidate-score-evaluator.mjs",
     "scripts/coding-agent-candidate-qualification.mjs",
     "scripts/run-coding-agent-candidate-global-receipt.mjs",
     "scripts/run-coding-agent-candidate-qualification.mjs",

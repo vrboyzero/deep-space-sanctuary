@@ -59,6 +59,10 @@ const mappingPath = path.resolve(
   "v3",
   "candidate-dimension-mapping.json",
 );
+
+export function resolveCodingAgentCandidateDimensionMappingPath() {
+  return mappingPath;
+}
 const mappingSchemaPath = path.resolve(
   import.meta.dirname,
   "..",

@@ -573,6 +573,9 @@ describe("coding agent benchmark v3 contract", () => {
         reportSha256: "e".repeat(64),
         indexSha256: "f".repeat(64),
         scorecardSha256: "a".repeat(64),
+        dimensionMappingSha256: "c".repeat(64),
+        scoreEvaluationSchemaVersion:
+          "coding-agent-benchmark-candidate-score-evaluation/v1",
         evidence: {
           schemaVersion: CODING_AGENT_QUALIFICATION_EVIDENCE_DIGEST_VERSION,
           entryCount: 8,
@@ -603,6 +606,31 @@ describe("coding agent benchmark v3 contract", () => {
           collectedRunCount: 1,
           missingRunCount: 143,
         }],
+      },
+    };
+    const eligibleQualificationReport = {
+      ...qualificationReport,
+      decision: {
+        schemaVersion: CODING_AGENT_CANDIDATE_QUALIFICATION_VERSION,
+        status: "eligible",
+        generatedAt: "2026-09-01T00:00:00.000Z",
+        coverage: {
+          expectedRunCount: 144,
+          collectedRunCount: 144,
+          missingRunCount: 0,
+        },
+        scores: {
+          dimensions: scorecard.targetVector.map(({ id, minimum, weight }) => ({
+            id,
+            score: minimum,
+            minimum,
+            weight,
+            status: "awarded",
+          })),
+          rawWeighted: 9.51,
+          rawWeightedMinimum: 9.5,
+          status: "scored",
+        },
       },
     };
     const schemaSamples = [
@@ -661,6 +689,19 @@ describe("coding agent benchmark v3 contract", () => {
     const compiledQualification = compileOutputSchema(qualificationSchema);
     expect(compiledQualification.ok).toBe(true);
     if (!compiledQualification.ok) return;
+    expect(compiledQualification.validator.validateOutput(
+      JSON.stringify(eligibleQualificationReport),
+    )).toMatchObject({ ok: true });
+    const roundedEligibleReport = structuredClone(eligibleQualificationReport);
+    roundedEligibleReport.decision.scores.rawWeighted = 9.5;
+    expect(compiledQualification.validator.validateOutput(
+      JSON.stringify(roundedEligibleReport),
+    )).toMatchObject({ ok: false });
+    const inflatedDimensionReport = structuredClone(eligibleQualificationReport);
+    inflatedDimensionReport.decision.scores.dimensions[0].score = 10;
+    expect(compiledQualification.validator.validateOutput(
+      JSON.stringify(inflatedDimensionReport),
+    )).toMatchObject({ ok: false });
     const duplicateDimensionReport = structuredClone(qualificationReport);
     duplicateDimensionReport.decision.scores.dimensions[6].id =
       duplicateDimensionReport.decision.scores.dimensions[0].id;

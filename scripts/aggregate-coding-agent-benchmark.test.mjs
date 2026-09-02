@@ -299,7 +299,7 @@ describe("coding agent candidate qualification", () => {
     const qualification = await qualifyCodingAgentBenchmarkCandidate({ aggregateRoot: outputRoot });
 
     expect(qualification).toMatchObject({
-      schemaVersion: "coding-agent-benchmark-candidate-qualification/v1",
+      schemaVersion: "coding-agent-benchmark-candidate-qualification/v2",
       status: "not_eligible",
       generatedAt: "2026-09-01T00:00:00.000Z",
       coverage: {
@@ -335,15 +335,18 @@ describe("coding agent candidate qualification", () => {
       verify: false,
     });
     expect(artifact).toMatchObject({
-      schemaVersion: "coding-agent-benchmark-candidate-qualification-report/v1",
+      schemaVersion: "coding-agent-benchmark-candidate-qualification-report/v2",
       generatedAt: "2026-09-01T00:00:00.000Z",
       source: {
         manifestSha256: manifestV3Sha256,
         reportSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         indexSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         scorecardSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        dimensionMappingSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        scoreEvaluationSchemaVersion:
+          "coding-agent-benchmark-candidate-score-evaluation/v1",
         evidence: {
-          schemaVersion: "coding-agent-benchmark-qualification-evidence-digest/v1",
+          schemaVersion: "coding-agent-benchmark-qualification-evidence-digest/v2",
           entryCount: expect.any(Number),
           sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         },
@@ -382,14 +385,14 @@ describe("coding agent candidate qualification", () => {
 
     const writeResult = runCandidateQualificationCli(["--aggregate-root", outputRoot]);
     expect(writeResult.status).toBe(0);
-    expect(writeResult.stdout).toMatch(/wrote coding-agent-benchmark-candidate-qualification-report\/v1 not_eligible/i);
+    expect(writeResult.stdout).toMatch(/wrote coding-agent-benchmark-candidate-qualification-report\/v2 not_eligible/i);
     expect(writeResult.stderr).not.toMatch(/failed:/i);
     await expect(fs.readFile(path.join(outputRoot, "candidate-qualification.json"), "utf-8"))
-      .resolves.toContain('"schemaVersion": "coding-agent-benchmark-candidate-qualification-report/v1"');
+      .resolves.toContain('"schemaVersion": "coding-agent-benchmark-candidate-qualification-report/v2"');
 
     const verifyResult = runCandidateQualificationCli(["--aggregate-root", outputRoot, "--verify"]);
     expect(verifyResult.status).toBe(0);
-    expect(verifyResult.stdout).toMatch(/verified coding-agent-benchmark-candidate-qualification-report\/v1 not_eligible/i);
+    expect(verifyResult.stdout).toMatch(/verified coding-agent-benchmark-candidate-qualification-report\/v2 not_eligible/i);
     expect(verifyResult.stderr).not.toMatch(/failed:/i);
   });
 
@@ -447,6 +450,36 @@ describe("coding agent candidate qualification", () => {
     expect(verifyResult.status).toBe(1);
     expect(verifyResult.stdout).not.toMatch(/verified/i);
     expect(verifyResult.stderr).toMatch(/failed:.*(artifact|retained|reconstruct)/i);
+  });
+
+  it("rejects dimension evidence reference drift through the production verify CLI", async () => {
+    const root = await makeTempRoot();
+    const outputRoot = path.join(root, "baseline");
+    const task = manifestV3.tasks.find((item) => item.id === "real-js.bug-fix");
+    const reportPath = await writeV3SourceReport(
+      path.join(root, "source"),
+      [createV3Run(task, "windows-native", 1)],
+    );
+    await aggregateCodingAgentBenchmarkReports({
+      manifestRevision: "v3",
+      reportPaths: [reportPath],
+      outputRoot,
+      generatedAt: "2026-09-01T00:00:00.000Z",
+    });
+    await writeCodingAgentCandidateQualificationReport({ aggregateRoot: outputRoot });
+    await fs.writeFile(
+      path.join(outputRoot, "candidate-dimension-evidence-reference.json"),
+      "{}\n",
+      "utf-8",
+    );
+
+    const verifyResult = runCandidateQualificationCli([
+      "--aggregate-root",
+      outputRoot,
+      "--verify",
+    ]);
+    expect(verifyResult.status).toBe(1);
+    expect(verifyResult.stderr).toMatch(/failed:.*reconstruct/i);
   });
 
   it("keeps a complete aggregate unscored when its candidate-global receipt is absent", async () => {
@@ -1281,7 +1314,6 @@ describe("coding agent candidate qualification", () => {
         code: "qualification_contract_incomplete",
         missingContracts: [
           "aggregate_missing_report_metric",
-          "dimension_evidence_mapping",
         ],
       }],
     });
@@ -1291,7 +1323,7 @@ describe("coding agent candidate qualification", () => {
       .resolves.toMatchObject({ decision: qualification });
   });
 
-  it("consumes an authoritative complete expected-report plan before leaving only dimension mapping unscored", async () => {
+  it("consumes an authoritative complete expected-report plan before leaving dimension evidence unscored", async () => {
     const root = await makeTempRoot();
     const runs = manifestV3.tasks.flatMap((task) => task.platforms.flatMap((platform) => {
       return [1, 2, 3].map((attempt) => createV3Run(task, platform, attempt));
@@ -1332,10 +1364,7 @@ describe("coding agent candidate qualification", () => {
       status: "not_eligible",
       scores: { rawWeighted: null, status: "unscored" },
       blockingReasons: [{
-        code: "qualification_contract_incomplete",
-        missingContracts: [
-          "dimension_evidence_mapping",
-        ],
+        code: "candidate_dimension_evidence_incomplete",
       }],
     });
     await expect(writeCodingAgentCandidateQualificationReport({ aggregateRoot: outputRoot }))

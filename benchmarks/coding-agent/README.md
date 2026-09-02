@@ -17,7 +17,7 @@
 - `v3/benchmark-run.schema.json`、`v3/benchmark-report.schema.json`：`coding-agent-benchmark-run/v3` 与 `coding-agent-benchmark-report/v3` 的封闭 artifact 合同；接受版本化 fixture generator、7 种 execution profile 和 `24000/32000/36000` 冻结预算。
 - `v3/scorecard.json`、`v3/scorecard.schema.json`：`coding-agent-benchmark-scorecard/v3` 的 9.5 目标向量、分层 Gate 与不可补偿硬 Gate。
 - `v3/expected-report-plan.schema.json`、`v3/expected-reports.schema.json`：分别约束聚合前冻结且可含本地读取路径的 `coding-agent-benchmark-expected-report-plan/v1`，以及聚合后去路径化保留的 `coding-agent-benchmark-expected-reports/v1`；二者共同为 `missingReportCountMaximum` 提供独立 owner。
-- `v3/candidate-qualification-report.schema.json`：`coding-agent-benchmark-candidate-qualification-report/v1` 的封闭候选资格报告合同；顶层绑定 aggregate/scorecard/retained evidence digest，内部 decision 固定七维顺序，评分合同未闭合时只允许 `not_eligible/unscored`。
+- `v3/candidate-qualification-report.schema.json`：`coding-agent-benchmark-candidate-qualification-report/v2` 的封闭候选资格报告合同；顶层绑定 aggregate/scorecard/mapping/score evaluator 与 retained evidence digest，内部 decision 固定七维顺序，资格链未闭合时保持 `not_eligible/unscored`，全部闭合时才接受 `eligible/scored`。
 - `v3/candidate-dimension-mapping.json`、`v3/candidate-dimension-mapping.schema.json`：七维 task/metric/候选证据映射与封闭 Schema；固定 `target_threshold_certification` 语义，维度证据未全部完成时不把 benchmark 百分比换算为数值分。
 - `v3/candidate-dimension-evidence-reference.schema.json`：aggregate 根内 `candidate-dimension-evidence-reference.json` 的封闭外键合同；绑定当前 manifest/report/index 与 source/harness identity，区分缺失、拒绝、真实失败和完成。
 - `v3/candidate-supervisor-evidence-receipt.schema.json`：`coding-agent-benchmark-candidate-supervisor-evidence-receipt/v1` 的组合证据合同；绑定当前 harness 的 Windows/WSL2 60 分钟 soak、Verification DAG、原始 Vitest report 与固定 18 文件 fault audit，不复制原始证据正文。
@@ -60,18 +60,18 @@ corepack pnpm benchmark:coding-agent:v3:candidate-global-receipt --input <candid
 
 ## P2-C candidate qualification 零模型入口
 
-`benchmark:coding-agent:v3:candidate-qualification` 只读一个已保留的 v3 aggregate 与 scorecard，执行候选资格判定，并以不可覆盖方式在 aggregate 根写入 `candidate-qualification.json`。默认使用 checked-in scorecard；只有复核显式替代合同时才传入 `--scorecard-path`。`--verify` 不写文件，而是从当前 aggregate、scorecard 和逐项 retained artifact digest 重建报告，并要求结果逐字节一致。
+`benchmark:coding-agent:v3:candidate-qualification` 只读一个已保留的 v3 aggregate 与 scorecard，执行候选资格判定，并以不可覆盖方式在 aggregate 根写入 `candidate-qualification.json`。默认使用 checked-in scorecard；只有复核显式替代合同时才传入 `--scorecard-path`。`--verify` 不写文件，而是从当前 aggregate、scorecard、dimension mapping/reference 和逐项 owner/retained artifact 的 `coding-agent-benchmark-qualification-evidence-digest/v2` 重建报告，并要求结果逐字节一致。
 
 ```powershell
 corepack pnpm benchmark:coding-agent:v3:candidate-qualification --aggregate-root <v3-aggregate-root>
 corepack pnpm benchmark:coding-agent:v3:candidate-qualification --aggregate-root <v3-aggregate-root> --verify
 ```
 
-该命令不启动 Gateway、模型或 Provider，不运行 candidate，不修改冻结 Formal，也不把 Schema-valid 等同于证据真实。矩阵、expected report、candidate-global receipt、run events、A/B/C layer Gate 或七维 mapping/score 合同任一未闭合时，报告保持 `not_eligible/unscored`；现阶段工具链只判资格，不宣称候选达到 9.5。
+该命令不启动 Gateway、模型或 Provider，不运行 candidate，不修改冻结 Formal，也不把 Schema-valid 等同于证据真实。矩阵、expected report、candidate-global receipt、run events、A/B/C layer Gate、七维 aggregate criteria 或 candidate evidence 任一未闭合时，报告保持 `not_eligible/unscored`。全部 Gate 与七维合同完成后，`scripts/coding-agent-candidate-score-evaluator.mjs` 按 `coding-agent-benchmark-candidate-score-evaluation/v1` 和冻结的 `target_threshold_certification` 语义只授予各维 scorecard minimum，使用十进制精确乘加得到未展示舍入的 raw weighted `9.51`，并以 `>=9.5` 判定；不做 benchmark 百分比到 0–10 的线性换算。
 
 ## P2-C candidate dimension evidence
 
-`scripts/coding-agent-candidate-score.mjs` 通过公开 loader 读取权威 `candidate-dimension-mapping.json`，并从 aggregate 根可选的 `candidate-dimension-evidence-reference.json` 对账候选级 evidence owner。缺少 reference 时七维保持 incomplete；路径越界、Schema/SHA-256/identity 漂移时 reject；证据可信但 Gate 未达标时 failed；只有该维全部合同完成时才 complete。当前 loader 只解析三态，不计算或写入数值 score。
+`scripts/coding-agent-candidate-score.mjs` 通过公开 loader 读取权威 `candidate-dimension-mapping.json`，并从 aggregate 根可选的 `candidate-dimension-evidence-reference.json` 对账候选级 evidence owner。缺少 reference 时七维保持 incomplete；路径越界、Schema/SHA-256/identity 漂移时 reject；证据可信但 Gate 未达标时 failed；只有该维全部合同完成时才 complete。loader 只解析证据状态；独立 score evaluator 必须同时验证 mapping 中每组 aggregate criteria，只有七维全部满足时才向 qualification v2 返回数值 score。
 
 `safety_recovery` 的 Supervisor 组合 owner 使用 `coding-agent-benchmark-candidate-supervisor-evidence-receipt/v1`。receipt 必须把同一当前 harness 的 Windows/WSL2 soak pair 与 P1-B Verification DAG、原始 Vitest JSON 同时绑定；DAG 的 exact command 固定为：
 

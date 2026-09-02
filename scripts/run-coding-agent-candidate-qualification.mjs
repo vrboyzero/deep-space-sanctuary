@@ -6,15 +6,21 @@ import { fileURLToPath } from "node:url";
 
 import { compileOutputSchema } from "../packages/belldandy-core/src/cli/shared/output-schema.ts";
 import { qualifyCodingAgentBenchmarkCandidate } from "./coding-agent-candidate-qualification.mjs";
+import {
+  CODING_AGENT_CANDIDATE_SCORE_EVALUATION_VERSION,
+} from "./coding-agent-candidate-score-evaluator.mjs";
+import {
+  resolveCodingAgentCandidateDimensionMappingPath,
+} from "./coding-agent-candidate-score.mjs";
 import { resolveCodingAgentBenchmarkScorecardV3Path } from "./coding-agent-benchmark-v3-contract.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const OUTPUT_NAME = "candidate-qualification.json";
 
 export const CODING_AGENT_CANDIDATE_QUALIFICATION_REPORT_VERSION =
-  "coding-agent-benchmark-candidate-qualification-report/v1";
+  "coding-agent-benchmark-candidate-qualification-report/v2";
 export const CODING_AGENT_QUALIFICATION_EVIDENCE_DIGEST_VERSION =
-  "coding-agent-benchmark-qualification-evidence-digest/v1";
+  "coding-agent-benchmark-qualification-evidence-digest/v2";
 
 export function parseCodingAgentCandidateQualificationCliArguments(argv) {
   const options = { verify: false };
@@ -113,11 +119,16 @@ async function captureQualificationSource(input) {
   const manifestPath = path.join(input.aggregateRoot, "task-manifest.json");
   const reportPath = path.join(input.aggregateRoot, "benchmark-report.json");
   const indexPath = path.join(input.aggregateRoot, "baseline-index.json");
-  const [manifestText, reportText, indexText, scorecardText] = await Promise.all([
+  const [manifestText, reportText, indexText, scorecardText, dimensionMappingText] = await Promise.all([
     readBoundedRegularFile(manifestPath, 4 * 1024 * 1024, "task-manifest.json"),
     readBoundedRegularFile(reportPath, 64 * 1024 * 1024, "benchmark-report.json"),
     readBoundedRegularFile(indexPath, 16 * 1024 * 1024, "baseline-index.json"),
     readBoundedRegularFile(input.scorecardPath, 1024 * 1024, "scorecard.json"),
+    readBoundedRegularFile(
+      resolveCodingAgentCandidateDimensionMappingPath(),
+      1024 * 1024,
+      "candidate-dimension-mapping.json",
+    ),
   ]);
   const report = parseJson(reportText, "benchmark-report.json");
   const index = parseJson(indexText, "baseline-index.json");
@@ -127,6 +138,8 @@ async function captureQualificationSource(input) {
     reportSha256: sha256(reportText),
     indexSha256: sha256(indexText),
     scorecardSha256: sha256(scorecardText),
+    dimensionMappingSha256: sha256(dimensionMappingText),
+    scoreEvaluationSchemaVersion: CODING_AGENT_CANDIDATE_SCORE_EVALUATION_VERSION,
     evidence: await createQualificationEvidenceDigest({
       aggregateRoot: input.aggregateRoot,
       report,
@@ -155,6 +168,14 @@ async function createQualificationEvidenceDigest(input) {
       ?? "candidate-global-receipt.json",
     "candidate-global receipt",
   ));
+  const dimensionReferencePath = "candidate-dimension-evidence-reference.json";
+  paths.add(dimensionReferencePath);
+  const dimensionReference = await readOptionalJson(
+    path.join(input.aggregateRoot, dimensionReferencePath),
+  );
+  for (const ownerPath of collectOwnerArtifactPaths(dimensionReference?.owners)) {
+    paths.add(requireSafeRelativePath(ownerPath, "dimension evidence owner"));
+  }
 
   const entries = [];
   for (const relativePath of [...paths].sort()) {
@@ -183,6 +204,36 @@ async function createQualificationEvidenceDigest(input) {
     entryCount: entries.length,
     sha256: sha256(serializeJson(entries)),
   };
+}
+
+function collectOwnerArtifactPaths(owners) {
+  if (!owners || typeof owners !== "object" || Array.isArray(owners)) return [];
+  const paths = [];
+  const visit = (value) => {
+    if (Array.isArray(value)) {
+      for (const entry of value) visit(entry);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    for (const [key, entry] of Object.entries(value)) {
+      if (key === "path" && typeof entry === "string") paths.push(entry);
+      else visit(entry);
+    }
+  };
+  visit(owners);
+  return paths;
+}
+
+async function readOptionalJson(target) {
+  try {
+    return parseJson(
+      await readBoundedRegularFile(target, 4 * 1024 * 1024, path.basename(target)),
+      path.basename(target),
+    );
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
 }
 
 async function validateCandidateQualificationReport(report) {

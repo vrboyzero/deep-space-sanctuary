@@ -11214,31 +11214,66 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
   -> 两个连续冻结候选最终复核
 ```
 
-当前本地推进点已完成 `cli_tui` 与 `git_delivery` 两个 candidate-bound receipt：前者绑定 TaskProjection/效率/双平台 accessibility，后者绑定多仓 worktree、review/remediation、remote authority separation 与 recovery audit；两者的 Schema、公共 loader、真实性/三态 resolver、唯一 producer/仓库 verifier 接线均已收口。`incomplete / reject / failed / complete` 主链由公共 seam 和仓库 Gate 证明，但真实双平台 CLI/TUI 与 Git delivery artifact 仍待稳定 current-candidate 采集。`headless_ecosystem` 唯一剩余项仍是一份绑定未来 current-candidate commit 的真实 GitHub Actions run/API/ZIP receipt；fixture 不能替代真实证据。本轮按用户要求在 `git_delivery` 文档回写后暂停，后续顺序为：真实 artifact/CI 回填 -> 数值 evaluator/report -> 完整回归 -> 两个连续候选。
+当前本地推进点已完成 `cli_tui` 与 `git_delivery` 两个 candidate-bound receipt：前者绑定 TaskProjection/效率/双平台 accessibility，后者绑定多仓 worktree、review/remediation、remote authority separation 与 recovery audit；两者的 Schema、公共 loader、真实性/三态 resolver、唯一 producer/仓库 verifier 接线均已收口。七维数值 evaluator/report 也已接入：`coding-agent-benchmark-candidate-score-evaluation/v1` 只在七维 aggregate criteria 与 candidate evidence 全部完成时按冻结 minimum 授分，并以十进制精确乘加得到未展示舍入的 raw weighted；qualification report 已升级为 v2，证据 digest 同时绑定 mapping、reference、owner 与 retained artifact。真实双平台 CLI/TUI 与 Git delivery artifact、`headless_ecosystem` 的 GitHub Actions run/API/ZIP receipt 仍待稳定 current-candidate 采集；fixture 不能替代真实证据。后续顺序为：真实 artifact/CI 回填 -> 完整联合回归 -> 两个连续候选。
+
+#### P2-C 七维评分实现结论：evidence-gated evaluator 与 qualification v2（2026-09-02）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-score-evaluator.mjs` 新建**：
+   - 提供版本化 `coding-agent-benchmark-candidate-score-evaluation/v1` 公共 evaluator，固定 v3 report、dimension mapping、evidence resolution、scorecard 版本与七维顺序；
+   - 逐组复算 mapping 中的 `boolean_rate`、`applicable_boolean_rate` 与 `sum` criteria，缺失 source/空选择集/不支持 aggregation 直接失败关闭；
+   - 仅在每一维 candidate evidence `complete` 且所有 aggregate criteria 通过时授予该维 scorecard minimum；使用十进制精确乘加计算 raw weighted，不做中间或发布舍入。
+
+2. **`scripts/coding-agent-candidate-qualification.mjs`、`scripts/run-coding-agent-candidate-qualification.mjs` 与 v2 Schema 扩展**：
+   - qualification decision/report 升级至 v2，保留既有 hard/layer Gate 的 `not_eligible/unscored` 失败关闭语义，并新增 `eligible/scored` 的固定七维输出；
+   - v2 report source 增加 mapping SHA-256、score evaluator version；evidence digest 升级为 v2，纳入 `candidate-dimension-evidence-reference.json`、owner receipt 和其声明的 retained artifact；`--verify` 继续要求从当前证据逐字节重建；
+   - scorer 失败、版本/顺序漂移、维度 evidence partial/failed 或 aggregate criteria 不达标均不写数值报告；raw weighted Gate 失败显式报 contract error，不产生伪造 `eligible`。
+
+3. **测试、仓库接线与文档**：
+   - 新增 evaluator 的 complete、partial、aggregate Gate failure、raw weighted boundary、版本/顺序漂移与 scored-decision 测试；扩展 qualification/report Schema 的 `eligible/scored`、数值篡改、reference digest 漂移和 verifier 版本负例；
+   - `scripts/verify-coding-agent-benchmark-contract.mjs`、`benchmarks/coding-agent/README.md` 与 `docs/project-map.md` 登记 evaluator、qualification v2、digest v2 和新的接线边界。
+
+4. **效果**：
+   - 七维评分从“仅定义目标”变为唯一、可复算、evidence-gated 的机器 owner；不会把 benchmark 百分比线性换算为 0–10，也不会以 fixture 或 partial aggregate 授分；
+   - current candidate 尚未具备完整七维真实证据时仍保持 `not_eligible/unscored`，现有历史评分与冻结 Formal 不变。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` exit code=`0`；
+- evaluator/Schema/repository contract 定向回归 `35/35` 通过；qualification、dimension evidence、CodeIntel、CLI/TUI、Git delivery 与 candidate score 联合回归 `119/119` 通过；
+- `corepack pnpm verify:coding-benchmark` 通过；新增脚本 `node --check`、JSON Schema 解析与 `git diff --check` 通过；仅保留既存 AJV `date-time` format warning；
+- 未运行真实 TUI/PTY accessibility、Git/worktree soak、远端 push/PR、GitHub Actions current-candidate、Gateway、模型/Provider 或冻结 Formal；Provider calls/cost=`0/$0`，fixture 不替代真实证据。
+
+##### 后续计划
+
+- **下一步准备做什么**：在稳定 current-candidate 提交和执行前 Gate 后，采集并回填真实 Windows/WSL2 CLI/TUI accessibility、Git/worktree/review/remote-authority artifact 与 private CI receipt；随后运行完整资格/评分联合回归并准备第一个冻结候选。
+- **为什么先做它**：evaluator/report 的本地合同已闭合，剩余决定性缺口是原生平台、交付和外部 CI 证据；先采集真实 artifact 才能证明产品能力，而不是继续扩大 fixture 或评分逻辑。
+- **当前还缺的关键闭环**：稳定 current-candidate identity、真实双平台 artifact、`headless_ecosystem` CI receipt、完整七维 evidence 全绿、两个连续候选及最终原始加权复核。
 
 #### 后续工作量估算
 
 **本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
 
-**风险与可行性**：本地收口可行性高，综合风险为中高。主要风险不是算法复杂度，而是 `cli_tui`/`git_delivery` 可能缺少可直接复用的 current-candidate producer、真实 CI 在 `private/main` 检查点后可能暴露平台差异，以及完整候选可能暴露新的产品缺陷；真实 CI 授权已具备，不再是授权阻塞。以下按“首轮候选不需要新增产品修复、相邻工作包共享回归”的前提估算；工程量与 CI/候选实际运行等待时间分开计算：
+**风险与可行性**：本地合同收口可行性高，综合风险为中高。主要风险不是算法复杂度，而是真实双平台 CLI/TUI 与 Git/worktree 采集可能暴露平台差异、private CI 检查点需要新的稳定提交，以及完整候选可能暴露新的产品缺陷；真实 CI 授权已具备，但本轮持续授权不包含 push。以下按“首轮候选不需要新增产品修复、相邻工作包共享回归”的前提估算；工程量与 CI/候选实际运行等待时间分开计算：
 
 | 剩余工作包 | 包含内容与完成边界 | 预计工程量 |
 | --- | --- | ---: |
 | `context_retrieval` 唯一 producer/仓库接线 | 已完成唯一 candidate-bound producer、README/project-map/repository verifier、正式输出与联合回归；不再扩大 CodeIntel 边界 | `-` |
 | `headless_ecosystem` 真实 CI receipt 收口 | 绑定稳定 current-candidate commit，采集 GitHub Actions run/API/ZIP receipt，核对 identity/外键/终态并完成回填；本地链已完成 | `0.5–1.25 人日工程量`，另计 CI 排队/观察窗口 |
-| `cli_tui` Adapter | 复用 TaskProjection/效率证据，补跨入口终态与 TUI 双平台 accessibility owner、真实性/三态和仓库接线 | `0.75–1.5 人日` |
-| `git_delivery` Adapter | 组合 multi-repository worktree soak、review/remediation、remote authority separation 与 recovery audit；补 current-candidate identity、可信失败及负例 | `1.25–2.5 人日` |
-| 七维数值 evaluator/report | 只在七维合同 complete 且 qualification hard Gates 全绿时授予版本化实得分；实现原始加权、每维最低分、Schema/CLI/verify、缺失/漂移/边界负例 | `1–2 人日` |
+| `cli_tui` Adapter | 已完成 TaskProjection/效率、双平台 accessibility owner、真实性/三态和仓库接线；剩真实 artifact 采集/回填 | `0.25–0.5 人日工程量`，另计双平台运行窗口 |
+| `git_delivery` Adapter | 已完成 worktree/review/remote authority/recovery audit 合同、current-candidate identity 与负例；剩真实 artifact 采集/回填 | `0.5–0.75 人日工程量`，另计双平台运行窗口 |
+| 七维数值 evaluator/report | 已完成 evidence-gated evaluator、qualification v2、原始加权、每维最低分、Schema/CLI/verify 与缺失/漂移/边界负例；不含真实候选采集 | `已完成` |
 | 全链最终接线与工程复核 | 固定命令、跨维度资格链联合回归、build、Schema/语法/diff Gate、README/project-map/verifier 同步与一轮轻量对抗复核 | `0.5–1 人日` |
 | 两个连续候选的组织与复核 | 冻结 identity，执行前 Gate，完成证据采集/聚合/资格/评分、失败分类和连续性对账；不含真实运行等待时间 | `1–2 人日工程量`，另计两个完整运行/观察窗口 |
 
-**更新后的常规计划基线**：约 **`5–8.5 人日工程量 + 两个连续候选运行/观察窗口`**。其中 `headless_ecosystem` 真实 CI 收口、`cli_tui`、`git_delivery`、评分工具链和最终复核构成主要工程量；候选组织/复核约 `1–2 人日`。CodeIntel 唯一 producer/仓库接线已从剩余量移除；表内工作包共享 producer、report/CLI 和联合回归，不能把各项上限机械相加；真实 CI 排队、Provider 费用和观察窗口不折算为人日。
+**更新后的常规计划基线**：约 **`2.75–4.5 人日工程量 + 两个连续候选运行/观察窗口`**。主要剩余量是 `headless_ecosystem` 真实 CI、CLI/TUI 与 Git delivery 原生 artifact 回填、最终联合复核和两个候选组织；七维 evaluator/report 已从剩余量移除。表内工作包共享 producer、report/CLI 和联合回归，不能把各项上限机械相加；真实 CI 排队、Provider 费用和观察窗口不折算为人日。
 
 估算边界如下：
 
 - **包含**：`context_retrieval` 唯一 producer/仓库接线、`headless_ecosystem` 真实 CI receipt、P2-C 其余维度闭环、七维数值 evaluator/report、仓库接线、完整回归，以及两个连续候选的一次通过式组织与复核；
 - **不包含**：候选运行/CI 排队的自然等待时间、Provider 费用、授权等待、候选失败后暴露的未知产品修复、重跑次数、C# 生产接入、Go production rollout、公开发布或生产写入；
-- **风险增量**：若 `cli_tui` accessibility 或 `git_delivery` 多仓/远端分权缺少可复用 producer，预计另增 `2–5+ 人日`；若真实 CI 或完整候选暴露平台、编辑/测试或系统稳定性缺陷，返工量必须按实际失败证据重新估算，当前不能提前伪造确定值；
+- **风险增量**：若真实 CLI/TUI accessibility、Git delivery 或 CI artifact 暴露平台、编辑/测试、远端分权或系统稳定性缺陷，返工量必须按实际失败证据重新估算，当前不能提前伪造确定值；
 - **完成边界**：七维证据、qualification、数值 score/report 和仓库 Gate 全部可复算，且两个连续冻结候选分别满足每维最低分、原始加权 `>=9.500` 与全部 hard Gate；否则仍为未完成或 `unscored`。
 
 | 项目 | 优先级 | 状态 | 关键证据 | 剩余工作量 | 下一步 / 完成边界 |
@@ -11256,4 +11291,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **CodeIntel、`cli_tui`、`git_delivery` candidate receipt/仓库接线完成；真实 artifact 与 CI 待稳定提交** | CodeIntel 与 CLI/TUI 既有 receipt 链保持通过；Git delivery 四项 contract、三态、system recovery 外键和仓库 verifier 收口，定向 `3/3`、公共既有联合 `58/58`；真实双平台 artifact 尚未采集 | `约 3.75–6 人日工程量 + 两个连续候选运行/观察窗口` | 本轮暂停；恢复后先采集/回填真实 CLI/TUI、Git delivery 与 private CI 证据，再进入七维 evaluator/report、完整回归和两个连续候选 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **CodeIntel、`cli_tui`、`git_delivery` candidate receipt/仓库接线及七维 evaluator/report 完成；真实 artifact 与 CI 待稳定提交** | CodeIntel、CLI/TUI、Git delivery receipt 链保持通过；qualification v2/evaluator 定向与联合回归通过；真实双平台 artifact 尚未采集 | `约 2.75–4.5 人日工程量 + 两个连续候选运行/观察窗口` | 先采集/回填真实 CLI/TUI、Git delivery 与 private CI 证据，再运行完整资格/评分回归并组织两个连续候选 |

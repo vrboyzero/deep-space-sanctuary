@@ -14,12 +14,19 @@ import {
   validateCodingRunTraceEvents,
 } from "../packages/belldandy-core/src/coding-run/trace.ts";
 import { verifyCodingAgentBaselineArtifact } from "./aggregate-coding-agent-benchmark.mjs";
+import {
+  evaluateCodingAgentCandidateScores,
+} from "./coding-agent-candidate-score-evaluator.mjs";
+import {
+  loadCodingAgentCandidateDimensionEvidence,
+  loadCodingAgentCandidateDimensionMapping,
+} from "./coding-agent-candidate-score.mjs";
 import { loadCodingAgentBenchmarkScorecardV3 } from "./coding-agent-benchmark-v3-contract.mjs";
 import { validateCodingAgentBenchmarkV3SystemEvidence } from "./coding-agent-benchmark-v3-fixtures.mjs";
 import { validateAgentRunEvents } from "./run-coding-agent-ci.mjs";
 
 export const CODING_AGENT_CANDIDATE_QUALIFICATION_VERSION =
-  "coding-agent-benchmark-candidate-qualification/v1";
+  "coding-agent-benchmark-candidate-qualification/v2";
 
 export async function writeCodingAgentCandidateGlobalReceipt(input) {
   const aggregateRoot = path.resolve(requireInput(input?.aggregateRoot, "aggregateRoot"));
@@ -577,25 +584,98 @@ export async function qualifyCodingAgentBenchmarkCandidate(input) {
     };
   }
 
+  if (baselineIndex.expectedReports === undefined) {
+    return {
+      schemaVersion: CODING_AGENT_CANDIDATE_QUALIFICATION_VERSION,
+      status: "not_eligible",
+      generatedAt: report.generatedAt,
+      coverage: {
+        expectedRunCount: coverage.expectedRunCount,
+        collectedRunCount: coverage.collectedRunCount,
+        missingRunCount: 0,
+      },
+      scores,
+      blockingReasons: [{
+        code: "qualification_contract_incomplete",
+        missingContracts: ["aggregate_missing_report_metric"],
+      }],
+    };
+  }
+
+  const mapping = await loadCodingAgentCandidateDimensionMapping({ manifest, scorecard });
+  const evidence = await loadCodingAgentCandidateDimensionEvidence({
+    aggregateRoot,
+    verifiedAggregate: { report, baselineIndex },
+  });
+  const scoreEvaluation = evaluateCodingAgentCandidateScores({
+    report,
+    mapping,
+    evidence,
+    scorecard,
+  });
+  if (scoreEvaluation.status === "failed") {
+    throw new Error("Coding benchmark candidate score contract failed after all evidence completed.");
+  }
+  if (scoreEvaluation.status !== "passed") {
+    const incompleteDimensions = evidence.dimensions
+      .filter(({ status }) => status !== "complete")
+      .map(({ id, status }) => ({ id, status }));
+    const failedAggregateDimensionIds = scoreEvaluation.dimensions
+      .filter(({ aggregateStatus }) => aggregateStatus === "failed")
+      .map(({ id }) => id);
+    return {
+      schemaVersion: CODING_AGENT_CANDIDATE_QUALIFICATION_VERSION,
+      status: "not_eligible",
+      generatedAt: report.generatedAt,
+      coverage: {
+        expectedRunCount: coverage.expectedRunCount,
+        collectedRunCount: coverage.collectedRunCount,
+        missingRunCount: 0,
+      },
+      scores,
+      blockingReasons: [incompleteDimensions.length > 0
+        ? {
+          code: "candidate_dimension_evidence_incomplete",
+          dimensions: incompleteDimensions,
+        }
+        : {
+          code: "candidate_dimension_aggregate_gate_failed",
+          dimensionIds: failedAggregateDimensionIds,
+        }],
+    };
+  }
+  return createCodingAgentCandidateScoredDecision({
+    generatedAt: report.generatedAt,
+    coverage,
+    scoreEvaluation,
+  });
+}
+
+export function createCodingAgentCandidateScoredDecision(input) {
+  if (input?.scoreEvaluation?.status !== "passed") {
+    throw new Error("Coding benchmark candidate scored decision requires a passed evaluation.");
+  }
   return {
     schemaVersion: CODING_AGENT_CANDIDATE_QUALIFICATION_VERSION,
-    status: "not_eligible",
-    generatedAt: report.generatedAt,
+    status: "eligible",
+    generatedAt: input.generatedAt,
     coverage: {
-      expectedRunCount: coverage.expectedRunCount,
-      collectedRunCount: coverage.collectedRunCount,
+      expectedRunCount: input.coverage.expectedRunCount,
+      collectedRunCount: input.coverage.collectedRunCount,
       missingRunCount: 0,
     },
-    scores,
-    blockingReasons: [{
-      code: "qualification_contract_incomplete",
-      missingContracts: [
-        ...(baselineIndex.expectedReports === undefined
-          ? ["aggregate_missing_report_metric"]
-          : []),
-        "dimension_evidence_mapping",
-      ],
-    }],
+    scores: {
+      dimensions: input.scoreEvaluation.dimensions.map((dimension) => ({
+        id: dimension.id,
+        score: dimension.score,
+        minimum: dimension.minimum,
+        weight: dimension.weight,
+        status: "awarded",
+      })),
+      rawWeighted: input.scoreEvaluation.rawWeighted,
+      rawWeightedMinimum: input.scoreEvaluation.rawWeightedMinimum,
+      status: "scored",
+    },
   };
 }
 

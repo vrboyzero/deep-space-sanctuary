@@ -450,6 +450,17 @@ describe("coding agent benchmark repository contract", () => {
         expect.stringMatching(/candidate qualification decision Schema version drifted/i),
       ]));
 
+      const eligibleDecisionVersionDrift = structuredClone(schema);
+      eligibleDecisionVersionDrift.$defs.eligibleDecision.properties.schemaVersion.const =
+        "candidate-qualification/drifted";
+      await fs.writeFile(schemaPath, JSON.stringify(eligibleDecisionVersionDrift), "utf-8");
+      const eligibleDecisionFailures = await collectCodingAgentBenchmarkContractFailures({
+        workspaceRoot: fixtureRoot,
+      });
+      expect(eligibleDecisionFailures).toEqual(expect.arrayContaining([
+        expect.stringMatching(/eligible candidate qualification decision Schema version drifted/i),
+      ]));
+
       const digestVersionDrift = structuredClone(schema);
       digestVersionDrift.$defs.source.properties.evidence.properties.schemaVersion.const =
         "qualification-evidence-digest/drifted";
@@ -457,6 +468,17 @@ describe("coding agent benchmark repository contract", () => {
       const digestFailures = await collectCodingAgentBenchmarkContractFailures({ workspaceRoot: fixtureRoot });
       expect(digestFailures).toEqual(expect.arrayContaining([
         expect.stringMatching(/qualification evidence digest Schema version drifted/i),
+      ]));
+
+      const scoreEvaluatorVersionDrift = structuredClone(schema);
+      scoreEvaluatorVersionDrift.$defs.source.properties.scoreEvaluationSchemaVersion.const =
+        "candidate-score-evaluation/drifted";
+      await fs.writeFile(schemaPath, JSON.stringify(scoreEvaluatorVersionDrift), "utf-8");
+      const scoreEvaluatorFailures = await collectCodingAgentBenchmarkContractFailures({
+        workspaceRoot: fixtureRoot,
+      });
+      expect(scoreEvaluatorFailures).toEqual(expect.arrayContaining([
+        expect.stringMatching(/qualification score evaluator Schema version drifted/i),
       ]));
     } finally {
       await fs.rm(fixtureRoot, { recursive: true, force: true });
@@ -476,7 +498,7 @@ describe("coding agent benchmark repository contract", () => {
       expect(failures).toEqual(expect.arrayContaining([
         "package.json must expose benchmark:coding-agent:v3:candidate-qualification.",
         "coding benchmark README must document benchmark:coding-agent:v3:candidate-qualification.",
-        "coding benchmark README must document coding-agent-benchmark-candidate-qualification-report/v1.",
+        "coding benchmark README must document coding-agent-benchmark-candidate-qualification-report/v2.",
         "coding benchmark README must document candidate-qualification.json.",
         "docs/project-map.md must describe scripts/run-coding-agent-candidate-qualification.mjs.",
         "docs/project-map.md must describe benchmarks/coding-agent/v3/candidate-qualification-report.schema.json.",
