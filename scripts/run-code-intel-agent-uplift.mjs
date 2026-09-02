@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   CODING_AGENT_BENCHMARK_COMMAND_CONTROL_AGENT_PROFILE,
+  hashCanonicalText,
 } from "./coding-agent-benchmark-contract.mjs";
 import {
   createBenchmarkPreflightArtifact,
@@ -914,11 +915,38 @@ async function verifyPlatformReadiness(input) {
   if (JSON.stringify(preparedTaskIds) !== JSON.stringify(CODE_INTEL_AGENT_UPLIFT_TASK_IDS)) {
     throw new Error("CodeIntel uplift readiness prepared pair drifted.");
   }
+  const frozenInputs = [
+    {
+      label: "Gate",
+      relativePath: "benchmarks/code-intel/v1/agent-uplift-gate.json",
+      expectedSha256: readiness.gate.sha256,
+    },
+    {
+      label: "task manifest",
+      relativePath: "benchmarks/coding-agent/v3/task-manifest.json",
+      expectedSha256: readiness.taskManifest.sha256,
+    },
+    {
+      label: "truth set",
+      relativePath: "benchmarks/code-intel/v1/truth-set.json",
+      expectedSha256: readiness.truthSet.sha256,
+    },
+  ];
+  for (const frozenInput of frozenInputs) {
+    const target = resolveInside(input.sourceRoot, frozenInput.relativePath);
+    const actualSha256 = hashCanonicalText(await fs.readFile(target, "utf-8"));
+    if (actualSha256 !== frozenInput.expectedSha256) {
+      throw new Error(`CodeIntel uplift ${frozenInput.label} identity drifted.`);
+    }
+  }
   for (const identity of [readiness.sourceIdentity, readiness.runtimeIdentity]) {
     const files = [];
     for (const entry of requireArray(identity?.files, "readiness identity files")) {
       const target = resolveInside(input.sourceRoot, requireString(entry.path, "identity path"));
-      files.push({ path: entry.path, sha256: sha256(await fs.readFile(target)) });
+      files.push({
+        path: entry.path,
+        sha256: hashCanonicalText(await fs.readFile(target, "utf-8")),
+      });
     }
     if (JSON.stringify(files) !== JSON.stringify(identity.files)
       || sha256(JSON.stringify(files)) !== identity.aggregateSha256) {

@@ -3,7 +3,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { resolveCodingAgentBenchmarkContract } from "./coding-agent-benchmark-contract.mjs";
+import {
+  hashCanonicalText,
+  resolveCodingAgentBenchmarkContract,
+} from "./coding-agent-benchmark-contract.mjs";
 import { validateCodingAgentBenchmarkV3Manifest } from "./coding-agent-benchmark-v3-contract.mjs";
 import {
   evaluateCodingAgentBenchmarkV3SnapshotPreflight,
@@ -369,7 +372,10 @@ async function hashIdentityFiles(sourceRoot, relativePaths) {
   const files = [];
   for (const relativePath of relativePaths) {
     const resolved = resolveInside(sourceRoot, relativePath);
-    files.push({ path: relativePath, sha256: sha256(await fs.readFile(resolved)) });
+    files.push({
+      path: relativePath,
+      sha256: hashCanonicalText(await fs.readFile(resolved, "utf-8")),
+    });
   }
   return { files, aggregateSha256: sha256(JSON.stringify(files)) };
 }
@@ -395,7 +401,7 @@ async function readJsonSource(target, label) {
     throw new Error(`CodeIntel uplift ${label} is unavailable: ${safeMessage(error)}.`);
   }
   try {
-    return { value: JSON.parse(text), sha256: sha256(text) };
+    return { value: JSON.parse(text), sha256: hashCanonicalText(text) };
   } catch {
     throw new Error(`CodeIntel uplift ${label} is invalid JSON.`);
   }

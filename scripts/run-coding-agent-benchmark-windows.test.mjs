@@ -72,7 +72,7 @@ describe("coding agent benchmark Windows launcher", () => {
     );
   });
 
-  it("forwards only host, pricing, and allowlisted OpenAI configuration to children", () => {
+  it("forwards only host, pricing, command sandbox, and allowlisted OpenAI configuration to children", () => {
     const childEnv = buildWindowsChildEnvironment({
       Path: "C:/Windows/System32",
       BELLDANDY_OPENAI_API_KEY: "sensitive-provider-key",
@@ -81,6 +81,9 @@ describe("coding agent benchmark Windows launcher", () => {
       BELLDANDY_MODEL_CACHE_READ_USD_PER_1M: "0.0125",
       BELLDANDY_MODEL_INPUT_USD_PER_1M: "0.375",
       BELLDANDY_MODEL_OUTPUT_USD_PER_1M: "1.125",
+      BELLDANDY_COMMAND_SANDBOX_BACKEND: "oci",
+      BELLDANDY_COMMAND_SANDBOX_OCI_RUNTIME: "docker",
+      BELLDANDY_COMMAND_SANDBOX_OCI_IMAGE: "node:22-bullseye@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
       BELLDANDY_LOG_DIR: "",
       BELLDANDY_MODEL_CONFIG_FILE: "E:/user-state/models.json",
       BELLDANDY_EXTRA_WORKSPACE_ROOTS: "E:/outside-scope",
@@ -98,6 +101,9 @@ describe("coding agent benchmark Windows launcher", () => {
       BELLDANDY_MODEL_CACHE_READ_USD_PER_1M: "0.0125",
       BELLDANDY_MODEL_INPUT_USD_PER_1M: "0.375",
       BELLDANDY_MODEL_OUTPUT_USD_PER_1M: "1.125",
+      BELLDANDY_COMMAND_SANDBOX_BACKEND: "oci",
+      BELLDANDY_COMMAND_SANDBOX_OCI_RUNTIME: "docker",
+      BELLDANDY_COMMAND_SANDBOX_OCI_IMAGE: "node:22-bullseye@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     });
     expect(childEnv).not.toHaveProperty("BELLDANDY_LOG_DIR");
     expect(childEnv).not.toHaveProperty("BELLDANDY_MODEL_CONFIG_FILE");

@@ -1,5 +1,4 @@
 import fs from "node:fs/promises";
-import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { compileOutputSchema } from "../packages/belldandy-core/src/cli/shared/output-schema.ts";
+import { hashCanonicalText } from "./coding-agent-benchmark-contract.mjs";
 import {
   buildCodeIntelTruthSetReport,
   calculateLocationMetrics,
@@ -24,7 +24,7 @@ afterEach(async () => {
 
 describe("CodeIntel truth set", () => {
   it("publishes the frozen real-agent uplift Gate before consumer implementation", async () => {
-    const [gate, schema, taskManifest, truthSet] = await Promise.all([
+    const [gate, schema, currentTaskManifest, truthSet] = await Promise.all([
       readJson(path.join(workspaceRoot, "benchmarks/code-intel/v1/agent-uplift-gate.json")),
       readJson(path.join(workspaceRoot, "benchmarks/code-intel/v1/agent-uplift-gate.schema.json")),
       fs.readFile(path.join(workspaceRoot, "benchmarks/coding-agent/v3/task-manifest.json")),
@@ -35,13 +35,19 @@ describe("CodeIntel truth set", () => {
     expect(gate.sourceIdentity).toEqual({
       taskManifest: {
         path: "benchmarks/coding-agent/v3/task-manifest.json",
-        sha256: sha256(taskManifest),
+        sha256: "e3cac7c8b2786408af45dc3bfed718ee1a898388aa0fae4fbd5b1d38ab68bd22",
       },
       truthSet: {
         path: "benchmarks/code-intel/v1/truth-set.json",
-        sha256: sha256(truthSet),
+        sha256: hashCanonicalText(truthSet.toString("utf-8")),
       },
     });
+    expect(hashCanonicalText(currentTaskManifest.toString("utf-8"))).toBe(
+      "ecfdb6fb89ebe7c7e17f41ada5582bde41d03d48886e92228de594714abd3897",
+    );
+    expect(hashCanonicalText(currentTaskManifest.toString("utf-8"))).not.toBe(
+      gate.sourceIdentity.taskManifest.sha256,
+    );
     expect(gate.cohort.map((entry) => entry.taskId)).toEqual([
       "real-ts.api-migration",
       "real-ts.cross-package-refactor",
@@ -145,6 +151,38 @@ describe("CodeIntel truth set", () => {
     expect(report.cases.every((entry) => entry.status === "passed")).toBe(true);
   });
 
+  it("accepts a CRLF-only checkout while preserving the frozen LF identity", async () => {
+    const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ss-code-intel-truth-crlf-"));
+    temporaryRoots.push(temporaryRoot);
+    await fs.cp(path.dirname(manifestPath), temporaryRoot, { recursive: true });
+    const copiedManifest = path.join(temporaryRoot, "truth-set.json");
+    const manifest = await readJson(copiedManifest);
+    const textPaths = [
+      copiedManifest,
+      ...manifest.workspace.sourceFiles.map((sourceFile) => (
+        path.join(temporaryRoot, manifest.workspace.root, sourceFile.path)
+      )),
+    ];
+    for (const filePath of textPaths) {
+      const text = await fs.readFile(filePath, "utf-8");
+      await fs.writeFile(filePath, text.replace(/\r?\n/g, "\r\n"), "utf-8");
+    }
+
+    const report = await buildCodeIntelTruthSetReport({
+      platform: currentPlatform(),
+      manifestPath: copiedManifest,
+      generatedAt: "2026-08-09T07:00:00.000Z",
+    });
+
+    expect(report.metrics.passed).toBe(true);
+    expect(report.truthSet.manifestSha256).toBe(
+      hashCanonicalText(await fs.readFile(manifestPath, "utf-8")),
+    );
+    expect(report.sourceIdentity.files).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "src/caller.ts", sha256: "bda552f7425c3956b5aa83b5756b08a2659deac365ed605104849f5006f4d389" }),
+    ]));
+  });
+
   it("fails closed when a frozen source file drifts", async () => {
     const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ss-code-intel-truth-drift-"));
     temporaryRoots.push(temporaryRoot);
@@ -207,8 +245,4 @@ function validateAgainstSchema(schema, value) {
   const compiled = compileOutputSchema(schema);
   if (!compiled.ok) return compiled;
   return compiled.validator.validateOutput(JSON.stringify(value));
-}
-
-function sha256(value) {
-  return createHash("sha256").update(value).digest("hex");
 }

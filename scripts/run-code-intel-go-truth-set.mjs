@@ -13,6 +13,7 @@ import {
   probeGoplsToolchain,
   summarizeLspReadinessTimeline,
 } from "../packages/belldandy-skills/dist/code-intel/index.js";
+import { hashCanonicalText } from "./coding-agent-benchmark-contract.mjs";
 
 export const CODE_INTEL_GO_TRUTH_SET_REPORT_VERSION = "code-intel-go-truth-set-report/v1";
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -41,10 +42,10 @@ export async function buildCodeIntelGoTruthSetReport(input) {
   const manifestDirectory = path.dirname(manifestPath);
   const fixtureRoot = path.resolve(manifestDirectory, manifest.workspace.root);
   const sourceFiles = await verifySourceFiles(fixtureRoot, manifest.workspace.sourceFiles);
-  const manifestSha256 = sha256(manifestText);
+  const manifestSha256 = hashCanonicalText(manifestText);
   const runtimeFiles = await Promise.all(runtimeContractPaths.map(async (relativePath) => ({
     path: relativePath,
-    sha256: await hashFile(path.join(workspaceRoot, relativePath)),
+    sha256: await hashTextFile(path.join(workspaceRoot, relativePath)),
   })));
   const startedAt = Date.now();
   const runtimeFactory = input?.runtimeFactory ?? createGoplsRuntime;
@@ -364,7 +365,7 @@ async function verifySourceFiles(fixtureRoot, sourceFiles) {
     if (!isPathInside(fixtureRoot, filePath)) {
       throw new Error(`Go truth set source path escapes fixture root: ${sourceFile.path}`);
     }
-    const actual = await hashFile(filePath);
+    const actual = await hashTextFile(filePath);
     if (actual !== sourceFile.sha256) {
       throw new Error(`Go truth set source hash mismatch: ${sourceFile.path}`);
     }
@@ -510,8 +511,8 @@ function offsetToPosition(source, offset) {
   return { line: lines.length - 1, column: lines.at(-1)?.length ?? 0 };
 }
 
-async function hashFile(filePath) {
-  return sha256(await fs.readFile(filePath));
+async function hashTextFile(filePath) {
+  return hashCanonicalText(await fs.readFile(filePath, "utf-8"));
 }
 
 function sha256(value) {

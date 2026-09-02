@@ -11,6 +11,7 @@ import {
   probeGoplsToolchain,
 } from "../packages/belldandy-skills/dist/code-intel/index.js";
 import { validateGoTruthSetManifest } from "./run-code-intel-go-truth-set.mjs";
+import { hashCanonicalText } from "./coding-agent-benchmark-contract.mjs";
 
 export const CODE_INTEL_GO_FAULT_GATE_REPORT_VERSION = "code-intel-go-fault-gate-report/v1";
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -40,7 +41,7 @@ export async function buildCodeIntelGoFaultGateReport(input) {
   const sourceFiles = await verifySourceFiles(fixtureRoot, manifest.workspace.sourceFiles);
   const runtimeFiles = await Promise.all(runtimeContractPaths.map(async (relativePath) => ({
     path: relativePath,
-    sha256: await hashFile(path.join(workspaceRoot, relativePath)),
+    sha256: await hashTextFile(path.join(workspaceRoot, relativePath)),
   })));
   const startedAt = Date.now();
   const runtimeFactory = input?.runtimeFactory ?? runRealFaultRuntime;
@@ -68,7 +69,7 @@ export async function buildCodeIntelGoFaultGateReport(input) {
     truthSet: {
       id: manifest.id,
       manifestPath: toReportPath(manifestPath),
-      manifestSha256: sha256(manifestText),
+      manifestSha256: hashCanonicalText(manifestText),
       workspaceRevision: manifest.workspace.revision,
     },
     sourceIdentity: {
@@ -398,7 +399,7 @@ async function verifySourceFiles(root, expectedFiles) {
     if (!isPathInside(root, filePath)) {
       throw new Error("Go CodeIntel fault Gate source escaped the fixture root.");
     }
-    const actualSha256 = await hashFile(filePath);
+    const actualSha256 = await hashTextFile(filePath);
     if (actualSha256 !== expected.sha256) {
       throw new Error(`Go CodeIntel fault Gate source hash mismatch: ${expected.path}`);
     }
@@ -407,8 +408,8 @@ async function verifySourceFiles(root, expectedFiles) {
   return files;
 }
 
-async function hashFile(filePath) {
-  return sha256(await fs.readFile(filePath));
+async function hashTextFile(filePath) {
+  return hashCanonicalText(await fs.readFile(filePath, "utf-8"));
 }
 
 function sha256(value) {

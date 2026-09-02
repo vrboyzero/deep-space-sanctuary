@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { hashCanonicalText } from "./coding-agent-benchmark-contract.mjs";
 
 import {
   readEvidenceReference,
@@ -123,7 +124,7 @@ export async function addCandidateCodeIntelEvidence(aggregateRoot, options = {})
     "utf8",
   );
   const resourceConfig = JSON.parse(resourceConfigText);
-  const resourceConfigSha256 = sha256(resourceConfigText);
+  const resourceConfigSha256 = hashCanonicalText(resourceConfigText);
   const goManifestSha256 = await hashWorkspaceFile("benchmarks/code-intel/v1/go-truth-set.json");
   const aggregate = reference.aggregate;
 
@@ -1070,7 +1071,7 @@ function collectCanonicalSourceInventory(input) {
 
 async function hashWorkspaceFile(relativePath) {
   const target = path.resolve(import.meta.dirname, "..", ...relativePath.split("/"));
-  return sha256(await fs.readFile(target));
+  return hashCanonicalText(await fs.readFile(target, "utf-8"));
 }
 
 function digestForPath(value) {

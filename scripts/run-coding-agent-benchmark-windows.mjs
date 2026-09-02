@@ -32,6 +32,11 @@ const FORWARDED_MODEL_PRICING_ENV_KEYS = [
   ...REQUIRED_MODEL_PRICING_ENV_KEYS,
   "BELLDANDY_MODEL_CACHE_READ_USD_PER_1M",
 ];
+const FORWARDED_COMMAND_SANDBOX_ENV_KEYS = [
+  "BELLDANDY_COMMAND_SANDBOX_BACKEND",
+  "BELLDANDY_COMMAND_SANDBOX_OCI_RUNTIME",
+  "BELLDANDY_COMMAND_SANDBOX_OCI_IMAGE",
+];
 const OPENAI_ROUTING_ENV_KEYS = [
   "BELLDANDY_OPENAI_BASE_URL",
   "BELLDANDY_OPENAI_WIRE_API",
@@ -140,6 +145,9 @@ export function buildWindowsChildEnvironment(baseEnv, options) {
   }
 
   for (const key of FORWARDED_MODEL_PRICING_ENV_KEYS) {
+    copyNonEmptyEnvValue(env, baseEnv, key);
+  }
+  for (const key of FORWARDED_COMMAND_SANDBOX_ENV_KEYS) {
     copyNonEmptyEnvValue(env, baseEnv, key);
   }
   if (options?.provider === "openai") {

@@ -18,11 +18,19 @@ export const CODING_AGENT_BENCHMARK_MANIFEST_V3_VERSION = "coding-agent-benchmar
 export const CODING_AGENT_BENCHMARK_REPORT_V3_VERSION = "coding-agent-benchmark-report/v3";
 export const CODING_AGENT_BENCHMARK_RUN_V3_VERSION = "coding-agent-benchmark-run/v3";
 
-export function hashCodingAgentBenchmarkManifestText(value) {
+export function normalizeTextLineEndings(value) {
   if (typeof value !== "string") {
-    throw new Error("Coding benchmark manifest hash input must be text.");
+    throw new Error("Canonical text identity input must be text.");
   }
-  return crypto.createHash("sha256").update(value.replace(/\r\n?/g, "\n")).digest("hex");
+  return value.replace(/\r\n?/g, "\n");
+}
+
+export function hashCanonicalText(value) {
+  return crypto.createHash("sha256").update(normalizeTextLineEndings(value)).digest("hex");
+}
+
+export function hashCodingAgentBenchmarkManifestText(value) {
+  return hashCanonicalText(value);
 }
 
 const REQUIRED_PLATFORMS = ["windows-native", "wsl2-linux"];

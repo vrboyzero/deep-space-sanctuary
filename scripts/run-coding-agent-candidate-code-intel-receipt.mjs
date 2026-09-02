@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { compileOutputSchema } from "../packages/belldandy-core/src/cli/shared/output-schema.ts";
 import {
+  hashCanonicalText,
   hashCodingAgentBenchmarkManifestText,
   loadCodingAgentBenchmarkManifest,
 } from "./coding-agent-benchmark-contract.mjs";
@@ -803,7 +804,7 @@ function hashWorkspaceFile(relativePath) {
   // Checked-in contract files are small and are read only after artifact
   // loading; synchronous hashing keeps receipt construction deterministic.
   // eslint-disable-next-line no-sync
-  return sha256(fsSync.readFileSync(target));
+  return hashCanonicalText(fsSync.readFileSync(target, "utf-8"));
 }
 
 function parseJson(text, label) {

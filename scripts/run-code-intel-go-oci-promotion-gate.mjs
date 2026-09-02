@@ -23,6 +23,7 @@ import {
   buildCodeIntelGoTruthSetReport,
   validateGoTruthSetManifest,
 } from "./run-code-intel-go-truth-set.mjs";
+import { hashCanonicalText } from "./coding-agent-benchmark-contract.mjs";
 
 export const CODE_INTEL_GO_OCI_PROMOTION_GATE_REPORT_VERSION =
   "code-intel-go-oci-promotion-gate-report/v1";
@@ -62,7 +63,7 @@ export async function buildCodeIntelGoOciPromotionGateReport(input = {}) {
   const startedAt = Date.now();
   const runtimeFiles = await Promise.all(runtimeContractPaths.map(async (relativePath) => ({
     path: relativePath,
-    sha256: await hashFile(path.join(repositoryRoot, relativePath)),
+    sha256: await hashTextFile(path.join(repositoryRoot, relativePath)),
   })));
   const runtime = input.runtimeFactory
     ? await input.runtimeFactory()
@@ -700,6 +701,10 @@ function requireIsoTimestamp(value) {
 
 async function hashFile(filePath) {
   return sha256(await fs.readFile(filePath));
+}
+
+async function hashTextFile(filePath) {
+  return hashCanonicalText(await fs.readFile(filePath, "utf-8"));
 }
 
 function sha256(value) {

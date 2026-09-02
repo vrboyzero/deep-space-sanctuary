@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { hashCanonicalText } from "./coding-agent-benchmark-contract.mjs";
 
 export const CODE_INTEL_CONTEXT_INSPECTOR_AUDIT_REPORT_VERSION =
   "code-intel-context-inspector-audit-report/v1";
@@ -23,14 +24,14 @@ export async function buildCodeIntelContextInspectorAuditReport(input) {
   const harness = requireRepositoryIdentity(input?.harness);
   const sourceFiles = await Promise.all(SOURCE_FILES.map(async (entry) => ({
     ...entry,
-    sha256: sha256(await readBoundedRegularFile(
+    sha256: hashCanonicalText((await readBoundedRegularFile(
       path.join(sourceRoot, ...entry.path.split("/")),
       `Context Inspector source ${entry.path}`,
-    )),
-    runtimeSha256: sha256(await readBoundedRegularFile(
+    )).toString("utf-8")),
+    runtimeSha256: hashCanonicalText((await readBoundedRegularFile(
       path.join(sourceRoot, ...entry.runtimePath.split("/")),
       `Context Inspector runtime ${entry.runtimePath}`,
-    )),
+    )).toString("utf-8")),
   })));
   const projectionRuntime = sourceFiles[0];
   const projectionUrl = pathToFileURL(

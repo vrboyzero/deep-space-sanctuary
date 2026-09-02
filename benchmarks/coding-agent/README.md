@@ -31,7 +31,7 @@
 - `v3/repository-snapshot-receipt.schema.json`：`coding-agent-benchmark-snapshot-receipt/v1` 的封闭准备凭据，绑定真实仓 URL/commit、clean worktree content identity、许可证内容、依赖输入、pinned cache 内容和执行期禁网策略。
 - `v3/system-scenario.schema.json`、`v3/system-evidence.schema.json`：约束 C 层 scenario、真实 harness evidence，以及 runtime preflight 失败时绑定当前 run 的 `not_run` evidence。
 - `v3/real-web-ui-regression-truth-set.json`、`v3/real-web-ui-regression-truth-set.schema.json`：`coding-agent-benchmark-web-ui-truth-set/v1` 的冻结行为与封闭 Schema；同时覆盖 `aria-*`/`data-*` 的 `false` 序列化、普通属性 `false` 移除，以及所有属性的 `null`/`undefined` 移除，并以 SHA-256 绑定 `real-web.ui-regression` 的同一任务文本、测试命令和 changed-path 合同。
-- `scripts/coding-agent-benchmark-contract.mjs`：CLI 与测试共用的 manifest 加载、语义校验和 report 构建 seam。
+- `scripts/coding-agent-benchmark-contract.mjs`：CLI 与测试共用的 manifest 加载、语义校验、report 构建 seam，以及跨平台文本 identity 的 canonical LF hash。
 - `scripts/coding-agent-benchmark-v3-contract.mjs`：v3 矩阵、固定仓快照、B/C acceptance、scorecard 与 native aggregate 前置语义校验 owner。
 - `scripts/coding-agent-benchmark-v3-fixtures.mjs`：v3 fixture provider registry 与只读 snapshot preparation/preflight owner；A 层适配 corrected v2 generator/evaluator，Express、Preact、vscode-languageserver-node 与 spf13/cobra 共 8 个 B 层纵向切片已接入真实 overlay/evaluator，4 个 C 层 system Provider 已接入版本化 scenario、capability preflight 与机器 evaluator。Cobra 复制 pinned `gomodcache` 到 workspace 私有目录，执行期固定 `GOPROXY=off`、`GOSUMDB=off`、`GOTOOLCHAIN=local`、`GOWORK=off`、`-p=1`。
 - `scripts/coding-agent-benchmark-v3-web-ui-truth-set.mjs`：Web UI truth set 的 SHA/语义绑定、prompt suffix 和 visible test 单一 owner；`real-web-ui-regression-v2` fixture/evaluator 只接受 `src/diff/props.js` 的精确 changed-path 集合与同一冻结 visible test，允许行为等价实现，不再按某条源码表达式判分。
@@ -108,6 +108,8 @@ candidate loader 必须从 GitHub run/jobs/artifacts API JSON 与下载后的原
 `benchmark:coding-agent:v3:candidate-code-intel-receipt` 是 `candidateCodeIntelReceipt` 的唯一仓库 producer。它只读取 current-candidate aggregate 根中的 `task-manifest.json`、`benchmark-report.json`、`baseline-index.json` 与固定的 11 份既有 CodeIntel artifact，生成 `coding-agent-benchmark-candidate-code-intel-evidence-receipt/v1`，并更新同根 `candidate-dimension-evidence-reference.json`。receipt 与 reference 均以不可覆盖方式写入；已有 owner、缺失/损坏 artifact、Schema/version/SHA-256/source-harness identity 或跨层外键漂移都会失败关闭并回滚本次部分写入。
 
 固定 artifact 集合包括双平台 truth-set、Context Inspector、resource-soak、uplift aggregate/双平台 report，以及 Go comparator、Windows native 和 WSL2 OCI report。公共 loader 将其投影为 `incomplete / reject / failed / complete` 四态，并仅为 `context_retrieval` 维度的六项合同提供完成状态；Schema-valid 但底层 Gate 未通过时只能是 `failed`，不能借摘要或 fixture 自证为 `complete`。producer 不运行 CodeIntel、Gateway、模型或 Provider，也不计算 numeric score；current-candidate 边界和 source/harness identity 必须由真实 aggregate 提供，fixture 仅用于回归验证。
+
+CodeIntel 的 manifest、truth-set、resource-soak、runtime source 和 candidate selection hash 统一先将 `CRLF`/孤立 `CR` 规范化为 `LF`，再计算 SHA-256；这只消除跨平台换行差异，不忽略内容、字段或 source identity 漂移。历史 frozen Gate 仍绑定其原始 manifest identity，当前 HEAD 若已改动必须单独报告为 drift，不能覆盖历史证据。
 
 ```powershell
 corepack pnpm benchmark:coding-agent:v3:candidate-code-intel-receipt --aggregate-root <v3-aggregate-root> --generated-at <ISO-8601>
@@ -364,7 +366,8 @@ node scripts/run-coding-agent-benchmark-windows.mjs --workspace-root <clean-harn
 dry-run 可将 `--credentials-configured` 设为 `false`，此时不要求 pricing，但仍应通过同一 launcher
 验证 Gateway auth/hello 和自动回收；launcher 会从两个 child 的共享环境中清除继承的主模型 key、外部
 model config 与已知 Provider API key，确保父进程即使已经加载真实凭据也不会把 dry-run 变成真实调用。
-Windows launcher 的 child env 只转交 Windows 宿主运行键、显式 pricing、OpenAI base URL/wire API；仅当
+Windows launcher 的 child env 只转交 Windows 宿主运行键、显式 pricing、三项显式 OCI command sandbox
+配置和 OpenAI base URL/wire API；仅当
 `credentialsConfigured=true` 时转交 `BELLDANDY_OPENAI_API_KEY`。其他父进程项目配置和空值不会进入
 Gateway/benchmark 子进程。可选的 `--provider-env-file` 也只解析上述三个 OpenAI 键，不从文件读取
 pricing；launcher 同时固定 Provider retry=`0` 并关闭非计费边界内后台能力，因此不需要用 PowerShell

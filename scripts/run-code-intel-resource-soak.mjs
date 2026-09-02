@@ -9,6 +9,7 @@ import {
   CodeIntel,
   TypeScriptLanguageServiceProvider,
 } from "../packages/belldandy-skills/dist/code-intel/index.js";
+import { hashCanonicalText } from "./coding-agent-benchmark-contract.mjs";
 
 export const CODE_INTEL_RESOURCE_SOAK_REPORT_VERSION = "code-intel-resource-soak-report/v1";
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -222,7 +223,7 @@ export async function buildCodeIntelResourceSoakReport(input) {
     soak: {
       id: config.id,
       configPath: toReportPath(configPath),
-      configSha256: sha256(configText),
+      configSha256: hashCanonicalText(configText),
     },
     sourceIdentity: { files: sourceFiles },
     provider: {
@@ -454,8 +455,8 @@ async function verifySourceIdentity(entries) {
     const sourcePath = resolveWorkspacePath(entry.path);
     const runtimePath = resolveWorkspacePath(entry.runtimePath);
     const [sourceSha256, runtimeSha256] = await Promise.all([
-      hashFile(sourcePath),
-      hashFile(runtimePath),
+      hashTextFile(sourcePath),
+      hashTextFile(runtimePath),
     ]);
     if (sourceSha256 !== entry.sha256) {
       throw new Error(`CodeIntel resource soak source hash mismatch: ${entry.path}`);
@@ -535,8 +536,8 @@ async function pathExists(targetPath) {
   }
 }
 
-async function hashFile(filePath) {
-  return sha256(await fs.readFile(filePath));
+async function hashTextFile(filePath) {
+  return hashCanonicalText(await fs.readFile(filePath, "utf-8"));
 }
 
 function sha256(value) {

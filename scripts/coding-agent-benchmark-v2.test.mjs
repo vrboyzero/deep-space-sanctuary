@@ -879,6 +879,13 @@ describe("coding agent benchmark v2 preflight", () => {
       webRoot: resolveWebRoot(),
       stateDir: stateRoot,
       agentFactory: () => ({
+        getCodingRunCapabilities() {
+          return {
+            maxCostUsd: false,
+            workspaceMutationRequirement: true,
+            requiredChangedPaths: true,
+          };
+        },
         async *run() {
           yield { type: "status", status: "running" };
           yield {
@@ -903,6 +910,11 @@ describe("coding agent benchmark v2 preflight", () => {
           yield { type: "final", text: JSON.stringify({ summary: "Recovered once." }) };
         },
       }),
+      primaryModelConfig: {
+        baseUrl: "https://fixture.invalid/v1",
+        apiKey: "fixture-key",
+        model: "fixture-model",
+      },
     });
 
     try {

@@ -12,6 +12,7 @@ import {
   resolveOciCommandSandboxConfig,
 } from "../packages/belldandy-skills/src/command-sandbox.ts";
 import { createOciSandboxLease } from "../packages/belldandy-skills/src/command-sandbox-lease.ts";
+import { hashCanonicalText } from "./coding-agent-benchmark-contract.mjs";
 
 export const CODE_INTEL_GO_OCI_SANDBOX_GATE_REPORT_VERSION =
   "code-intel-go-oci-sandbox-gate-report/v1";
@@ -41,7 +42,7 @@ export async function buildCodeIntelGoOciSandboxGateReport(input = {}) {
   const startedAt = Date.now();
   const runtimeFiles = await Promise.all(runtimeContractPaths.map(async (relativePath) => ({
     path: relativePath,
-    sha256: await hashFile(path.join(workspaceRoot, relativePath)),
+    sha256: await hashTextFile(path.join(workspaceRoot, relativePath)),
   })));
   const runtime = input.runtimeFactory
     ? await input.runtimeFactory()
@@ -441,6 +442,10 @@ function requireImageDigest(image) {
 
 async function hashFile(filePath) {
   return sha256(await fs.readFile(filePath));
+}
+
+async function hashTextFile(filePath) {
+  return hashCanonicalText(await fs.readFile(filePath, "utf-8"));
 }
 
 function sha256(value) {

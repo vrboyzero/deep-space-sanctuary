@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { compileOutputSchema } from "../packages/belldandy-core/src/cli/shared/output-schema.ts";
+import { hashCanonicalText } from "./coding-agent-benchmark-contract.mjs";
 
 const MAX_RECEIPT_BYTES = 4 * 1024 * 1024;
 const MAX_ARTIFACT_BYTES = 16 * 1024 * 1024;
@@ -1073,7 +1074,7 @@ function containsMutationAuthority(value) {
 
 function hashWorkspaceFileIfPresent(filePath) {
   try {
-    return sha256(requireFileSync(filePath));
+    return hashCanonicalText(requireFileSync(filePath).toString("utf-8"));
   } catch {
     return null;
   }

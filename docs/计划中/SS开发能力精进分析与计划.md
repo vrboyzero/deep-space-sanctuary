@@ -11410,6 +11410,130 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：recovery 修复改变了 benchmark harness identity；所有旧 `378a70e` 报告都不能与新代码混合，必须先冻结提交再采集 CLI/TUI、Git delivery 和 private CI artifact。
 - **当前还缺的关键闭环**：新 stable identity 的双平台完整矩阵与 aggregate、CLI/TUI/Git delivery complete receipt、绑定新 private CI run 的 official API/ZIP receipt、资格/七维评分，以及第二个连续候选。
 
+#### P2-C 候选执行准备实现结论：稳定 identity 与收费前 Gate（2026-09-02）
+
+##### 已完成内容
+
+1. **`75502b6d7987bf72875412006a08698bf4a946b3` stable current-candidate 冻结**：
+   - recovery 修复已提交为 `75502b6 fix(benchmark): allow verified WSL recovery gateway`，本地 `main` 与 `private/main` 指向同一提交；
+   - 未推送 `origin/main`，未跟踪的 `tmp-codeintel-summary.json` 未纳入提交；
+   - `378a70e` 下的 Windows `72/72` 与 WSL2 `7` 项继续只作为诊断候选，不进入新 identity aggregate。
+
+2. **`.tmp/p2c-candidate-75502b6-harness` 与 `/var/tmp/star-sanctuary-p2c-candidate-75502b6` 双平台 staging 就绪**：
+   - 两端均为 detached、clean，commit、lockfile SHA-256 与 worktree content SHA-256 完全一致；
+   - Windows/WSL2 各自原生依赖树已完成 frozen offline install、完整 build 与 repository verifier；
+   - `tmp/p2c-candidate-75502b6-inputs/windows-native` 与 `/var/tmp/star-sanctuary-p2c-candidate-75502b6-inputs` 均具备 `4` 个 repository receipt 和 `8` 个通过的 task preflight。
+
+3. **`tmp/run-p2c-candidate-matrix-75502b6.ps1` 与 WSL Docker shim 收费前 Gate 完成**：
+   - PowerShell、Node 与 POSIX shell 语法通过，WSL shim 经直接 argv probe 返回精确 pinned image digest；
+   - provider 文件仅核对存在、常规文件和非 reparse point，未读取或回显正文；新 Windows artifact/state/fixture/ledger 路径均不存在；
+   - Windows/WSL2 `28891` 端口与本任务关联的 Node/shell/`rg` 进程均清洁；下一次单 run 最坏费用上界为 `28.78989848 RMB < 80 RMB`。
+
+4. **private CI current-candidate run 已绑定但尚未形成资格证据**：
+   - Quality Gates run `33638045777` 绑定 `75502b6…`，当前为 `in_progress`；
+   - Docker Build & Publish run `33638045178` 绑定同一提交但终态为 `failure`，后续按原始日志分类；
+   - 两条 run 均未被写成 private CI receipt，只有绑定当前 identity 且通过正式验真的 Quality run/API/ZIP 才可进入候选证据。
+
+5. **效果**：
+   - stable current-candidate、双平台执行环境、真实仓输入与收费边界已统一绑定，可进入单项 command-control canary；
+   - Gate 在任何 Provider 调用前排除了 identity 漂移、旧输出覆盖、端口冲突、孤儿进程和 OCI image 漂移；
+   - 当前仍没有新 candidate Provider usage 或正式 artifact，不提前宣称 aggregate、private CI 或资格完成。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build:incremental` exit code=`0`；
+- recovery benchmark runner/WSL launcher 回归 `49/49` 通过，双平台 `verify:coding-benchmark` 与 repository verifier 通过；
+- 双平台 identity 均为 commit=`75502b6d7987bf72875412006a08698bf4a946b3`、workspaceDirty=`false`、lockfile SHA-256=`844c0021f1c9135214c913636fd6ed6f9232593883bd5b6289f7ade51d2b7d2b`、worktree content SHA-256=`b0d79b6eb14014b9cc50f2d9e15168f32f0721932246737e6a5e8ec91171cdba`；
+- 收费前 Gate 全部通过；candidate 新增 Provider calls/cost=`0/$0`，全周期 observed=`$2.25652731`、reserved unknown=`$1.24221`。
+
+##### 后续计划
+
+- **下一步准备做什么**：只运行 Windows `tests.failed-diagnosis` attempt 1 canary；通过并验真 report/ledger/费用后，再运行 Windows 剩余 `71` 项，随后以最终 ledger 作为 WSL2 初始费用并先执行 `gateway.disconnect-recovery` canary。
+- **为什么先做它**：command-control canary 是当前 clean identity 下最小且可诊断的真实 Provider 闭环，可以在扩大到完整矩阵前验证 Gateway、OCI sandbox、usage 与 artifact binding。
+- **当前还缺的关键闭环**：新 identity 双平台 `144/144` aggregate、CLI/TUI 与 Git delivery complete receipt、通过验真的 private CI API/两个原始 ZIP、完整 qualification/七维原始加权，以及第二个连续候选。
+
+#### P2-C 候选 canary 诊断实现结论：Windows OCI child-env 合同修复与 private CI 分类（2026-09-02）
+
+##### 已完成内容
+
+1. **`75502b6…` Windows `tests.failed-diagnosis` canary artifact 新建并冻结**：
+   - artifact=`artifacts/p2c-75502b6/candidate-1/formal/windows-native/a1/tests-failed-diagnosis`，唯一 run=`tests-failed-diagnosis-windows-a1-1788358405934`；
+   - report=`partial`、run=`infrastructure_error/infrastructure`、OCI preflight=`failed/invalid_configuration`、usage=`not_reached`，因此 `eligibleForProductComparison=false`；
+   - Provider 未到达、新增费用=`$0`、Windows ledger 未创建；已生成的 artifact/state/fixture 保留为不可覆盖诊断证据，不删除、不冒充当前候选结果。
+
+2. **`scripts/run-coding-agent-benchmark-windows.mjs` 修复**：
+   - 根因收敛为 Windows launcher 重建 child env 时没有转交已通过收费前 Gate 的 OCI sandbox 配置；
+   - child env 显式 allowlist 新增 `BELLDANDY_COMMAND_SANDBOX_BACKEND`、`BELLDANDY_COMMAND_SANDBOX_OCI_RUNTIME` 与 `BELLDANDY_COMMAND_SANDBOX_OCI_IMAGE`；
+   - 其余项目配置和 Provider credentials 的拒绝边界不变，未放宽任意环境变量继承。
+
+3. **测试与文档同步**：
+   - `scripts/run-coding-agent-benchmark-windows.test.mjs` 覆盖三项 OCI 配置转交，并继续断言任意项目变量不泄漏；
+   - `benchmarks/coding-agent/README.md` 与 `docs/project-map.md` 同步 Windows child env 合同；
+   - `75502b6…` 因 benchmark harness 已产生后续源码变更，只保留为诊断 identity；后续正式采集必须基于新提交重建双平台 staging、inputs 与输出路径。
+
+4. **private CI 失败完成同源分类**：
+   - Quality Gates run=`33638045777`、full-test job=`100273772578` 与 Docker Build & Publish run=`33638045178`、full-test job=`100273769242` 均绑定 `75502b6…` 并终态失败；Docker image/release/package 步骤因测试失败被跳过，不是发布权限失败；
+   - 两个 job 均为同四项失败：`coding-agent-benchmark-v2.test.mjs` recovery 用例 `1` 项、`run-code-intel-agent-uplift-readiness.test.mjs` `2` 项、`run-code-intel-truth-set.test.mjs` `1` 项；
+   - v2 recovery 失败已定位为测试 Gateway fixture 缺失 `fixture-model` 对应的 `primaryModelConfig`；CodeIntel 失败来自历史 frozen gate 仍绑定 task manifest=`e3cac7c8…`、当前 manifest 已变为 `ecfdb6fb…`，本机另有 CRLF/LF raw hash 差异。历史 gate/provenance 不更新为当前值，也不以旧 uplift 冒充 current candidate。
+
+5. **效果**：
+   - 首个收费 canary 在 Provider 前正确失败关闭，没有形成费用、ledger 或可误用的产品结果；
+   - OCI launcher 缺口已在本地闭合，真实 OCI preflight 重新通过；
+   - 当前阻塞从不可诊断的“候选未运行”收敛为两个独立 Gate 修复包，完整矩阵不会在已失效 identity 或红色 private CI 上继续扩张。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build:incremental` exit code=`0`；
+- Windows launcher 测试先 Red=`1 failed / 17 passed`，修复后 `18/18` 通过；benchmark/Windows/WSL launcher 联合回归 `67/67` 通过；
+- 真实 Windows OCI preflight 通过，`corepack pnpm verify:coding-benchmark` 通过，仅保留既存 AJV `date-time` format warning；
+- 两条 private CI run 均完成且可从原始 check annotations 复核同四项失败；完整 CI 为 `4 failed / 6326 passed / 36 skipped`，未形成可接受的 private CI receipt；
+- candidate observed cost 仍为 `$0`；全周期 observed=`$2.25652731`、reserved unknown=`$1.24221`，下一单 run 最坏费用上界=`28.78989848 RMB < 80 RMB`。
+
+##### 后续计划
+
+- **下一步准备做什么**：先为 v2 recovery fixture 补齐显式 `primaryModelConfig`；再为 CodeIntel 文本 identity 统一 LF 规范化，并把历史 frozen-input 正向测试与当前 HEAD manifest drift 失败关闭测试分离。随后重跑三个失败文件、相关联合回归、增量构建、repository verifier 和完整测试，再创建并仅推送 `private/main` 的新稳定提交。
+- **为什么先做它**：launcher 修复已改变 source/harness identity，且两条 `75502b6…` private CI 都是红色；在本地与远端 Gate 恢复前继续付费矩阵只会生成不能进入资格链的 artifact。
+- **当前还缺的关键闭环**：上述测试修复与完整回归、新 stable identity 的绿色 private CI、双平台 clean staging 和收费前 Gate、新 Windows canary 与 `144/144` aggregate、CLI/TUI/Git delivery/private CI receipt 回填、完整 qualification/七维原始加权，以及第二个连续候选。
+
+#### P2-C 修复阶段实现结论：v2 recovery fixture 与 CodeIntel canonical text identity（2026-09-03）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-benchmark-v2.test.mjs` 修复**：
+   - recovery Gateway fixture 显式提供 `fixture-model` 对应的 `primaryModelConfig`；
+   - fixture Agent 显式声明 `workspaceMutationRequirement` 与 `requiredChangedPaths` capability，确保真实 Headless recovery 请求可进入 Agent 执行；
+   - 断线注入、cursor continuation 和单次写入合同保持不变。
+
+2. **CodeIntel 文本 identity 统一**：
+   - `scripts/coding-agent-benchmark-contract.mjs` 提供共享 `normalizeTextLineEndings()` / `hashCanonicalText()`，所有 CodeIntel manifest、truth-set、resource-soak、runtime source 和 candidate selection 文本 hash 先规范化为 LF；
+   - TS/JS truth set、Context Inspector、resource soak、Go truth/fault/OCI producer、uplift readiness/replay 与 candidate receipt producer/resolver 使用同一 canonical hash 口径；
+   - resource-soak 自引用脚本 hash 更新为当前源码 canonical SHA-256；二进制 Go/gopls artifact 仍使用原始字节 hash。
+
+3. **历史 frozen-input 边界收口**：
+   - readiness 正例测试使用独立的历史 v3 manifest fixture，保留 Gate 的 `e3cac7c8…` identity；
+   - 当前 HEAD 的 `ecfdb6fb…` manifest 与对 frozen fixture 的内容 mutation 分别作为 drift 失败关闭用例；
+   - downstream uplift verifier 增加对当前 Gate/manifest/truth-set 文件的独立 canonical identity 复算，不能以历史 readiness report 绕过当前输入漂移。
+
+##### 效果
+
+- v2 Gateway recovery fixture 能真实启动一次受限写入并在断线后续读，不再因 fixture 配置/能力缺失在 Agent 创建前静默结束；
+- Windows/WSL2 的 CRLF/LF checkout 不再造成虚假的 CodeIntel identity drift，实际内容或字段变化仍 fail-closed；
+- 历史 uplift Gate、当前 HEAD manifest 与 candidate evidence 的 provenance 边界明确，旧证据不会被新 manifest 覆盖或冒充。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` exit code=`0`；
+- focused benchmark/CodeIntel 回归 `13` 个文件、`166/166` 测试通过；CodeIntel 全套 `15` 个文件、`98/98` 测试通过；
+- `corepack pnpm verify:coding-benchmark`、`corepack pnpm verify:coding-ci`、全部新增/修改脚本 `node --check` 与 `git diff --check` 通过；
+- 标准全量 Vitest 两次均为 `983/986` 文件通过，唯一失败分别是不同的并发资源争用超时；对应失败文件单独复跑通过（`2/2` 与 `18/18`）；提高全局测试超时至 `15s` 的全量复核为 `1970/1971` suite、`6366/6370` tests，唯一失败为同类 `60s` Gateway prompt snapshot 超时；未发现本次改动相关失败；
+- 本环节未启动真实 Gateway/模型/Provider formal，新增 Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：冻结并提交本轮源码、测试、配置与文档，确认 `main` 分支和提交边界后仅推送 `private/main`；随后从新 stable identity 重建 Windows/WSL2 clean staging、原生依赖和 repository inputs，并重新执行收费前 Gate。
+- **为什么先做它**：本轮修改改变了 benchmark 与 CodeIntel harness identity；只有先形成 clean stable commit，后续 canary、aggregate、CLI/TUI、Git delivery 和 private CI artifact 才能绑定同一份 source/harness bytes。
+- **当前还缺的关键闭环**：新 stable identity 的绿色 private CI、Windows `tests.failed-diagnosis` canary、双平台 `144/144` aggregate、CLI/TUI/Git delivery/private CI complete receipt、完整 qualification/七维原始加权，以及第二个连续候选。
+
 #### 后续工作量估算
 
 **本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；CLI/TUI 双平台首帧与退出收敛也已修复并通过真实 PTY 验证；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
@@ -11450,4 +11574,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **candidate bootstrap、本地原生 collector/可恢复 runner、同 identity Linux staging、CodeIntel、`cli_tui`、`git_delivery` receipt/仓库接线、七维 evaluator/report、双平台 TUI 首帧与 WSL recovery 默认网关修复完成；真实候选证据待闭合** | local runner `16/16`、candidate 全组 `173/173`、Windows/WSL2 Git audit 各 `71/71`；WSL recovery 定向/联合回归 `49/49` 与真实默认网关解析通过；`378a70e` 的 `72+7` 项仅为诊断候选，正式 `complete` artifact 与新 private CI 尚未采集 | `1.75–3.5 人日剩余基线 + 两个连续候选运行/观察窗口` | 下一恢复点：提交并仅推送 recovery 修复到 `private/main`，从新 clean identity 生成真实 `144/144` aggregate，再回填 CLI/TUI、Git delivery 与 private CI，运行资格/评分复算并组织第二个连续候选 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **candidate bootstrap、本地原生 collector/可恢复 runner、同 identity Linux staging、CodeIntel、`cli_tui`、`git_delivery` receipt/仓库接线、七维 evaluator/report、双平台 TUI 首帧与 WSL recovery 修复完成；v2 recovery fixture 与 CodeIntel canonical LF/frozen-input 边界已修复，稳定提交待创建/推送** | `75502b6…` Windows canary=`infrastructure_error`、OCI=`invalid_configuration`、usage=`not_reached`、新增费用=`$0`，artifact 已冻结；本轮 v2/CodeIntel focused=`166/166`、CodeIntel 全套=`98/98`、build/verifier/语法 Gate 通过；标准全量仅有并发资源争用超时，相关文件单独复跑通过，未形成新的 candidate receipt | `1.75–3.5 人日剩余基线 + 两个连续候选运行/观察窗口` | 下一恢复点：创建只含本轮修复的 stable commit 并仅推送 `private/main`；随后重建双平台 staging/Gate，重跑 Windows canary，生成 `144/144` aggregate 并回填 CLI/TUI、Git delivery 与 private CI artifact |

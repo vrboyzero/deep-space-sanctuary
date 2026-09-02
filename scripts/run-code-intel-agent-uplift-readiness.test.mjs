@@ -6,6 +6,10 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { compileOutputSchema } from "../packages/belldandy-core/src/cli/shared/output-schema.ts";
 import {
+  hashCanonicalText,
+  normalizeTextLineEndings,
+} from "./coding-agent-benchmark-contract.mjs";
+import {
   CODE_INTEL_AGENT_UPLIFT_CANDIDATE_ID,
   CODE_INTEL_AGENT_UPLIFT_GATE_SHA256,
   CODE_INTEL_AGENT_UPLIFT_READINESS_VERSION,
@@ -125,16 +129,24 @@ describe("CodeIntel Agent uplift readiness", () => {
       failures: ["runtime_identity_mismatch"],
     });
 
-    const drift = await createReadinessFixture("windows-native");
-    await fs.appendFile(
-      path.join(drift.sourceRoot, "benchmarks/coding-agent/v3/task-manifest.json"),
-      " ",
-    );
+    const drift = await createReadinessFixture("windows-native", { taskManifest: "current" });
     await expect(runCodeIntelAgentUpliftReadiness({
       platform: "windows-native",
       sourceRoot: drift.sourceRoot,
       repositoryConfigPath: drift.repositoryConfigPath,
       outputRoot: drift.outputRoot,
+    }, readinessDependencies("windows-native"))).rejects.toThrow(/task manifest identity drift/i);
+
+    const mutatedFrozen = await createReadinessFixture("windows-native");
+    await fs.appendFile(
+      path.join(mutatedFrozen.sourceRoot, "benchmarks/coding-agent/v3/task-manifest.json"),
+      " ",
+    );
+    await expect(runCodeIntelAgentUpliftReadiness({
+      platform: "windows-native",
+      sourceRoot: mutatedFrozen.sourceRoot,
+      repositoryConfigPath: mutatedFrozen.repositoryConfigPath,
+      outputRoot: mutatedFrozen.outputRoot,
     }, readinessDependencies("windows-native"))).rejects.toThrow(/task manifest identity drift/i);
 
     const gateDrift = await createReadinessFixture("windows-native");
@@ -154,7 +166,7 @@ describe("CodeIntel Agent uplift readiness", () => {
   });
 });
 
-async function createReadinessFixture(platform) {
+async function createReadinessFixture(platform, options = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), `code-intel-uplift-${platform}-`));
   tempRoots.push(root);
   const sourceRoot = path.join(root, "source");
@@ -179,6 +191,13 @@ async function createReadinessFixture(platform) {
     "packages/belldandy-skills/dist/code-intel/code-intel.js",
     "packages/belldandy-skills/dist/code-intel/typescript-provider.js",
   ];
+  const currentTaskManifestText = await fs.readFile(
+    path.join(workspaceRoot, "benchmarks/coding-agent/v3/task-manifest.json"),
+    "utf-8",
+  );
+  const taskManifestText = options.taskManifest === "current"
+    ? currentTaskManifestText
+    : buildHistoricalTaskManifestText(currentTaskManifestText);
   await Promise.all([
     fs.mkdir(path.join(sourceRoot, "benchmarks/coding-agent/v3"), { recursive: true }),
     fs.mkdir(path.join(sourceRoot, "benchmarks/code-intel/v1"), { recursive: true }),
@@ -189,13 +208,21 @@ async function createReadinessFixture(platform) {
       await fs.writeFile(target, `${relativePath}\n`, "utf-8");
     }),
   ]);
-  for (const relativePath of [
-    "benchmarks/coding-agent/v3/task-manifest.json",
-    "benchmarks/code-intel/v1/truth-set.json",
-    "benchmarks/code-intel/v1/agent-uplift-gate.json",
-  ]) {
-    await fs.copyFile(path.join(workspaceRoot, relativePath), path.join(sourceRoot, relativePath));
-  }
+  await Promise.all([
+    fs.writeFile(
+      path.join(sourceRoot, "benchmarks/coding-agent/v3/task-manifest.json"),
+      taskManifestText,
+      "utf-8",
+    ),
+    fs.copyFile(
+      path.join(workspaceRoot, "benchmarks/code-intel/v1/truth-set.json"),
+      path.join(sourceRoot, "benchmarks/code-intel/v1/truth-set.json"),
+    ),
+    fs.copyFile(
+      path.join(workspaceRoot, "benchmarks/code-intel/v1/agent-uplift-gate.json"),
+      path.join(sourceRoot, "benchmarks/code-intel/v1/agent-uplift-gate.json"),
+    ),
+  ]);
 
   const repositories = [];
   for (const repositoryId of ["express", "vscode-languageserver-node"]) {
@@ -216,6 +243,36 @@ async function createReadinessFixture(platform) {
     repositories,
   }, null, 2)}\n`);
   return { sourceRoot, repositoryConfigPath, outputRoot };
+}
+
+function buildHistoricalTaskManifestText(currentText) {
+  const normalized = normalizeTextLineEndings(currentText);
+  const startMarker = '    {\n      "id": "real-web.ui-regression",';
+  const endMarker = '    {\n      "id": "real-web.dependency-diagnosis",';
+  const start = normalized.indexOf(startMarker);
+  const end = normalized.indexOf(endMarker, start + startMarker.length);
+  if (start < 0 || end < 0 || end <= start) {
+    throw new Error("Current v3 task manifest no longer exposes the frozen Web task boundary.");
+  }
+  const currentBlock = normalized.slice(start, end);
+  const frozenBlock = currentBlock
+    .replace(
+      '"real-web-ui-regression-v2"',
+      '"real-web-ui-regression-v1"',
+    )
+    .replace('"version": 2', '"version": 1')
+    .replace(
+      '"Fix the frozen browser-facing regression in the real web project. Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, and remove every attribute with null or undefined values. Make the smallest change in src/diff/props.js and pass the supplied deterministic checks."',
+      '"Fix the frozen browser-facing regression in the real web project, preserve the public behavior, and pass the supplied deterministic checks."',
+    )
+    .replace('"real-web-ui-regression-v2"', '"real-web-ui-regression-v1"')
+    .replace(/      "truthSet": \{\n[\s\S]*?      \},\n/u, "");
+  const result = `${normalized.slice(0, start)}${frozenBlock}${normalized.slice(end)}`;
+  const expectedHash = "e3cac7c8b2786408af45dc3bfed718ee1a898388aa0fae4fbd5b1d38ab68bd22";
+  if (hashCanonicalText(result) !== expectedHash) {
+    throw new Error("Historical v3 task manifest fixture drifted from the frozen uplift input.");
+  }
+  return result;
 }
 
 function readinessDependencies(runtimePlatform) {

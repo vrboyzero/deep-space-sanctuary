@@ -8,6 +8,7 @@ import {
   CodeIntel,
   TypeScriptLanguageServiceProvider,
 } from "../packages/belldandy-skills/dist/code-intel/index.js";
+import { hashCanonicalText } from "./coding-agent-benchmark-contract.mjs";
 
 export const CODE_INTEL_TRUTH_SET_REPORT_VERSION = "code-intel-truth-set-report/v1";
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -25,7 +26,7 @@ export async function buildCodeIntelTruthSetReport(input) {
   const manifestDirectory = path.dirname(manifestPath);
   const fixtureRoot = path.resolve(manifestDirectory, manifest.workspace.root);
   const sourceFiles = await verifySourceFiles(fixtureRoot, manifest.workspace.sourceFiles);
-  const manifestSha256 = sha256(manifestText);
+  const manifestSha256 = hashCanonicalText(manifestText);
   const provider = new TypeScriptLanguageServiceProvider();
   const codeIntel = new CodeIntel({ providers: [provider] });
   const startedAt = Date.now();
@@ -41,8 +42,8 @@ export async function buildCodeIntelTruthSetReport(input) {
 
   const metrics = summarizeCaseMetrics(caseResults, manifest.thresholds);
   const [runtimeSourceSha256, runtimeExecutableSha256] = await Promise.all([
-    hashFile(path.join(workspaceRoot, sourceContractPath)),
-    hashFile(path.join(workspaceRoot, executableContractPath)),
+    hashTextFile(path.join(workspaceRoot, sourceContractPath)),
+    hashTextFile(path.join(workspaceRoot, executableContractPath)),
   ]);
   const report = {
     schemaVersion: CODE_INTEL_TRUTH_SET_REPORT_VERSION,
@@ -195,7 +196,7 @@ async function verifySourceFiles(fixtureRoot, sourceFiles) {
     if (!isPathInside(fixtureRoot, filePath)) {
       throw new Error(`Truth set source path escapes fixture root: ${sourceFile.path}`);
     }
-    const actual = await hashFile(filePath);
+    const actual = await hashTextFile(filePath);
     if (actual !== sourceFile.sha256) {
       throw new Error(`Truth set source hash mismatch: ${sourceFile.path}`);
     }
@@ -309,8 +310,8 @@ function offsetToPosition(source, offset) {
   };
 }
 
-async function hashFile(filePath) {
-  return sha256(await fs.readFile(filePath));
+async function hashTextFile(filePath) {
+  return hashCanonicalText(await fs.readFile(filePath, "utf-8"));
 }
 
 function sha256(value) {

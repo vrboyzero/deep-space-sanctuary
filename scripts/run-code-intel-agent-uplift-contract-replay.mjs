@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { ReActRunBudgetTracker } from "../packages/belldandy-agent/src/react-run-budget.ts";
+import { hashCanonicalText } from "./coding-agent-benchmark-contract.mjs";
 
 export const CODE_INTEL_AGENT_UPLIFT_CONTRACT_REPLAY_VERSION =
   "code-intel-agent-uplift-contract-replay/v1";
@@ -39,7 +40,7 @@ export async function runCodeIntelCandidateContractReplay(input) {
     fs.readFile(upliftReportPath, "utf8"),
     Promise.all(RUNTIME_SOURCE_PATHS.map(async (relativePath) => ({
       path: relativePath,
-      sha256: sha256(await fs.readFile(path.join(sourceRoot, relativePath))),
+      sha256: hashCanonicalText(await fs.readFile(path.join(sourceRoot, relativePath), "utf-8")),
     }))),
   ]);
   const actualUpliftReportSha256 = sha256(upliftReportText);
