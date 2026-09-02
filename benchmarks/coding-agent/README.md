@@ -23,6 +23,7 @@
 - `v3/candidate-supervisor-evidence-receipt.schema.json`：`coding-agent-benchmark-candidate-supervisor-evidence-receipt/v1` 的组合证据合同；绑定当前 harness 的 Windows/WSL2 60 分钟 soak、Verification DAG、原始 Vitest report 与固定 18 文件 fault audit，不复制原始证据正文。
 - `v3/candidate-verification-evidence-receipt.schema.json`：`coding-agent-benchmark-candidate-verification-evidence-receipt/v1` 的组合证据合同；绑定当前 aggregate/harness 的 Impact Truth Set、结构化 Verification DAG/Vitest report、deterministic failure replay 与三 viewport Browser Relay 三件套，不复制原始证据正文。
 - `v3/candidate-coding-run-client-evidence-receipt.schema.json`：`coding-agent-benchmark-candidate-coding-run-client-evidence-receipt/v1` 的本地组合证据合同；绑定当前 aggregate/harness 的零执行 Verification DAG、原始 Vitest JSON 与固定七文件 coding-run client audit，不复制原始证据正文，也不冒充真实 CI receipt。
+- `v3/candidate-code-intel-evidence-receipt.schema.json`：`coding-agent-benchmark-candidate-code-intel-evidence-receipt/v1` 的 current-candidate CodeIntel 组合 receipt 合同；固定绑定 11 份既有 CodeIntel artifact、selection/source inventory 与 aggregate/harness identity，不保存模型或 Provider 正文。
 - `v3/repository-inputs.schema.json`：`coding-agent-benchmark-repository-inputs/v1` 的封闭 CLI 输入合同；每个条目只允许 repository ID、source/cache 根和 receipt 路径，重复仓库、未知字段或 receipt 绑定漂移均失败关闭。
 - `v3/linux-snapshot-preparation.schema.json`：`coding-agent-benchmark-linux-snapshot-preparation/v1` 的封闭准备报告；记录 WSL2 平台/libc/工具链、离线命令策略、四仓 source identity、cache/receipt/preflight 路径，以及未满足仓的精确 blocker；`libc` 保持可选以兼容已保留的早期 v1 artifact。
 - `v3/preflight.schema.json`、`v3/repository-snapshot-preflight.schema.json`：分别约束 v3 通用 runtime preflight 与 B 层实际 snapshot/cache/license/network preflight。
@@ -100,6 +101,16 @@ corepack pnpm verify:coding-run-client
 `real_ci_consumer_binding` 使用独立的 `candidateCodingRunClientCiReceipt` 与 `coding-agent-benchmark-candidate-coding-run-client-ci-evidence-receipt/v1`，每个 Quality matrix lane 先由 `scripts/run-coding-run-client-ci-lane-receipt.mjs` 生成 `coding-agent-benchmark-coding-run-client-ci-lane-evidence/v1`，再由 pinned `actions/upload-artifact` 上传同目录下唯一的 `lane-receipt.json` 与 `vitest-report.json`。producer 只接受 GitHub Actions 官方 repository/workflow/run/attempt/SHA/ref 与对应 runner identity；原始报告和 step outcome 必须同时为 success 或同时为 failure，七文件选择必须精确一致。push/workflow dispatch 中 producer 与 upload 均使用 `always()`，因此可信测试失败仍保留证据且原测试退出码继续使 job 失败；PR 继续执行相同测试但不生成 current-candidate artifact。
 
 candidate loader 必须从 GitHub run/jobs/artifacts API JSON 与下载后的原始 ZIP 字节复算 run URL、双平台 job/step/artifact 外键、archive/entry SHA-256、CRC、固定 entry、时间线与原始 Vitest 终态。双 lane 可信通过才关闭合同；可信单 lane failure 投影为 `failed`，任何摘要、身份、歧义对象、时间线或终态矛盾均 reject。workflow 文本、本地报告、历史 Quality run 或候选自报均不能替代当前候选证据；因此本地三项完成后该维仍为 `partial` 且不产生数值分，真实 run 未采集前不得宣称 `real_ci_consumer_binding` 完成。
+
+## P2-C candidate CodeIntel receipt
+
+`benchmark:coding-agent:v3:candidate-code-intel-receipt` 是 `candidateCodeIntelReceipt` 的唯一仓库 producer。它只读取 current-candidate aggregate 根中的 `task-manifest.json`、`benchmark-report.json`、`baseline-index.json` 与固定的 11 份既有 CodeIntel artifact，生成 `coding-agent-benchmark-candidate-code-intel-evidence-receipt/v1`，并更新同根 `candidate-dimension-evidence-reference.json`。receipt 与 reference 均以不可覆盖方式写入；已有 owner、缺失/损坏 artifact、Schema/version/SHA-256/source-harness identity 或跨层外键漂移都会失败关闭并回滚本次部分写入。
+
+固定 artifact 集合包括双平台 truth-set、Context Inspector、resource-soak、uplift aggregate/双平台 report，以及 Go comparator、Windows native 和 WSL2 OCI report。公共 loader 将其投影为 `incomplete / reject / failed / complete` 四态，并仅为 `context_retrieval` 维度的六项合同提供完成状态；Schema-valid 但底层 Gate 未通过时只能是 `failed`，不能借摘要或 fixture 自证为 `complete`。producer 不运行 CodeIntel、Gateway、模型或 Provider，也不计算 numeric score；current-candidate 边界和 source/harness identity 必须由真实 aggregate 提供，fixture 仅用于回归验证。
+
+```powershell
+corepack pnpm benchmark:coding-agent:v3:candidate-code-intel-receipt --aggregate-root <v3-aggregate-root> --generated-at <ISO-8601>
+```
 
 ## P0.14/P0.15 v3 Linux snapshot preparation 边界
 

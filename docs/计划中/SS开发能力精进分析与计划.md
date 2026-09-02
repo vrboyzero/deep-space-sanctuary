@@ -11062,6 +11062,43 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：外键攻击矩阵已证明 resolver 的最小 fail-closed 边界，剩余缺口是让真实 producer 和正式仓库 Gate 可重复地产生、发现并消费该 receipt。
 - **当前还缺的关键闭环**：唯一 producer 的实际输出接线、repository verifier/README/project-map 同步、联合回归，以及绑定未来 current-candidate 的真实 CI/连续候选证据；本环节至此暂停，不在未获新指示时继续推进。
 
+#### P2-C context_retrieval 实现结论：唯一 CodeIntel producer/仓库接线（2026-09-02）
+
+##### 已完成内容
+
+1. **`scripts/run-coding-agent-candidate-code-intel-receipt.mjs` 新建**：
+   - 提供 `benchmark:coding-agent:v3:candidate-code-intel-receipt` 唯一 current-candidate producer，严格读取 aggregate identity、`task-manifest.json`、`benchmark-report.json`、`baseline-index.json` 与固定 `11` 份既有 CodeIntel artifact；
+   - 通过公共 `candidateCodeIntelReceipt` resolver 生成 receipt 并接入 `candidate-dimension-evidence-reference.json`，以 `wx`/失败回滚保证 owner 与 reference 不可覆盖且部分写入可恢复；
+   - 不启动 CodeIntel、Gateway、模型或 Provider，不计算 numeric score；支持并传播任意正整数 uplift `attempt`，由真实 aggregate/source/harness identity 约束 current-candidate 边界。
+
+2. **`scripts/coding-agent-candidate-code-intel-receipt.mjs`、`scripts/coding-agent-candidate-code-intel-evidence-fixtures.mjs` 与 `scripts/run-coding-agent-candidate-code-intel-receipt.test.mjs` 扩展**：
+   - 导出并复用 receipt Schema version，允许合法 uplift attempt 贯穿 aggregate、platform report、pair/cell 外键；
+   - 覆盖成功消费、attempt `12`、已有 owner、缺失 artifact、resolver 失败回滚等 producer 行为；
+   - 保持 `incomplete / reject / failed / complete` 四态和六项 `context_retrieval` completion 投影，fixture 只用于回归验证，不能替代真实证据。
+
+3. **仓库合同与文档接线**：
+   - `package.json` 增加唯一 producer script；`scripts/verify-coding-agent-benchmark-contract.mjs` 增加 receipt Schema/version、producer/resolver、脚本与文档接线校验，`scripts/verify-coding-agent-benchmark-contract.test.mjs` 增加缺失接线、Schema 缺失和 version drift 负例；
+   - `benchmarks/coding-agent/README.md` 与 `docs/project-map.md` 记录固定 artifact 集合、四态边界、命令和唯一 owner，移除重复章节；
+   - 本计划文档同步回写本环节实现结论、总体目标约束、当前链路、剩余工作量和下一恢复点。
+
+4. **效果**：
+   - `context_retrieval` 现在拥有可重复、current-candidate-bound 的唯一 CodeIntel receipt producer 与仓库发现/消费接线；
+   - receipt digest、Schema、source/harness identity、selection/path/platform、Go shared runtime 与 uplift pair/task 外键均由公共 seam 验真，可信 Gate failure 只投影为 `failed`，损坏或漂移证据 fail-closed 为 `reject`；
+   - 本环节只完成证据资格链的最小接线，不扩大 CodeIntel 产品能力、不提前授予数值评分；总体核心目标优先于保留既有 P2-C 改动，后续可按闭环需要调整或提交，但不无止境扩展边界。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` exit code=`0`；
+- CodeIntel producer、fixture validation、公共 dimension seam 与联合回归共 `4` 个测试文件、`21/21` 通过；仓库 verifier 定向测试 `20/20` 通过；
+- `corepack pnpm verify:coding-benchmark` 通过，输出 `[verify:coding-benchmark] v1/v2/v3 manifests, schemas, docs, and platform gates are aligned`；`git diff --check` 通过；
+- 未运行真实 GitHub Actions CI、Gateway、CodeIntel Provider、模型或冻结 Formal；本环节 Provider calls/cost=`0/$0`，fixture 不被宣称为真实 current-candidate 证据。
+
+##### 后续计划
+
+- **下一步准备做什么**：以 `cli_tui` 作为下一恢复点，复用现有 TaskProjection/效率证据，推进该维度的 current-candidate、真实性/三态、双平台 accessibility owner 与仓库接线；同时保留 `headless_ecosystem` 真实 CI receipt 待稳定 current-candidate 提交后按授权回填。
+- **为什么先做它**：CodeIntel 的唯一 producer、仓库 verifier 和联合回归已经收口，继续增加旁支不会更接近总体目标；`cli_tui` 是当前链路中下一个未闭合的能力维度。
+- **当前还缺的关键闭环**：真实 CI 仍需绑定未来稳定候选的官方 run/API/ZIP 证据，fixture 不能替代它；后续还需完成 `cli_tui`、`git_delivery`、七维 evaluator/report、完整回归与两个连续候选。推进始终以“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 评分 → 连续候选”为核心，必要时调整既有 P2-C 改动，但不扩大边界。
+
 ## 实施计划进度表
 
 ### 前提：总体核心目标、当前推进目标与工作链路（2026-09-02）
@@ -11114,17 +11151,17 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
   -> 两个连续冻结候选最终复核
 ```
 
-当前本地推进点位于 `context_retrieval` 统一 candidate-bound CodeIntel receipt：Context Inspector producer、receipt Schema 与公共 loader 六合同 resolver 已收口，`incomplete / reject / failed / complete` 主链已由公共 seam 证明；本环节已补阻断误资格所必需的最小 artifact path/platform、selection manifest/config、Go shared runtime 与 uplift pair/task 外键代表矩阵，下一步只剩唯一 producer/仓库接线，完成即转入 `cli_tui`，不继续扩展 CodeIntel 旁支。推进以总体核心目标为准，必要时可调整既有 P2-C 实现，但不为保留既有改动或假想场景无止境扩大边界。`headless_ecosystem` 唯一剩余项仍是一份绑定未来 current-candidate commit 的真实 GitHub Actions run/API/ZIP receipt；真实 CI 现已获授权，可在形成稳定提交与执行前 Gate 后只推送 `private/main` 触发，不能由本地 fixture 代替。主要顺序为：`context_retrieval` 唯一 producer/接线收口 -> `cli_tui` -> `git_delivery` -> 数值 evaluator/report -> 完整回归 -> 两个连续候选；真实 CI 在合适检查点插入并回填。若候选运行暴露真实产品缺陷，流程应回到产品修复与重新冻结，而不是继续授分。
+当前本地推进点位于 `context_retrieval` 统一 candidate-bound CodeIntel receipt：Context Inspector producer、receipt Schema、公共 loader 六合同 resolver、最小外键攻击矩阵以及唯一 producer/仓库 verifier 接线均已收口，`incomplete / reject / failed / complete` 主链由公共 seam 和仓库 Gate 证明；本环节完成后不再扩展 CodeIntel，下一恢复点转入 `cli_tui`。推进以总体核心目标为准，必要时可调整或提交既有 P2-C 实现，以达成真实能力与可信证据闭环为优先，不为保留既有改动或假想场景无止境扩大边界。`headless_ecosystem` 唯一剩余项仍是一份绑定未来 current-candidate commit 的真实 GitHub Actions run/API/ZIP receipt；真实 CI 现已获授权，可在形成稳定提交与执行前 Gate 后只推送 `private/main` 触发，但本地 fixture 不能代替真实证据。主要顺序为：`cli_tui` -> `git_delivery` -> 数值 evaluator/report -> 完整回归 -> 两个连续候选；真实 CI 在合适检查点插入并回填。若候选运行暴露真实产品缺陷，流程应回到产品修复与重新冻结，而不是继续授分。
 
 #### 后续工作量估算
 
-**本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链和最小外键攻击矩阵已完成，剩余是唯一 producer/仓库接线；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
+**本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
 
 **风险与可行性**：本地收口可行性高，综合风险为中高。主要风险不是算法复杂度，而是 `cli_tui`/`git_delivery` 可能缺少可直接复用的 current-candidate producer、真实 CI 在 `private/main` 检查点后可能暴露平台差异，以及完整候选可能暴露新的产品缺陷；真实 CI 授权已具备，不再是授权阻塞。以下按“首轮候选不需要新增产品修复、相邻工作包共享回归”的前提估算；工程量与 CI/候选实际运行等待时间分开计算：
 
 | 剩余工作包 | 包含内容与完成边界 | 预计工程量 |
 | --- | --- | ---: |
-| `context_retrieval` 唯一 producer/仓库接线 | 将已完成的六合同 resolver 接入唯一 candidate-bound producer，补 README/project-map/repository verifier、联合回归和正式输出 | `0.5–1 人日` |
+| `context_retrieval` 唯一 producer/仓库接线 | 已完成唯一 candidate-bound producer、README/project-map/repository verifier、正式输出与联合回归；不再扩大 CodeIntel 边界 | `-` |
 | `headless_ecosystem` 真实 CI receipt 收口 | 绑定稳定 current-candidate commit，采集 GitHub Actions run/API/ZIP receipt，核对 identity/外键/终态并完成回填；本地链已完成 | `0.5–1.25 人日工程量`，另计 CI 排队/观察窗口 |
 | `cli_tui` Adapter | 复用 TaskProjection/效率证据，补跨入口终态与 TUI 双平台 accessibility owner、真实性/三态和仓库接线 | `0.75–1.5 人日` |
 | `git_delivery` Adapter | 组合 multi-repository worktree soak、review/remediation、remote authority separation 与 recovery audit；补 current-candidate identity、可信失败及负例 | `1.25–2.5 人日` |
@@ -11132,7 +11169,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | 全链最终接线与工程复核 | 固定命令、跨维度资格链联合回归、build、Schema/语法/diff Gate、README/project-map/verifier 同步与一轮轻量对抗复核 | `0.5–1 人日` |
 | 两个连续候选的组织与复核 | 冻结 identity，执行前 Gate，完成证据采集/聚合/资格/评分、失败分类和连续性对账；不含真实运行等待时间 | `1–2 人日工程量`，另计两个完整运行/观察窗口 |
 
-**更新后的常规计划基线**：约 **`5.5–9.5 人日工程量 + 两个完整候选的实际运行/观察窗口`**。其中 CodeIntel/Headless 剩余收口、`cli_tui`、`git_delivery`、评分工具链和最终复核构成主要工程量；候选组织/复核约 `1–2 人日`。表内工作包共享 producer、report/CLI 和联合回归，不能把各项上限机械相加；真实 CI 排队、Provider 费用和观察窗口不折算为人日。
+**更新后的常规计划基线**：约 **`5–8.5 人日工程量 + 两个连续候选运行/观察窗口`**。其中 `headless_ecosystem` 真实 CI 收口、`cli_tui`、`git_delivery`、评分工具链和最终复核构成主要工程量；候选组织/复核约 `1–2 人日`。CodeIntel 唯一 producer/仓库接线已从剩余量移除；表内工作包共享 producer、report/CLI 和联合回归，不能把各项上限机械相加；真实 CI 排队、Provider 费用和观察窗口不折算为人日。
 
 估算边界如下：
 
@@ -11156,4 +11193,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **`headless_ecosystem` 本地链已收口、真实 CI 已授权待稳定提交；CodeIntel 最小外键矩阵 Green** | CodeIntel receipt Schema、`11` 份 producer fixture、公共 resolver 与外键代表联合 `16/16`；六合同 complete、receipt digest/summary/selection/path/platform/shared-runtime/pair-task reject、Schema-valid Gate failed 均由公共 seam 证明；既有 P2-C 改动按总体目标保留并可调整 | `约 5.5–9.5 人日工程量 + 两个候选运行/观察窗口` | 仅补唯一 CodeIntel producer/仓库接线与联合回归，完成后立即转 `cli_tui`；稳定节点只推 `private/main` 获取真实 CI 证据，避免继续扩大 CodeIntel 边界 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **CodeIntel producer/仓库接线完成；`headless_ecosystem` 真实 CI 待稳定提交** | CodeIntel receipt Schema、`11` 份 producer fixture、公共 resolver、外键代表与唯一 producer/仓库 verifier 联合 `21/21`；六合同 complete、receipt digest/summary/selection/path/platform/shared-runtime/pair-task reject、Schema-valid Gate failed 均由公共 seam 证明；既有 P2-C 改动以总体目标为准可调整或提交 | `约 5–8.5 人日工程量 + 两个连续候选运行/观察窗口` | 下一恢复点为 `cli_tui`；真实 CI 仅在稳定 current-candidate 检查点按授权推 `private/main` 获取官方证据，fixture 不替代真实证据，不继续扩大 CodeIntel 边界 |

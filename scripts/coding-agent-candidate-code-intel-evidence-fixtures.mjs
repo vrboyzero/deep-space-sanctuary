@@ -136,7 +136,8 @@ export async function addCandidateCodeIntelEvidence(aggregateRoot, options = {})
     createResourceSoakReport("windows-native", resourceConfig, resourceConfigSha256),
     createResourceSoakReport("wsl2-linux", resourceConfig, resourceConfigSha256),
   ];
-  const uplift = createUpliftReports(aggregate);
+  const upliftAttempt = options.upliftAttempt ?? 1;
+  const uplift = createUpliftReports(aggregate, upliftAttempt);
   const go = createGoReports(goManifestSha256);
 
   const artifacts = {
@@ -258,7 +259,7 @@ export async function addCandidateCodeIntelEvidence(aggregateRoot, options = {})
       },
       agentUplift: {
         candidateId: "code-intel-semantic-live-v1",
-        attempt: 1,
+        attempt: upliftAttempt,
         taskIds: UPLIFT_TASKS.map(({ id }) => id),
         platforms: ["windows-native", "wsl2-linux"],
       },
@@ -571,7 +572,7 @@ function createResourceSoakReport(platform, config, configSha256) {
   };
 }
 
-function createUpliftReports(aggregate) {
+function createUpliftReports(aggregate, attempt) {
   const sourceIdentity = fileIdentity(["packages/belldandy-skills/src/code-intel/typescript-provider.ts"]);
   const runtimeIdentity = fileIdentity(["packages/belldandy-skills/dist/code-intel/typescript-provider.js"]);
   const platformReports = ["windows-native", "wsl2-linux"].map((platform) => ({
@@ -579,7 +580,7 @@ function createUpliftReports(aggregate) {
     generatedAt: "2026-09-02T09:04:00.000Z",
     status: "completed",
     platform,
-    attempt: 1,
+    attempt,
     candidateId: "code-intel-semantic-live-v1",
     gate: {
       id: "p1-a1-ts-js-agent-uplift-v1",
@@ -606,12 +607,12 @@ function createUpliftReports(aggregate) {
       retryCount: 0,
     },
     pairs: UPLIFT_TASKS.map((task, index) => ({
-      pairId: `${task.id}:${platform}:a1`,
+      pairId: `${task.id}:${platform}:a${attempt}`,
       taskId: task.id,
       repositoryId: task.repositoryId,
       executionProfile: task.executionProfile,
-      baseline: createUpliftCell("baseline", task, platform, index, aggregate),
-      candidate: createUpliftCell("candidate", task, platform, index, aggregate),
+      baseline: createUpliftCell("baseline", task, platform, index, aggregate, attempt),
+      candidate: createUpliftCell("candidate", task, platform, index, aggregate, attempt),
     })),
     blockingFailures: [],
   }));
@@ -622,7 +623,7 @@ function createUpliftReports(aggregate) {
       schemaVersion: "code-intel-agent-uplift-report/v1",
       generatedAt: "2026-09-02T09:05:00.000Z",
       status: "passed",
-      attempt: 1,
+      attempt,
       candidateId: "code-intel-semantic-live-v1",
       authorization: {
         provider: "fixture-provider",
@@ -658,7 +659,7 @@ function createUpliftReports(aggregate) {
   };
 }
 
-function createUpliftCell(variant, task, platform, index, aggregate) {
+function createUpliftCell(variant, task, platform, index, aggregate, attempt) {
   const baseline = variant === "baseline";
   const artifactBase = `candidate-evidence/code-intel/uplift/${platform}/${task.id.replaceAll(".", "-")}/${variant}`;
   const source = aggregate.source;
@@ -675,10 +676,10 @@ function createUpliftCell(variant, task, platform, index, aggregate) {
     sha256: digestForPath(`${artifactBase}/${file}`),
   }]));
   return {
-    cellId: `${task.id}:${platform}:a1:${variant}`,
+    cellId: `${task.id}:${platform}:a${attempt}:${variant}`,
     variant,
     taskId: task.id,
-    runId: `${task.id.replaceAll(".", "-")}-${platform}-a1-${variant}`,
+    runId: `${task.id.replaceAll(".", "-")}-${platform}-a${attempt}-${variant}`,
     status: "passed",
     failureCategory: null,
     identity: {

@@ -87,11 +87,15 @@ import {
 import {
   CODING_AGENT_CANDIDATE_CODING_RUN_CLIENT_EVIDENCE_RECEIPT_VERSION,
   CODING_AGENT_CANDIDATE_CODING_RUN_CLIENT_CI_EVIDENCE_RECEIPT_VERSION,
+  CODING_AGENT_CANDIDATE_CODE_INTEL_EVIDENCE_RECEIPT_VERSION,
   CODING_AGENT_CANDIDATE_DIMENSION_EVIDENCE_REFERENCE_VERSION,
   CODING_AGENT_CANDIDATE_DIMENSION_MAPPING_VERSION,
   CODING_AGENT_CANDIDATE_SUPERVISOR_EVIDENCE_RECEIPT_VERSION,
   CODING_AGENT_CANDIDATE_VERIFICATION_EVIDENCE_RECEIPT_VERSION,
 } from "./coding-agent-candidate-score.mjs";
+import {
+  CODING_AGENT_CANDIDATE_CODE_INTEL_RECEIPT_VERSION,
+} from "./coding-agent-candidate-code-intel-receipt.mjs";
 import { CODING_RUN_CLIENT_CI_LANE_EVIDENCE_VERSION } from "./run-coding-run-client-ci-lane-receipt.mjs";
 import { resolveCodingCiProfile } from "./run-coding-agent-ci.mjs";
 
@@ -216,6 +220,9 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   const candidateCodingRunClientCiEvidenceReceiptV3Schema = await readJson(
     "benchmarks/coding-agent/v3/candidate-coding-run-client-ci-evidence-receipt.schema.json",
   );
+  const candidateCodeIntelEvidenceReceiptV3Schema = await readJson(
+    "benchmarks/coding-agent/v3/candidate-code-intel-evidence-receipt.schema.json",
+  );
   const codingRunClientCiLaneEvidenceV3Schema = await readJson(
     "benchmarks/coding-agent/v3/coding-run-client-ci-lane-evidence.schema.json",
   );
@@ -327,6 +334,8 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   await readText("scripts/run-coding-agent-candidate-global-receipt.mjs");
   await readText("scripts/run-coding-agent-candidate-qualification.mjs");
   await readText("scripts/run-coding-run-client-ci-lane-receipt.mjs");
+  await readText("scripts/coding-agent-candidate-code-intel-receipt.mjs");
+  await readText("scripts/run-coding-agent-candidate-code-intel-receipt.mjs");
   const projectMap = await readText("docs/project-map.md");
   const qualityGates = await readText(".github/workflows/quality-gates.yml");
 
@@ -493,6 +502,11 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   );
   validateSchema(
     failures,
+    "v3 candidate CodeIntel evidence receipt",
+    candidateCodeIntelEvidenceReceiptV3Schema,
+  );
+  validateSchema(
+    failures,
     "v3 coding-run client CI lane evidence",
     codingRunClientCiLaneEvidenceV3Schema,
   );
@@ -603,6 +617,14 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     !== CODING_AGENT_CANDIDATE_CODING_RUN_CLIENT_CI_EVIDENCE_RECEIPT_VERSION) {
     failures.push(
       "v3 candidate coding-run client CI evidence receipt Schema version drifted from the score loader contract.",
+    );
+  }
+  if (candidateCodeIntelEvidenceReceiptV3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_CANDIDATE_CODE_INTEL_RECEIPT_VERSION
+    || CODING_AGENT_CANDIDATE_CODE_INTEL_RECEIPT_VERSION
+      !== CODING_AGENT_CANDIDATE_CODE_INTEL_EVIDENCE_RECEIPT_VERSION) {
+    failures.push(
+      "v3 candidate CodeIntel receipt Schema version drifted from the producer and score loader contracts.",
     );
   }
   if (codingRunClientCiLaneEvidenceV3Schema?.properties?.schemaVersion?.const
@@ -764,6 +786,10 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   if (packageJson?.scripts?.["benchmark:coding-agent:v3:candidate-qualification"]
     !== "node --import tsx scripts/run-coding-agent-candidate-qualification.mjs") {
     failures.push("package.json must expose benchmark:coding-agent:v3:candidate-qualification.");
+  }
+  if (packageJson?.scripts?.["benchmark:coding-agent:v3:candidate-code-intel-receipt"]
+    !== "node --import tsx scripts/run-coding-agent-candidate-code-intel-receipt.mjs") {
+    failures.push("package.json must expose benchmark:coding-agent:v3:candidate-code-intel-receipt.");
   }
   if (packageJson?.scripts?.["verify:coding-run-client"]
     !== EXPECTED_CODING_RUN_CLIENT_AUDIT_SCRIPT) {
@@ -1005,6 +1031,14 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "coding-agent-benchmark-candidate-coding-run-client-evidence-receipt/v1",
     "coding-agent-benchmark-candidate-coding-run-client-ci-evidence-receipt/v1",
     "coding-agent-benchmark-coding-run-client-ci-lane-evidence/v1",
+    "benchmark:coding-agent:v3:candidate-code-intel-receipt",
+    "coding-agent-benchmark-candidate-code-intel-evidence-receipt/v1",
+    "candidate-code-intel-evidence-receipt.schema.json",
+    "context_retrieval",
+    "incomplete / reject / failed / complete",
+    "current-candidate",
+    "不运行 CodeIntel、Gateway、模型或 Provider",
+    "不计算 numeric score",
     "headless_ecosystem",
     "external_consumer_pair_lifecycle",
     "protocol_version_conformance",
@@ -1116,6 +1150,10 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "benchmarks/coding-agent/v3/coding-run-client-ci-lane-evidence.schema.json",
     "scripts/run-coding-run-client-ci-lane-receipt.mjs",
     "candidateCodingRunClientReceipt",
+    "scripts/coding-agent-candidate-code-intel-receipt.mjs",
+    "scripts/run-coding-agent-candidate-code-intel-receipt.mjs",
+    "benchmarks/coding-agent/v3/candidate-code-intel-evidence-receipt.schema.json",
+    "candidateCodeIntelReceipt",
     "scripts/verify-coding-agent-benchmark-contract.mjs",
   ]) {
     if (!projectMap.includes(requiredPath)) {

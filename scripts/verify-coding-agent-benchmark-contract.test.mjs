@@ -523,6 +523,72 @@ describe("coding agent benchmark repository contract", () => {
     }
   });
 
+  it("fails closed when the candidate CodeIntel receipt Schema is absent", async () => {
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-code-intel-schema-"));
+    try {
+      const failures = await collectCodingAgentBenchmarkContractFailures({ workspaceRoot: fixtureRoot });
+      expect(failures).toEqual(expect.arrayContaining([
+        expect.stringMatching(/v3\/candidate-code-intel-evidence-receipt\.schema\.json is missing/i),
+      ]));
+    } finally {
+      await fs.rm(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when candidate CodeIntel producer repository wiring is absent", async () => {
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-code-intel-wiring-"));
+    try {
+      await fs.mkdir(path.join(fixtureRoot, "benchmarks", "coding-agent"), { recursive: true });
+      await fs.mkdir(path.join(fixtureRoot, "docs"), { recursive: true });
+      await fs.writeFile(path.join(fixtureRoot, "package.json"), JSON.stringify({ scripts: {} }), "utf-8");
+      await fs.writeFile(path.join(fixtureRoot, "benchmarks", "coding-agent", "README.md"), "", "utf-8");
+      await fs.writeFile(path.join(fixtureRoot, "docs", "project-map.md"), "", "utf-8");
+
+      const failures = await collectCodingAgentBenchmarkContractFailures({ workspaceRoot: fixtureRoot });
+      expect(failures).toEqual(expect.arrayContaining([
+        expect.stringMatching(/scripts\/coding-agent-candidate-code-intel-receipt\.mjs is missing/i),
+        expect.stringMatching(/scripts\/run-coding-agent-candidate-code-intel-receipt\.mjs is missing/i),
+        "package.json must expose benchmark:coding-agent:v3:candidate-code-intel-receipt.",
+        "coding benchmark README must document benchmark:coding-agent:v3:candidate-code-intel-receipt.",
+        "coding benchmark README must document coding-agent-benchmark-candidate-code-intel-evidence-receipt/v1.",
+        "docs/project-map.md must describe scripts/run-coding-agent-candidate-code-intel-receipt.mjs.",
+        "docs/project-map.md must describe candidateCodeIntelReceipt.",
+      ]));
+    } finally {
+      await fs.rm(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when the candidate CodeIntel receipt Schema version drifts", async () => {
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-code-intel-version-"));
+    const schemaPath = path.join(
+      fixtureRoot,
+      "benchmarks",
+      "coding-agent",
+      "v3",
+      "candidate-code-intel-evidence-receipt.schema.json",
+    );
+    try {
+      const schema = JSON.parse(await fs.readFile(path.join(
+        workspaceRoot,
+        "benchmarks",
+        "coding-agent",
+        "v3",
+        "candidate-code-intel-evidence-receipt.schema.json",
+      ), "utf-8"));
+      schema.properties.schemaVersion.const = "coding-agent-benchmark-candidate-code-intel-evidence-receipt/drifted";
+      await fs.mkdir(path.dirname(schemaPath), { recursive: true });
+      await fs.writeFile(schemaPath, JSON.stringify(schema), "utf-8");
+
+      const failures = await collectCodingAgentBenchmarkContractFailures({ workspaceRoot: fixtureRoot });
+      expect(failures).toEqual(expect.arrayContaining([
+        "v3 candidate CodeIntel receipt Schema version drifted from the producer and score loader contracts.",
+      ]));
+    } finally {
+      await fs.rm(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when candidate Verification repository wiring is absent", async () => {
     const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-verification-wiring-"));
     try {

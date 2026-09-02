@@ -7,8 +7,9 @@ import { compileOutputSchema } from "../packages/belldandy-core/src/cli/shared/o
 
 const MAX_RECEIPT_BYTES = 4 * 1024 * 1024;
 const MAX_ARTIFACT_BYTES = 16 * 1024 * 1024;
-const RECEIPT_SCHEMA_VERSION =
+export const CODING_AGENT_CANDIDATE_CODE_INTEL_RECEIPT_VERSION =
   "coding-agent-benchmark-candidate-code-intel-evidence-receipt/v1";
+const RECEIPT_SCHEMA_VERSION = CODING_AGENT_CANDIDATE_CODE_INTEL_RECEIPT_VERSION;
 const WORKSPACE_ROOT = path.resolve(import.meta.dirname, "..");
 
 const RECEIPT_SCHEMA_PATH = path.join(
@@ -367,7 +368,8 @@ function requireReceiptSelections(receiptArtifact) {
     || selection.resourceSoak.id !== "p1-a1-typescript-provider-resource-soak-v1"
     || JSON.stringify(selection.resourceSoak.platforms) !== JSON.stringify(EXPECTED_PLATFORMS)
     || selection.agentUplift.candidateId !== "code-intel-semantic-live-v1"
-    || selection.agentUplift.attempt !== 1
+    || !Number.isInteger(selection.agentUplift.attempt)
+    || selection.agentUplift.attempt < 1
     || JSON.stringify(selection.agentUplift.platforms) !== JSON.stringify(EXPECTED_PLATFORMS)
     || JSON.stringify(selection.agentUplift.taskIds)
       !== JSON.stringify(EXPECTED_UPLIFT_TASKS.map(({ id }) => id))
@@ -450,6 +452,7 @@ function requireUpliftCrossReportBindings(input) {
         pair: report.pairs[taskIndex],
         task: EXPECTED_UPLIFT_TASKS[taskIndex],
         platform,
+        attempt: selection.attempt,
         expectedAggregateBinding: input.expectedAggregateBinding,
       });
     }
@@ -464,6 +467,7 @@ function requireUpliftCrossReportBindings(input) {
       pair: input.aggregate.pairs[index],
       task: EXPECTED_UPLIFT_TASKS[index % EXPECTED_UPLIFT_TASKS.length],
       platform: EXPECTED_PLATFORMS[Math.floor(index / EXPECTED_UPLIFT_TASKS.length)],
+      attempt: selection.attempt,
       expectedAggregateBinding: input.expectedAggregateBinding,
     });
   }
@@ -479,8 +483,11 @@ function requireUpliftCrossReportBindings(input) {
 function requireUpliftPairBinding(input) {
   const pair = input.pair;
   const task = input.task;
+  const attempt = input.attempt;
   if (!pair
-    || pair.pairId !== `${task.id}:${input.platform}:a1`
+    || !Number.isInteger(attempt)
+    || attempt < 1
+    || pair.pairId !== `${task.id}:${input.platform}:a${attempt}`
     || pair.taskId !== task.id
     || pair.repositoryId !== task.repositoryId
     || pair.executionProfile !== task.executionProfile
@@ -493,7 +500,7 @@ function requireUpliftPairBinding(input) {
       throw rejection("CodeIntel uplift pair/task/platform identity drifted");
     }
     if (cell.taskId !== task.id
-      || cell.cellId !== `${task.id}:${input.platform}:a1:${cell.variant}`
+      || cell.cellId !== `${task.id}:${input.platform}:a${attempt}:${cell.variant}`
       || cell.identity?.executionProfile !== task.executionProfile
       || JSON.stringify(cell.identity?.source)
         !== JSON.stringify(input.expectedAggregateBinding.source)
@@ -743,6 +750,7 @@ function resolveUplift(input) {
         pair,
         EXPECTED_UPLIFT_TASKS[pairIndex],
         expectedPlatform,
+        receipt.selection.agentUplift.attempt,
         input.expectedAggregateBinding,
       ));
   });
@@ -753,7 +761,13 @@ function resolveUplift(input) {
     && aggregate.pairs.every((pair, index) => {
       const platform = EXPECTED_PLATFORMS[Math.floor(index / 4)];
       const task = EXPECTED_UPLIFT_TASKS[index % 4];
-      return isUpliftPairValid(pair, task, platform, input.expectedAggregateBinding);
+      return isUpliftPairValid(
+        pair,
+        task,
+        platform,
+        receipt.selection.agentUplift.attempt,
+        input.expectedAggregateBinding,
+      );
     })
     && aggregate.platforms?.windowsNative?.reportSha256 === input.platformReports[0].sha256
     && aggregate.platforms?.wsl2Linux?.reportSha256 === input.platformReports[1].sha256;
@@ -784,16 +798,16 @@ function resolveUplift(input) {
   return { semanticAdoption, noBinaryFallback };
 }
 
-function isUpliftPairValid(pair, task, platform, expectedAggregateBinding) {
+function isUpliftPairValid(pair, task, platform, attempt, expectedAggregateBinding) {
   if (!pair || pair.taskId !== task.id
     || pair.repositoryId !== task.repositoryId
     || pair.executionProfile !== task.executionProfile
     || !pair.baseline || !pair.candidate) return false;
-  const expectedPairId = `${task.id}:${platform}:a1`;
+  const expectedPairId = `${task.id}:${platform}:a${attempt}`;
   if (pair.pairId !== expectedPairId) return false;
   return [pair.baseline, pair.candidate].every((cell) => {
     return cell.taskId === task.id
-      && cell.cellId.startsWith(`${task.id}:${platform}:a1:`)
+      && cell.cellId.startsWith(`${task.id}:${platform}:a${attempt}:`)
       && cell.identity?.source
       && cell.identity?.harness
       && JSON.stringify(cell.identity.source) === JSON.stringify(expectedAggregateBinding.source)
