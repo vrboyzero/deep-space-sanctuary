@@ -11577,6 +11577,46 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：当前 `e05ddc4` 的 candidate artifact 已绑定旧 runner 且包含未完成的 retry provenance；必须先冻结新 source/harness identity，才能让 retry、aggregate、CLI/TUI、Git delivery 与 private CI 指向同一份字节。
 - **当前还缺的关键闭环**：新 stable identity 的完整 `144/144` 双平台 aggregate、retry 选择与费用复算、绿色 private CI official API/ZIP receipt、CLI/TUI/Git delivery complete receipt、完整 qualification/七维原始加权，以及第二个连续候选。
 
+#### P2-C current-candidate 重采实现结论：`df54f67` 双平台 staging 与 canary（2026-09-03）
+
+##### 已完成内容
+
+1. **稳定提交与双平台候选环境冻结**：
+   - `df54f672124610217677e1d4e149e6b741a1cb8a`（`fix(benchmark): preserve infrastructure retry provenance`）已从本地 `main` 仅推送到 `private/main`，`origin/main` 未触碰；
+   - Windows `.tmp/p2c-candidate-df54f67-harness` 与 WSL2 `/var/tmp/star-sanctuary-p2c-candidate-df54f67` 均由同一提交 clean 构建；两端 identity 均为 lockfile=`844c0021…`、canonical worktree=`505219ab…`；
+   - Windows/WSL2 各自使用原生离线依赖完成完整 build，各生成 `4` 个 repository receipt 与 `8` 个通过的 B 层 task preflight；WSL2 preparation=`ready 4/4`，未复用 Windows `node_modules`。
+
+2. **双平台 native dependency lifecycle 诊断与环境修复**：
+   - 首次新 identity canary 在 Provider 前以 `gateway_exited_before_readiness` 失败，原始 `gateway-readiness.json`、stdout/stderr 与 state 根保留；Provider calls/cost=`0/$0`，未生成 benchmark report，未进入产品分母；
+   - 根因是 detached Windows harness 以 `--ignore-scripts` 安装后缺失 `better-sqlite3` 的 `node-v127-win32-x64` native binding，Gateway 在 `MemoryStore` 初始化时退出；
+   - 仅对仓库 `onlyBuiltDependencies` 允许的 package 执行离线 package-level pending rebuild；Windows SQLite smoke 返回 `1`，随后独立无凭据 Gateway readiness smoke=`0`；
+   - WSL2 在 Provider 前主动发现并补齐同类 `better-sqlite3` 与 `node-pty` Linux binding，SQLite/PTY/esbuild smoke 分别返回 `1`、`"ok"`、`0.25.12`；两端均未修改产品源码或 source identity。
+
+3. **`df54f67` 双平台 canary 新建并冻结**：
+   - Windows/WSL2 正式 report 分别位于 `artifacts/p2c-df54f67/candidate-1/formal/<platform>/startup-recovery-r1/a1/tests-failed-diagnosis`；Windows 正式采集与首次 readiness 失败使用不同根，旧证据未覆盖；
+   - 两端 `tests.failed-diagnosis` 均为 attempt=`1`、`infrastructureRetries=0`、status=`passed`，机器 evaluator 的 task/tests/regression 均为 `true/true/0`；未发生 infrastructure retry；
+   - Windows usage=`16666/1602` tokens、cost=`$0.00104119`；WSL2 usage=`14947/1348` tokens、cost=`$0.00077850`；当前候选合计 cost=`$0.00181969`；
+   - 全周期 observed=`$2.27944879`、reserved unknown=`$1.44221000`，费用 guard 上界=`29.77327032 RMB`，下一单最坏上界=`30.57327032 RMB < 80 RMB`。
+
+4. **效果**：
+   - 新 stable identity 已完成从 clean checkout、双平台原生依赖、repository inputs 到 Windows/WSL2 真实 canary 的端到端闭环；
+   - 环境启动失败与正式 benchmark 结果保持物理隔离，未把 Provider 前失败误写成产品或 infrastructure retry 样本；
+   - 双平台 canary 证明 retry provenance 修复后的默认 `0` 路径可运行，但尚未形成 `144/144` aggregate 或候选资格结论。
+
+##### 验证结果
+
+- TypeScript 编译无错误：Windows 与 WSL2 新 harness 的完整 `corepack pnpm build` 均通过；
+- 本轮提交前相关定向测试 `198/198`、完整 Vitest `6370/6370` 个执行测试通过（另 `3` 个跳过），双平台 repository preflight=`8/8 + 8/8`；
+- Windows/WSL2 native binding smoke、Windows 无凭据 Gateway readiness smoke及双平台 `tests.failed-diagnosis` 正式 canary 均通过；两份 report 的 source/harness identity、usage 与 `infrastructureRetries=0` 已复算；
+- 端口 `28891/28892` 已释放，未发现本任务 Gateway/runner/OCI container 残留；本轮生成的 `8` 个候选 runtime `.env/.env.local` 已逐一校验 containment、常规文件、非 reparse point 与 SHA-256 后送入 Windows 回收站，cleanup log=`artifacts/cleanup/p2c-df54f67-canary-env-2026-09-03.json`、SHA-256=`cf3a362232edd02e0eedf714d067b44aeaadc5e8ac8a1bae7cd5f750cdc27459`，仓库根 `.env.local` 保留；
+- 收费前 guard：下一单最坏上界=`30.57327032 RMB < 80 RMB`，单 run 上限仍为 `$0.10`，模型固定 `deepseek-v4-flash`，Provider retry=`0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：恢复时继续使用已冻结的 `df54f67` detached harness，从 attempt 1 尚未采集的任务开始按 `infrastructureRetries=0` 推进 Windows/WSL2 三轮矩阵；只有同 identity 的真实 `infrastructure_error` 才使用一次显式 `1` 重试，并在 `144/144` 后统一 aggregate。
+- **为什么先做它**：双平台 canary 已证明 native dependency、Gateway 路由、Provider、evaluator 与费用链可用；沿同一 identity 继续剩余 logical attempts 才能避免因文档提交制造新的候选分叉，并最短闭合完整矩阵。
+- **当前还缺的关键闭环**：完整双平台 `144/144` aggregate、可能的唯一 infrastructure retry 选择、CLI/TUI/Git delivery/private CI receipt、qualification/七维原始加权，以及第二个连续候选。
+
 #### 后续工作量估算
 
 **本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；CLI/TUI 双平台首帧与退出收敛也已修复并通过真实 PTY 验证；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
@@ -11617,4 +11657,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **candidate bootstrap、本地原生 collector/可恢复 runner、同 identity Linux staging、CodeIntel、`cli_tui`、`git_delivery` receipt/仓库接线、七维 evaluator/report、双平台 TUI 首帧与 WSL recovery 修复、v2 recovery fixture、CodeIntel canonical LF/frozen-input 边界及 infrastructure retry provenance 已完成；本地定向与完整回归全绿，并由本实现结论所在稳定提交冻结，候选重采待启动** | `e05ddc4…` Windows candidate-1 已处理 `37/72`：`26 passed`、`10 failed/product_workflow`、`1 infrastructure_error`；新增候选 cost=`$0.02110179`，全周期 observed=`$2.27762910`、reserved=`$1.44221000`；双平台新 staging/preflight、`198/198` 本地定向回归、完整 Vitest `984` 文件与 `6370` 测试通过（另 `2` 文件、`3` 测试跳过）；private CI dependency audit=`findings_present`、full-test=`EPIPE`、Docker=`cancelled`，未形成绿色 receipt 或新 aggregate/资格 artifact | `1.75–3.5 人日剩余基线 + 两个连续候选运行/观察窗口` | 下一恢复点：以本实现结论所在 stable identity 重建双平台 staging/Gate，从 `infrastructureRetries=0` 重新采集；只有同 identity infrastructure failure 才以 `1` 重试，随后回填 aggregate、CLI/TUI、Git delivery 与 private CI artifact，并仅推进 `private/main` 私有交付链 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **candidate bootstrap、本地原生 collector/可恢复 runner、同 identity Linux staging、CodeIntel、`cli_tui`、`git_delivery` receipt/仓库接线、七维 evaluator/report、双平台 TUI 首帧与 WSL recovery 修复、v2 recovery fixture、CodeIntel canonical LF/frozen-input 边界及 infrastructure retry provenance 已完成；`df54f67…` 已仅推送 `private/main`，双平台 staging/Gate 与 `tests.failed-diagnosis` canary 已完成** | `df54f67…` Windows/WSL2 identity=`505219ab…`、各 `4` receipt/`8` preflight、完整 build 通过；Windows 首次 readiness 失败定位为缺失 `better-sqlite3` binding，Provider cost=`$0`，双平台 native lifecycle 修复后 attempt 1 均 `passed`、`infrastructureRetries=0`，Windows/WSL2 cost=`$0.00104119/$0.00077850`；全周期 observed=`$2.27944879`、reserved=`$1.44221000`、下一单最坏上界=`30.57327032 RMB`；8 个 runtime env 已回收，旧 `e05ddc4…` artifact 保留，尚无新 aggregate/资格 artifact | `1.75–3.5 人日剩余基线 + 两个连续候选运行/观察窗口` | 下一恢复点：继续冻结的 `df54f67` 双平台 attempt 1 剩余任务与后续 attempts，默认 `infrastructureRetries=0`；只有真实 infrastructure failure 才显式以 `1` 重试，完成 `144/144` 后回填 aggregate、CLI/TUI、Git delivery 与 private CI artifact |
