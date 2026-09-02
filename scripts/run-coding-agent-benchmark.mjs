@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
+import { readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -481,6 +482,7 @@ export async function runStage0BTask(input, dependencies = {}) {
         ...(input.shadowCandidateId ? { shadowCandidateId: input.shadowCandidateId } : {}),
         taskId: task.id,
         manifestRevision: input.manifestRevision ?? "v1",
+        runtimePlatform: input.runtimePlatform,
         sourceRoot: input.sourceRoot ?? workspaceRoot,
         bddEntry,
         cancelOnRunStart: isCancellationTask,
@@ -1032,7 +1034,7 @@ async function executeRecoveryCodingCiProcess(input) {
     "coding-run",
     "trace.js",
   )).href);
-  const target = resolveGatewayTarget(input.childEnv);
+  const target = resolveRecoveryGatewayTarget(input.childEnv, input.runtimePlatform);
   const proxy = await startGatewayDisconnectProxy({
     upstreamHost: target.host,
     upstreamPort: target.port,
@@ -1395,16 +1397,42 @@ function roundCostUsd(value) {
   return Number(value.toFixed(8));
 }
 
-function resolveGatewayTarget(childEnv) {
+export function resolveRecoveryGatewayTarget(childEnv, runtimePlatform, dependencies = {}) {
   const host = String(childEnv?.BELLDANDY_HOST ?? process.env.BELLDANDY_HOST ?? "127.0.0.1").trim();
   const port = Number(childEnv?.BELLDANDY_PORT ?? process.env.BELLDANDY_PORT ?? 28889);
-  if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1") {
-    throw new Error("Recovery benchmark Gateway must use a loopback host.");
+  const loopback = host === "127.0.0.1" || host === "localhost" || host === "::1";
+  const wsl2DefaultGateway = runtimePlatform?.id === "wsl2-linux"
+    ? resolveWsl2DefaultGateway(dependencies)
+    : null;
+  if (!loopback && host !== wsl2DefaultGateway) {
+    throw new Error("Recovery benchmark Gateway must use loopback or the exact WSL2 default Gateway.");
   }
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
     throw new Error("Recovery benchmark Gateway port is invalid.");
   }
   return { host, port };
+}
+
+function resolveWsl2DefaultGateway(dependencies = {}) {
+  const release = String((dependencies.release ?? os.release)());
+  if (!/microsoft.*wsl2/i.test(release)) return null;
+
+  let route;
+  try {
+    route = String((dependencies.readRoute ?? (() => readFileSync("/proc/net/route", "utf-8")))());
+  } catch {
+    return null;
+  }
+  for (const line of route.split(/\r?\n/).slice(1)) {
+    const fields = line.trim().split(/\s+/);
+    if (fields.length < 4 || fields[1] !== "00000000" || !/^[0-9A-Fa-f]{8}$/.test(fields[2])) continue;
+    const flags = Number.parseInt(fields[3], 16);
+    if (!Number.isFinite(flags) || (flags & 0x3) !== 0x3) continue;
+    const bytes = fields[2].match(/../g)?.map((value) => Number.parseInt(value, 16)).reverse();
+    if (!bytes || bytes.some((value) => !Number.isInteger(value))) continue;
+    return bytes.join(".");
+  }
+  return null;
 }
 
 function createRunId(taskId, platform, attempt) {

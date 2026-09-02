@@ -24,6 +24,7 @@ import {
   resolveBenchmarkCliSourceRoot,
   resolveGatewayWorkspacePath,
   resolveBenchmarkRuntimePlatform,
+  resolveRecoveryGatewayTarget,
   resolveBenchmarkShadowCandidate,
   runStage0BSuite,
 } from "./run-coding-agent-benchmark.mjs";
@@ -49,6 +50,37 @@ afterEach(async () => {
 });
 
 describe("coding agent benchmark stage 0B runner", () => {
+  it("allows recovery through only the exact WSL2 default Gateway", () => {
+    const route = [
+      "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask",
+      "eth0\t00000000\t01801BAC\t0003\t0\t0\t0\t00000000",
+    ].join("\n");
+    const dependencies = {
+      release: () => "6.6.87.2-microsoft-standard-WSL2",
+      readRoute: () => route,
+    };
+
+    expect(resolveRecoveryGatewayTarget({
+      BELLDANDY_HOST: "127.0.0.1",
+      BELLDANDY_PORT: "28891",
+    }, { id: "windows-native" }, dependencies)).toEqual({ host: "127.0.0.1", port: 28891 });
+    expect(resolveRecoveryGatewayTarget({
+      BELLDANDY_HOST: "172.27.128.1",
+      BELLDANDY_PORT: "28891",
+    }, { id: "wsl2-linux" }, dependencies)).toEqual({ host: "172.27.128.1", port: 28891 });
+    expect(() => resolveRecoveryGatewayTarget({
+      BELLDANDY_HOST: "172.27.128.2",
+      BELLDANDY_PORT: "28891",
+    }, { id: "wsl2-linux" }, dependencies)).toThrow(/loopback or the exact WSL2 default Gateway/i);
+    expect(() => resolveRecoveryGatewayTarget({
+      BELLDANDY_HOST: "172.27.128.1",
+      BELLDANDY_PORT: "28891",
+    }, { id: "wsl2-linux" }, {
+      ...dependencies,
+      release: () => "6.6.87.2-generic",
+    })).toThrow(/loopback or the exact WSL2 default Gateway/i);
+  });
+
   it("allows WSL2 v2/v3 cold dist imports without weakening Windows or v1 timeouts", () => {
     expect(resolveGatewayProcessRestartTimeoutMs("v2", "linux")).toBe(60_000);
     expect(resolveGatewayProcessRestartTimeoutMs("v3", "linux")).toBe(60_000);

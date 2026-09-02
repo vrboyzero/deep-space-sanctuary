@@ -11374,6 +11374,42 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：所有正式 artifact 都以不可覆盖方式绑定 commit、lockfile 与 worktree content；先冻结稳定 identity 才能确保本地原生报告、远端 CI 和 qualification 指向同一候选，避免把本轮诊断 staging 或 fixture 误用为正式证据。
 - **当前还缺的关键闭环**：稳定 current-candidate identity、真实 `144/144` aggregate、CLI/TUI/Git delivery complete receipt、`headless_ecosystem` private CI receipt、完整七维 evidence/资格/原始加权，以及两个连续候选全部 hard Gate 通过。
 
+#### P2-C WSL Formal 修复实现结论：recovery 默认网关安全闭环（2026-09-02）
+
+##### 已完成内容
+
+1. **`scripts/run-coding-agent-benchmark.mjs` 修改**：
+   - 将已经过平台指纹核对的 `runtimePlatform` 传入 recovery owner，不再丢失 WSL2 执行上下文；
+   - 保持 Windows/Linux loopback 原合同，仅在 runtime=`wsl2-linux`、kernel release 为 WSL2、`/proc/net/route` 存在带 gateway flag 的默认路由且目标 IPv4 精确相等时允许 NAT Windows host；
+   - route 缺失、格式异常、非 WSL2 kernel、同网段其他地址或非法端口继续在 fault proxy 和 Provider 调用前失败关闭。
+
+2. **`scripts/run-coding-agent-benchmark.test.mjs` 扩展**：
+   - 新增 loopback 兼容、精确 WSL2 默认网关通过、邻接地址拒绝和非 WSL2 拒绝回归；
+   - 先确认 Red=`resolveRecoveryGatewayTarget is not a function`，再由最小实现转为 Green。
+
+3. **`benchmarks/coding-agent/README.md` 与 `docs/project-map.md` 修改**：
+   - 登记 NAT networking 下 recovery 的精确默认网关边界；
+   - 明确 fault proxy 的安全校验仍由 benchmark runner 持有，未把任意 LAN/WLAN 或同网段地址加入白名单。
+
+4. **效果**：
+   - WSL2 runner 可以在 NAT 模式连接 Windows-host Gateway 并进入真实断连/续读 owner，不再与 loopback-only 条件形成不可满足合同；
+   - 安全边界由宽泛“非 loopback”收敛为可从本机 kernel route 独立复算的单一地址；
+   - `378a70e` 下已生成的 Windows `72` 项与 WSL2 `7` 项降为诊断候选，因本次 source/harness 变更不得进入下一稳定 identity 的 aggregate。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build:incremental` exit code=`0`；
+- benchmark runner 与 WSL launcher 两文件回归 `49/49` 通过，含真实 Gateway disconnect/reconnect、cursor continuation 与 process restart 集成；新增用例经历 `1 failed` Red 后转为 `1 passed` Green；
+- Ubuntu-22.04 真实调用从 kernel release 与 `/proc/net/route` 解析并接受 `{host: 172.27.128.1, port: 28891}`；Windows 受控 Gateway 探针确认同一 NAT 环境 `127.0.0.1=ECONNREFUSED`、默认网关连接成功；
+- `node --check scripts/run-coding-agent-benchmark.mjs` 与 `git diff --check` 通过，仅保留既有 LF/CRLF 提示；
+- 诊断候选累计 Provider reported cost=`$0.06083007`，全周期 observed=`$2.25652731`、reserved unknown=`$1.24221`，当前最坏费用上界约 `27.99 RMB < 80 RMB`；原始报告与 Provider 前 infrastructure failure 均保留，未覆盖、未移出历史证据。
+
+##### 后续计划
+
+- **下一步准备做什么**：完成 repository verifier 与 diff 复核，创建并仅推送 `private/main` 的新稳定提交；随后从该提交重建 Windows/WSL2 clean harness、原生依赖和 repository inputs，从零生成同 identity `144/144` aggregate。
+- **为什么先做它**：recovery 修复改变了 benchmark harness identity；所有旧 `378a70e` 报告都不能与新代码混合，必须先冻结提交再采集 CLI/TUI、Git delivery 和 private CI artifact。
+- **当前还缺的关键闭环**：新 stable identity 的双平台完整矩阵与 aggregate、CLI/TUI/Git delivery complete receipt、绑定新 private CI run 的 official API/ZIP receipt、资格/七维评分，以及第二个连续候选。
+
 #### 后续工作量估算
 
 **本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；CLI/TUI 双平台首帧与退出收敛也已修复并通过真实 PTY 验证；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
@@ -11414,4 +11450,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **candidate bootstrap、本地原生 collector/可恢复 runner、同 identity Linux staging、CodeIntel、`cli_tui`、`git_delivery` receipt/仓库接线、七维 evaluator/report 与双平台 TUI 首帧修复完成；真实候选证据待闭合** | local runner `16/16`、candidate 全组 `173/173`、增量构建、Windows/WSL2 Git audit 各 `71/71`、repository verifier `22/22` 与实际 verifier 均通过；正式 `complete` artifact 与 private CI 尚未采集 | `1.75–3.5 人日剩余基线 + 两个连续候选运行/观察窗口` | 下一恢复点：审定范围并冻结 stable identity，生成真实 `144/144` aggregate，回填 CLI/TUI、Git delivery 与 private CI，运行资格/评分复算并组织两个连续候选 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **candidate bootstrap、本地原生 collector/可恢复 runner、同 identity Linux staging、CodeIntel、`cli_tui`、`git_delivery` receipt/仓库接线、七维 evaluator/report、双平台 TUI 首帧与 WSL recovery 默认网关修复完成；真实候选证据待闭合** | local runner `16/16`、candidate 全组 `173/173`、Windows/WSL2 Git audit 各 `71/71`；WSL recovery 定向/联合回归 `49/49` 与真实默认网关解析通过；`378a70e` 的 `72+7` 项仅为诊断候选，正式 `complete` artifact 与新 private CI 尚未采集 | `1.75–3.5 人日剩余基线 + 两个连续候选运行/观察窗口` | 下一恢复点：提交并仅推送 recovery 修复到 `private/main`，从新 clean identity 生成真实 `144/144` aggregate，再回填 CLI/TUI、Git delivery 与 private CI，运行资格/评分复算并组织第二个连续候选 |
