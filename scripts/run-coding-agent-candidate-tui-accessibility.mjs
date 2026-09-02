@@ -16,18 +16,23 @@ const SCHEMA_PATH = path.join(
 );
 const SOURCE_PATHS = Object.freeze([
   "packages/belldandy-core/src/tui/app.tsx",
+  "packages/belldandy-core/src/tui/index.tsx",
   "packages/belldandy-core/src/tui/input.ts",
+  "packages/belldandy-core/src/tui/runtime.ts",
   "scripts/run-tui-performance-benchmark.mjs",
   "scripts/run-tui-performance-pty.py",
   "scripts/run-tui-accessibility-native-worker.mjs",
   "scripts/run-coding-agent-candidate-tui-accessibility.mjs",
 ]);
+const DEFAULT_CANDIDATE_STARTUP_TIMEOUT_SECONDS = 30;
+const MIN_CANDIDATE_STARTUP_TIMEOUT_SECONDS = 30;
+const MAX_CANDIDATE_STARTUP_TIMEOUT_SECONDS = 120;
 
 export const CODING_AGENT_CANDIDATE_TUI_ACCESSIBILITY_VERSION =
   "tui-accessibility-cross-platform/v1";
 
 export function parseCodingAgentCandidateTuiAccessibilityArguments(argv) {
-  const options = { startupTimeoutSeconds: 30 };
+  const options = { startupTimeoutSeconds: DEFAULT_CANDIDATE_STARTUP_TIMEOUT_SECONDS };
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     if (!["--aggregate-root", "--platform", "--generated-at", "--startup-timeout-seconds"].includes(flag)) {
@@ -49,11 +54,10 @@ export function parseCodingAgentCandidateTuiAccessibilityArguments(argv) {
       if (!Number.isFinite(Date.parse(value))) throw new Error("--generated-at must be an ISO-8601 timestamp");
       options.generatedAt = value;
     } else {
-      const parsed = Number(value);
-      if (!Number.isSafeInteger(parsed) || parsed < 5 || parsed > 120) {
-        throw new Error("--startup-timeout-seconds must be an integer between 5 and 120");
-      }
-      options.startupTimeoutSeconds = parsed;
+      options.startupTimeoutSeconds = normalizeCandidateStartupTimeoutSeconds(
+        Number(value),
+        "--startup-timeout-seconds",
+      );
     }
     index += 1;
   }
@@ -65,6 +69,10 @@ export function parseCodingAgentCandidateTuiAccessibilityArguments(argv) {
 export async function runCodingAgentCandidateTuiAccessibility(input, dependencies = {}) {
   const aggregateRoot = path.resolve(requireString(input?.aggregateRoot, "aggregateRoot"));
   const platform = requirePlatform(input?.platform);
+  const startupTimeoutSeconds = normalizeCandidateStartupTimeoutSeconds(
+    input?.startupTimeoutSeconds,
+    "startupTimeoutSeconds",
+  );
   const generatedAt = input?.generatedAt ?? new Date().toISOString();
   const outputPath = resolveOutputPath(aggregateRoot, platform);
   if (await exists(outputPath)) {
@@ -78,7 +86,7 @@ export async function runCodingAgentCandidateTuiAccessibility(input, dependencie
   }
   const collect = dependencies.collectObservation ?? collectIsolatedTuiAccessibilityObservation;
   const observed = await collect(platform, {
-    startupTimeoutSeconds: input?.startupTimeoutSeconds ?? 30,
+    startupTimeoutSeconds,
   });
   const sourceIdentity = await createSourceIdentity(aggregate.harness);
   const accessibility = normalizeAccessibility(observed.sample?.accessibility);
@@ -316,6 +324,16 @@ function requireNonNegativeInteger(value, label) {
     throw new Error(`${label} must be a non-negative integer`);
   }
   return value;
+}
+
+function normalizeCandidateStartupTimeoutSeconds(value, label) {
+  const normalized = value ?? DEFAULT_CANDIDATE_STARTUP_TIMEOUT_SECONDS;
+  if (!Number.isSafeInteger(normalized)
+    || normalized < MIN_CANDIDATE_STARTUP_TIMEOUT_SECONDS
+    || normalized > MAX_CANDIDATE_STARTUP_TIMEOUT_SECONDS) {
+    throw new Error(`${label} must be an integer between 30 and 120`);
+  }
+  return normalized;
 }
 
 function sha256(value) {

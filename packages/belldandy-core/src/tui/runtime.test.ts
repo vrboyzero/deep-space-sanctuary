@@ -56,6 +56,38 @@ function createClient(): TuiCodingRunClient & {
 }
 
 describe("CodingTuiRuntime", () => {
+  it("aborts an in-flight workspace inspection before closing the client", async () => {
+    const client = createClient();
+    let observedSignal: AbortSignal | undefined;
+    const inspectWorkspace = vi.fn(async (_cwd: string, input?: { signal?: AbortSignal }) => (
+      new Promise<Awaited<ReturnType<typeof inspectWorkspaceChanges>>>((resolve) => {
+        observedSignal = input?.signal;
+        input?.signal?.addEventListener("abort", () => resolve({
+          cwd: path.resolve("E:\\workspace"),
+          trackedChanges: 0,
+          untrackedChanges: 0,
+          conflictChanges: 0,
+          changedPaths: [],
+          error: "Workspace inspection cancelled.",
+        }), { once: true });
+      })
+    ));
+    const runtime = new CodingTuiRuntime({
+      stateDir: "E:\\state",
+      cwd: "E:\\workspace",
+      client,
+      inspectWorkspace,
+    });
+
+    const pending = runtime.inspectWorkspace();
+    await Promise.resolve();
+    await runtime.close();
+
+    await expect(pending).resolves.toMatchObject({ error: "Workspace inspection cancelled." });
+    expect(observedSignal?.aborted).toBe(true);
+    expect(client.close).toHaveBeenCalledWith("Star Sanctuary TUI closed.");
+  });
+
   it("starts a constrained conversation and subscribes to the returned binding", async () => {
     const client = createClient();
     const runtime = new CodingTuiRuntime({

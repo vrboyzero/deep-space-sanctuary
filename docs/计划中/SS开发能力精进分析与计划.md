@@ -11252,7 +11252,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
   -> 两个连续冻结候选最终复核
 ```
 
-当前本地推进点已完成 `cli_tui` 与 `git_delivery` 两个 candidate-bound receipt：前者绑定 TaskProjection/效率/双平台 accessibility，后者绑定多仓 worktree、review/remediation、remote authority separation 与 recovery audit；两者的 Schema、公共 loader、真实性/三态 resolver、唯一 producer/仓库 verifier 接线均已收口。`cli_tui` 双平台原生 producer 也已完成并执行真实 smoke，但 Windows/WSL2 均在首帧前 startup timeout，因此当前结论为可信 `failed`，不能回填 complete artifact。七维数值 evaluator/report 也已接入：`coding-agent-benchmark-candidate-score-evaluation/v1` 只在七维 aggregate criteria 与 candidate evidence 全部完成时按冻结 minimum 授分，并以十进制精确乘加得到未展示舍入的 raw weighted；qualification report 已升级为 v2，证据 digest 同时绑定 mapping、reference、owner 与 retained artifact。真实通过的双平台 CLI/TUI 与 Git delivery artifact、`headless_ecosystem` 的 GitHub Actions run/API/ZIP receipt 仍待稳定 current-candidate 采集；fixture 不能替代真实证据。后续顺序为：修复 TUI 首帧 -> 真实 artifact/CI 回填 -> 完整联合回归 -> 两个连续候选。
+当前本地推进点已完成 `cli_tui` 与 `git_delivery` 两个 candidate-bound receipt：前者绑定 TaskProjection/效率/双平台 accessibility，后者绑定多仓 worktree、review/remediation、remote authority separation 与 recovery audit；两者的 Schema、公共 loader、真实性/三态 resolver、唯一 producer/仓库 verifier 接线均已收口。`cli_tui` 双平台首帧已完成诊断与修复：此前 `5s` smoke 低于 WSL2 历史首帧基线，属于不适合候选采集的超时策略；正式入口现拒绝低于 `30s` 的窗口，TUI 关闭还会取消未完成的只读 Git workspace inspection。修复后真实 PTY 在 Windows/WSL2 分别于 `4340ms`/`18321ms` 出现首帧，并于 `170ms`/`45ms` 收敛退出，进程与 state dir 均零残留；这些数据是修复验证，尚未冒充 current-candidate `complete` artifact。七维数值 evaluator/report 也已接入：`coding-agent-benchmark-candidate-score-evaluation/v1` 只在七维 aggregate criteria 与 candidate evidence 全部完成时按冻结 minimum 授分，并以十进制精确乘加得到未展示舍入的 raw weighted；qualification report 已升级为 v2，证据 digest 同时绑定 mapping、reference、owner 与 retained artifact。真实双平台 CLI/TUI 与 Git delivery artifact、`headless_ecosystem` 的 GitHub Actions run/API/ZIP receipt 仍待稳定 current-candidate 采集；fixture 不能替代真实证据。后续顺序为：稳定提交并建立 current-candidate -> 真实 artifact/CI 回填 -> 完整联合回归 -> 两个连续候选。
 
 #### P2-C 七维评分实现结论：evidence-gated evaluator 与 qualification v2（2026-09-02）
 
@@ -11289,9 +11289,45 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：evaluator/report 的本地合同已闭合，剩余决定性缺口是原生平台、交付和外部 CI 证据；先采集真实 artifact 才能证明产品能力，而不是继续扩大 fixture 或评分逻辑。
 - **当前还缺的关键闭环**：稳定 current-candidate identity、真实双平台 artifact、`headless_ecosystem` CI receipt、完整七维 evidence 全绿、两个连续候选及最终原始加权复核。
 
+#### P2-C CLI/TUI 实现结论：双平台首帧诊断与退出期 Git 检查收敛（2026-09-02）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/tui/runtime.ts` 修改**：
+   - 为 `CodingTuiRuntime` 增加生命周期 `AbortController`，并把 signal 传入只读 workspace inspection 的全部 Git 子进程；
+   - `close()` 在关闭 coding-run client 前先取消未完成检查，取消路径返回稳定的 `Workspace inspection cancelled.`，避免 TUI 已退出但 Git child 继续持有进程。
+
+2. **`scripts/run-coding-agent-candidate-tui-accessibility.mjs` 修改**：
+   - 正式 candidate startup timeout 默认且最小固定为 `30s`、最大为 `120s`，CLI 与直接 producer 调用共用同一失败关闭校验；
+   - 将 `packages/belldandy-core/src/tui/index.tsx` 与 `packages/belldandy-core/src/tui/runtime.ts` 纳入 artifact source identity，使首帧/退出实现漂移不能复用旧证据；
+   - 低层 worker 仍允许短窗口用于诊断，但不能经正式 candidate producer 生成资格证据。
+
+3. **`runtime.test.ts` 与 candidate producer 测试扩展**：
+   - 覆盖关闭时取消 in-flight workspace inspection、Git signal 传播、稳定取消结果；
+   - 覆盖低于 `30s` 的候选窗口在采集前被拒绝，以及新增 TUI owner 的 source identity 绑定。
+
+4. **效果**：
+   - Windows 与 WSL2 均能在符合历史基线的证据窗口内输出首帧并完成完整 accessibility/lifecycle 观测；
+   - `Ctrl+C` 退出不再受首屏异步 Git inspection 拖尾，双平台均无残留进程和 state dir；
+   - 诊断短超时与正式候选证据边界分离，既保留快速故障定位能力，也不再制造低于已知平台基线的假失败。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` exit code=`0`；
+- TUI runtime/producer 定向回归 `31/31` 通过；source identity 最终补齐后 producer 定向回归 `7/7` 再次通过；最终覆盖 runtime、CLI/TUI、Git delivery、dimension evidence、qualification、score 与 repository verifier 的 9 文件联合回归 `129/129` 通过；
+- `corepack pnpm verify:coding-benchmark` 通过，仅保留既存 AJV `date-time` format warning；
+- 真实 PTY 验证：Windows startup/exit=`4340ms/170ms`，WSL2 startup/exit=`18321ms/45ms`；两端 accessibility/lifecycle 全绿，`residualProcessCount=0`，隔离 state dir 已清理；
+- 尚未从稳定提交生成正式 current-candidate artifact，因此 `cli_tui` receipt 仍不得标记为 `complete`；本环节未启动 Gateway、模型或 Provider，费用为 `$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：完成最终联合回归并创建只含本环节改动的稳定提交，从 clean worktree 建立 current-candidate aggregate，依次采集 Windows/WSL2 accessibility artifact 并组合 `cli_tui` receipt；随后采集 Git delivery 四类 artifact，并在稳定 `main` 上仅推送 `private/main` 取得 GitHub Actions run/API/ZIP receipt。
+- **为什么先做它**：正式 artifact 以 source/harness identity 不可覆盖绑定，必须先冻结通过回归的提交；CLI/TUI 是当前已修复且成本为零的最近闭环，可先证明 producer 与真实产品行为一致，再进入远端 CI。
+- **当前还缺的关键闭环**：真实 current-candidate `cli_tui`/`git_delivery` complete receipt、`headless_ecosystem` private CI receipt、完整资格/七维评分回归，以及两个连续冻结候选的原始加权与 hard Gate 复核。
+
 #### 后续工作量估算
 
-**本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
+**本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；CLI/TUI 双平台首帧与退出收敛也已修复并通过真实 PTY 验证；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
 
 **风险与可行性**：本地合同收口可行性高，综合风险为中高。主要风险不是算法复杂度，而是真实双平台 CLI/TUI 与 Git/worktree 采集可能暴露平台差异、private CI 检查点需要新的稳定提交，以及完整候选可能暴露新的产品缺陷；真实 CI 授权已具备，但本轮持续授权不包含 push。以下按“首轮候选不需要新增产品修复、相邻工作包共享回归”的前提估算；工程量与 CI/候选实际运行等待时间分开计算：
 
@@ -11299,13 +11335,13 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | --- | --- | ---: |
 | `context_retrieval` 唯一 producer/仓库接线 | 已完成唯一 candidate-bound producer、README/project-map/repository verifier、正式输出与联合回归；不再扩大 CodeIntel 边界 | `-` |
 | `headless_ecosystem` 真实 CI receipt 收口 | 绑定稳定 current-candidate commit，采集 GitHub Actions run/API/ZIP receipt，核对 identity/外键/终态并完成回填；本地链已完成 | `0.5–1.25 人日工程量`，另计 CI 排队/观察窗口 |
-| `cli_tui` Adapter | 已完成 TaskProjection/效率、双平台 accessibility owner、真实性/三态、原生 producer 和仓库接线；真实双平台 smoke 均在首帧前 startup timeout，需修复后采集/回填 | `原估 0.25–0.5 人日失效，待首帧根因诊断后重估`，另计双平台运行窗口 |
+| `cli_tui` Adapter | 已完成 TaskProjection/效率、双平台 accessibility owner、真实性/三态、原生 producer、首帧/退出修复和仓库接线；剩余 stable current-candidate 双平台采集/回填 | `0.25–0.5 人日工程量`，另计双平台运行窗口 |
 | `git_delivery` Adapter | 已完成 worktree/review/remote authority/recovery audit 合同、current-candidate identity 与负例；剩真实 artifact 采集/回填 | `0.5–0.75 人日工程量`，另计双平台运行窗口 |
 | 七维数值 evaluator/report | 已完成 evidence-gated evaluator、qualification v2、原始加权、每维最低分、Schema/CLI/verify 与缺失/漂移/边界负例；不含真实候选采集 | `已完成` |
 | 全链最终接线与工程复核 | 固定命令、跨维度资格链联合回归、build、Schema/语法/diff Gate、README/project-map/verifier 同步与一轮轻量对抗复核 | `0.5–1 人日` |
 | 两个连续候选的组织与复核 | 冻结 identity，执行前 Gate，完成证据采集/聚合/资格/评分、失败分类和连续性对账；不含真实运行等待时间 | `1–2 人日工程量`，另计两个完整运行/观察窗口 |
 
-**更新后的常规计划基线**：原 **`2.75–4.5 人日工程量 + 两个连续候选运行/观察窗口`** 不再包含已被真实 smoke 暴露的 TUI 首帧修复量；其余基线保持，CLI/TUI 增量须在根因诊断后重估。主要剩余量是 TUI 首帧修复、`headless_ecosystem` 真实 CI、CLI/TUI 与 Git delivery 原生 artifact 回填、最终联合复核和两个候选组织；七维 evaluator/report 已从剩余量移除。表内工作包共享 producer、report/CLI 和联合回归，不能把各项上限机械相加；真实 CI 排队、Provider 费用和观察窗口不折算为人日。
+**更新后的常规计划基线**：双平台 TUI 首帧修复量现已完成，不再计入剩余工作。主要剩余量是 `headless_ecosystem` 真实 CI、CLI/TUI 与 Git delivery 原生 artifact 回填、最终联合复核和两个候选组织；七维 evaluator/report 已从剩余量移除。表内工作包共享 producer、report/CLI 和联合回归，不能把各项上限机械相加；真实 CI 排队、Provider 费用和观察窗口不折算为人日。
 
 估算边界如下：
 
@@ -11329,4 +11365,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **CodeIntel、`cli_tui`、`git_delivery` candidate receipt/仓库接线及七维 evaluator/report 完成；CLI/TUI 原生 producer 完成但真实双平台 startup timeout** | CLI/TUI 双平台 smoke 均 first frame=`false`、timed out=`true`、residual=`0`；receipt/qualification/evaluator 联合回归保持通过；真实 complete artifact 与 CI 尚未闭合 | `原 2.75–4.5 人日基线 + 待诊断的 TUI 首帧修复量 + 两个连续候选运行/观察窗口` | 下一恢复点先诊断并修复双平台 TUI 首帧，再采集/回填 CLI/TUI、Git delivery 与 private CI 证据，运行完整资格/评分回归并组织两个连续候选 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **CodeIntel、`cli_tui`、`git_delivery` candidate receipt/仓库接线、七维 evaluator/report 与双平台 TUI 首帧修复完成；真实候选证据回填中** | 修复后 Windows/WSL2 startup=`4340ms/18321ms`、exit=`170ms/45ms`，accessibility/lifecycle 与零残留全绿；正式 `complete` artifact 与 private CI 尚未闭合 | `2.75–4.5 人日剩余基线 + 两个连续候选运行/观察窗口` | 下一恢复点：从稳定提交建立 current-candidate，采集/回填 CLI/TUI、Git delivery 与 private CI 真实证据，再运行完整资格/评分回归并组织两个连续候选 |

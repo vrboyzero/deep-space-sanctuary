@@ -89,12 +89,18 @@ type InvokeGateway = (input: {
   parsePayload: (payload: Record<string, unknown>) => unknown;
 }) => Promise<GatewayMethodResult<unknown>>;
 
+type InspectWorkspace = (
+  cwd: string,
+  input?: { signal?: AbortSignal },
+) => Promise<TuiWorkspaceChangeSummary & { diffStat?: string[] }>;
+
 export type CodingTuiRuntimeOptions = {
   stateDir: string;
   cwd: string;
   client: TuiCodingRunClient;
   requestTimeoutMs?: number;
   invokeGateway?: InvokeGateway;
+  inspectWorkspace?: InspectWorkspace;
 };
 
 type PendingTuiChangeSnapshot = {
@@ -110,6 +116,8 @@ export class CodingTuiRuntime {
   private readonly client: TuiCodingRunClient;
   private readonly requestTimeoutMs: number;
   private readonly invokeGateway: InvokeGateway;
+  private readonly inspectWorkspaceReader: InspectWorkspace;
+  private readonly lifecycleController = new AbortController();
   private readonly changeSnapshotRuntime: WorkspaceChangeSnapshotRuntime;
   private readonly changeRecoveryRuntime: WorkspaceChangeRecoveryRuntime;
   private readonly pendingChangeSnapshots = new Map<string, PendingTuiChangeSnapshot | TuiChangeSnapshotResult>();
@@ -123,6 +131,7 @@ export class CodingTuiRuntime {
     this.client = options.client;
     this.requestTimeoutMs = normalizePositiveInteger(options.requestTimeoutMs, DEFAULT_TUI_REQUEST_TIMEOUT_MS);
     this.invokeGateway = options.invokeGateway ?? ((request) => invokeGatewayMethod(request));
+    this.inspectWorkspaceReader = options.inspectWorkspace ?? inspectWorkspaceChanges;
     this.changeSnapshotRuntime = new WorkspaceChangeSnapshotRuntime({ stateDir: this.stateDir });
     this.changeRecoveryRuntime = new WorkspaceChangeRecoveryRuntime({ stateDir: this.stateDir });
   }
@@ -314,7 +323,7 @@ export class CodingTuiRuntime {
   }
 
   async inspectWorkspace(): Promise<TuiWorkspaceChangeSummary> {
-    return inspectWorkspaceChanges(this.cwd);
+    return this.inspectWorkspaceReader(this.cwd, { signal: this.lifecycleController.signal });
   }
 
   async listWorkspaceTargets(): Promise<TuiWorkspaceTarget[]> {
@@ -540,6 +549,7 @@ export class CodingTuiRuntime {
   }
 
   async close(): Promise<void> {
+    this.lifecycleController.abort();
     await this.client.close("Star Sanctuary TUI closed.");
   }
 }
@@ -593,17 +603,20 @@ function createInProcessCodingRunClient(input: {
   };
 }
 
-export async function inspectWorkspaceChanges(cwd: string): Promise<TuiWorkspaceChangeSummary & { diffStat?: string[] }> {
+export async function inspectWorkspaceChanges(
+  cwd: string,
+  input: { signal?: AbortSignal } = {},
+): Promise<TuiWorkspaceChangeSummary & { diffStat?: string[] }> {
   const resolvedCwd = path.resolve(cwd);
   try {
-    const repoRoot = path.resolve(await runGit(["rev-parse", "--show-toplevel"], resolvedCwd));
-    const branch = await runGit(["branch", "--show-current"], resolvedCwd);
-    const gitDir = resolveGitPath(await runGit(["rev-parse", "--git-dir"], resolvedCwd), resolvedCwd);
-    const commonDir = resolveGitPath(await runGit(["rev-parse", "--git-common-dir"], resolvedCwd), resolvedCwd);
-    const status = await runGit(["status", "--porcelain=v1", "-z"], resolvedCwd, true);
+    const repoRoot = path.resolve(await runGit(["rev-parse", "--show-toplevel"], resolvedCwd, false, input.signal));
+    const branch = await runGit(["branch", "--show-current"], resolvedCwd, false, input.signal);
+    const gitDir = resolveGitPath(await runGit(["rev-parse", "--git-dir"], resolvedCwd, false, input.signal), resolvedCwd);
+    const commonDir = resolveGitPath(await runGit(["rev-parse", "--git-common-dir"], resolvedCwd, false, input.signal), resolvedCwd);
+    const status = await runGit(["status", "--porcelain=v1", "-z"], resolvedCwd, true, input.signal);
     const parsed = parsePorcelainStatus(status);
-    const unstaged = await runGit(["diff", "--stat", "--no-ext-diff", "--"], resolvedCwd);
-    const staged = await runGit(["diff", "--cached", "--stat", "--no-ext-diff", "--"], resolvedCwd);
+    const unstaged = await runGit(["diff", "--stat", "--no-ext-diff", "--"], resolvedCwd, false, input.signal);
+    const staged = await runGit(["diff", "--cached", "--stat", "--no-ext-diff", "--"], resolvedCwd, false, input.signal);
     const diffStat = [...splitLines(staged), ...splitLines(unstaged)].slice(0, MAX_DIFF_STAT_LINES);
     return {
       cwd: resolvedCwd,
@@ -620,7 +633,9 @@ export async function inspectWorkspaceChanges(cwd: string): Promise<TuiWorkspace
       untrackedChanges: 0,
       conflictChanges: 0,
       changedPaths: [],
-      error: toSafeCodingRunErrorMessage(error),
+      error: input.signal?.aborted
+        ? "Workspace inspection cancelled."
+        : toSafeCodingRunErrorMessage(error),
     };
   }
 }
@@ -1045,12 +1060,18 @@ function readConversationBinding(value: unknown): TuiConversationBinding | undef
   return conversationId && agentRunId ? { conversationId, agentRunId } : undefined;
 }
 
-function runGit(args: string[], cwd: string, preserveWhitespace = false): Promise<string> {
+function runGit(
+  args: string[],
+  cwd: string,
+  preserveWhitespace = false,
+  signal?: AbortSignal,
+): Promise<string> {
   return execFile("git", args, {
     cwd,
     windowsHide: true,
     maxBuffer: 2 * 1024 * 1024,
     env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "" },
+    ...(signal ? { signal } : {}),
   }).then(({ stdout }) => {
     const value = String(stdout ?? "");
     return preserveWhitespace ? value : value.trim();

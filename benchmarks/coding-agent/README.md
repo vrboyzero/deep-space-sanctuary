@@ -115,7 +115,7 @@ corepack pnpm benchmark:coding-agent:v3:candidate-code-intel-receipt --aggregate
 
 ## P2-C candidate TUI accessibility evidence
 
-双平台 producer 在 current-candidate aggregate 建立后分别执行。它先要求当前仓库 identity 与 aggregate harness 精确一致，再以真实 PTY 执行首帧、窄屏/恢复、键盘 Tab、鼠标切页、输入回放与 `Ctrl+C`；只有键盘导航、ANSI inverse 可见焦点、固定标签、terminal mode/state dir 与进程零残留全部通过时才写 `complete`。可信观察失败写 `failed`，缺 aggregate、identity 漂移、环境不符或已有同平台 artifact 均拒绝，不覆盖证据。
+双平台 producer 在 current-candidate aggregate 建立后分别执行。它先要求当前仓库 identity 与 aggregate harness 精确一致，再以真实 PTY 执行首帧、窄屏/恢复、键盘 Tab、鼠标切页、输入回放与 `Ctrl+C`；正式 candidate 入口的 startup timeout 默认且最小为 `30s`（最大 `120s`），低于历史 WSL2 首帧基线的短窗口只允许用于低层诊断，不能生成候选证据。只有键盘导航、ANSI inverse 可见焦点、固定标签、terminal mode/state dir 与进程零残留全部通过时才写 `complete`。可信观察失败写 `failed`，缺 aggregate、identity 漂移、环境不符或已有同平台 artifact 均拒绝，不覆盖证据。
 
 ```powershell
 corepack pnpm benchmark:coding-agent:v3:candidate-tui-accessibility:windows --aggregate-root <v3-aggregate-root>

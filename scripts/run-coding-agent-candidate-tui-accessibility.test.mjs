@@ -72,6 +72,11 @@ describe("candidate TUI accessibility artifact producer", () => {
     expect(() => parseCodingAgentCandidateTuiAccessibilityArguments([
       "--aggregate-root", "artifacts/candidate",
     ])).toThrow(/--platform is required/i);
+    expect(() => parseCodingAgentCandidateTuiAccessibilityArguments([
+      "--aggregate-root", "artifacts/candidate",
+      "--platform", "wsl2-linux",
+      "--startup-timeout-seconds", "10",
+    ])).toThrow(/between 30 and 120/i);
     expect(parseTuiAccessibilityNativeWorkerArguments([
       "--platform", "windows-native",
       "--startup-timeout-seconds", "30",
@@ -99,9 +104,34 @@ describe("candidate TUI accessibility artifact producer", () => {
       expect(result.artifact.sourceIdentity.files.map(({ path }) => path)).toContain(
         "packages/belldandy-core/src/tui/app.tsx",
       );
+      expect(result.artifact.sourceIdentity.files.map(({ path }) => path)).toEqual(
+        expect.arrayContaining([
+          "packages/belldandy-core/src/tui/index.tsx",
+          "packages/belldandy-core/src/tui/runtime.ts",
+        ]),
+      );
       await expect(fs.readFile(result.outputPath, "utf8")).resolves.toContain(
         '"status": "complete"',
       );
+    });
+  });
+
+  it("rejects a sub-baseline timeout before collecting candidate evidence", async () => {
+    await withSafetyEvidenceFixture(async ({ aggregateRoot }) => {
+      const aggregate = await readEvidenceReference(aggregateRoot);
+      let collected = false;
+      await expect(runCodingAgentCandidateTuiAccessibility({
+        aggregateRoot,
+        platform: "wsl2-linux",
+        startupTimeoutSeconds: 10,
+      }, {
+        resolveRepositoryIdentity: async () => aggregate.aggregate.harness,
+        collectObservation: async () => {
+          collected = true;
+          return completeObservation("wsl2-linux");
+        },
+      })).rejects.toThrow(/between 30 and 120/i);
+      expect(collected).toBe(false);
     });
   });
 
