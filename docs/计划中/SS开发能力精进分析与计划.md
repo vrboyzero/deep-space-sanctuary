@@ -11617,6 +11617,42 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：双平台 canary 已证明 native dependency、Gateway 路由、Provider、evaluator 与费用链可用；沿同一 identity 继续剩余 logical attempts 才能避免因文档提交制造新的候选分叉，并最短闭合完整矩阵。
 - **当前还缺的关键闭环**：完整双平台 `144/144` aggregate、可能的唯一 infrastructure retry 选择、CLI/TUI/Git delivery/private CI receipt、qualification/七维原始加权，以及第二个连续候选。
 
+#### P2-C current-candidate attempt 1 矩阵实现结论：`df54f67` 双平台 48 项报告（2026-09-03）
+
+##### 已完成内容
+
+1. **`tmp/run-p2c-candidate-matrix-df54f67.ps1` 续跑编排收敛**：
+   - 增加 candidate-global cost ledger，合并 Windows/WSL2 observed、reserved、candidate cost 与 `platform/task/attempt/infrastructureRetries` 外键；跨平台续跑不再使用分裂的费用基线；
+   - 默认所有新 run 使用 `infrastructureRetries=0`；检测到正式 `infrastructure_error` 后在写入保留 ledger/report（若有）后立即停止，不自动把产品/模型失败当作 retry；
+   - 对无完整 report 但已发生 Provider usage 的失败保留 `unreportedInfrastructure`，费用进入全局 guard，且不加入 aggregate `processed` 分母。
+
+2. **`df54f67` attempt 1 双平台矩阵采集**：
+   - Windows/WSL2 各完成 `24/24` 个有效 logical run report，合计 `48/144`；所有正式 report 的 source/harness commit=`df54f672…`、canonical worktree=`505219ab…`、`infrastructureRetries=0` 均通过复算；
+   - Windows=`17 passed + 7 failed/product_workflow`，WSL2=`13 passed + 11 failed/product_workflow`；有效 infrastructure error=`0`，不对 product/model failure 重试；
+   - `gateway.client-cancel` 的 `usage=unavailable` 保留 `$0.10` reserved，`gateway.process-restart` 的 `usage=not_reached` 按 fixture 合同保留；其余 usage 均为 provider-reported。
+
+3. **Windows system restart 长路径诊断与短根重采**：
+   - `matrix-r1` 下的 `system.restart-delivery-reconciliation` 因 Git managed worktree branch lock 路径 `Filename too long` 在 report 生成前失败；原始 events/trace 与 `7494/1469` tokens、4 model calls、`$0.00059841` usage 保留在 `unreportedInfrastructure`，不进入 aggregate；
+   - 将同一 logical attempt 改用一字符 collection root `r` 后正式 report=`passed`，无重复副作用；该路径策略用于后续剩余矩阵。
+
+4. **效果**：
+   - attempt 1 已形成双平台完整 coverage，失败分母与基础设施诊断分离，未因编排路径错误污染候选资格；
+   - global ledger 当前 observed=`$2.31293587`、reserved unknown=`$1.64221000`、candidate provider cost=`$0.03530677`，其中包含无 report 失败的真实 usage；下一单最坏上界约 `32.44116696 RMB < 80 RMB`；
+   - 当前候选仍为 partial，尚未生成可消费的 `144/144` aggregate、qualification 或数值 score。
+
+##### 验证结果
+
+- attempt 1 有效报告 `48/48`：Windows `24/24`、WSL2 `24/24`；状态 `30 passed / 18 failed(product_workflow) / 0 infrastructure_error`；另 `1` 个无 report infrastructure 诊断已单独计费并保留；
+- 每份正式 report 的 source/harness identity、task/platform/attempt 外键和 `execution.infrastructureRetries=0` 通过脚本复算；双平台 native build、repository receipt/preflight 与 OCI digest 仍通过；
+- 无归属本任务的 Gateway/runner/OCI 残留，端口 `28891` 仅留下正常 TCP `TIME_WAIT`；运行环境文件待本轮矩阵结束后统一按 cleanup log 回收；
+- 产品/模型失败不触发 retry，当前只保留未来同 identity 基础设施失败的单次 `infrastructureRetries=1` 入口。
+
+##### 后续计划
+
+- **下一步准备做什么**：继续使用一字符 collection root `r`，先完成 Windows 与 WSL2 attempt 2 的 24+24 logical run，默认 `infrastructureRetries=0`；每个平台批次结束后复核 global ledger、report identity 与资源收敛。
+- **为什么先做它**：attempt 1 已证明双平台路径可用，attempt 2 能在不改变 source/harness identity 的前提下扩大样本并尽早发现跨 attempt 的 recovery、system harness 或费用异常；失败仍必须保留在分母。
+- **当前还缺的关键闭环**：attempt 2/3 双平台剩余 `96` 个有效 report、必要时唯一基础设施重试、完整 `144/144` aggregate、CLI/TUI/Git delivery/private CI receipt、qualification/七维原始加权，以及第二个连续候选。
+
 #### 后续工作量估算
 
 **本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；CLI/TUI 双平台首帧与退出收敛也已修复并通过真实 PTY 验证；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
@@ -11657,4 +11693,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **candidate bootstrap、本地原生 collector/可恢复 runner、同 identity Linux staging、CodeIntel、`cli_tui`、`git_delivery` receipt/仓库接线、七维 evaluator/report、双平台 TUI 首帧与 WSL recovery 修复、v2 recovery fixture、CodeIntel canonical LF/frozen-input 边界及 infrastructure retry provenance 已完成；`df54f67…` 已仅推送 `private/main`，双平台 staging/Gate 与 `tests.failed-diagnosis` canary 已完成** | `df54f67…` Windows/WSL2 identity=`505219ab…`、各 `4` receipt/`8` preflight、完整 build 通过；Windows 首次 readiness 失败定位为缺失 `better-sqlite3` binding，Provider cost=`$0`，双平台 native lifecycle 修复后 attempt 1 均 `passed`、`infrastructureRetries=0`，Windows/WSL2 cost=`$0.00104119/$0.00077850`；全周期 observed=`$2.27944879`、reserved=`$1.44221000`、下一单最坏上界=`30.57327032 RMB`；8 个 runtime env 已回收，旧 `e05ddc4…` artifact 保留，尚无新 aggregate/资格 artifact | `1.75–3.5 人日剩余基线 + 两个连续候选运行/观察窗口` | 下一恢复点：继续冻结的 `df54f67` 双平台 attempt 1 剩余任务与后续 attempts，默认 `infrastructureRetries=0`；只有真实 infrastructure failure 才显式以 `1` 重试，完成 `144/144` 后回填 aggregate、CLI/TUI、Git delivery 与 private CI artifact |
+| P2-C：9.5 稳定化与最终复核 | P2 | **candidate bootstrap、本地原生 collector/可恢复 runner、同 identity Linux staging、CodeIntel、`cli_tui`、`git_delivery` receipt/仓库接线、七维 evaluator/report、双平台 TUI 首帧与 WSL recovery 修复、v2 recovery fixture、CodeIntel canonical LF/frozen-input 边界及 infrastructure retry provenance 已完成；`df54f67…` 已仅推送 `private/main`，双平台 staging/Gate 与 attempt 1 矩阵已完成 `48/144` 有效报告** | `df54f67…` Windows/WSL2 identity=`505219ab…`、各 `4` receipt/`8` preflight、完整 build 通过；attempt 1 有效 report=`48/48`（Windows `17 passed/7 failed`、WSL2 `13 passed/11 failed`），均 `infrastructureRetries=0`；另 1 个 Windows 长路径无 report infrastructure 诊断的 usage `$0.00059841` 已计入 global ledger；全局 observed=`$2.31293587`、reserved=`$1.64221000`、candidate=`$0.03530677`、下一单最坏上界约 `32.44116696 RMB`；尚无 `144/144` aggregate/资格 artifact | `1.75–3.5 人日剩余基线 + 两个连续候选运行/观察窗口` | 下一恢复点：继续使用短 collection root `r` 完成 attempt 2/3 双平台剩余 `96` 个有效报告，默认 `infrastructureRetries=0`；只有同 identity 真实 infrastructure failure 才显式以 `1` 重试，完成 `144/144` 后回填 aggregate、CLI/TUI、Git delivery 与 private CI artifact |
