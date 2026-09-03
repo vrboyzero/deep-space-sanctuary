@@ -12547,6 +12547,43 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：runner 的八个真实仓任务必须在 Provider 前绑定可复算的本平台 source/cache receipt；这是 plan 冻结和正式 canary 前最后一组数据前置。
 - **当前还缺的关键闭环**：两端 repository inputs、不可覆盖 `144/144` expected-report plan、收费前端口/进程 Gate、完整候选链，以及第二个连续达标候选。
 
+#### P2-C 新候选执行准备阶段结论：`c02eef7` 双平台 repository inputs（2026-09-03）
+
+##### 已完成内容
+
+1. **`tmp/prepare-p2c-candidate-inputs-c02eef7.mjs` 新建并执行**：
+   - 一次性脚本只绑定 commit=`c02eef7a69a0a10cc15c674c523d5b4b64d97197`、Windows frozen harness 与新输出根；
+   - 复用生产 manifest、snapshot inspection 和 task preflight owner，以 staging + rename 和逐文件 `wx` 保证正式输入不可覆盖；
+   - `tmp/p2c-candidate-c02eef7-inputs/windows-native` 已生成 `4` 个 repository receipt、`8` 个 task preflight 与唯一 `repository-inputs.json`。
+
+2. **WSL2 原生 repository inputs 生成**：
+   - production Linux producer 从四个 frozen source seed 克隆到 ext4，并只使用既有 offline npm cache、dependency seed 与 Go module cache；
+   - 首轮因 Go 未进入 `PATH` 保留为 `/var/tmp/star-sanctuary-p2c-candidate-c02eef7-inputs-rejected-go-path`，未覆盖、未删除；
+   - 使用精确 Go 1.24.2 bin 重跑后，canonical `/var/tmp/star-sanctuary-p2c-candidate-c02eef7-inputs` 返回 `ready=4, blocked=0`，并生成 `4` 个 receipt、`8` 个通过的 preflight。
+
+3. **双平台输入与 identity 验真**：
+   - 两端 receipt 中 express/preact/spf13-cobra/vscode-languageserver-node commit 均逐项匹配 v3 manifest；
+   - Windows config SHA-256=`468e6e12210a761cec44da490c53862f6fd5070dcf26f4cf98ce97c53d52a039`，WSL2 config SHA-256=`ffaa88c3f3de2fe5948cd352ce89537a5eca37e114df484b9c78309ec31666c4`；平台路径语义不同，因此分别冻结而不要求两个 config byte-identical；
+   - 生成后 production identity 在 Windows/WSL2 仍逐字段一致：clean commit=`c02eef7…`、lockfile=`844c0021…`、worktree=`cfe97460…`。
+
+4. **效果**：
+   - 八个真实仓任务在两平台均具备可复算、离线、平台原生的 source/cache/receipt binding；
+   - expected-report plan 可在不依赖未准备输入的前提下绑定完整 `24 × 2 × 3` 分母；
+   - 本环节未启动 Gateway、benchmark run 或 Provider，费用增量=`$0`。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节未修改 TypeScript；两端 frozen staging 最近一次完整 `corepack pnpm build` 均已通过，输入生成后 identity 未漂移；
+- Windows repository receipts=`4/4`、task preflights=`8/8 passed`；WSL2 repository receipts=`4/4`、task preflights=`8/8 passed`，合计 preflight=`16/16`；
+- WSL2 preparation toolchain 精确记录 `go version go1.24.2 linux/amd64`，四个 config 引用的 source/cache/receipt 均存在；
+- `node --check tmp/prepare-p2c-candidate-inputs-c02eef7.mjs` 与文档 `git diff --check` 通过，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在任何候选 run 前生成 `candidate-1` 的不可覆盖 expected-report plan，并独立复核精确 `144` 个唯一 ID/路径、manifest SHA-256、source/harness 四字段 identity 与 plan 文件 SHA-256；通过后立即回写，再改造矩阵脚本。
+- **为什么先做它**：repository inputs 已是最后一组数据前置；此时冻结完整分母，才能让首个 canary 及后续每个报告都在副作用发生前证明自己属于同一候选和唯一计划槽位。
+- **当前还缺的关键闭环**：不可覆盖 `144/144` expected-report plan、适配 plan 路径的新矩阵脚本、收费前端口/进程 Gate、完整候选链，以及第二个连续达标候选。
+
 #### 后续工作量估算
 
 **本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；CLI/TUI 双平台首帧与退出收敛也已修复并通过真实 PTY 验证；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
@@ -12587,7 +12624,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 候选保持拒绝；corrected analysis 的全部产品失败 family 已逐项收敛；新候选 identity=`c02eef7` 双平台 clean staging 及原生 install/build/verifier 已闭合，repository inputs 与 expected-report plan 待闭合** | 旧 aggregate=`97 passed + 47 product_workflow failed`、正式 infrastructure error=`0`，不得重解释；usage `12` 个终态、unknown `19/19` 与 corrected failure analysis 已闭合；`output_schema=7/7` 最终 focused=`33/33`、相邻=`162/162`、Agent=`885 passed + 1 skipped`、Core=`62/62`，工程 Gate 全绿，实现 checkpoint=`4f9ba94d7dfeebc43dbb5231c3c81bf1d1893b60`；Windows/WSL2 staging 均绑定 commit=`c02eef7a69a0a10cc15c674c523d5b4b64d97197`、clean=`true`、lockfile=`844c0021…`、worktree=`cfe97460…`；Windows/WSL2 offline install 分别=`493/494`、downloaded=`0/0`，两端完整 build 与 benchmark verifier 通过且写后 identity 未漂移；当前 Provider=`0/$0`，累计费用守卫=`35.33581920 RMB`，下一 run 最坏=`36.13581920 RMB < 80 RMB` | `1.75–3.5 人日既有基线 + 双平台准备/候选运行/观察窗口` | 生成并验真两端 repository inputs；随后必须先生成、复核不可覆盖 `144/144` expected-report plan，才运行第一个候选槽位并逐环节回写 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 候选保持拒绝；corrected analysis 的全部产品失败 family 已逐项收敛；新候选 identity=`c02eef7` 双平台 clean staging、原生 install/build/verifier 与 repository inputs 已闭合，expected-report plan 待闭合** | 旧 aggregate=`97 passed + 47 product_workflow failed`、正式 infrastructure error=`0`，不得重解释；usage `12` 个终态、unknown `19/19` 与 corrected failure analysis 已闭合；`output_schema=7/7` 最终 focused=`33/33`、相邻=`162/162`、Agent=`885 passed + 1 skipped`、Core=`62/62`，工程 Gate 全绿，实现 checkpoint=`4f9ba94d7dfeebc43dbb5231c3c81bf1d1893b60`；Windows/WSL2 staging 均绑定 commit=`c02eef7a69a0a10cc15c674c523d5b4b64d97197`、clean=`true`、lockfile=`844c0021…`、worktree=`cfe97460…`；Windows/WSL2 offline install 分别=`493/494`、downloaded=`0/0`，两端完整 build 与 benchmark verifier 通过且写后 identity 未漂移；repository inputs 两端均为 receipts=`4/4`、preflights=`8/8 passed`，WSL2 Go provenance=`1.24.2`；当前 Provider=`0/$0`，累计费用守卫=`35.33581920 RMB`，下一 run 最坏=`36.13581920 RMB < 80 RMB` | `1.75–3.5 人日既有基线 + 双平台准备/候选运行/观察窗口` | 在任何新 run 前生成并验真不可覆盖 `144/144` expected-report plan；再接入逐字匹配 plan 路径的新矩阵脚本和收费前 Gate |
 
 
 #### 重要问题说明
@@ -12623,3 +12660,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 29、finalization 文档要求“Schema 无法稳定序列化时失败关闭”，但首版 `JSON.stringify({ schema })` 在 Schema 的 `toJSON()` 返回 `undefined` 时会合法生成 `{}`，从而保留标签却丢失合同正文。真实 CLI Schema 来自 JSON 文件，通常不带方法，但公共 owner 入参为 `unknown`，不能让该边界静默退化。新增回归首轮因测试文件漏 import `vi` 在进入被测函数前失败，该结果不计作产品 Red；修正夹具后，测试精确观察到 request=`defined`、合同=`{}`、`toJSON calls=1`，形成有效 `1 failed`。处理方案已落实：先直接序列化 Schema 一次，结果为 `undefined` 或抛错即返回 `undefined`，否则用该结果构造 `{"schema":...}`；这样既失败关闭，也不因二次 `toJSON` 产生漂移。单点已由有效 `1 failed` 转为 `1 passed`，`toJSON calls=1`；完整 Schema/预算 focused=`33/33`、相邻=`162/162`、Agent=`885 passed + 1 skipped`、Core=`62/62`，增量构建、benchmark verifier、diff check 与 debug-marker Gate 均通过，并由实现 checkpoint=`4f9ba94d7dfeebc43dbb5231c3c81bf1d1893b60` 固定。
 30、WSL2 identity 首次只读探针使用 PowerShell → `wsl.exe` → `bash -lc` → Node `-e` 的四层嵌套字符串，括号在到达 Node 前被 PowerShell 二次解析，得到 `ParserError: Missing ')' in method call`；该失败发生在生产 resolver 调用前，不是 repository identity 或产品失败，也没有启动 Gateway、runner 或 Provider。处理方案是去掉中间 `bash -lc`，通过 `wsl.exe -d Ubuntu-22.04 -- node ...` 直接传递 argv；重跑后生产 `resolveBenchmarkRepositoryIdentity()` 成功返回与 Windows 完全一致的四字段 identity。后续 WSL 单命令探针固定优先直接 argv，仅在确需 shell 语义时才使用脚本文件或单层 shell。
 31、WSL2 `verify:coding-benchmark` exit code=`0`，但 Node 同时输出既存 `[DEP0040] punycode` deprecation warning，AJV 仍输出既存 `date-time` format warning；两类提示均未改变 verifier 的最终 aligned 结论，也不是本轮 structured-output 或 candidate identity 回归。技术债裁决=`record_only`：当前不升级依赖或改变 Schema format 插件，以免扩大冻结候选边界；后续依赖治理任务可单独定位 `punycode` 的传递依赖并评估兼容升级，当前 Gate 按真实 warning 原样记录。
+32、恢复后的首次 WSL2 identity 只读探针误调用冻结仓库内不存在的 `scripts/print-coding-agent-benchmark-repository-identity.mjs`，Node 在 module resolution 阶段返回 `MODULE_NOT_FOUND`；该失败发生在 production resolver、Gateway、runner 与 Provider 之前，不代表 candidate identity 漂移。根因是将主工作区已有的 `tmp/print-benchmark-identity.mjs` 包装器误判为冻结仓库脚本。处理方案是从 `/mnt/e/project/star-sanctuary/tmp/print-benchmark-identity.mjs` 启动包装器，并把 `/var/tmp/star-sanctuary-p2c-candidate-c02eef7` 作为独立 argv 传入；重跑已通过生产 `resolveBenchmarkRepositoryIdentity()` 返回 commit=`c02eef7…`、clean=`true`、lockfile=`844c0021…`、worktree=`cfe97460…`。后续 identity 探针固定先核对包装器实际位置，再使用直接 argv，不再猜测冻结仓库内存在同名 CLI。
+33、`c02eef7` 首次 WSL2 repository-input preparation 返回 `partial ready=3 blocked=1`；production summary 明确显示 Node/Git/npm 正常但 `toolchain.go=null`，唯一 blocked repository=`spf13-cobra`、reason=`go_toolchain_unavailable`，其余三个 Node repository 的 `6` 个 preflight 已通过。根因是本次用 `wsl.exe -- node` 直接 argv 启动 producer 时没有给进程 `PATH` 前置既有冻结 Go toolchain；Go 1.24.2 binary 与 module cache 实际均存在，分别位于 `/var/tmp/star-sanctuary-p1a2-go1.24.2-linux-20260811-a/bin/go` 和 `/var/tmp/star-sanctuary-coding-agent-v3/p0.15-materials/go-module-cache`，不是 source/cache 损坏。处理方案已完成：原 canonical partial 目录已原子改名为 `/var/tmp/star-sanctuary-p2c-candidate-c02eef7-inputs-rejected-go-path` 作为只读诊断证据，未覆盖、未删除；随后使用只含明确 Linux 系统目录且前置冻结 Go 1.24.2 bin 的 `PATH`，在原 canonical 输出路径不可覆盖重跑，结果=`ready=4, blocked=0`、receipts=`4/4`、preflights=`8/8 passed`，toolchain 精确记录 `go version go1.24.2 linux/amd64`。该失败与修复均未启动 Gateway、runner 或 Provider，费用增量=`$0`。
+34、WSL2 通用材料路径 `/var/tmp/star-sanctuary-coding-agent-v3/p0.15-materials/toolchains/go/bin/go` 当前返回 Go `1.26.5`，而最近接受的 `df54f67` repository inputs 与正式 runner shim 均记录/指向 Go `1.24.2`；若只验证“go 可执行”就使用通用路径，会把未声明的 toolchain provenance 漂移混入新候选。处理方案是不用通用目录名承担版本冻结，当前 preparation 与后续矩阵均显式使用 `/var/tmp/star-sanctuary-p1a2-go1.24.2-linux-20260811-a/bin`，并在执行前验证 `go version go1.24.2 linux/amd64`；通用 1.26.5 材料保持原状，技术债裁决=`record_only`，不在本轮改写或删除。
+35、读取旧 WSL preparation 摘要时，命令中的 `| head -40` 没有封装为 Linux shell argv，管道由宿主 PowerShell 解释，导致宿主找不到 `head`；失败仅发生在只读展示命令，不影响任何 artifact。处理方案是对无需 shell 的操作继续使用 `wsl.exe -- <command> <argv>`，本次改为直接传递 `sed -n 1,40p <path>` 后成功；确需管道时才显式使用单层 `sh -lc`，且不得再叠加 Node `-e` 或 PowerShell 字符串插值。
