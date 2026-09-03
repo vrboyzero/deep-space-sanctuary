@@ -4,6 +4,7 @@ import {
   buildRequiredWorkspaceMutationNavigationToolCalls,
   buildWorkspaceMutationContinuationPlan,
   buildWorkspaceMutationContinuationRequest,
+  buildWorkspaceMutationInputCorrectionRequest,
   buildWorkspaceMutationNavigationRequest,
   buildWorkspaceMutationObjectiveInputCorrectionRequest,
   buildWorkspaceMutationObjectiveReviewRequest,
@@ -2559,6 +2560,106 @@ describe("ReAct workspace mutation recovery", () => {
     const focusedEvidence = request?.messages[1]?.content.split("[tool=file_read]").at(-1);
     expect(focusedEvidence).toContain('"contentTruncatedForMutationRecovery":true');
     expect(focusedEvidence).toContain('"anchorContext":');
+  });
+
+  it("prioritizes a task-qualified method declaration in complete full-file correction evidence", () => {
+    const targetContext = [
+      "// Name returns the command's name: the first word in the use line.",
+      "func (c *Command) Name() string {",
+      "\tname := c.Use",
+      "\ti := strings.LastIndex(name, \" \")",
+      "\tif i >= 0 {",
+      "\t\tname = name[:i]",
+      "\t}",
+      "\treturn name",
+      "}",
+    ].join("\n");
+    const distractors = Array.from({ length: 6 }, (_, blockIndex) => [
+      `// Name is used by unrelated helper ${blockIndex}.`,
+      ...Array.from(
+        { length: 48 },
+        (_, lineIndex) => `var helper${blockIndex}_${lineIndex} = ${lineIndex}`,
+      ),
+    ].join("\n")).join("\n");
+    const request = buildWorkspaceMutationInputCorrectionRequest({
+      maxInputTokens: 1_400,
+      tools: [toolDefinition("apply_patch")],
+      missingRequiredChangedPaths: ["command.go"],
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+      messages: [
+        {
+          role: "user",
+          content: "Restore Command.Name so a multi-argument Use line returns only its first token.",
+        },
+        {
+          role: "assistant",
+          tool_calls: [{ id: "read-command", function: { name: "file_read", arguments: "{}" } }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "read-command",
+          content: JSON.stringify({
+            path: "command.go",
+            truncated: false,
+            content: `${distractors}\n${targetContext}\n${"var tail = true\n".repeat(200)}`,
+          }),
+        },
+      ],
+    });
+
+    expect(request?.missingRequiredSourceEvidencePaths).toEqual([]);
+    expect(request?.messages[1]?.content).toContain("func (c *Command) Name() string");
+    expect(request?.messages[1]?.content).toContain("strings.LastIndex");
+  });
+
+  it("prioritizes a task-qualified JavaScript getter declaration in complete full-file correction evidence", () => {
+    const targetContext = [
+      "defineGetter(req, 'subdomains', function subdomains() {",
+      "  var hostname = this.hostname;",
+      "  if (!hostname) return [];",
+      "  var offset = this.app.get('subdomain offset');",
+      "  var subdomains = !isIP(hostname)",
+      "    ? hostname.split('.').reverse()",
+      "    : [hostname];",
+      "  return subdomains.slice(offset + 1);",
+      "});",
+    ].join("\n");
+    const distractors = Array.from({ length: 6 }, (_, blockIndex) => [
+      `// subdomains is mentioned by unrelated helper ${blockIndex}.`,
+      ...Array.from(
+        { length: 48 },
+        (_, lineIndex) => `var helper${blockIndex}_${lineIndex} = ${lineIndex};`,
+      ),
+    ].join("\n")).join("\n");
+    const request = buildWorkspaceMutationInputCorrectionRequest({
+      maxInputTokens: 1_400,
+      tools: [toolDefinition("apply_patch")],
+      missingRequiredChangedPaths: ["lib/request.js"],
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+      messages: [
+        {
+          role: "user",
+          content: "Restore the documented req.subdomains offset behavior with the smallest change in lib/request.js.",
+        },
+        {
+          role: "assistant",
+          tool_calls: [{ id: "read-request", function: { name: "file_read", arguments: "{}" } }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "read-request",
+          content: JSON.stringify({
+            path: "lib/request.js",
+            truncated: false,
+            content: `${distractors}\n${targetContext}\n${"var tail = true;\n".repeat(200)}`,
+          }),
+        },
+      ],
+    });
+
+    expect(request?.missingRequiredSourceEvidencePaths).toEqual([]);
+    expect(request?.messages[1]?.content).toContain("function subdomains() {");
+    expect(request?.messages[1]?.content).toContain("return subdomains.slice(offset + 1);");
   });
 
   it("retains task-relevant identifiers from the middle of a complete large required file", () => {

@@ -8,6 +8,7 @@ import {
   branchReceivesFalseExcludedByPreviousSibling,
   readSiblingBranchBody,
 } from "./react-workspace-mutation-serialized-false.js";
+import { rankTaskSourceIdentifierOccurrences } from "./react-workspace-mutation-source-context.js";
 
 export const WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE = 4_096;
 export const WORKSPACE_MUTATION_RECOVERY_MIN_OUTPUT_TOKEN_RESERVE = 1_024;
@@ -3306,15 +3307,9 @@ function collectTaskRelevantFileContexts(
   let retainedChars = 0;
 
   for (const identifier of identifiers) {
-    let searchOffset = 0;
-    while (contexts.length < maxItems) {
-      const matchIndex = fileContent.indexOf(identifier, searchOffset);
-      if (matchIndex < 0) {
+    for (const matchIndex of rankTaskSourceIdentifierOccurrences(fileContent, taskText, identifier)) {
+      if (contexts.length >= maxItems) {
         break;
-      }
-      searchOffset = matchIndex + identifier.length;
-      if (!hasIdentifierBoundaries(fileContent, matchIndex, identifier.length)) {
-        continue;
       }
       const desiredStart = Math.max(0, matchIndex - FILE_READ_TASK_CONTEXT_BEFORE_CHARS);
       const desiredEnd = Math.min(
