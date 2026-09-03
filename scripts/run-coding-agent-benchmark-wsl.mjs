@@ -9,6 +9,9 @@ import {
   resolvePriorObservedCostUsd,
 } from "./run-coding-agent-benchmark.mjs";
 import { runWindowsBenchmark as runWindowsBenchmarkGateway } from "./run-coding-agent-benchmark-windows.mjs";
+import {
+  validateCodingAgentBenchmarkCandidateExpectedReportLaunch,
+} from "./run-coding-agent-benchmark-expected-report-plan.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultWorkspaceRoot = path.resolve(path.dirname(scriptPath), "..");
@@ -254,6 +257,13 @@ function requireValue(values, key) {
 
 export async function runWslBenchmark(input, dependencies = {}) {
   const distribution = requireInput(input, "distribution");
+  const validateCandidateLaunch = dependencies.validateCandidateExpectedReportLaunch
+    ?? validateCodingAgentBenchmarkCandidateExpectedReportLaunch;
+  await validateCandidateLaunch({
+    ...input,
+    platform: "wsl2-linux",
+    manifestRevision: input.manifestRevision ?? "v1",
+  }, dependencies);
   const host = input.host ?? resolveWslGatewayHost(distribution, dependencies);
   const port = input.port ?? "28889";
   const gatewayWorkspaceRoot = input.gatewayWorkspaceRoot ?? input.workspaceRoot ?? defaultWorkspaceRoot;
@@ -349,6 +359,12 @@ async function main() {
     } : {}),
     ...(values.has("shadow-candidate-id") ? {
       shadowCandidateId: requireValue(values, "shadow-candidate-id"),
+    } : {}),
+    ...(values.has("candidate-id") ? {
+      candidateId: requireValue(values, "candidate-id"),
+    } : {}),
+    ...(values.has("expected-report-plan") ? {
+      expectedReportPlanPath: requireValue(values, "expected-report-plan"),
     } : {}),
   });
   process.exitCode = exitCode;

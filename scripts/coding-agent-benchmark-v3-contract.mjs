@@ -98,6 +98,11 @@ const EXPECTED_A_TASK_IDS = new Set([
   "git.delivery-guard",
 ]);
 
+const EXPECTED_LOCAL_FIXTURE_TASK_IDS = new Set([
+  "gateway.client-cancel",
+  "gateway.process-restart",
+]);
+
 const EXPECTED_B_TASK_REPOSITORIES = Object.freeze({
   "real-go.bug-fix": "spf13-cobra",
   "real-go.public-api-migration": "spf13-cobra",
@@ -509,6 +514,20 @@ export function validateCodingAgentBenchmarkV3Manifest(manifest) {
   if (aTaskIds.size !== EXPECTED_A_TASK_IDS.size
     || [...EXPECTED_A_TASK_IDS].some((taskId) => !aTaskIds.has(taskId))) {
     throw new Error("Coding benchmark v3 A-layer regression task set drifted.");
+  }
+  const modelExecutionDeclarationCount = manifest.tasks.filter((task) => {
+    return Object.hasOwn(task, "modelExecution");
+  }).length;
+  if (modelExecutionDeclarationCount !== 0 && modelExecutionDeclarationCount !== manifest.tasks.length) {
+    throw new Error("Coding benchmark v3 model execution declarations must be absent or complete.");
+  }
+  if (modelExecutionDeclarationCount > 0) {
+    for (const task of manifest.tasks) {
+      const expected = EXPECTED_LOCAL_FIXTURE_TASK_IDS.has(task.id) ? "local_fixture" : "provider";
+      if (task.modelExecution !== expected) {
+        throw new Error(`Coding benchmark v3 task ${task.id} model execution drifted.`);
+      }
+    }
   }
   const bTasks = manifest.tasks.filter((task) => task.layer === "B");
   if (bTasks.length !== Object.keys(EXPECTED_B_TASK_REPOSITORIES).length

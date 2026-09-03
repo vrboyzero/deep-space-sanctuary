@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { compileOutputSchema } from "../packages/belldandy-core/src/cli/shared/output-schema.ts";
 import {
   buildCodingAgentFailureAnalysis,
+  CODING_AGENT_BENCHMARK_FAILURE_ANALYSIS_V1_VERSION,
   parseCodingAgentFailureAnalysisCliArguments,
   runCodingAgentFailureAnalysis,
   verifyCodingAgentFailureAnalysis,
@@ -19,7 +20,7 @@ describe("coding agent benchmark failure analysis", () => {
     const artifact = buildCodingAgentFailureAnalysis(input);
 
     expect(artifact).toMatchObject({
-      schemaVersion: "coding-agent-benchmark-failure-analysis/v1",
+      schemaVersion: "coding-agent-benchmark-failure-analysis/v2",
       status: "completed",
       scope: {
         analyzedFailureCount: 5,
@@ -170,6 +171,130 @@ describe("coding agent benchmark failure analysis", () => {
       .toBe("patch_acceptance_failed");
   });
 
+  it("classifies the five previously unknown candidate signatures without retaining messages", () => {
+    const input = fixture();
+    replaceFailureCase(input, 0, {
+      events: [
+        startedEvent("model-empty"),
+        failedEvent(
+          "internal",
+          "required workspace mutation was not completed: the bounded source-navigation model call "
+            + "did not request each missing required source path exactly once.",
+        ),
+      ],
+    });
+    replaceFailureCase(input, 1, {
+      events: [
+        startedEvent("completed-no-mutation"),
+        failedEvent(
+          "internal",
+          "required workspace mutation was not completed: the mutation-only apply_patch call contained "
+            + "a context-only hunk that could not be preserved safely; use unique safe Update File sections, "
+            + "valid hunk structure, and at least one real added or removed line per file. "
+            + "diagnostic=context_only_hunk hunkCount=1 contextOnlyHunkCount=1 paths=[\"lib/request.js\"] "
+            + "preservationReason=empty_hunk sectionCount=1 actionableSectionCount=0",
+        ),
+      ],
+    });
+    replaceFailureCase(input, 2, {
+      events: [
+        startedEvent("patch-rejected"),
+        toolStarted("edit-2", "apply_patch"),
+        toolCompleted("edit-2", "apply_patch", true),
+        failedEvent(
+          "internal",
+          "required workspace mutation was not completed: the post-write objective correction did not "
+            + "narrowly refine the prior mutation despite the smallest-change requirement.",
+        ),
+      ],
+      evaluation: evaluation(false, true, true, 0),
+    });
+    replaceFailureCase(input, 3, {
+      events: [
+        startedEvent("budget"),
+        toolStarted("accepted-edit", "apply_patch"),
+        toolCompleted("accepted-edit", "apply_patch", true),
+        completedEvent(1),
+      ],
+      patch: Buffer.from("accepted patch with a failing test"),
+      evaluation: evaluation(false, false, true, 1),
+    });
+    replaceFailureCase(input, 4, {
+      events: [
+        startedEvent("schema"),
+        failedEvent("internal", "模型返回空内容。finish_reason=stop，reasoning_content=present(2048)。"),
+      ],
+    });
+
+    const artifact = buildCodingAgentFailureAnalysis(input);
+    expect(artifact.schemaVersion).toBe("coding-agent-benchmark-failure-analysis/v2");
+    expect(artifact.status).toBe("completed");
+    expect(artifact.summary.unknownCount).toBe(0);
+    expect(artifact.runs.map((run) => [run.runId, run.family])).toEqual([
+      ["model-empty", "required_source_navigation_incomplete"],
+      ["budget", "accepted_patch_regression"],
+      ["completed-no-mutation", "mutation_patch_contract_invalid"],
+      ["patch-rejected", "post_write_correction_failed"],
+      ["schema", "model_empty_content_at_stop"],
+    ]);
+    const serialized = JSON.stringify(artifact);
+    expect(serialized).not.toContain("bounded source-navigation model call");
+    expect(serialized).not.toContain("reasoning_content=present");
+  });
+
+  it("preserves known v1 families before applying v2-only signatures", () => {
+    const input = fixture();
+    replaceFailureCase(input, 0, {
+      events: [
+        startedEvent("model-empty"),
+        toolStarted("edit-1", "apply_patch"),
+        toolCompleted("edit-1", "apply_patch", false),
+        failedEvent(
+          "internal",
+          "required workspace mutation was not completed: the mutation-only apply_patch call contained "
+            + "a context-only hunk that could not be preserved safely; diagnostic=context_only_hunk",
+        ),
+      ],
+    });
+    replaceFailureCase(input, 2, {
+      events: [
+        startedEvent("patch-rejected"),
+        toolStarted("edit-2", "apply_patch"),
+        toolCompleted("edit-2", "apply_patch", true),
+        failedEvent(
+          "internal",
+          "required workspace mutation was not completed: the post-write objective correction did not "
+            + "narrowly refine the prior mutation despite the smallest-change requirement.",
+        ),
+      ],
+    });
+
+    const artifact = buildCodingAgentFailureAnalysis(input);
+    expect(artifact.runs.find((run) => run.runId === "model-empty")?.family)
+      .toBe("patch_acceptance_failed");
+    expect(artifact.runs.find((run) => run.runId === "patch-rejected")?.family)
+      .toBe("patch_acceptance_failed");
+  });
+
+  it("keeps legacy v1 classification stable for frozen reports", () => {
+    const input = fixture();
+    input.schemaVersion = CODING_AGENT_BENCHMARK_FAILURE_ANALYSIS_V1_VERSION;
+    replaceFailureCase(input, 0, {
+      events: [
+        startedEvent("model-empty"),
+        failedEvent(
+          "internal",
+          "required workspace mutation was not completed: the bounded source-navigation model call "
+            + "did not request each missing required source path exactly once.",
+        ),
+      ],
+    });
+
+    const artifact = buildCodingAgentFailureAnalysis(input);
+    expect(artifact.schemaVersion).toBe("coding-agent-benchmark-failure-analysis/v1");
+    expect(artifact.runs.find((run) => run.runId === "model-empty")?.family).toBe("unknown");
+  });
+
   it("parses an explicit aggregate/output pair and writes once", async () => {
     expect(parseCodingAgentFailureAnalysisCliArguments([
       "--aggregate-root", "artifacts/aggregate",
@@ -209,7 +334,7 @@ describe("coding agent benchmark failure analysis", () => {
       const artifact = buildCodingAgentFailureAnalysis(fixture());
       await writeCodingAgentFailureAnalysisArtifact(outputRoot, artifact);
       await expect(fs.readFile(path.join(outputRoot, "failure-analysis.json"), "utf-8"))
-        .resolves.toContain("coding-agent-benchmark-failure-analysis/v1");
+        .resolves.toContain("coding-agent-benchmark-failure-analysis/v2");
       await expect(writeCodingAgentFailureAnalysisArtifact(outputRoot, artifact))
         .rejects.toThrow(/already exists/i);
     } finally {
@@ -358,6 +483,20 @@ function fixture() {
       patch: item.patch,
     })),
   };
+}
+
+function replaceFailureCase(input, index, changes) {
+  const run = input.aggregate.runs[index];
+  const artifact = input.artifactInputs[index];
+  if (changes.evaluation) run.evaluation = changes.evaluation;
+  artifact.manifest = run;
+  artifact.manifestText = JSON.stringify(run);
+  if (changes.events) {
+    artifact.events = changes.events;
+    artifact.eventsText = toJsonl(changes.events);
+  }
+  if (changes.patch) artifact.patch = changes.patch;
+  input.aggregateText = JSON.stringify(input.aggregate);
 }
 
 function benchmarkRun(input, index) {

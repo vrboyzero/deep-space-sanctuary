@@ -102,6 +102,13 @@ describe("coding agent benchmark v3 contract", () => {
         C: { taskDefinitionCount: 4, expectedExecutionCount: 24 },
       },
     });
+    expect(Object.fromEntries(manifest.tasks.map((task) => [task.id, task.modelExecution])))
+      .toEqual(Object.fromEntries(manifest.tasks.map((task) => [
+        task.id,
+        task.id === "gateway.client-cancel" || task.id === "gateway.process-restart"
+          ? "local_fixture"
+          : "provider",
+      ])));
   });
 
   it("freezes four licensed repository snapshots and two B-layer tasks per repository", async () => {
@@ -799,6 +806,7 @@ function v3Run(manifest, task) {
     failureCategory: null,
     execution: {
       profile: task.executionProfile,
+      modelExecution: task.modelExecution,
       budgets: resolveCodingAgentBenchmarkTaskBudgets(manifest, task.id),
       infrastructureRetries: 0,
     },

@@ -10,12 +10,16 @@ import {
   loadCodingAgentBenchmarkManifest,
   resolveCodingAgentBenchmarkManifestPath,
 } from "./coding-agent-benchmark-contract.mjs";
+import {
+  CODING_AGENT_CANDIDATE_EXPECTED_REPORT_PLAN_VERSION,
+  resolveCodingAgentBenchmarkCandidateReportId,
+} from "./run-coding-agent-benchmark-expected-report-plan.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 
 export const CODING_AGENT_BASELINE_INDEX_VERSION = "coding-agent-benchmark-baseline-index/v1";
 export const CODING_AGENT_EXPECTED_REPORT_PLAN_VERSION =
-  "coding-agent-benchmark-expected-report-plan/v1";
+  CODING_AGENT_CANDIDATE_EXPECTED_REPORT_PLAN_VERSION;
 export const CODING_AGENT_EXPECTED_REPORT_EVIDENCE_VERSION =
   "coding-agent-benchmark-expected-reports/v1";
 export const CODING_AGENT_EXPECTED_REPORT_PROJECTION_VERSION =
@@ -41,16 +45,17 @@ export async function aggregateCodingAgentBenchmarkReports(input) {
   const manifestSha256 = hashCodingAgentBenchmarkManifestText(manifestText);
   const expectedReportPlan = input?.expectedReportPlan === undefined
     ? undefined
-    : validateExpectedReportPlan(input.expectedReportPlan, manifestSha256, reportPaths);
-  const expectedReportIdByPath = new Map(
-    expectedReportPlan?.reports.map((report) => [pathIdentity(report.path), report.reportId]),
+    : validateExpectedReportPlan(input.expectedReportPlan, manifest, manifestSha256, reportPaths);
+  const expectedReportByPath = new Map(
+    expectedReportPlan?.reports.map((report) => [pathIdentity(report.path), report]),
   );
   const inputReports = [];
   for (const reportPath of reportPaths) {
+    const expectedReport = expectedReportByPath.get(pathIdentity(reportPath));
     inputReports.push({
       ...await readInputReport({ reportPath, manifest, manifestSha256 }),
       ...(expectedReportPlan
-        ? { reportId: expectedReportIdByPath.get(pathIdentity(reportPath)) }
+        ? { reportId: expectedReport.reportId, expectedReport }
         : {}),
     });
   }
@@ -63,6 +68,13 @@ export async function aggregateCodingAgentBenchmarkReports(input) {
       assertSameIdentity(harness, inputReport.report.harness, inputReport.reportPath, "harness");
     }
   }
+  validateExpectedReportCandidateBindings({
+    plan: expectedReportPlan,
+    manifest,
+    source,
+    harness,
+    inputReports,
+  });
 
   const runs = sortRuns(inputReports.flatMap((inputReport) => inputReport.report.runs), manifest);
   assertUniqueRunAttempts(runs);
@@ -128,10 +140,11 @@ export function createCodingAgentBenchmarkExpectedReportPlan(input) {
   if (!Array.isArray(input?.reports) || input.reports.length === 0 || input.reports.length > 256) {
     throw new Error("Coding benchmark expected report plan requires 1 to 256 reports.");
   }
-  const reports = input.reports.map((report) => ({
-    reportId: requireReportId(report?.reportId),
-    path: path.resolve(requireInput(report?.path, "expected report path")),
-  })).sort((left, right) => left.reportId.localeCompare(right.reportId));
+  const candidate = input?.candidate === undefined
+    ? undefined
+    : normalizeExpectedReportCandidate(input.candidate);
+  const reports = input.reports.map((report) => normalizeExpectedReportEntry(report))
+    .sort((left, right) => left.reportId.localeCompare(right.reportId));
   if (new Set(reports.map((report) => report.reportId)).size !== reports.length) {
     throw new Error("Coding benchmark expected report plan reportId values must be unique.");
   }
@@ -141,6 +154,7 @@ export function createCodingAgentBenchmarkExpectedReportPlan(input) {
   return {
     schemaVersion: CODING_AGENT_EXPECTED_REPORT_PLAN_VERSION,
     manifestSha256,
+    ...(candidate ? { candidate } : {}),
     reports,
   };
 }
@@ -154,12 +168,19 @@ export async function loadCodingAgentBenchmarkExpectedReportPlanFile(planPathInp
   const parsed = parseJson(await fs.readFile(planPath, "utf-8"), planPath);
   if (parsed?.schemaVersion !== CODING_AGENT_EXPECTED_REPORT_PLAN_VERSION
     || Object.keys(parsed).some((key) => {
-      return key !== "schemaVersion" && key !== "manifestSha256" && key !== "reports";
+      return key !== "schemaVersion"
+        && key !== "manifestSha256"
+        && key !== "candidate"
+        && key !== "reports";
     })
     || !Array.isArray(parsed.reports)
     || parsed.reports.some((report) => {
       return !report || typeof report !== "object" || Object.keys(report).some((key) => {
-        return key !== "reportId" && key !== "path";
+        return key !== "reportId"
+          && key !== "taskId"
+          && key !== "platform"
+          && key !== "attempt"
+          && key !== "path";
       });
     })) {
     throw new Error("Coding benchmark expected report plan file does not match its versioned contract.");
@@ -259,8 +280,9 @@ export async function verifyCodingAgentBaselineArtifact(input) {
   }
   const expectedReports = await validateExpectedReportProjection({
     value: baselineIndex.expectedReports,
-    inputs: baselineIndex.inputs,
+    inputs: verifiedInputReports,
     outputRoot,
+    manifest,
     manifestSha256,
   });
   const expectedIndex = createBaselineIndex({
@@ -444,7 +466,164 @@ function createBaselineIndex(input) {
   };
 }
 
-function validateExpectedReportPlan(value, manifestSha256, reportPaths) {
+function normalizeExpectedReportEntry(report) {
+  const normalized = {
+    reportId: requireReportId(report?.reportId),
+    path: path.resolve(requireInput(report?.path, "expected report path")),
+  };
+  const metadataKeys = ["taskId", "platform", "attempt"];
+  const metadataCount = metadataKeys.filter((key) => report?.[key] !== undefined).length;
+  if (metadataCount === 0) return normalized;
+  if (metadataCount !== metadataKeys.length) {
+    throw new Error("Coding benchmark expected report metadata must include taskId, platform, and attempt together.");
+  }
+  const taskId = requireReportId(report.taskId);
+  const platform = requireExpectedReportPlatform(report.platform);
+  const attempt = requireExpectedReportAttempt(report.attempt);
+  if (normalized.reportId !== resolveCodingAgentBenchmarkCandidateReportId({
+    taskId,
+    platform,
+    attempt,
+  })) {
+    throw new Error("Coding benchmark expected report ID drifted from its logical run metadata.");
+  }
+  return { ...normalized, taskId, platform, attempt };
+}
+
+function normalizeRetainedExpectedReportEntry(report) {
+  const reportId = requireReportId(report?.reportId);
+  const metadataKeys = ["taskId", "platform", "attempt"];
+  const metadataCount = metadataKeys.filter((key) => report?.[key] !== undefined).length;
+  if (metadataCount === 0) {
+    if (Object.keys(report).length !== 1) {
+      throw new Error("Coding benchmark retained expected report entry is invalid.");
+    }
+    return { reportId };
+  }
+  if (metadataCount !== metadataKeys.length || Object.keys(report).length !== 4) {
+    throw new Error("Coding benchmark retained expected report metadata is incomplete.");
+  }
+  const taskId = requireReportId(report.taskId);
+  const platform = requireExpectedReportPlatform(report.platform);
+  const attempt = requireExpectedReportAttempt(report.attempt);
+  if (reportId !== resolveCodingAgentBenchmarkCandidateReportId({ taskId, platform, attempt })) {
+    throw new Error("Coding benchmark retained expected report ID drifted from its metadata.");
+  }
+  return { reportId, taskId, platform, attempt };
+}
+
+function normalizeExpectedReportCandidate(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)
+    || Object.keys(value).length !== 3
+    || !Object.hasOwn(value, "id")
+    || !Object.hasOwn(value, "source")
+    || !Object.hasOwn(value, "harness")) {
+    throw new Error("Coding benchmark expected report candidate binding is invalid.");
+  }
+  return {
+    id: requireReportId(value.id),
+    source: normalizeExpectedReportIdentity(value.source, "source"),
+    harness: normalizeExpectedReportIdentity(value.harness, "harness"),
+  };
+}
+
+function normalizeExpectedReportIdentity(value, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)
+    || Object.keys(value).length !== 4
+    || !/^[a-f0-9]{40}$/.test(value.commit ?? "")
+    || value.workspaceDirty !== false
+    || !/^[a-f0-9]{64}$/.test(value.lockfileSha256 ?? "")
+    || !/^[a-f0-9]{64}$/.test(value.worktreeContentSha256 ?? "")) {
+    throw new Error(`Coding benchmark expected report candidate ${label} identity is invalid.`);
+  }
+  return {
+    commit: value.commit,
+    workspaceDirty: false,
+    lockfileSha256: value.lockfileSha256,
+    worktreeContentSha256: value.worktreeContentSha256,
+  };
+}
+
+function validateExpectedReportCandidateMatrix(plan, manifest) {
+  if (!plan?.candidate) {
+    if (plan?.reports?.some(hasExpectedReportMetadata)) {
+      throw new Error("Coding benchmark expected report logical run metadata requires a candidate binding.");
+    }
+    return;
+  }
+  if (manifest?.schemaVersion !== "coding-agent-benchmark-manifest/v3") {
+    throw new Error("Coding benchmark candidate expected report plan requires manifest revision v3.");
+  }
+  const expectedKeys = manifest.tasks.flatMap((task) => (
+    task.platforms.flatMap((platform) => (
+      Array.from({ length: manifest.suite.sampleRuns }, (_, index) => (
+        `${task.id}\0${platform}\0${index + 1}`
+      ))
+    ))
+  ));
+  const actualKeys = plan.reports.map((report) => {
+    if (!hasExpectedReportMetadata(report)) {
+      throw new Error("Coding benchmark candidate expected report plan is missing logical run metadata.");
+    }
+    return `${report.taskId}\0${report.platform}\0${report.attempt}`;
+  });
+  if (actualKeys.length !== expectedKeys.length
+    || new Set(actualKeys).size !== actualKeys.length
+    || expectedKeys.some((key) => !actualKeys.includes(key))) {
+    throw new Error("Coding benchmark candidate expected report plan does not match the manifest matrix.");
+  }
+}
+
+function validateExpectedReportCandidateBindings(input) {
+  if (!input.plan?.candidate) return;
+  assertSameIdentity(
+    input.plan.candidate.source,
+    input.source,
+    "expected report plan",
+    "source",
+  );
+  assertSameIdentity(
+    input.plan.candidate.harness,
+    input.harness,
+    "expected report plan",
+    "harness",
+  );
+  const reportsById = new Map(input.plan.reports.map((report) => [report.reportId, report]));
+  for (const inputReport of input.inputReports) {
+    const expected = reportsById.get(inputReport.reportId);
+    const runs = inputReport.report?.runs;
+    if (!expected || !Array.isArray(runs) || runs.length !== 1
+      || runs[0].taskId !== expected.taskId
+      || runs[0].platform !== expected.platform
+      || runs[0].attempt !== expected.attempt) {
+      throw new Error(
+        `Coding benchmark source report logical run does not match its planned slot: ${inputReport.reportPath}.`,
+      );
+    }
+  }
+}
+
+function hasExpectedReportMetadata(report) {
+  return report?.taskId !== undefined
+    && report?.platform !== undefined
+    && report?.attempt !== undefined;
+}
+
+function requireExpectedReportPlatform(value) {
+  if (value !== "windows-native" && value !== "wsl2-linux") {
+    throw new Error("Coding benchmark expected report platform is invalid.");
+  }
+  return value;
+}
+
+function requireExpectedReportAttempt(value) {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new Error("Coding benchmark expected report attempt is invalid.");
+  }
+  return value;
+}
+
+function validateExpectedReportPlan(value, manifest, manifestSha256, reportPaths) {
   if (value?.schemaVersion !== CODING_AGENT_EXPECTED_REPORT_PLAN_VERSION) {
     throw new Error("Coding benchmark expected report plan has an unsupported schema version.");
   }
@@ -452,6 +631,7 @@ function validateExpectedReportPlan(value, manifestSha256, reportPaths) {
   if (plan.manifestSha256 !== manifestSha256) {
     throw new Error("Coding benchmark expected report plan manifest hash drifted.");
   }
+  validateExpectedReportCandidateMatrix(plan, manifest);
   const plannedPaths = new Set(plan.reports.map((report) => pathIdentity(report.path)));
   const unexpectedPath = reportPaths.find((reportPath) => !plannedPaths.has(pathIdentity(reportPath)));
   if (unexpectedPath) {
@@ -464,7 +644,15 @@ function createRetainedExpectedReportPlan(plan) {
   return {
     schemaVersion: CODING_AGENT_EXPECTED_REPORT_EVIDENCE_VERSION,
     manifestSha256: plan.manifestSha256,
-    reports: plan.reports.map((report) => ({ reportId: report.reportId })),
+    ...(plan.candidate ? { candidate: structuredClone(plan.candidate) } : {}),
+    reports: plan.reports.map((report) => ({
+      reportId: report.reportId,
+      ...(hasExpectedReportMetadata(report) ? {
+        taskId: report.taskId,
+        platform: report.platform,
+        attempt: report.attempt,
+      } : {}),
+    })),
   };
 }
 
@@ -489,7 +677,7 @@ function createExpectedReportProjection(input) {
 }
 
 async function validateExpectedReportProjection(input) {
-  const { value, inputs, outputRoot, manifestSha256 } = input;
+  const { value, inputs, outputRoot, manifest, manifestSha256 } = input;
   if (value === undefined) {
     if (inputs.some((item) => item?.reportId !== undefined)) {
       throw new Error("Coding benchmark baseline index report identity requires expectedReports.");
@@ -513,20 +701,34 @@ async function validateExpectedReportProjection(input) {
   const parsedPlan = parseJson(planText, planPath);
   if (parsedPlan?.schemaVersion !== CODING_AGENT_EXPECTED_REPORT_EVIDENCE_VERSION
     || parsedPlan?.manifestSha256 !== manifestSha256
+    || Object.keys(parsedPlan ?? {}).some((key) => (
+      key !== "schemaVersion"
+      && key !== "manifestSha256"
+      && key !== "candidate"
+      && key !== "reports"
+    ))
     || !Array.isArray(parsedPlan.reports)
     || parsedPlan.reports.length === 0
     || parsedPlan.reports.length > 256
     || parsedPlan.reports.some((report) => {
       return !isReportId(report?.reportId)
-        || Object.keys(report).length !== 1;
+        || Object.keys(report).some((key) => (
+          key !== "reportId"
+          && key !== "taskId"
+          && key !== "platform"
+          && key !== "attempt"
+        ));
     })) {
     throw new Error("Coding benchmark expected report plan evidence is invalid.");
   }
   const canonicalPlan = {
     schemaVersion: CODING_AGENT_EXPECTED_REPORT_EVIDENCE_VERSION,
     manifestSha256,
+    ...(parsedPlan.candidate ? {
+      candidate: normalizeExpectedReportCandidate(parsedPlan.candidate),
+    } : {}),
     reports: parsedPlan.reports
-      .map((report) => ({ reportId: report.reportId }))
+      .map((report) => normalizeRetainedExpectedReportEntry(report))
       .sort((left, right) => left.reportId.localeCompare(right.reportId)),
   };
   const reportIds = canonicalPlan.reports.map((report) => report.reportId);
@@ -538,6 +740,14 @@ async function validateExpectedReportProjection(input) {
     || serializeJson(canonicalPlan) !== planText) {
     throw new Error("Coding benchmark baseline index expected report counts cannot be reconstructed.");
   }
+  validateExpectedReportCandidateMatrix(canonicalPlan, manifest);
+  validateExpectedReportCandidateBindings({
+    plan: canonicalPlan,
+    manifest,
+    source: inputs[0]?.report?.source,
+    harness: inputs[0]?.report?.harness,
+    inputReports: inputs,
+  });
   const expected = createExpectedReportProjection({
     plan: canonicalPlan,
     collectedReportIds: inputReportIds,

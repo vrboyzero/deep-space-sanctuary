@@ -65,6 +65,13 @@ import {
   startGatewayDisconnectProxy,
 } from "./coding-agent-recovery-harness.mjs";
 import { executeGatewayProcessRestartCodingCi } from "./coding-agent-process-restart-harness.mjs";
+import { executeGatewayClientCancellationCodingCi } from "./coding-agent-client-cancel-harness.mjs";
+import {
+  CODING_AGENT_MODEL_EXECUTION_LOCAL_FIXTURE,
+  createCodingAgentLocalFixtureModelFingerprint,
+  resolveCodingAgentBenchmarkModelExecution,
+  sanitizeCodingAgentLocalFixtureEnvironment,
+} from "./coding-agent-benchmark-local-fixture.mjs";
 import { collectWorkspaceArtifact, sanitizeDiagnostic } from "./run-coding-agent-ci.mjs";
 import {
   CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_ID,
@@ -276,6 +283,8 @@ export async function runStage0BSuite(input, dependencies = {}) {
 
   const runs = [];
   for (const taskId of taskIds) {
+    const task = manifest.tasks.find((candidate) => candidate.id === taskId);
+    const modelExecution = resolveCodingAgentBenchmarkModelExecution(task, manifestRevision);
     const runId = input.runIds?.[taskId] ?? createRunId(taskId, runtimePlatform.id, attempt);
     runs.push(await runStage0BTask({
       taskId,
@@ -294,11 +303,15 @@ export async function runStage0BSuite(input, dependencies = {}) {
       model: input.model,
       runtimePlatform,
       childEnv: input.childEnv,
-      maxCostUsd: usageBudget?.remainingCostUsd,
+      maxCostUsd: modelExecution === CODING_AGENT_MODEL_EXECUTION_LOCAL_FIXTURE
+        ? undefined
+        : usageBudget?.remainingCostUsd,
       ...(shadowCandidateId ? { shadowCandidateId } : {}),
       v3ProviderContext: v3ProviderContexts.get(taskId),
     }, dependencies));
-    const budgetDecision = consumeBenchmarkUsageBudget(usageBudget, runs.at(-1)?.usage?.observation);
+    const budgetDecision = modelExecution === CODING_AGENT_MODEL_EXECUTION_LOCAL_FIXTURE
+      ? { continueRunning: true, reason: null }
+      : consumeBenchmarkUsageBudget(usageBudget, runs.at(-1)?.usage?.observation);
     if (!budgetDecision.continueRunning) break;
   }
 
@@ -336,6 +349,8 @@ export async function runStage0BTask(input, dependencies = {}) {
   const isRecoveryTask = task?.id === STAGE_0C_RECOVERY_TASK_ID;
   const isCancellationTask = task?.id === STAGE_0C_CANCELLATION_TASK_ID;
   const isProcessRestartTask = task?.id === STAGE_0C_PROCESS_RESTART_TASK_ID;
+  const modelExecution = resolveCodingAgentBenchmarkModelExecution(task, input.manifestRevision ?? "v1");
+  const isLocalFixtureExecution = modelExecution === CODING_AGENT_MODEL_EXECUTION_LOCAL_FIXTURE;
   const isGitLocalTask = STAGE_0C_GIT_TASK_IDS.includes(task?.id);
   const isStage0DCoreTask = STAGE_0D_CORE_TASK_IDS.includes(task?.id);
   if (!task || (!isV3Task && !STAGE_0B_TASK_IDS.includes(task.id) && !isInteractiveTask && !isSafetyTask && !isRecoveryTask && !isCancellationTask && !isProcessRestartTask && !isGitLocalTask && !isStage0DCoreTask)) {
@@ -465,7 +480,7 @@ export async function runStage0BTask(input, dependencies = {}) {
       runId: input.runId,
       sourceRoot: input.sourceRoot,
       stateDir,
-      pricingRequired: input.model.credentialsConfigured && !isProcessRestartTask,
+      pricingRequired: input.model.credentialsConfigured && !isProcessRestartTask && !isLocalFixtureExecution,
       readEnv,
     }, {
       ...(dependencies.probeOciImage ? { probeImage: dependencies.probeOciImage } : {}),
@@ -475,6 +490,8 @@ export async function runStage0BTask(input, dependencies = {}) {
 
   const executeCodingCi = isRecoveryTask
     ? dependencies.executeRecoveryCodingCi ?? dependencies.executeCodingCi ?? executeRecoveryCodingCiProcess
+    : isCancellationTask && isLocalFixtureExecution
+      ? dependencies.executeClientCancellationCodingCi ?? executeClientCancellationCodingCiProcess
     : isProcessRestartTask
       ? dependencies.executeProcessRestartCodingCi ?? executeProcessRestartCodingCiProcess
       : dependencies.executeCodingCi ?? executeCodingCiProcess;
@@ -487,11 +504,11 @@ export async function runStage0BTask(input, dependencies = {}) {
       }
     : await executeCodingCi({
         workspace,
-        ...(gatewayWorkspace && !isProcessRestartTask ? { gatewayWorkspace } : {}),
+        ...(gatewayWorkspace && !isProcessRestartTask && !isLocalFixtureExecution ? { gatewayWorkspace } : {}),
         artifactDir,
         stateDir,
         conversationId: `coding-benchmark-${input.runId}`,
-        modelId: input.model.id,
+        modelId: isLocalFixtureExecution ? undefined : input.model.id,
         promptPath,
         outputSchemaPath,
         mode: task.executionProfile,
@@ -507,10 +524,14 @@ export async function runStage0BTask(input, dependencies = {}) {
         cancelOnRunStart: isCancellationTask,
         ...(approval ? { approvalContractPath: approval.contractPath } : {}),
         childEnv: {
-          ...input.childEnv,
+          ...(isLocalFixtureExecution
+            ? sanitizeCodingAgentLocalFixtureEnvironment(input.childEnv)
+            : input.childEnv),
           ...fixture.executionEnvironment,
         },
-        maxCostUsd: contract.revision !== "v1" && isProcessRestartTask ? undefined : input.maxCostUsd,
+        maxCostUsd: isLocalFixtureExecution || (contract.revision !== "v1" && isProcessRestartTask)
+          ? undefined
+          : input.maxCostUsd,
       });
   const durationMs = Math.max(0, Date.now() - startedAt);
   await preserveCodingCiManifest(artifactDir, runner.exitCode);
@@ -618,6 +639,7 @@ export async function runStage0BTask(input, dependencies = {}) {
     failureCategory: verdict.failureCategory,
     execution: {
       profile: task.executionProfile,
+      ...(isV3Task ? { modelExecution } : {}),
       budgets: executionBudgets,
       infrastructureRetries,
       ...(input.maxCostUsd === undefined || (contract.revision !== "v1" && isProcessRestartTask)
@@ -630,7 +652,9 @@ export async function runStage0BTask(input, dependencies = {}) {
       nodeVersion: process.version,
       packageManager: await readPackageManager(input.sourceRoot ?? workspaceRoot),
       wsl: input.runtimePlatform.wsl,
-      model: { ...input.model },
+      model: isLocalFixtureExecution
+        ? createCodingAgentLocalFixtureModelFingerprint(task)
+        : { ...input.model },
     },
     evaluation: verdict.evaluation,
     usage: {
@@ -1203,6 +1227,13 @@ async function executeProcessRestartCodingCiProcess(input) {
       // The restart fixture uses a local non-Provider Agent and reports usage=not_reached.
       modelId: undefined,
     }),
+  });
+}
+
+async function executeClientCancellationCodingCiProcess(input) {
+  return await executeGatewayClientCancellationCodingCi({
+    ...input,
+    executeCodingCi: executeCodingCiProcess,
   });
 }
 

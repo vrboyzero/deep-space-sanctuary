@@ -24,6 +24,9 @@ import {
 import { loadCodingAgentBenchmarkScorecardV3 } from "./coding-agent-benchmark-v3-contract.mjs";
 import { validateCodingAgentBenchmarkV3SystemEvidence } from "./coding-agent-benchmark-v3-fixtures.mjs";
 import { validateAgentRunEvents } from "./run-coding-agent-ci.mjs";
+import {
+  CODING_AGENT_MODEL_EXECUTION_LOCAL_FIXTURE,
+} from "./coding-agent-benchmark-local-fixture.mjs";
 
 export const CODING_AGENT_CANDIDATE_QUALIFICATION_VERSION =
   "coding-agent-benchmark-candidate-qualification/v2";
@@ -291,9 +294,12 @@ export async function qualifyCodingAgentBenchmarkCandidate(input) {
     };
   }
 
+  const manifest = JSON.parse(await fs.readFile(path.join(aggregateRoot, "task-manifest.json"), "utf-8"));
+  const manifestTasksById = new Map(manifest.tasks.map((task) => [task.id, task]));
   const runEventGateCounts = await evaluateCandidateRunEventGates({
     aggregateRoot,
     runs: report.runs,
+    manifestTasksById,
   });
   const runEventFailedGates = [
     {
@@ -327,8 +333,6 @@ export async function qualifyCodingAgentBenchmarkCandidate(input) {
 
   const cRuns = report.runs.filter((run) => run.taskId.startsWith("system."));
   let passedCriticalSystemEvidenceCount = 0;
-  const manifest = JSON.parse(await fs.readFile(path.join(aggregateRoot, "task-manifest.json"), "utf-8"));
-  const manifestTasksById = new Map(manifest.tasks.map((task) => [task.id, task]));
   for (const run of cRuns) {
     try {
       const evidenceText = await fs.readFile(
@@ -699,7 +703,17 @@ async function evaluateCandidateRunEventGates(input) {
       continue;
     }
 
-    if (eventContract.usage.status !== "complete") {
+    const task = input.manifestTasksById.get(run.taskId);
+    const localFixtureUsageIsComplete = await validateLocalFixtureUsageEvidence({
+      aggregateRoot: input.aggregateRoot,
+      task,
+      run,
+      events,
+      eventContract,
+    });
+    const declaresLocalFixture = task?.modelExecution === CODING_AGENT_MODEL_EXECUTION_LOCAL_FIXTURE;
+    if ((declaresLocalFixture && !localFixtureUsageIsComplete)
+      || (!declaresLocalFixture && eventContract.usage.status !== "complete")) {
       incompleteProviderUsageCount += 1;
     }
     try {
@@ -709,6 +723,61 @@ async function evaluateCandidateRunEventGates(input) {
     }
   }
   return { incompleteTraceCount, incompleteProviderUsageCount };
+}
+
+async function validateLocalFixtureUsageEvidence(input) {
+  const { task, run, events, eventContract } = input;
+  if (task?.modelExecution !== CODING_AGENT_MODEL_EXECUTION_LOCAL_FIXTURE
+    || run.execution?.modelExecution !== CODING_AGENT_MODEL_EXECUTION_LOCAL_FIXTURE
+    || run.execution.maxCostUsd !== undefined
+    || run.environment?.model?.provider !== CODING_AGENT_MODEL_EXECUTION_LOCAL_FIXTURE
+    || run.environment.model.id !== task.fixture?.generatorId
+    || run.environment.model.credentialsConfigured !== false
+    || run.usage?.inputTokens !== null
+    || run.usage?.outputTokens !== null
+    || run.usage?.observation?.status !== "not_reached"
+    || run.usage.observation.costUsd !== null
+    || eventContract?.usage?.status !== "incomplete"
+    || eventContract.usage.reason !== "usage_not_reported"
+    || events.some((event) => event?.type === "run.usage")) {
+    return false;
+  }
+  try {
+    const preflight = JSON.parse(await fs.readFile(
+      path.resolve(input.aggregateRoot, run.artifacts.preflight),
+      "utf-8",
+    ));
+    if (preflight.status !== "passed"
+      || preflight.checks?.pricing?.status !== "not_applicable"
+      || preflight.checks.pricing.reason !== "fixture_provider") {
+      return false;
+    }
+    if (run.taskId === "gateway.client-cancel") {
+      const cancellation = JSON.parse(await fs.readFile(
+        path.resolve(input.aggregateRoot, run.artifacts.cancelInjection),
+        "utf-8",
+      ));
+      return eventContract.terminalType === "run.cancelled"
+        && cancellation.status === "confirmed"
+        && cancellation.cancellationRequestCount === 1
+        && cancellation.terminalType === "run.cancelled";
+    }
+    if (run.taskId === "gateway.process-restart") {
+      const restart = JSON.parse(await fs.readFile(
+        path.resolve(input.aggregateRoot, run.artifacts.restartInjection),
+        "utf-8",
+      ));
+      const terminal = events.at(-1);
+      return eventContract.terminalType === "run.failed"
+        && terminal?.payload?.error?.code === "gateway_unavailable"
+        && restart.status === "confirmed"
+        && restart.messageSendRequestCount === 1
+        && restart.cleanup?.managedGatewayProcessCount === 0;
+    }
+  } catch {
+    return false;
+  }
+  return false;
 }
 
 function parseJsonl(value) {

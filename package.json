@@ -26,6 +26,7 @@
     "build:force": "tsc -b --force",
     "verify:build": "node scripts/verify-workspace-build.mjs",
     "benchmark:coding-agent:v3:prepare-linux": "node scripts/coding-agent-benchmark-linux-snapshot-preparation.mjs",
+    "benchmark:coding-agent:v3:expected-report-plan": "node scripts/run-coding-agent-benchmark-expected-report-plan.mjs",
     "benchmark:coding-agent:v3:navigation-efficiency": "node scripts/run-coding-agent-benchmark-navigation-efficiency.mjs",
     "benchmark:coding-agent:v3:candidate-cli-tui-receipt": "node --import tsx scripts/run-coding-agent-candidate-cli-tui-receipt.mjs",
     "benchmark:coding-agent:v3:candidate-tui-accessibility:windows": "node --import tsx scripts/run-coding-agent-candidate-tui-accessibility.mjs --platform windows-native",

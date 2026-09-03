@@ -1539,6 +1539,130 @@ describe("coding agent benchmark stage 0B runner", () => {
     )).resolves.toContain('"status": "not_injected"');
   });
 
+  windowsIt("keeps v3 lifecycle fixtures off the Provider path and outside the usage budget", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-v3-local-lifecycle-"));
+    tempRoots.push(root);
+    const invocations = [];
+    const report = await runStage0BSuite({
+      platform: "windows-native",
+      manifestRevision: "v3",
+      sourceRoot: path.resolve("."),
+      taskIds: ["gateway.client-cancel", "gateway.process-restart"],
+      fixtureRoot: path.join(root, "fixtures"),
+      artifactRoot: path.join(root, "artifacts"),
+      stateRoot: path.join(root, "state"),
+      attempt: 1,
+      runIds: {
+        "gateway.client-cancel": "cancel-v3-local-fixture",
+        "gateway.process-restart": "restart-v3-local-fixture",
+      },
+      model: { provider: "openai", id: "provider-model-must-not-run", credentialsConfigured: true },
+      childEnv: {
+        BELLDANDY_OPENAI_API_KEY: "not-a-real-key",
+        BENCHMARK_SAFE_FIXTURE_VALUE: "retained",
+      },
+      priorObservedCostUsd: 0.75,
+      maxTotalCostUsd: 1,
+      generatedAt: "2026-09-03T00:00:00.000Z",
+    }, {
+      runtime: { platform: "win32", osRelease: "Windows fixture", env: {} },
+      resolveRepositoryIdentity: async () => repositoryIdentity("d"),
+      createBenchmarkPreflightArtifact: async (input) => createPassedV3RuntimePreflight(input),
+      async executeCodingCi() {
+        throw new Error("Provider Coding CI path must not execute for a local lifecycle fixture.");
+      },
+      async executeClientCancellationCodingCi(input) {
+        invocations.push({ taskId: "gateway.client-cancel", input });
+        return { exitCode: 4, stdout: "", stderr: "local cancellation fixture unavailable" };
+      },
+      async executeProcessRestartCodingCi(input) {
+        invocations.push({ taskId: "gateway.process-restart", input });
+        return { exitCode: 4, stdout: "", stderr: "local restart fixture unavailable" };
+      },
+    });
+
+    expect(invocations.map((item) => item.taskId)).toEqual([
+      "gateway.client-cancel",
+      "gateway.process-restart",
+    ]);
+    for (const { input } of invocations) {
+      expect(input.modelId).toBeUndefined();
+      expect(input.maxCostUsd).toBeUndefined();
+      expect(input.childEnv).toMatchObject({ BENCHMARK_SAFE_FIXTURE_VALUE: "retained" });
+      expect(input.childEnv).not.toHaveProperty("BELLDANDY_OPENAI_API_KEY");
+    }
+    expect(report.runs).toHaveLength(2);
+    for (const run of report.runs) {
+      expect(run.execution).toEqual({
+        profile: "plan",
+        modelExecution: "local_fixture",
+        budgets: { timeoutMs: 300000, maxTurns: 12, maxTokens: 24000 },
+        infrastructureRetries: 0,
+      });
+      expect(run.environment.model).toEqual({
+        provider: "local_fixture",
+        id: run.fixture.generatorId,
+        credentialsConfigured: false,
+      });
+      expect(run.usage.observation).toEqual({ status: "not_reached", costUsd: null });
+    }
+  });
+
+  windowsIt("cancels a v3 local fixture through the production Gateway without Provider usage", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-v3-client-cancel-integration-"));
+    tempRoots.push(root);
+    const runId = "client-cancel-v3-windows-integration";
+    const report = await runStage0BSuite({
+      platform: "windows-native",
+      manifestRevision: "v3",
+      sourceRoot: path.resolve("."),
+      taskIds: ["gateway.client-cancel"],
+      fixtureRoot: path.join(root, "fixtures"),
+      artifactRoot: path.join(root, "artifacts"),
+      stateRoot: path.join(root, "state"),
+      attempt: 1,
+      runIds: { "gateway.client-cancel": runId },
+      model: { provider: "fixture", id: "provider-must-not-run", credentialsConfigured: false },
+      generatedAt: "2026-09-03T00:00:00.000Z",
+    });
+
+    const runDir = path.join(root, "artifacts", runId);
+    const cancellation = JSON.parse(await fs.readFile(
+      path.join(runDir, "cancel-injection.json"),
+      "utf-8",
+    ));
+    const events = (await fs.readFile(path.join(runDir, "events.jsonl"), "utf-8"))
+      .split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
+    expect(report.runs).toEqual([expect.objectContaining({
+      taskId: "gateway.client-cancel",
+      status: "passed",
+      failureCategory: null,
+      execution: expect.objectContaining({ modelExecution: "local_fixture" }),
+      environment: expect.objectContaining({
+        model: {
+          provider: "local_fixture",
+          id: "gateway-client-cancel-v1",
+          credentialsConfigured: false,
+        },
+      }),
+      usage: expect.objectContaining({
+        inputTokens: null,
+        outputTokens: null,
+        observation: { status: "not_reached", costUsd: null },
+      }),
+    })]);
+    expect(cancellation).toMatchObject({
+      status: "confirmed",
+      cancellationRequestCount: 1,
+      terminalType: "run.cancelled",
+    });
+    expect(events.some((event) => event.type === "run.usage")).toBe(false);
+    expect(events.at(-1)).toMatchObject({
+      type: "run.cancelled",
+      payload: { usage: { status: "incomplete", reason: "usage_not_reported" } },
+    });
+  }, 30_000);
+
   windowsIt("records a lost old binding after a real controlled Gateway process restart", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-stage0c-process-restart-integration-"));
     tempRoots.push(root);

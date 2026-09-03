@@ -617,6 +617,19 @@ function assertRunRecord(run, tasksById, manifest) {
   if (run.execution?.profile !== task.executionProfile) {
     throw new Error(`Coding benchmark run ${run.runId} execution profile drifted from the manifest.`);
   }
+  if (contract.revision === "v3" && Object.hasOwn(task, "modelExecution")) {
+    if (!Object.hasOwn(run.execution ?? {}, "modelExecution")
+      || run.execution.modelExecution !== task.modelExecution) {
+      throw new Error(`Coding benchmark run ${run.runId} model execution drifted from the manifest.`);
+    }
+  } else if (run.execution?.modelExecution !== undefined
+    && run.execution.modelExecution !== "provider") {
+    throw new Error(`Coding benchmark run ${run.runId} has an invalid legacy model execution.`);
+  }
+  const effectiveModelExecution = run.execution?.modelExecution ?? "provider";
+  if (effectiveModelExecution !== "provider" && effectiveModelExecution !== "local_fixture") {
+    throw new Error(`Coding benchmark run ${run.runId} has an invalid model execution.`);
+  }
   if (run.execution.maxCostUsd !== undefined
     && (!Number.isFinite(run.execution.maxCostUsd) || run.execution.maxCostUsd <= 0)) {
     throw new Error(`Coding benchmark run ${run.runId} has an invalid maxCostUsd.`);
@@ -692,6 +705,14 @@ function assertRunRecord(run, tasksById, manifest) {
   if (typeof run.environment.model?.credentialsConfigured !== "boolean") {
     throw new Error(`Coding benchmark run ${run.runId} records only credential presence as a boolean.`);
   }
+  if (effectiveModelExecution === "local_fixture") {
+    if (run.execution.maxCostUsd !== undefined
+      || run.environment.model.provider !== "local_fixture"
+      || run.environment.model.id !== task.fixture.generatorId
+      || run.environment.model.credentialsConfigured !== false) {
+      throw new Error(`Coding benchmark run ${run.runId} has an invalid local fixture model binding.`);
+    }
+  }
   if (run.platform === "wsl2-linux") {
     const wsl = run.environment.wsl;
     if (!wsl || typeof wsl !== "object" || Array.isArray(wsl)) {
@@ -724,6 +745,13 @@ function assertRunRecord(run, tasksById, manifest) {
       || (observation.status !== "provider_reported" && observation.costUsd !== null)) {
       throw new Error(`Coding benchmark run ${run.runId} has an invalid usage observation.`);
     }
+  }
+  if (effectiveModelExecution === "local_fixture"
+    && (run.usage.inputTokens !== null
+      || run.usage.outputTokens !== null
+      || run.usage.observation?.status !== "not_reached"
+      || run.usage.observation.costUsd !== null)) {
+    throw new Error(`Coding benchmark run ${run.runId} has invalid local fixture usage evidence.`);
   }
   const artifactFields = [
     "manifest",

@@ -32,8 +32,14 @@ async function main() {
     webRoot: path.join(sourceRoot, "apps", "web", "public"),
     stateDir,
     agentFactory: () => ({
-      async *run() {
-        await new Promise(() => {});
+      async *run(input) {
+        await new Promise((resolve, reject) => {
+          const signal = input?.abortSignal;
+          if (!signal) return;
+          const rejectWithAbort = () => reject(signal.reason ?? new Error("Local fixture run cancelled."));
+          if (signal.aborted) rejectWithAbort();
+          else signal.addEventListener("abort", rejectWithAbort, { once: true });
+        });
       },
     }),
   });

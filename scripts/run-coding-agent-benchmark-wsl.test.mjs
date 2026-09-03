@@ -11,6 +11,42 @@ import {
 } from "./run-coding-agent-benchmark-wsl.mjs";
 
 describe("coding agent benchmark WSL launcher", () => {
+  it("rejects candidate plan drift before resolving the WSL host or starting the Gateway", async () => {
+    const expectedError = new Error("candidate report path is not declared");
+    const validateCandidateExpectedReportLaunch = vi.fn(async () => {
+      throw expectedError;
+    });
+    const spawnSync = vi.fn();
+    const runWindowsBenchmark = vi.fn();
+
+    await expect(runWslBenchmark({
+      distribution: "Ubuntu-22.04",
+      workspaceRoot: "E:/project/star-sanctuary",
+      fixtureRoot: "E:/project/star-sanctuary/.tmp/coding-agent-fixtures-wsl",
+      artifactRoot: "E:/project/star-sanctuary/artifacts/coding-agent-wsl",
+      stateRoot: "E:/project/star-sanctuary/artifacts/coding-agent-state-wsl",
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      credentialsConfigured: true,
+      attempt: 1,
+      taskId: "rules.nested-precedence",
+      manifestRevision: "v3",
+      candidateId: "candidate-a",
+      expectedReportPlanPath: "E:/candidate/expected-report-plan.json",
+    }, {
+      validateCandidateExpectedReportLaunch,
+      spawnSync,
+      runWindowsBenchmark,
+    })).rejects.toBe(expectedError);
+
+    expect(validateCandidateExpectedReportLaunch).toHaveBeenCalledWith(
+      expect.objectContaining({ platform: "wsl2-linux", candidateId: "candidate-a" }),
+      expect.any(Object),
+    );
+    expect(spawnSync).not.toHaveBeenCalled();
+    expect(runWindowsBenchmark).not.toHaveBeenCalled();
+  });
+
   it("resolves the Windows host from the target WSL2 default route", () => {
     const run = vi.fn(() => ({
       status: 0,
@@ -91,7 +127,10 @@ describe("coding agent benchmark WSL launcher", () => {
 
   it("starts the Linux runner through the ready Windows Gateway lifecycle", async () => {
     const child = new EventEmitter();
-    const start = vi.fn(() => child);
+    const start = vi.fn(() => {
+      queueMicrotask(() => child.emit("close", 0));
+      return child;
+    });
     const runWindowsBenchmark = vi.fn(async (_input, dependencies) => await dependencies.runBenchmark({
       endpoint: {
         host: "172.27.128.1",
@@ -100,8 +139,6 @@ describe("coding agent benchmark WSL launcher", () => {
         authToken: "ephemeral-token",
       },
     }));
-    queueMicrotask(() => child.emit("close", 0));
-
     await expect(runWslBenchmark({
       distribution: "Ubuntu-22.04",
       workspaceRoot: "E:/project/star-sanctuary",

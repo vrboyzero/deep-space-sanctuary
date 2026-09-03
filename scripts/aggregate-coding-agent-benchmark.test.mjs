@@ -30,6 +30,10 @@ import {
   writeCodingAgentCandidateQualificationReport,
 } from "./run-coding-agent-candidate-qualification.mjs";
 import { runCodingAgentCandidateGlobalReceipt } from "./run-coding-agent-candidate-global-receipt.mjs";
+import {
+  createCodingAgentBenchmarkCandidateExpectedReportPlan,
+  resolveCodingAgentBenchmarkCandidateReportPath,
+} from "./run-coding-agent-benchmark-expected-report-plan.mjs";
 
 const workspaceRoot = path.resolve(import.meta.dirname, "..");
 const manifestPath = path.join(workspaceRoot, "benchmarks/coding-agent/v1/task-manifest.json");
@@ -1372,6 +1376,61 @@ describe("coding agent candidate qualification", () => {
     await expect(verifyCodingAgentCandidateQualificationReport({ aggregateRoot: outputRoot }))
       .resolves.toMatchObject({ decision: qualification });
   });
+
+  it("rejects Provider usage on a task declared as a local lifecycle fixture", async () => {
+    const root = await makeTempRoot();
+    const runs = manifestV3.tasks.flatMap((task) => task.platforms.flatMap((platform) => {
+      return [1, 2, 3].map((attempt) => createV3Run(task, platform, attempt));
+    }));
+    const reportPath = await writeV3SourceReport(path.join(root, "source"), runs, {}, {
+      artifactTextFor({ run, artifactKey }) {
+        if (artifactKey === "events") {
+          const eventRun = run.taskId === "gateway.client-cancel"
+            ? { ...run, execution: { ...run.execution, modelExecution: "provider" } }
+            : run;
+          return createRunEventsJsonl(eventRun, "complete");
+        }
+        if (artifactKey === "systemEvidence") {
+          return `${JSON.stringify(createSystemEvidence(run.taskId, run.runId, run.platform), null, 2)}\n`;
+        }
+        return undefined;
+      },
+    });
+    const outputRoot = path.join(root, "baseline");
+    const expectedReportPlan = createCodingAgentBenchmarkExpectedReportPlan({
+      manifestSha256: manifestV3Sha256,
+      reports: [{ reportId: "candidate-native-matrix", path: reportPath }],
+    });
+    await aggregateCodingAgentBenchmarkReports({
+      manifestRevision: "v3",
+      reportPaths: [reportPath],
+      expectedReportPlan,
+      outputRoot,
+      generatedAt: "2026-09-03T00:00:00.000Z",
+    });
+    await writeCodingAgentCandidateGlobalReceipt({
+      aggregateRoot: outputRoot,
+      generatedAt: "2026-09-03T01:00:00.000Z",
+      sensitiveScan: createCandidateGlobalReceipt({}).sensitiveScan,
+      resourceSweeps: [
+        createResourceSweep("windows-native"),
+        createResourceSweep("wsl2-linux"),
+      ],
+    });
+
+    await expect(qualifyCodingAgentBenchmarkCandidate({ aggregateRoot: outputRoot }))
+      .resolves.toMatchObject({
+        status: "not_eligible",
+        blockingReasons: [{
+          code: "candidate_run_events_hard_gate_failed",
+          failedGates: [{
+            id: "incompleteProviderUsageCountMaximum",
+            observed: 6,
+            maximum: 0,
+          }],
+        }],
+      });
+  });
 });
 
 describe("coding agent expected source-report plan", () => {
@@ -1450,6 +1509,137 @@ describe("coding agent expected source-report plan", () => {
     await expect(verifyCodingAgentBaselineArtifact({ outputRoot })).rejects.toThrow(
       /expected report.*reconstruct|baseline index cannot be reconstructed/i,
     );
+  });
+});
+
+describe("coding agent candidate expected source-report plan", () => {
+  it("retains candidate identity and the exact logical run matrix for offline verification", async () => {
+    const root = await makeTempRoot();
+    const source = versionedIdentity("c");
+    const harness = versionedIdentity("b");
+    const reportRoot = path.join(root, "reports");
+    const task = manifestV3.tasks.find((item) => item.id === "gateway.client-cancel");
+    const reportPath = resolveCodingAgentBenchmarkCandidateReportPath({
+      reportRoot,
+      taskId: task.id,
+      platform: "windows-native",
+      attempt: 1,
+    });
+    await writeV3SourceReport(
+      path.dirname(reportPath),
+      [createV3Run(task, "windows-native", 1)],
+      { source, harness },
+    );
+    const expectedReportPlan = createCodingAgentBenchmarkCandidateExpectedReportPlan({
+      candidateId: "candidate-20260903-a",
+      manifest: manifestV3,
+      manifestSha256: manifestV3Sha256,
+      reportRoot,
+      source,
+      harness,
+    });
+    const outputRoot = path.join(root, "baseline");
+
+    const result = await aggregateCodingAgentBenchmarkReports({
+      manifestRevision: "v3",
+      reportPaths: [reportPath],
+      expectedReportPlan,
+      outputRoot,
+      generatedAt: "2026-09-03T00:00:00.000Z",
+    });
+
+    expect(result.baselineIndex.expectedReports).toMatchObject({
+      expectedReportCount: 144,
+      collectedReportCount: 1,
+      missingReportCount: 143,
+    });
+    const retained = JSON.parse(await fs.readFile(
+      path.join(outputRoot, "expected-reports.json"),
+      "utf-8",
+    ));
+    expect(retained).toMatchObject({
+      candidate: { id: "candidate-20260903-a", source, harness },
+      reports: expect.arrayContaining([{
+        reportId: "gateway.client-cancel.windows-native.a1",
+        taskId: "gateway.client-cancel",
+        platform: "windows-native",
+        attempt: 1,
+      }]),
+    });
+    expect(retained.reports).toHaveLength(144);
+    await expect(verifyCodingAgentBaselineArtifact({ outputRoot })).resolves.toMatchObject({
+      baselineIndex: { expectedReports: { missingReportCount: 143 } },
+    });
+  });
+
+  it("rejects candidate source identity drift before writing an aggregate", async () => {
+    const root = await makeTempRoot();
+    const source = versionedIdentity("c");
+    const harness = versionedIdentity("b");
+    const reportRoot = path.join(root, "reports");
+    const task = manifestV3.tasks[0];
+    const reportPath = resolveCodingAgentBenchmarkCandidateReportPath({
+      reportRoot,
+      taskId: task.id,
+      platform: "windows-native",
+      attempt: 1,
+    });
+    await writeV3SourceReport(
+      path.dirname(reportPath),
+      [createV3Run(task, "windows-native", 1)],
+      { source: versionedIdentity("d"), harness },
+    );
+    const expectedReportPlan = createCodingAgentBenchmarkCandidateExpectedReportPlan({
+      candidateId: "candidate-20260903-a",
+      manifest: manifestV3,
+      manifestSha256: manifestV3Sha256,
+      reportRoot,
+      source,
+      harness,
+    });
+
+    await expect(aggregateCodingAgentBenchmarkReports({
+      manifestRevision: "v3",
+      reportPaths: [reportPath],
+      expectedReportPlan,
+      outputRoot: path.join(root, "baseline"),
+    })).rejects.toThrow(/source identity drifted/i);
+    await expect(fs.stat(path.join(root, "baseline"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects a report whose logical run does not match its planned slot", async () => {
+    const root = await makeTempRoot();
+    const source = versionedIdentity("c");
+    const harness = versionedIdentity("b");
+    const reportRoot = path.join(root, "reports");
+    const plannedTask = manifestV3.tasks[0];
+    const actualTask = manifestV3.tasks[1];
+    const reportPath = resolveCodingAgentBenchmarkCandidateReportPath({
+      reportRoot,
+      taskId: plannedTask.id,
+      platform: "windows-native",
+      attempt: 1,
+    });
+    await writeV3SourceReport(
+      path.dirname(reportPath),
+      [createV3Run(actualTask, "windows-native", 1)],
+      { source, harness },
+    );
+    const expectedReportPlan = createCodingAgentBenchmarkCandidateExpectedReportPlan({
+      candidateId: "candidate-20260903-a",
+      manifest: manifestV3,
+      manifestSha256: manifestV3Sha256,
+      reportRoot,
+      source,
+      harness,
+    });
+
+    await expect(aggregateCodingAgentBenchmarkReports({
+      manifestRevision: "v3",
+      reportPaths: [reportPath],
+      expectedReportPlan,
+      outputRoot: path.join(root, "baseline"),
+    })).rejects.toThrow(/logical run.*planned slot/i);
   });
 });
 
@@ -1638,7 +1828,7 @@ async function writeV3SourceReport(root, runs, identities = {}, options = {}) {
       const explicitText = options.artifactTextFor?.({ run, artifactKey, artifactPath });
       await fs.writeFile(
         target,
-        explicitText ?? (path.basename(artifactPath) === "browser-screenshot.png"
+        explicitText ?? createDefaultV3ArtifactText(run, artifactKey) ?? (path.basename(artifactPath) === "browser-screenshot.png"
           ? V3_BROWSER_SCREENSHOT
           : "fixture artifact\n"),
       );
@@ -1703,6 +1893,7 @@ function createV3Run(task, platform, attempt) {
     failureCategory: null,
     execution: {
       profile: task.executionProfile,
+      modelExecution: task.modelExecution,
       budgets: resolveCodingAgentBenchmarkTaskBudgets(manifestV3, task.id),
       infrastructureRetries: 0,
     },
@@ -1712,7 +1903,9 @@ function createV3Run(task, platform, attempt) {
       nodeVersion: "v22.23.1",
       packageManager: "pnpm@10.23.0",
       wsl: platform === "wsl2-linux" ? { distribution: "Ubuntu-22.04", version: 2 } : null,
-      model: { provider: "fixture", id: "v3-baseline-fixture", credentialsConfigured: false },
+      model: task.modelExecution === "local_fixture"
+        ? { provider: "local_fixture", id: task.fixture.generatorId, credentialsConfigured: false }
+        : { provider: "fixture", id: "v3-baseline-fixture", credentialsConfigured: false },
     },
     evaluation: {
       source: "machine",
@@ -1822,7 +2015,8 @@ function createRunEventsJsonl(run, usageStatus, agentRunId = run.runId) {
       },
     },
   };
-  const usage = usageStatus === "complete"
+  const localFixture = run.execution?.modelExecution === "local_fixture" && usageStatus === "complete";
+  const usage = !localFixture && usageStatus === "complete"
     ? {
         status: "complete",
         reason: "provider_reported_all_model_calls",
@@ -1830,6 +2024,35 @@ function createRunEventsJsonl(run, usageStatus, agentRunId = run.runId) {
         providerReportedModelCalls: 1,
       }
     : { status: "incomplete", reason: "usage_not_reported" };
+  const terminal = localFixture && run.taskId === "gateway.client-cancel"
+    ? {
+        version: "v1",
+        seq: 2,
+        timestampMs: 2,
+        source: "conversation",
+        binding,
+        type: "run.cancelled",
+        payload: { reason: "fixture cancellation", hadPartialResponse: false, usage },
+      }
+    : localFixture && run.taskId === "gateway.process-restart"
+      ? {
+          version: "v1",
+          seq: 2,
+          timestampMs: 2,
+          source: "conversation",
+          binding,
+          type: "run.failed",
+          payload: { error: { code: "gateway_unavailable", message: "fixture restart" }, usage },
+        }
+      : {
+          version: "v1",
+          seq: 2,
+          timestampMs: 2,
+          source: "conversation",
+          binding,
+          type: "run.completed",
+          payload: { usage },
+        };
   const events = [
     {
       version: "v1",
@@ -1840,17 +2063,35 @@ function createRunEventsJsonl(run, usageStatus, agentRunId = run.runId) {
       type: "run.started",
       payload: { status: "running", capabilities },
     },
-    {
-      version: "v1",
-      seq: 2,
-      timestampMs: 2,
-      source: "conversation",
-      binding,
-      type: "run.completed",
-      payload: { usage },
-    },
+    terminal,
   ];
   return `${events.map((event) => JSON.stringify(event)).join("\n")}\n`;
+}
+
+function createDefaultV3ArtifactText(run, artifactKey) {
+  if (artifactKey === "preflight" && run.execution?.modelExecution === "local_fixture") {
+    return `${JSON.stringify({
+      status: "passed",
+      checks: { pricing: { status: "not_applicable", reason: "fixture_provider" } },
+    }, null, 2)}\n`;
+  }
+  if (artifactKey === "cancelInjection" && run.taskId === "gateway.client-cancel") {
+    return `${JSON.stringify({
+      schemaVersion: "coding-agent-cancel-injection/v1",
+      status: "confirmed",
+      cancellationRequestCount: 1,
+      terminalType: "run.cancelled",
+    }, null, 2)}\n`;
+  }
+  if (artifactKey === "restartInjection" && run.taskId === "gateway.process-restart") {
+    return `${JSON.stringify({
+      schemaVersion: "coding-agent-restart-injection/v1",
+      status: "confirmed",
+      messageSendRequestCount: 1,
+      cleanup: { managedGatewayProcessCount: 0 },
+    }, null, 2)}\n`;
+  }
+  return undefined;
 }
 
 function createSystemEvidence(taskId, runId, platform) {

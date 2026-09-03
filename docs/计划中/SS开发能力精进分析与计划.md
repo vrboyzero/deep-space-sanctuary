@@ -11728,6 +11728,86 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：usage hard Gate 在所有维度 receipt 和数值评分之前阻断，且缺失的 expected-report plan 无法事后补造；若不先修复这两项 provenance/终态合同，即使补齐本候选的 private CI 或局部能力证据也不会获得资格。
 - **当前还缺的关键闭环**：12 个终态 usage 的可解释且可复算证据、预冻结 expected-report plan、19 个 unknown failure 的完整分类、47 个产品失败对应的真实能力修复、新 stable identity 的完整候选链，以及两个连续候选的每维最低分与 raw weighted `>=9.500`。
 
+#### P2-C usage 终态与 expected-report 预冻结实现结论：local fixture 合同及 candidate plan Gate（2026-09-03）
+
+##### 已完成内容
+
+1. **`task-manifest.json`、v3 run/report Schema 与 benchmark contract 扩展**：
+   - v3 的 `24` 个任务全部显式声明 `modelExecution`；`gateway.client-cancel` 与 `gateway.process-restart` 固定为 `local_fixture`，其余 `22` 个任务固定为 `provider`；
+   - run execution、preflight、environment、events 与 qualification 对同一 model execution 做外键一致性校验，同时保持历史无该字段的 v3 artifact 可读取；
+   - qualification 只在 manifest/run/environment/preflight/events/lifecycle artifact 全部证明本地执行时接受 `usage_not_reported`；本地任务若出现 Provider usage 则失败关闭。
+
+2. **`coding-agent-benchmark-local-fixture.mjs`、`coding-agent-client-cancel-harness.mjs` 与 runner 接入**：
+   - 新增统一的本地模型指纹和敏感 Provider 环境剥离，两个 lifecycle task 不再传 model ID、创建 Provider budget 或产生费用；
+   - client-cancel 改由生产 Gateway 与可响应 abort 的本地 fixture Agent 执行，保留唯一 `run.cancelled` 终态，不伪造未发生的 `run.usage`；
+   - process-restart 保持真实进程重启/恢复验证，但模型执行明确为本地 fixture，原 `usage=not_reached` 不再误计为 Provider usage 缺失。
+
+3. **`run-coding-agent-benchmark-expected-report-plan.mjs` 新建并接入 launcher/aggregate**：
+   - producer 从冻结 v3 manifest 与 clean source/harness identity 生成精确 `24 × 2 × 3=144` 个唯一 report 槽位，稳定 ID 为 `<taskId>.<platform>.a<attempt>`，并以 `wx` 禁止覆盖；
+   - Windows 与 WSL launcher 要求 `--candidate-id` / `--expected-report-plan` 成对出现，在 Provider 环境解析、WSL route、端口探测、Gateway spawn 和 artifact 写入前复算 manifest、identity 与目标 report path；WSL path 统一在 Windows host 比较；
+   - aggregate 保持历史 plan 兼容；新 candidate plan 会把 candidate/source/harness 和 `task/platform/attempt` 保留到去路径化 evidence，并拒绝 source/harness 漂移、错路径、一个 report 含多个 run 或 logical-run 槽位错配。
+
+4. **Schema、脚本与项目导航更新**：
+   - `expected-report-plan.schema.json` 与 `expected-reports.schema.json` 增加可选 candidate 结构；一旦存在 candidate，就强制 clean identity、精确 `144` 项和完整 logical-run metadata；
+   - `package.json` 增加 `benchmark:coding-agent:v3:expected-report-plan`，repository verifier 纳入新 producer；
+   - `docs/project-map.md` 同步 local fixture、client-cancel、candidate plan、aggregate 与双 launcher 的 ownership 和失败关闭边界。
+
+5. **效果**：
+   - 上一候选的 `6 unavailable + 6 not_reached` 已被收敛为可复算的 `12` 个本地 lifecycle usage 终态，不再因全局 Provider usage Gate 被误拒；
+   - 新候选不能在未预冻结 `144` 项分母、identity 漂移或 report path 未声明时启动，且 aggregate/verifier 可以从 retained evidence 证明 plan 确实先于采集存在；
+   - 本结论只闭合 usage 与 expected-report provenance，不修复既有 `47` 个 product workflow 失败，也不生成新候选或七维分数。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误（`corepack pnpm build:incremental`）；
+- expected-report producer/aggregate/Windows/WSL 定向回归 `80/80` 通过；usage v3 合同、本地 lifecycle 路由、qualification projection、真实 Gateway client-cancel 与 Provider-usage 反例均已通过；
+- `corepack pnpm verify:coding-benchmark` 通过，v1/v2/v3 manifest、Schema、docs 与 platform Gate 对齐；`git diff --check` 通过，仅保留 Windows 行尾转换提示；
+- 本阶段 Provider calls/cost=`0/$0`，没有启动正式候选、网络写入、push 或公开发布。
+
+##### 后续计划
+
+- **下一步准备做什么**：扩展 failure analysis 的机器签名，逐项重放并分类现有 `19` 个 unknown；每得到一个 failure family 结论即先回写“重要问题说明”，再按高频且可复现的真实失败先写回归测试并修复产品能力。
+- **为什么先做它**：usage 与 expected-report provenance 已闭合，当前资格的下一真实阻断是 `47` 个 product workflow 失败；若不先把 unknown 变成可证伪的根因，直接改 prompt、evaluator 或重跑付费矩阵只会浪费候选和费用。
+- **当前还缺的关键闭环**：`19` 个 unknown 全部归类、patch acceptance/output schema/token budget 与新 failure family 的产品修复、完整回归、clean stable identity、运行前正式 plan artifact、完整候选链，以及第二个连续达标候选。
+
+#### P2-C failure classification 实现结论：19 个 unknown 受控归类与 v1/v2 兼容（2026-09-03）
+
+##### 已完成内容
+
+1. **`run-coding-agent-benchmark-failure-analysis.mjs` 扩展**：
+   - 默认输出升级为 `coding-agent-benchmark-failure-analysis/v2`，新增 source navigation、mutation patch、post-write correction、accepted regression 与 stop-empty 五类受控签名；
+   - 先执行稳定 v1 classifier，仅对 v1 的 `unknown` 应用 v2 扩展，避免新签名抢占已有 patch acceptance 等确定分类；
+   - `--verify` 按报告内 schemaVersion 重建，禁止用当前分类器改写冻结 v1 语义。
+
+2. **failure-analysis Schema 与仓库接线修改**：
+   - `failure-analysis.schema.json` 升级为 v2 封闭合同，新增五个 family/reason code；
+   - 新增 `failure-analysis-v1.schema.json` 保留 legacy 输出合同，README、project map 与 repository verifier 同时登记 v1/v2；
+   - 报告继续只保存受控 metadata、计数、布尔值和 SHA-256，不复制错误消息、模型正文、reasoning 或 Tool output。
+
+3. **分类回归与不可覆盖生产重放**：
+   - 新增五类历史 unknown、冻结 v1 兼容和重叠签名优先级回归；优先级用例先得到 Red，再由两段分类转为 Green；
+   - 首个 v2 生产 artifact 因错误抢占 `7` 个 v1 已知分类而被拒绝并原地保留，没有覆盖或删除；
+   - corrected v2 写入新目录，从旧 `df54f67…` aggregate 离线重建全部 `47` 个产品失败。
+
+4. **效果**：
+   - `19` 个 unknown 已全部归入可复算 family，corrected 报告为 `completed` 且 `unknown=0`；
+   - 原有 `19` 个 patch acceptance 保持不变，新增五类精确为 navigation=`6`、mutation patch=`5`、post-write=`6`、accepted regression=`1`、stop-empty=`1`；
+   - 旧候选仍保持拒绝，本结论只关闭失败归类，不把分类改善误作产品能力改善。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` exit code=`0`；
+- failure-analysis `10/10` 测试全部通过（含 `2` 个 v1/v2 兼容与分类优先级测试）；
+- 冻结 v1 与 corrected v2 均从原 aggregate 成功重建并验证 `47` 项；v2 family 分布为 `19/2/7/6/5/6/1/1`，`unknown=0`，报告 SHA-256=`1ae99f127a92dac4f1f542464ae324dff0165d48ace569692903ed2be9ff7550`；
+- `corepack pnpm verify:coding-benchmark`、脚本语法、8 个相关 JSON 解析与 `git diff --check` 通过，仅保留既有 AJV `date-time` 与 Windows 行尾提示；
+- 本环节 Provider calls/cost=`0/$0`，未修改冻结 aggregate、未启动 Gateway、未运行候选或执行网络写入。
+
+##### 后续计划
+
+- **下一步准备做什么**：从 corrected 报告的高频 family 和 task breakdown 定位真实生产失败源，优先为跨任务 `patch_acceptance_failed` 与共享 required-mutation 恢复链建立可复现回归，再做最小产品修复。
+- **为什么先做它**：分类已证明最大簇仍是跨任务 patch acceptance=`19`，且 mutation/post-write 共 `11` 项可能共享 mutation recovery 边界；先验证生产共同根因可以减少无效 prompt 调整和付费重跑。
+- **当前还缺的关键闭环**：`47` 个历史失败对应的产品修复与回归、clean stable identity、正式不可覆盖 expected-report plan、新 identity 的完整候选链，以及第二个连续达标候选。
+
 #### 后续工作量估算
 
 **本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；CLI/TUI 双平台首帧与退出收敛也已修复并通过真实 PTY 验证；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
@@ -11768,4 +11848,15 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **候选工具链与 `df54f67…` 双平台 `144/144` aggregate 已完成；candidate-global 已闭合，但正式 qualification=`not_eligible/unscored`，该候选已拒绝并停止后续 receipt 采集** | aggregate=`97 passed + 47 product_workflow failed`、正式 infrastructure error=`0`；candidate-global 原生双平台扫描 regular/link/unreadable/finding/orphan=`452157/3369/0/0/0`；qualification 首个 blocker=`incompleteProviderUsageCount 12 > 0`（client-cancel unavailable=`6`、process-restart not_reached=`6`），另有未预冻结 expected-report plan 的 latent blocker；failure analysis=`19 patch_acceptance + 7 output_schema + 2 token_budget + 19 unknown`、状态=`incomplete`；本候选不生成七维 score，不计入连续达标候选；费用仍为 global observed/reserved/candidate=`$2.37476740/$2.04221000/$0.09713830`、guard=`35.33581920 RMB < 80 RMB` | `1.75–3.5 人日既有基线 + failure-driven 修复量 + 两个连续候选运行/观察窗口` | 下一恢复点：先收敛 12 个 usage 终态合同并为新 candidate 预冻结 expected-report plan；再补齐 19 个 unknown 分类、修复真实产品失败，形成新 stable identity 后重跑完整资格链；本环节完成后暂停 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 候选保持拒绝；12 个 usage 终态合同、expected-report 预冻结 Gate 与 19 个 unknown 分类已完成，当前进入真实产品失败修复** | 旧 aggregate=`97 passed + 47 product_workflow failed`、正式 infrastructure error=`0`；旧 qualification=`not_eligible/unscored` 且不得重解释；v3 `24/24` task 已显式 model execution，两个 lifecycle task 的双平台三轮共 `12` 个终态由完整本地 fixture 外键解释；新 producer 精确冻结 `144` 个 candidate/source/harness-bound 槽位；corrected failure analysis=`19 patch_acceptance + 2 token_budget + 7 output_schema + 6 navigation + 5 mutation_patch + 6 post_write + 1 accepted_regression + 1 stop_empty`、`unknown=0`，双版本回归 `10/10`、repository verifier 与增量构建通过；本轮 Provider=`0/$0`，费用守卫沿用 `35.33581920 RMB < 80 RMB` | `1.75–3.5 人日既有基线 + failure-driven 修复量 + 两个连续候选运行/观察窗口` | 按高频失败簇写回归并修复真实产品能力；完整验证后冻结 clean identity，正式生成不可覆盖 expected-report plan，再运行完整候选链并逐环节回写 |
+
+
+#### 重要问题说明
+1、当前 aggregate 有 47 个 product_workflow 失败和 30 个 regression，预计 qualification 会失败。因此完成机器化资格判定后，应先运行 failure analysis，按高频失败簇修复真实产品能力，再冻结新 identity 重跑，而不是直接组织第二个候选。
+2、当前 aggregate-v3 虽有 144/144 coverage，但它没有运行前预冻结的 expected-reports projection；该证据不能事后补造。根因是旧 plan producer 只接受手工 `reportId/path` 列表，既不生成完整 `24 × 2 × 3` 矩阵，也不绑定 candidate/source/harness identity，launcher 因此无法在首个 run 前证明分母已冻结。处理方案现已完整接入：独立 producer 按 v3 manifest 生成精确 `144` 个唯一槽位并以 `wx` 禁止覆盖，Windows/WSL launcher 在首个副作用前核对 manifest/candidate/source/harness/path，aggregate 保留并离线重建同一 logical-run binding；定向回归与相关联合链 `80/80` 通过。旧 `df54f67` 仍因没有预冻结 plan 而保持拒绝，不得用新合同事后补造。
+3、expected-report plan 的路径必须由 Windows host 统一冻结和比较；若把 Windows artifact path 直接交给 Linux core runner 解析，盘符路径会被误当成 Linux 相对路径，造成错误漂移判定。处理方案是在 Windows/WSL 两个 host launcher 启动 Gateway 前验证宿主路径，WSL 只把已验证的实际 runner 参数转换为 Linux 路径，不在 Linux 内重新解释 plan 路径。
+4、aggregate 原实现只把输入 plan 的 `reportId/path` 投影为 retained ID，会静默丢弃 candidate/source/harness 与 logical-run 元数据，因此即使 plan 预先存在，也无法证明所收 report 来自同一候选或对应计划槽位。处理方案已完成：candidate 字段保持可选以兼容历史 artifact；新候选 plan 会把身份与 `task/platform/attempt` 保留到去路径化 `expected-reports.json`，selected report 必须恰含一个与槽位一致的 run，生产 verifier 从 retained source report 重建并复核全部绑定。身份漂移、槽位错配和正常重建三条定向测试 `3/3` 通过，且失败发生在 aggregate 输出目录创建前。
+5、本轮首次运行整个 `aggregate-coding-agent-benchmark.test.mjs` 时，一个既有 production CLI 子进程用例超过 Vitest 默认 `5s` 而超时；相邻测试继续运行，缩小到新增 candidate plan 分组后 `3/3` 在约 `4s` 内稳定通过。当前证据更符合并发/进程启动时序而非本次合同回归。处理方案是完成接线后单进程复跑整文件；若仍超时，再独立测量 CLI 冷启动并调整测试等待合同，不通过放宽产品 Gate 掩盖问题。
+6、Windows/WSL/plan 联合回归首次为 `35 passed + 1 timeout`：旧 WSL launcher 测试在调用异步函数前预先排入伪 child 的 `close` 微任务；新增 host-side plan Gate 首次 `await` 后，该事件在 listener 注册前被消费，测试因此等待到 `5s`。真实 `spawn` 的 close 不会在 child 返回前触发，根因是测试桩时序失真。处理方案是把 close 微任务安排到 `spawn` 桩返回 child 时，使 listener 注册顺序与真实进程一致；没有移除或弱化运行前异步 Gate。修复后同一三文件联合测试 `36/36` 通过，随后四文件完整定向批次 `80/80` 通过。
+7、新增 expected-report producer CLI 的首轮测试为 `3 passed + 1 failed`：参数 parser 的 `for` 步长已经按 flag/value 前进 `2`，循环体又重复递增 `1`，因此第二个参数值被误当作 flag。处理方案是删除循环体内的重复递增，并保留重复 flag、未知 flag、缺失必填值的失败关闭校验；修复后 producer `4/4`、最终联合批次 `80/80` 通过。该 CLI 不提供隐式默认 candidate ID/report root/output，避免误写正式 plan。
+8、现有 failure analysis 的 `19` 个 unknown 经冻结 aggregate 的终态 metadata 重放后已收敛为五类：bounded source navigation 未覆盖 required paths=`6`、mutation-only patch 合同无可执行变更=`5`、post-write review/correction 失败=`6`、patch 已接受但测试回归=`1`、`finish_reason=stop` 仅有 reasoning 无可见内容=`1`。根因不是 artifact 缺失，而是 v1 classifier 只识别 length stop、早期 mutation recovery、patch rejection、budget 与 output schema，未覆盖后来新增的 required-mutation 阶段化错误。处理方案是新增 `failure-analysis/v2` 的五个受控 family，只保存 reason code/计数/布尔/哈希，不保存错误消息、模型正文或 Tool output；verifier 按报告版本重建，旧 v1 artifact 保持原语义。首次 repository verifier 因 README 未保留旧 schemaVersion 字面量、project map 未登记 legacy schema 而失败，补齐双版本文档引用后已通过。首次 v2 生产重放又因新签名先于 v1 patch acceptance 判定而错误抢占 `7` 项，得到 `12/9/9` 的错误分布；新增优先级回归先 Red 后 Green，分类器现先保留 v1 非 unknown 结果，再处理 v2 扩展。错误的 `failure-analysis-v2` 目录作为被拒绝诊断证据原地保留，未覆盖、未删除；新 `failure-analysis-v2-corrected` 已不可覆盖生成并从原 aggregate 验证 `47/47`，结果为 `completed/unknown=0`，精确 family 分布=`19/2/7/6/5/6/1/1`，SHA-256=`1ae99f127a92dac4f1f542464ae324dff0165d48ace569692903ed2be9ff7550`。checkpoint 的首次 cached diff check 另发现 legacy schema 在 JSON 末尾多一空行；这是纯格式问题，删除该空行并重新 Gate，不影响已验证 schema 内容或 artifact。19 个 unknown 分类环节已关闭，下一步转入真实产品失败修复。

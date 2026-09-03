@@ -18,6 +18,9 @@ import {
   GatewayReadinessDiagnostic,
   writeGatewayReadinessDiagnostic,
 } from "./gateway-readiness-diagnostic.mjs";
+import {
+  validateCodingAgentBenchmarkCandidateExpectedReportLaunch,
+} from "./run-coding-agent-benchmark-expected-report-plan.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultWorkspaceRoot = path.resolve(path.dirname(scriptPath), "..");
@@ -454,6 +457,13 @@ export async function runWindowsBenchmark(input, dependencies = {}) {
   if (platform !== "win32") {
     throw new Error("The Windows benchmark launcher must execute on Windows.");
   }
+  const validateCandidateLaunch = dependencies.validateCandidateExpectedReportLaunch
+    ?? validateCodingAgentBenchmarkCandidateExpectedReportLaunch;
+  await validateCandidateLaunch({
+    ...input,
+    platform: "windows-native",
+    manifestRevision: input.manifestRevision ?? "v1",
+  }, dependencies);
   const baseEnv = await resolveWindowsBenchmarkSourceEnvironment(input, dependencies);
   const invocation = buildWindowsBenchmarkInvocation(input, {
     ...dependencies,
@@ -718,6 +728,12 @@ async function main() {
     } : {}),
     ...(values.has("shadow-candidate-id") ? {
       shadowCandidateId: requireValue(values, "shadow-candidate-id"),
+    } : {}),
+    ...(values.has("candidate-id") ? {
+      candidateId: requireValue(values, "candidate-id"),
+    } : {}),
+    ...(values.has("expected-report-plan") ? {
+      expectedReportPlanPath: requireValue(values, "expected-report-plan"),
     } : {}),
   });
   process.exitCode = exitCode;

@@ -256,6 +256,7 @@
         "executionProfile": {
           "enum": ["plan", "navigation-read", "workspace-write", "command-control", "safety-probe", "recovery-control", "git-local"]
         },
+        "modelExecution": { "enum": ["provider", "local_fixture"] },
         "platforms": {
           "type": "array",
           "prefixItems": [

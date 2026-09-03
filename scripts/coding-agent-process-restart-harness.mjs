@@ -7,6 +7,10 @@ import { fileURLToPath } from "node:url";
 
 import WebSocket, { WebSocketServer } from "ws";
 
+import {
+  sanitizeCodingAgentLocalFixtureEnvironment,
+} from "./coding-agent-benchmark-local-fixture.mjs";
+
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const gatewayFixturePath = path.join(scriptDir, "coding-agent-process-restart-gateway.mjs");
 const MAX_CAPTURE_BYTES = 256 * 1024;
@@ -315,7 +319,7 @@ async function startFixtureGateway(input) {
     // Resolve the tsx preloader from this repository, not from the regenerated fixture workspace.
     cwd: path.resolve(scriptDir, ".."),
     env: {
-      ...process.env,
+      ...sanitizeCodingAgentLocalFixtureEnvironment(process.env),
       BELLDANDY_HOST: "127.0.0.1",
       BELLDANDY_AUTH_MODE: "none",
       BELLDANDY_ALLOWED_ORIGINS: "",

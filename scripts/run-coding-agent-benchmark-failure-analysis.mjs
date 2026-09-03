@@ -4,8 +4,10 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
 
-export const CODING_AGENT_BENCHMARK_FAILURE_ANALYSIS_VERSION =
+export const CODING_AGENT_BENCHMARK_FAILURE_ANALYSIS_V1_VERSION =
   "coding-agent-benchmark-failure-analysis/v1";
+export const CODING_AGENT_BENCHMARK_FAILURE_ANALYSIS_VERSION =
+  "coding-agent-benchmark-failure-analysis/v2";
 
 const AGGREGATE_VERSION = "coding-agent-benchmark-report/v3";
 const RUN_VERSION = "coding-agent-benchmark-run/v3";
@@ -22,7 +24,7 @@ const TERMINAL_TYPES = new Set([
   "run.failed",
 ]);
 const EDIT_TOOLS = new Set(["apply_patch", "file_edit", "file_write", "file_delete"]);
-const FAMILY_DEFINITIONS = [
+const LEGACY_FAMILY_DEFINITIONS = [
   {
     id: "model_empty_content_at_length",
     priority: 1,
@@ -53,22 +55,80 @@ const FAMILY_DEFINITIONS = [
     priority: 5,
     observationCode: "terminal_output_schema_invalid",
   },
+];
+const V2_FAMILY_DEFINITIONS = [
+  ...LEGACY_FAMILY_DEFINITIONS,
+  {
+    id: "required_source_navigation_incomplete",
+    priority: 7,
+    observationCode: "bounded_source_navigation_missing_required_paths",
+  },
+  {
+    id: "mutation_patch_contract_invalid",
+    priority: 8,
+    observationCode: "mutation_only_patch_structure_invalid",
+  },
+  {
+    id: "post_write_correction_failed",
+    priority: 9,
+    observationCode: "post_write_review_or_correction_failed",
+  },
+  {
+    id: "accepted_patch_regression",
+    priority: 10,
+    observationCode: "accepted_patch_failed_tests_or_regressed",
+  },
+  {
+    id: "model_empty_content_at_stop",
+    priority: 11,
+    observationCode: "provider_stop_with_reasoning_and_no_visible_content",
+  },
   {
     id: "unknown",
     priority: 99,
     observationCode: "unrecognized_metadata_signature",
   },
 ];
-const FAMILY_BY_ID = new Map(FAMILY_DEFINITIONS.map((item) => [item.id, item]));
+const V1_FAMILY_DEFINITIONS = [
+  ...LEGACY_FAMILY_DEFINITIONS,
+  {
+    id: "unknown",
+    priority: 99,
+    observationCode: "unrecognized_metadata_signature",
+  },
+];
 const EMPTY_CONTENT_AT_LENGTH_PATTERN =
   /^模型返回空内容。finish_reason=length，reasoning_content=present\([0-9]+\)。$/u;
+const EMPTY_CONTENT_AT_STOP_PATTERN =
+  /^模型返回空内容。finish_reason=stop，reasoning_content=present\([0-9]+\)。$/u;
 const REQUIRED_MUTATION_EMPTY_CONTENT_AT_LENGTH_PATTERN =
   /^required workspace mutation was not completed: the mutation-only model call failed: 模型返回空内容。finish_reason=length，reasoning_content=present\([0-9]+\)。$/u;
 const REQUIRED_MUTATION_BUDGET_GATE_PATTERN =
   /^required workspace mutation was not completed: the ordinary model loop reached its budget gate before an allowed bounded mutation-only request could be built\.$/u;
+const REQUIRED_SOURCE_NAVIGATION_PATTERN =
+  /^required workspace mutation was not completed: the bounded source-navigation model call did not request each missing required source path exactly once\.$/u;
+const MUTATION_PATCH_CONTRACT_PATTERN =
+  /^required workspace mutation was not completed: the mutation-only apply_patch call contained a context-only hunk that could not be preserved safely;/u;
+const POST_WRITE_CORRECTION_PATTERNS = [
+  /^required workspace mutation was not completed: post-write correction tool apply_patch failed:/u,
+  /^required workspace mutation was not completed: the post-write objective correction only repeated a current-source block around unchanged lines instead of changing task-relevant behavior\.$/u,
+  /^required workspace mutation was not completed: the post-write objective correction did not narrowly refine the prior mutation despite the smallest-change requirement\.$/u,
+  /^required workspace mutation was not completed: the post-write objective review returned neither valid final JSON nor an allowed correction after its one phase-aware output repair\.$/u,
+];
 const scriptPath = fileURLToPath(import.meta.url);
 
+function resolveFailureAnalysisContract(schemaVersion = CODING_AGENT_BENCHMARK_FAILURE_ANALYSIS_VERSION) {
+  if (schemaVersion === CODING_AGENT_BENCHMARK_FAILURE_ANALYSIS_V1_VERSION) {
+    return { schemaVersion, familyDefinitions: V1_FAMILY_DEFINITIONS };
+  }
+  if (schemaVersion === CODING_AGENT_BENCHMARK_FAILURE_ANALYSIS_VERSION) {
+    return { schemaVersion, familyDefinitions: V2_FAMILY_DEFINITIONS };
+  }
+  throw new Error(`Unsupported failure analysis schema version: ${String(schemaVersion)}.`);
+}
+
 export function buildCodingAgentFailureAnalysis(input) {
+  const contract = resolveFailureAnalysisContract(input?.schemaVersion);
   const generatedAt = requireIsoTimestamp(input?.generatedAt ?? new Date().toISOString());
   const aggregate = requireObject(input?.aggregate, "aggregate");
   const aggregateText = requireText(input?.aggregateText, "aggregateText");
@@ -101,7 +161,7 @@ export function buildCodingAgentFailureAnalysis(input) {
   const runs = failedRuns.map((run) => {
     const artifactInput = artifactsByRunId.get(run.runId);
     if (!artifactInput) throw new Error(`Missing failure artifacts for ${run.runId}.`);
-    return analyzeFailureRun(run, artifactInput);
+    return analyzeFailureRun(run, artifactInput, contract.schemaVersion);
   }).sort(compareRunEvidence);
   for (const runId of artifactsByRunId.keys()) {
     if (!failedRuns.some((run) => run.runId === runId)) {
@@ -109,7 +169,7 @@ export function buildCodingAgentFailureAnalysis(input) {
     }
   }
 
-  const families = FAMILY_DEFINITIONS.map((definition) => {
+  const families = contract.familyDefinitions.map((definition) => {
     const matching = runs.filter((run) => run.family === definition.id);
     return {
       id: definition.id,
@@ -129,7 +189,7 @@ export function buildCodingAgentFailureAnalysis(input) {
     : null;
 
   return {
-    schemaVersion: CODING_AGENT_BENCHMARK_FAILURE_ANALYSIS_VERSION,
+    schemaVersion: contract.schemaVersion,
     generatedAt,
     status: unknownCount === 0 ? "completed" : "incomplete",
     source: {
@@ -172,7 +232,7 @@ export function buildCodingAgentFailureAnalysis(input) {
       failedEditCallCount: sum(runs.map((run) => run.signals.failedEditCallCount)),
       changedRunCount: runs.filter((run) => run.signals.workspaceMutationObserved).length,
       familyCounts: families.map((family) => ({ id: family.id, count: family.runCount })),
-      taskBreakdown: summarizeTasks(runs),
+      taskBreakdown: summarizeTasks(runs, contract.familyDefinitions),
       nextAction: unknownCount > 0
         ? {
             status: "blocked_unknown_failure_evidence",
@@ -213,7 +273,7 @@ function validateAggregate(aggregate) {
   }
 }
 
-function analyzeFailureRun(run, input) {
+function analyzeFailureRun(run, input, schemaVersion) {
   if (run.schemaVersion !== RUN_VERSION
     || run.status !== "failed"
     || run.failureCategory !== "product_workflow") {
@@ -251,7 +311,9 @@ function analyzeFailureRun(run, input) {
     editCallCount: eventEvidence.editCallCount,
     failedEditCallCount: eventEvidence.failedEditCallCount,
     patchAccepted: run.evaluation?.patchAccepted,
-  });
+    testsPassed: run.evaluation?.testsPassed,
+    regressionCount: run.evaluation?.regressionCount,
+  }, schemaVersion);
 
   return {
     runId: run.runId,
@@ -361,7 +423,42 @@ function summarizeEvents(events, runId) {
   };
 }
 
-function classifyFailure(input) {
+function classifyFailure(input, schemaVersion) {
+  const legacyFamily = classifyLegacyFailure(input);
+  if (legacyFamily !== "unknown"
+    || schemaVersion === CODING_AGENT_BENCHMARK_FAILURE_ANALYSIS_V1_VERSION) {
+    return legacyFamily;
+  }
+  if (input.terminalType === "run.failed"
+    && input.errorCode === "internal"
+    && REQUIRED_SOURCE_NAVIGATION_PATTERN.test(input.errorMessage)) {
+    return "required_source_navigation_incomplete";
+  }
+  if (input.terminalType === "run.failed"
+    && input.errorCode === "internal"
+    && MUTATION_PATCH_CONTRACT_PATTERN.test(input.errorMessage)) {
+    return "mutation_patch_contract_invalid";
+  }
+  if (input.terminalType === "run.failed"
+    && input.errorCode === "internal"
+    && POST_WRITE_CORRECTION_PATTERNS.some((pattern) => pattern.test(input.errorMessage))) {
+    return "post_write_correction_failed";
+  }
+  if (input.terminalType === "run.completed"
+    && input.workspaceMutationObserved
+    && input.patchAccepted === true
+    && (input.testsPassed === false || input.regressionCount > 0)) {
+    return "accepted_patch_regression";
+  }
+  if (input.terminalType === "run.failed"
+    && input.errorCode === "internal"
+    && EMPTY_CONTENT_AT_STOP_PATTERN.test(input.errorMessage)) {
+    return "model_empty_content_at_stop";
+  }
+  return "unknown";
+}
+
+function classifyLegacyFailure(input) {
   if (input.errorCode === "budget_exhausted") return "token_budget_exhausted";
   if (input.errorCode === "output_schema_invalid") return "output_schema_invalid";
   if (input.terminalType === "run.failed"
@@ -387,14 +484,14 @@ function classifyFailure(input) {
   return "unknown";
 }
 
-function summarizeTasks(runs) {
+function summarizeTasks(runs, familyDefinitions) {
   const taskIds = [...new Set(runs.map((run) => run.taskId))].sort();
   return taskIds.map((taskId) => {
     const taskRuns = runs.filter((run) => run.taskId === taskId);
     return {
       taskId,
       runCount: taskRuns.length,
-      familyCounts: FAMILY_DEFINITIONS.map((family) => ({
+      familyCounts: familyDefinitions.map((family) => ({
         id: family.id,
         count: taskRuns.filter((run) => run.family === family.id).length,
       })).filter((item) => item.count > 0),
@@ -426,6 +523,7 @@ export async function verifyCodingAgentFailureAnalysis(input) {
   const loaded = await loadFailureAnalysisInputs(input?.aggregateRoot);
   const rebuilt = buildCodingAgentFailureAnalysis({
     generatedAt: report.generatedAt,
+    schemaVersion: report.schemaVersion,
     ...loaded,
   });
   if (!isDeepStrictEqual(report, rebuilt)) {

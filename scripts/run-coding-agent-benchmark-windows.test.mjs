@@ -9,12 +9,47 @@ import {
   classifyGatewayReadinessFailure,
   loadWindowsProviderEnvironment,
   resolveWindowsBenchmarkSourceEnvironment,
+  runWindowsBenchmark,
   stopWindowsBenchmarkGateway,
 } from "./run-coding-agent-benchmark-windows.mjs";
 
 const workspaceRoot = "E:/project/star-sanctuary/.tmp/clean-harness";
 
 describe("coding agent benchmark Windows launcher", () => {
+  it("rejects candidate plan drift before Provider loading, port checks, or Gateway spawn", async () => {
+    const expectedError = new Error("candidate source identity drifted");
+    const validateCandidateExpectedReportLaunch = vi.fn(async () => {
+      throw expectedError;
+    });
+    const loadProviderEnvironment = vi.fn();
+    const spawn = vi.fn();
+
+    await expect(runWindowsBenchmark({
+      workspaceRoot,
+      fixtureRoot: "E:/project/star-sanctuary/tmp/fixtures",
+      artifactRoot: "E:/project/star-sanctuary/artifacts/windows-formal",
+      stateRoot: "E:/project/star-sanctuary/tmp/runtime",
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      credentialsConfigured: true,
+      attempt: 1,
+      taskId: "rules.nested-precedence",
+      manifestRevision: "v3",
+      candidateId: "candidate-a",
+      expectedReportPlanPath: "E:/candidate/expected-report-plan.json",
+      providerEnvFile: "E:/candidate/.env.local",
+    }, {
+      platform: "win32",
+      validateCandidateExpectedReportLaunch,
+      loadProviderEnvironment,
+      spawn,
+    })).rejects.toBe(expectedError);
+
+    expect(validateCandidateExpectedReportLaunch).toHaveBeenCalledOnce();
+    expect(loadProviderEnvironment).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
   it("classifies readiness failures without retaining error content", () => {
     expect(classifyGatewayReadinessFailure(new Error("Windows benchmark Gateway readiness timed out.")))
       .toBe("gateway_readiness_timeout");

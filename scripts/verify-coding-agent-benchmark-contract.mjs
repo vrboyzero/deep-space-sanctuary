@@ -72,6 +72,7 @@ import {
   CODING_AGENT_BENCHMARK_NAVIGATION_CANDIDATE_V3_VERSION,
 } from "./run-coding-agent-benchmark-navigation-candidate-v3.mjs";
 import {
+  CODING_AGENT_BENCHMARK_FAILURE_ANALYSIS_V1_VERSION,
   CODING_AGENT_BENCHMARK_FAILURE_ANALYSIS_VERSION,
 } from "./run-coding-agent-benchmark-failure-analysis.mjs";
 import {
@@ -324,6 +325,9 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   const failureAnalysisV3Schema = await readJson(
     "benchmarks/coding-agent/v3/failure-analysis.schema.json",
   );
+  const failureAnalysisV1V3Schema = await readJson(
+    "benchmarks/coding-agent/v3/failure-analysis-v1.schema.json",
+  );
   const navigationCandidateV2V3Schema = await readJson(
     "benchmarks/coding-agent/v3/navigation-candidate-v2.schema.json",
   );
@@ -510,6 +514,7 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     modelLoopBudgetTerminationV3Schema,
   );
   validateSchema(failures, "v3 failure analysis", failureAnalysisV3Schema);
+  validateSchema(failures, "v3 failure analysis v1", failureAnalysisV1V3Schema);
   validateSchema(failures, "v3 navigation candidate v2", navigationCandidateV2V3Schema);
   validateSchema(failures, "v3 navigation candidate v3", navigationCandidateV3V3Schema);
   validateSchema(failures, "v3 candidate-global runner input", candidateGlobalRunnerInputV3Schema);
@@ -605,6 +610,10 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   if (failureAnalysisV3Schema?.properties?.schemaVersion?.const
     !== CODING_AGENT_BENCHMARK_FAILURE_ANALYSIS_VERSION) {
     failures.push("v3 failure analysis Schema version drifted from its offline evidence contract.");
+  }
+  if (failureAnalysisV1V3Schema?.properties?.schemaVersion?.const
+    !== CODING_AGENT_BENCHMARK_FAILURE_ANALYSIS_V1_VERSION) {
+    failures.push("v3 failure analysis v1 Schema drifted from the frozen compatibility contract.");
   }
   if (scorecardV3Schema?.properties?.schemaVersion?.const !== CODING_AGENT_BENCHMARK_SCORECARD_V3_VERSION) {
     failures.push("v3 scorecard Schema version drifted from the 9.5 target contract.");
@@ -1007,6 +1016,7 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "coding-agent-benchmark-snapshot-receipt/v1",
     "coding-agent-benchmark-linux-snapshot-preparation/v1",
     "coding-agent-benchmark-failure-analysis/v1",
+    "coding-agent-benchmark-failure-analysis/v2",
     "coding-agent-benchmark-repository-inputs/v1",
     "linux-snapshot-preparation.schema.json",
     "repository-inputs.schema.json",
@@ -1024,6 +1034,7 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "model-loop-budget-termination.schema.json",
     "model-loop-rollout-audit.schema.json",
     "failure-analysis.schema.json",
+    "failure-analysis-v1.schema.json",
     "systemBrowserScreenshot",
     "browser-screenshot.png",
     "coding-agent-benchmark-parallel-read-harness.mjs",
@@ -1229,6 +1240,7 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "scripts/aggregate-coding-agent-benchmark.mjs",
     "scripts/run-coding-agent-benchmark.mjs",
     "scripts/run-coding-agent-benchmark-wsl.mjs",
+    "scripts/run-coding-agent-benchmark-expected-report-plan.mjs",
     "scripts/run-coding-agent-benchmark-system-smoke.mjs",
     "scripts/run-coding-agent-benchmark-navigation-efficiency.mjs",
     "benchmarks/coding-agent/v3/navigation-efficiency.schema.json",
@@ -1252,6 +1264,7 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "benchmarks/coding-agent/v3/model-loop-rollout-audit.schema.json",
     "scripts/run-coding-agent-benchmark-failure-analysis.mjs",
     "benchmarks/coding-agent/v3/failure-analysis.schema.json",
+    "benchmarks/coding-agent/v3/failure-analysis-v1.schema.json",
     "scripts/run-coding-agent-benchmark-navigation-candidate-v2.mjs",
     "benchmarks/coding-agent/v3/navigation-candidate-v2.schema.json",
     "scripts/run-coding-agent-benchmark-navigation-candidate-v3.mjs",
