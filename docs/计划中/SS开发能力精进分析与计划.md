@@ -11799,6 +11799,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - TypeScript 增量编译无错误：`corepack pnpm build:incremental` exit code=`0`；
 - failure-analysis `10/10` 测试全部通过（含 `2` 个 v1/v2 兼容与分类优先级测试）；
 - 冻结 v1 与 corrected v2 均从原 aggregate 成功重建并验证 `47` 项；v2 family 分布为 `19/2/7/6/5/6/1/1`，`unknown=0`，报告 SHA-256=`1ae99f127a92dac4f1f542464ae324dff0165d48ace569692903ed2be9ff7550`；
+- 本轮全部修改测试分组复跑 `139/139` 通过（aggregate/qualification=`43`、runner=`41`、双 launcher=`33`、v3/plan/failure-analysis=`22`），本地 checkpoint=`ac01964`；提交明确排除 `tmp-codeintel-summary.json`，未执行 push；
 - `corepack pnpm verify:coding-benchmark`、脚本语法、8 个相关 JSON 解析与 `git diff --check` 通过，仅保留既有 AJV `date-time` 与 Windows 行尾提示；
 - 本环节 Provider calls/cost=`0/$0`，未修改冻结 aggregate、未启动 Gateway、未运行候选或执行网络写入。
 
@@ -11807,6 +11808,43 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **下一步准备做什么**：从 corrected 报告的高频 family 和 task breakdown 定位真实生产失败源，优先为跨任务 `patch_acceptance_failed` 与共享 required-mutation 恢复链建立可复现回归，再做最小产品修复。
 - **为什么先做它**：分类已证明最大簇仍是跨任务 patch acceptance=`19`，且 mutation/post-write 共 `11` 项可能共享 mutation recovery 边界；先验证生产共同根因可以减少无效 prompt 调整和付费重跑。
 - **当前还缺的关键闭环**：`47` 个历史失败对应的产品修复与回归、clean stable identity、正式不可覆盖 expected-report plan、新 identity 的完整候选链，以及第二个连续达标候选。
+
+#### P2-C product failure repair 实现结论：required source navigation runtime-owned reads（2026-09-03）
+
+##### 已完成内容
+
+1. **`react-workspace-mutation.ts` 扩展**：
+   - 新增受可信 required path、最多 `3` 路 `file_read` 与 runtime call ID 约束的精确 navigation Tool call builder；
+   - Provider 返回完整合法集合时保留其调用；遗漏、重复、混合 Tool 或非法参数使该集合失效后，runtime 仅为缺失 required paths 合成无 anchor、固定 full-file limit 的读取；
+   - 继续复用原有路径规范化、Tool allowlist 和读取数量校验，不放宽 mutation、turn、token、cost 或 retry 上限。
+
+2. **`tool-agent.ts` 接入**：
+   - 在 bounded navigation 模型响应进入通用 Tool 校验和执行前收敛 required reads；
+   - Provider 的额外非 required 路径只会被丢弃，runtime 合成集合仍须通过原有二次 required-path 与 navigation allowlist 校验；
+   - 后续 Tool 计数、消息历史和执行流程保持原有预算与失败关闭边界。
+
+3. **`react-workspace-mutation.test.ts` 与 `tool-agent-workspace-mutation.test.ts` 回归**：
+   - 先以 Provider 遗漏一个 required path 的真实调用链得到 Red：模型请求结束后没有执行完整三路径读取；
+   - Green 断言 runtime 合成完整集合后继续 mutation，并覆盖顺序、call ID、固定读取上限、数量越界、规范化重复路径和空 ID 前缀；
+   - `docs/project-map.md` 同步登记 runtime-owned required navigation reads 的职责与边界。
+
+4. **效果**：
+   - bounded navigation 不再依赖 Provider 精确复述 runtime 已知的路径集合；
+   - required source 均会在同一个既有有界阶段被完整读取，Provider 多报的 workspace 路径不会被执行；
+   - 历史 `df54f67` 的 `6` 个失败保持原终态且不重解释，真实双平台改善仍只由新冻结候选证明。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` exit code=`0`；
+- workspace mutation 两文件 `148/148` 测试全部通过（含新增 runtime-owned navigation 安全边界测试）；
+- `git diff --check` 通过，仅保留 Windows 行尾转换提示；
+- 本环节 Provider calls/cost=`0/$0`，未修改冻结 aggregate、未运行正式候选或执行网络写入。
+
+##### 后续计划
+
+- **下一步准备做什么**：从 `mutation_patch_contract_invalid=5` 的冻结 events 建立最小重放，区分 malformed patch、context-only hunk 与已有 input-correction 分支未覆盖的初始 mutation，然后先写调用链 Red 再做最小修复。
+- **为什么先做它**：这 `5` 项与已完成的 navigation 都位于 required-mutation 主链，且可能与后续 `post_write_correction_failed=6` 共用 patch 诊断和 correction 状态；先关闭最窄、签名最明确的入口可减少对 `patch_acceptance_failed=19` 的误归因。
+- **当前还缺的关键闭环**：其余 `41` 个历史产品失败的根因与产品修复、完整相关回归、clean stable identity、正式不可覆盖 expected-report plan、新 identity 的完整 `144/144` 候选链，以及第二个连续达标候选。
 
 #### 后续工作量估算
 
@@ -11848,7 +11886,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 候选保持拒绝；12 个 usage 终态合同、expected-report 预冻结 Gate 与 19 个 unknown 分类已完成，当前进入真实产品失败修复** | 旧 aggregate=`97 passed + 47 product_workflow failed`、正式 infrastructure error=`0`；旧 qualification=`not_eligible/unscored` 且不得重解释；v3 `24/24` task 已显式 model execution，两个 lifecycle task 的双平台三轮共 `12` 个终态由完整本地 fixture 外键解释；新 producer 精确冻结 `144` 个 candidate/source/harness-bound 槽位；corrected failure analysis=`19 patch_acceptance + 2 token_budget + 7 output_schema + 6 navigation + 5 mutation_patch + 6 post_write + 1 accepted_regression + 1 stop_empty`、`unknown=0`，双版本回归 `10/10`、repository verifier 与增量构建通过；本轮 Provider=`0/$0`，费用守卫沿用 `35.33581920 RMB < 80 RMB` | `1.75–3.5 人日既有基线 + failure-driven 修复量 + 两个连续候选运行/观察窗口` | 按高频失败簇写回归并修复真实产品能力；完整验证后冻结 clean identity，正式生成不可覆盖 expected-report plan，再运行完整候选链并逐环节回写 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 候选保持拒绝；usage/expected-report/unknown 分类已闭合，navigation 产品修复本地闭合，继续处理 mutation patch 失败簇** | 旧 aggregate=`97 passed + 47 product_workflow failed`、正式 infrastructure error=`0`；旧 qualification=`not_eligible/unscored` 且不得重解释；`12` 个 lifecycle usage 终态与精确 `144` 槽位 plan Gate 已机器化；corrected failure analysis=`19 patch_acceptance + 2 token_budget + 7 output_schema + 6 navigation + 5 mutation_patch + 6 post_write + 1 accepted_regression + 1 stop_empty`、`unknown=0`；navigation 修复先 Red 后 Green，runtime-owned required reads 相关回归 `148/148`、增量构建通过；历史 navigation=`6` 不重解释，等待新候选证明 uplift；本轮 Provider=`0/$0`，费用守卫沿用 `35.33581920 RMB < 80 RMB` | `1.75–3.5 人日既有基线 + failure-driven 修复量 + 两个连续候选运行/观察窗口` | 先最小重放并修复 `mutation_patch_contract_invalid=5`，再逐簇关闭真实产品失败；完整验证后冻结 clean identity，正式生成不可覆盖 expected-report plan，再运行完整候选链并逐环节回写 |
 
 
 #### 重要问题说明
@@ -11860,3 +11898,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 6、Windows/WSL/plan 联合回归首次为 `35 passed + 1 timeout`：旧 WSL launcher 测试在调用异步函数前预先排入伪 child 的 `close` 微任务；新增 host-side plan Gate 首次 `await` 后，该事件在 listener 注册前被消费，测试因此等待到 `5s`。真实 `spawn` 的 close 不会在 child 返回前触发，根因是测试桩时序失真。处理方案是把 close 微任务安排到 `spawn` 桩返回 child 时，使 listener 注册顺序与真实进程一致；没有移除或弱化运行前异步 Gate。修复后同一三文件联合测试 `36/36` 通过，随后四文件完整定向批次 `80/80` 通过。
 7、新增 expected-report producer CLI 的首轮测试为 `3 passed + 1 failed`：参数 parser 的 `for` 步长已经按 flag/value 前进 `2`，循环体又重复递增 `1`，因此第二个参数值被误当作 flag。处理方案是删除循环体内的重复递增，并保留重复 flag、未知 flag、缺失必填值的失败关闭校验；修复后 producer `4/4`、最终联合批次 `80/80` 通过。该 CLI 不提供隐式默认 candidate ID/report root/output，避免误写正式 plan。
 8、现有 failure analysis 的 `19` 个 unknown 经冻结 aggregate 的终态 metadata 重放后已收敛为五类：bounded source navigation 未覆盖 required paths=`6`、mutation-only patch 合同无可执行变更=`5`、post-write review/correction 失败=`6`、patch 已接受但测试回归=`1`、`finish_reason=stop` 仅有 reasoning 无可见内容=`1`。根因不是 artifact 缺失，而是 v1 classifier 只识别 length stop、早期 mutation recovery、patch rejection、budget 与 output schema，未覆盖后来新增的 required-mutation 阶段化错误。处理方案是新增 `failure-analysis/v2` 的五个受控 family，只保存 reason code/计数/布尔/哈希，不保存错误消息、模型正文或 Tool output；verifier 按报告版本重建，旧 v1 artifact 保持原语义。首次 repository verifier 因 README 未保留旧 schemaVersion 字面量、project map 未登记 legacy schema 而失败，补齐双版本文档引用后已通过。首次 v2 生产重放又因新签名先于 v1 patch acceptance 判定而错误抢占 `7` 项，得到 `12/9/9` 的错误分布；新增优先级回归先 Red 后 Green，分类器现先保留 v1 非 unknown 结果，再处理 v2 扩展。错误的 `failure-analysis-v2` 目录作为被拒绝诊断证据原地保留，未覆盖、未删除；新 `failure-analysis-v2-corrected` 已不可覆盖生成并从原 aggregate 验证 `47/47`，结果为 `completed/unknown=0`，精确 family 分布=`19/2/7/6/5/6/1/1`，SHA-256=`1ae99f127a92dac4f1f542464ae324dff0165d48ace569692903ed2be9ff7550`。checkpoint 的首次 cached diff check 另发现 legacy schema 在 JSON 末尾多一空行；这是纯格式问题，删除该空行并重新 Gate，不影响已验证 schema 内容或 artifact。19 个 unknown 分类环节已关闭，下一步转入真实产品失败修复。
+9、corrected failure analysis 的 `required_source_navigation_incomplete=6` 全部来自 `real-go.public-api-migration` 的双平台三轮；冻结 events 证明普通阶段能读取 benchmark test，但 bounded navigation 的 Provider 响应没有一次精确覆盖 runtime 已知的全部缺失 required paths，随后统一以“did not request each missing required source path exactly once”失败。根因是 runtime 已持有受信任路径清单，却把确定性的完整读取计划再次委托给模型；并非 file reader、repository snapshot 或路径不可用。回归已先得到 Red：Provider 少报一个路径时请求数停在 `2` 而非继续到 `5`。处理方案已接入：在既有最多 `3` 路 navigation 边界内，由 runtime 合成仅含缺失 required path 的无 anchor、固定 full-file limit `file_read`；Provider 已给出完整合法集合时仍保留，额外路径被筛除，重复、混合 Tool、非法参数或遗漏会改用 runtime 精确集合，mutation/turn/token/cost/retry 上限不放宽。两文件联动与安全边界回归 `148/148`、TypeScript 增量构建和 diff check 已通过；这关闭了本地产品缺陷，但旧 `6` 个终态仍保持冻结，不重解释为通过，新候选重跑前不声称真实双平台 uplift。

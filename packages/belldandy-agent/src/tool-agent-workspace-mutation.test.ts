@@ -4834,12 +4834,18 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       protocolReadLimit: 102_400,
       completes: true,
     },
-    { name: "fails closed when one required path is omitted", navigationReadCount: 2, completes: false },
+    {
+      name: "synthesizes exact required reads when one path is omitted",
+      navigationReadCount: 2,
+      runtimeSynthesizesRequiredReads: true,
+      completes: true,
+    },
   ])("$name in one bounded navigation when only a non-target test was read", async ({
     navigationReadCount,
     extraNavigationPath,
     omitProtocolAnchor,
     protocolReadLimit,
+    runtimeSynthesizesRequiredReads,
     completes,
   }) => {
     const requiredChangedPaths = [
@@ -5034,7 +5040,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
         "file_read",
         "file_read",
       ]);
-      if (omitProtocolAnchor) {
+      if (omitProtocolAnchor || runtimeSynthesizesRequiredReads) {
         const protocolRead = execute.mock.calls
           .map(([request]) => request)
           .find((request) => request.arguments?.path === requiredChangedPaths[2]);

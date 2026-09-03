@@ -62,6 +62,11 @@ export type WorkspaceMutationNavigationToolCall = {
   };
 };
 
+export type RequiredWorkspaceMutationNavigationToolCall = WorkspaceMutationNavigationToolCall & {
+  id: string;
+  type: "function";
+};
+
 export type WorkspaceMutationPatchHunkDiagnostics = {
   hunkCount: number;
   contextOnlyHunkCount: number;
@@ -2523,6 +2528,31 @@ export function selectRequiredWorkspaceMutationNavigationToolCalls<
       arguments: JSON.stringify(boundedArguments),
     },
   } as T));
+}
+
+export function buildRequiredWorkspaceMutationNavigationToolCalls(
+  missingRequiredPaths: readonly string[],
+  maxFileReadCalls: number,
+  callIdPrefix: string,
+): RequiredWorkspaceMutationNavigationToolCall[] | undefined {
+  const normalizedCallIdPrefix = callIdPrefix.trim();
+  if (!normalizedCallIdPrefix) {
+    return undefined;
+  }
+  const toolCalls = missingRequiredPaths.map((requiredPath, index) => ({
+    id: `${normalizedCallIdPrefix}-${index + 1}`,
+    type: "function" as const,
+    function: {
+      name: "file_read",
+      arguments: JSON.stringify({ path: requiredPath }),
+    },
+  }));
+  return selectRequiredWorkspaceMutationNavigationToolCalls(
+    toolCalls,
+    missingRequiredPaths,
+    ["file_read"],
+    maxFileReadCalls,
+  );
 }
 
 export function selectRequiredWorkspaceMutationVerificationToolCalls<

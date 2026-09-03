@@ -144,6 +144,7 @@ import {
 } from "./react-finalization.js";
 import {
   areWorkspaceMutationNavigationToolCallsAllowed,
+  buildRequiredWorkspaceMutationNavigationToolCalls,
   buildWorkspaceMutationContinuationPlan,
   buildWorkspaceMutationInputCorrectionPlan,
   buildWorkspaceMutationNavigationRequest,
@@ -4087,6 +4088,47 @@ export class ToolEnabledAgent implements BelldandyAgent {
 
         // 检查是否有工具调用
         let toolCalls = response.toolCalls;
+        if (workspaceMutationNavigationCall) {
+          const maxFileReadCalls = workspaceMutationNavigationRequest?.maxFileReadCalls ?? 2;
+          const missingRequiredSourceEvidencePaths = workspaceMutationNavigationRequest
+            ?.missingRequiredSourceEvidencePaths ?? [];
+          if (missingRequiredSourceEvidencePaths.length > 0) {
+            const requiredToolCalls = toolCalls
+              ? selectRequiredWorkspaceMutationNavigationToolCalls(
+                  toolCalls,
+                  missingRequiredSourceEvidencePaths,
+                  toolNames,
+                  maxFileReadCalls,
+                )
+              : undefined;
+            if (requiredToolCalls) {
+              if (requiredToolCalls.length !== toolCalls?.length) {
+                logWarn("[workspace-mutation] dropped non-required source-navigation tool calls", {
+                  requestedToolCallCount: toolCalls?.length ?? 0,
+                  retainedToolCallCount: requiredToolCalls.length,
+                  conversationId: input.conversationId,
+                  agentId: resolvedAgentId,
+                });
+              }
+              toolCalls = requiredToolCalls;
+            } else {
+              const synthesizedToolCalls = buildRequiredWorkspaceMutationNavigationToolCalls(
+                missingRequiredSourceEvidencePaths,
+                maxFileReadCalls,
+                `workspace-mutation-navigation-${nextModelCallIndex}`,
+              );
+              if (synthesizedToolCalls) {
+                logWarn("[workspace-mutation] synthesized trusted required source-navigation reads", {
+                  requestedToolCallCount: toolCalls?.length ?? 0,
+                  synthesizedToolCallCount: synthesizedToolCalls.length,
+                  conversationId: input.conversationId,
+                  agentId: resolvedAgentId,
+                });
+                toolCalls = synthesizedToolCalls;
+              }
+            }
+          }
+        }
         logDebug("[tool-check] model response analyzed", {
           toolCallCount: toolCalls?.length ?? 0,
           responseContentLength: response.content?.length ?? 0,
@@ -4989,14 +5031,6 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 "the bounded source-navigation model call did not request each missing required source path exactly once.",
               );
               return;
-            }
-            if (requiredToolCalls.length !== toolCalls.length) {
-              logWarn("[workspace-mutation] dropped non-required source-navigation tool calls", {
-                requestedToolCallCount: toolCalls.length,
-                retainedToolCallCount: requiredToolCalls.length,
-                conversationId: input.conversationId,
-                agentId: resolvedAgentId,
-              });
             }
             toolCalls = requiredToolCalls;
           }

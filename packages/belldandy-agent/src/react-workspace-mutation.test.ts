@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildRequiredWorkspaceMutationNavigationToolCalls,
   buildWorkspaceMutationContinuationPlan,
   buildWorkspaceMutationContinuationRequest,
   buildWorkspaceMutationNavigationRequest,
@@ -2139,6 +2140,50 @@ describe("ReAct workspace mutation recovery", () => {
       path: "src/api.ts",
       limit: 1_048_576,
     });
+  });
+
+  it("builds only bounded runtime-owned reads for trusted navigation paths", () => {
+    const requiredPaths = ["src/api.ts", "src/protocol.ts"];
+    const calls = buildRequiredWorkspaceMutationNavigationToolCalls(
+      requiredPaths,
+      2,
+      "runtime-navigation-4",
+    );
+
+    expect(calls?.map((call) => ({
+      id: call.id,
+      type: call.type,
+      function: {
+        name: call.function.name,
+        arguments: JSON.parse(call.function.arguments),
+      },
+    }))).toEqual([
+      {
+        id: "runtime-navigation-4-1",
+        type: "function",
+        function: {
+          name: "file_read",
+          arguments: { path: "src/api.ts", limit: 1_048_576 },
+        },
+      },
+      {
+        id: "runtime-navigation-4-2",
+        type: "function",
+        function: {
+          name: "file_read",
+          arguments: { path: "src/protocol.ts", limit: 1_048_576 },
+        },
+      },
+    ]);
+    expect(buildRequiredWorkspaceMutationNavigationToolCalls(requiredPaths, 1, "runtime"))
+      .toBeUndefined();
+    expect(buildRequiredWorkspaceMutationNavigationToolCalls(
+      ["src/api.ts", "./src/api.ts"],
+      2,
+      "runtime",
+    )).toBeUndefined();
+    expect(buildRequiredWorkspaceMutationNavigationToolCalls(requiredPaths, 2, " "))
+      .toBeUndefined();
   });
 
   it.each([
