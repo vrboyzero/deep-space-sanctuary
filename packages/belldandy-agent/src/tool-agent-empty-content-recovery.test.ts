@@ -61,6 +61,76 @@ describe("ToolEnabledAgent empty reasoning finalization", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("uses one bounded finalization when a structured-output repair stops with reasoning only", async () => {
+    const requests: Array<Record<string, any>> = [];
+    const execute = vi.fn();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return response({
+          choices: [{ finish_reason: "stop", message: { content: "analysis without JSON" } }],
+          usage: { prompt_tokens: 4_194, completion_tokens: 624 },
+        });
+      }
+      if (requests.length === 2) {
+        return response({
+          choices: [{
+            finish_reason: "stop",
+            message: { content: null, reasoning_content: "R".repeat(701) },
+          }],
+          usage: { prompt_tokens: 2_008, completion_tokens: 135 },
+        });
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: '{"summary":"parallel reads completed"}' } }],
+        usage: { prompt_tokens: 1_000, completion_tokens: 40 },
+      });
+    });
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, maxOutputTokens: 1_024 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-empty-stop-structured-repair",
+      text: "Run the independent reads and return one summary.",
+      structuredOutput: {
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["summary"],
+          properties: { summary: { type: "string", minLength: 1, maxLength: 1_000 } },
+        },
+        validateOutput: (text: string) => text === '{"summary":"parallel reads completed"}'
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "Final output is not valid JSON." },
+      },
+    } as any));
+
+    expect(requests).toHaveLength(3);
+    expect(requests[1]).not.toHaveProperty("tools");
+    expect(requests[1]?.messages.at(-1)?.content).toContain("required JSON Schema");
+    expect(requests[2]).not.toHaveProperty("tools");
+    expect(requests[2]?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "user",
+        content: expect.stringContaining("Finalization-only phase"),
+      }),
+    ]));
+    expect(requests[2]?.messages.some((message: { role?: string }) => message.role === "tool")).toBe(false);
+    expect(execute).not.toHaveBeenCalled();
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "usage",
+      inputTokens: 7_202,
+      outputTokens: 799,
+      modelCalls: 3,
+      providerReportedModelCalls: 3,
+    }));
+    expect(items).toContainEqual({
+      type: "final",
+      text: '{"summary":"parallel reads completed"}',
+    });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("stops after one recovery when the bounded call also has no visible content", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => response({
       choices: [{

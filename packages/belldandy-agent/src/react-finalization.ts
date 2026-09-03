@@ -13,6 +13,14 @@ export function estimateReactModelCallBudgetInputTokens(
     + boundedToolDefinitionTokens;
 }
 
+export function isReactEmptyContentFinalizationTrigger(input: {
+  finishReason: string;
+  structuredOutputRepairCall: boolean;
+}): boolean {
+  return input.finishReason === "length"
+    || (input.structuredOutputRepairCall && input.finishReason === "stop");
+}
+
 export type ReactFinalizationSourceMessage = {
   role: string;
   content?: unknown;

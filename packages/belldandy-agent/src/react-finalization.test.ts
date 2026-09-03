@@ -3,6 +3,7 @@ import {
   buildReactFinalizationRequest,
   estimateReactModelCallBudgetInputTokens,
   estimateReactFinalizationInputTokens,
+  isReactEmptyContentFinalizationTrigger,
   REACT_FINALIZATION_OUTPUT_TOKEN_RESERVE,
 } from "./react-finalization.js";
 import { MODEL_LOOP_COST_CONTAINMENT_LIMITS } from "./react-run-budget.js";
@@ -21,6 +22,29 @@ describe("ReAct finalization request", () => {
     expect(11_087 + expressInput + REACT_FINALIZATION_OUTPUT_TOKEN_RESERVE).toBe(25_649);
     expect(parallelReadInput).toBe(7_074);
     expect(18_084 + parallelReadInput + REACT_FINALIZATION_OUTPUT_TOKEN_RESERVE).toBe(26_182);
+  });
+
+  it("limits stop-triggered recovery to a structured-output repair", () => {
+    expect(isReactEmptyContentFinalizationTrigger({
+      finishReason: "length",
+      structuredOutputRepairCall: false,
+    })).toBe(true);
+    expect(isReactEmptyContentFinalizationTrigger({
+      finishReason: "length",
+      structuredOutputRepairCall: true,
+    })).toBe(true);
+    expect(isReactEmptyContentFinalizationTrigger({
+      finishReason: "stop",
+      structuredOutputRepairCall: true,
+    })).toBe(true);
+    expect(isReactEmptyContentFinalizationTrigger({
+      finishReason: "stop",
+      structuredOutputRepairCall: false,
+    })).toBe(false);
+    expect(isReactEmptyContentFinalizationTrigger({
+      finishReason: "unknown",
+      structuredOutputRepairCall: true,
+    })).toBe(false);
   });
 
   it("builds a bounded tool-free transcript with the task and recent evidence", () => {

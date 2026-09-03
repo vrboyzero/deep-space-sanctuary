@@ -140,6 +140,7 @@ import {
 import {
   buildReactFinalizationRequest,
   estimateReactModelCallBudgetInputTokens,
+  isReactEmptyContentFinalizationTrigger,
   REACT_FINALIZATION_INPUT_SAFETY_FACTOR,
   REACT_FINALIZATION_OUTPUT_TOKEN_RESERVE,
   type ReactFinalizationRequest,
@@ -4012,10 +4013,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
             return;
           }
           if (
-            response.emptyContent?.finishReason === "length"
+            response.emptyContent
+            && isReactEmptyContentFinalizationTrigger({
+              finishReason: response.emptyContent.finishReason,
+              structuredOutputRepairCall,
+            })
             && !emptyContentFinalizationAttempted
             && !finalizationOnlyCall
-            && !structuredOutputRepairCall
           ) {
             emptyContentFinalizationAttempted = true;
             pendingEmptyContentFinalizationError = response.error;
