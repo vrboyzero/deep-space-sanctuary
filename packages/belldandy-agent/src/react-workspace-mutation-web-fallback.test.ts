@@ -534,6 +534,146 @@ describe("serialized-false dropped fallback recovery", () => {
   });
 });
 
+describe("serialized-false accepted post-write shapes", () => {
+  const exactPrefixCondition = "\t\t} else if (value != NULL && (value !== false || (name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') || (name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-'))) {";
+  const regexCondition = "\t\t} else if (value === false && /^(aria-|data-)/.test(name)) {";
+  const cases = [
+    {
+      name: "Windows a1 inline exact prefixes",
+      source: [
+        functionGuard,
+        functionComment,
+        exactPrefixCondition,
+        ordinarySetAttribute,
+        unconditionalFallback,
+        removalStatement,
+        branchEnd,
+      ].join("\n"),
+      patch: [
+        "*** Begin Patch",
+        `*** Update File: ${requiredPath}`,
+        "@@",
+        `-${originalCondition}`,
+        `+${exactPrefixCondition}`,
+        "*** End Patch",
+      ].join("\n"),
+    },
+    {
+      name: "WSL2 a2 regex prefixes",
+      source: [
+        functionGuard,
+        functionComment,
+        originalCondition,
+        ordinarySetAttribute,
+        regexCondition,
+        "\t\t\tdom.setAttribute(name, 'false');",
+        unconditionalFallback,
+        removalStatement,
+        branchEnd,
+      ].join("\n"),
+      patch: [
+        "*** Begin Patch",
+        `*** Update File: ${requiredPath}`,
+        "@@",
+        ` ${originalCondition}`,
+        ` ${ordinarySetAttribute}`,
+        `+${regexCondition}`,
+        "+\t\t\tdom.setAttribute(name, 'false');",
+        "*** End Patch",
+      ].join("\n"),
+    },
+    {
+      name: "WSL2 a3 normalized alias",
+      source: [
+        "\t\tconst normalized = value == NULL || typeof value == 'function' ? NULL : value;",
+        "\t\tif (normalized == NULL) {",
+        removalStatement,
+        "\t\t} else if (normalized === false) {",
+        "\t\t\tif (name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') {",
+        "\t\t\t\tdom.setAttribute(name, 'false');",
+        "\t\t\t} else if (name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-') {",
+        "\t\t\t\tdom.setAttribute(name, 'false');",
+        "\t\t\t} else {",
+        "\t\t\t\tdom.removeAttribute(name);",
+        "\t\t\t}",
+        unconditionalFallback,
+        "\t\t\tdom.setAttribute(name, name == 'popover' && normalized == true ? '' : normalized);",
+        branchEnd,
+      ].join("\n"),
+      patch: [
+        "*** Begin Patch",
+        `*** Update File: ${requiredPath}`,
+        "@@",
+        `-${functionGuard}`,
+        `-${functionComment}`,
+        `-${originalCondition}`,
+        `-${ordinarySetAttribute}`,
+        `-${unconditionalFallback}`,
+        `-${removalStatement}`,
+        "+\t\tconst normalized = value == NULL || typeof value == 'function' ? NULL : value;",
+        "+\t\tif (normalized == NULL) {",
+        `+${removalStatement}`,
+        "+\t\t} else if (normalized === false) {",
+        "+\t\t\tif (name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') {",
+        "+\t\t\t\tdom.setAttribute(name, 'false');",
+        "+\t\t\t} else if (name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-') {",
+        "+\t\t\t\tdom.setAttribute(name, 'false');",
+        "+\t\t\t} else {",
+        "+\t\t\t\tdom.removeAttribute(name);",
+        "+\t\t\t}",
+        `+${unconditionalFallback}`,
+        "+\t\t\tdom.setAttribute(name, name == 'popover' && normalized == true ? '' : normalized);",
+        "*** End Patch",
+      ].join("\n"),
+    },
+  ];
+
+  it.each(cases)("accepts $name", ({ source, patch }) => {
+    const messages = sourceMessages(source);
+
+    expect(hasUnreachableSerializedFalseWitnessCurrentSource(
+      messages,
+      taskText,
+      [patch],
+    )).toBe(false);
+    expect(hasUnpreservedSerializedFalseWitnessCurrentSource(
+      messages,
+      taskText,
+      [patch],
+    )).toBe(false);
+  });
+
+  it.each([
+    {
+      name: "missing nullish normalization",
+      source: cases[2]!.source.replace(
+        "value == NULL || typeof value == 'function'",
+        "typeof value == 'function'",
+      ),
+    },
+    {
+      name: "inexact data prefix",
+      source: cases[2]!.source.replace(
+        "name[3] == 'a' && name[4] == '-'",
+        "name[3] == 'a'",
+      ),
+    },
+    {
+      name: "ordinary false is serialized",
+      source: cases[2]!.source.replace(
+        "\t\t\t\tdom.removeAttribute(name);\n\t\t\t}\n\t\t} else {",
+        "\t\t\t\tdom.setAttribute(name, 'false');\n\t\t\t}\n\t\t} else {",
+      ),
+    },
+  ])("rejects normalized alias with $name", ({ source }) => {
+    expect(hasUnreachableSerializedFalseWitnessCurrentSource(
+      sourceMessages(source),
+      taskText,
+      [cases[2]!.patch],
+    )).toBe(true);
+  });
+});
+
 function patchCall(patch: string) {
   return {
     function: {

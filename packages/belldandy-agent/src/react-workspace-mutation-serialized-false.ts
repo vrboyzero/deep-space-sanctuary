@@ -77,6 +77,38 @@ const NARROW_PREFIX_PREDICATE = "name[0] == 'a' && name[1] == 'r' || name[0] == 
 const NARROW_PREFIX_FALSE_REMOVAL_CONDITION = `} else if (value === false && !(${NARROW_PREFIX_PREDICATE})) {`;
 const NARROW_PREFIX_FALSE_SERIALIZATION_CONDITION = `} else if (value === false && (${NARROW_PREFIX_PREDICATE})) {`;
 
+export function hasNormalizedSerializedFalseAttributeBranch(
+  lines: readonly string[],
+): boolean {
+  for (let index = 0; index <= lines.length - 14; index += 1) {
+    const declaration = lines[index] ?? "";
+    const conditionIndent = declaration.slice(
+      0,
+      declaration.length - declaration.trimStart().length,
+    );
+    const statementIndent = `${conditionIndent}\t`;
+    const nestedConditionIndent = `${statementIndent}`;
+    const nestedStatementIndent = `${nestedConditionIndent}\t`;
+    if (declaration === `${conditionIndent}const normalized = value == NULL || typeof value == 'function' ? NULL : value;`
+      && lines[index + 1] === `${conditionIndent}if (normalized == NULL) {`
+      && lines[index + 2] === `${statementIndent}${ATTRIBUTE_REMOVAL_STATEMENT}`
+      && lines[index + 3] === `${conditionIndent}} else if (normalized === false) {`
+      && lines[index + 4] === `${nestedConditionIndent}if ${ARIA_PREFIX_PREDICATE.slice(0, -3)} {`
+      && lines[index + 5] === `${nestedStatementIndent}${SERIALIZED_FALSE_LITERAL_STATEMENT}`
+      && lines[index + 6] === `${nestedConditionIndent}} else if ${DATA_PREFIX_PREDICATE} {`
+      && lines[index + 7] === `${nestedStatementIndent}${SERIALIZED_FALSE_LITERAL_STATEMENT}`
+      && lines[index + 8] === `${nestedConditionIndent}} else {`
+      && lines[index + 9] === `${nestedStatementIndent}${ATTRIBUTE_REMOVAL_STATEMENT}`
+      && lines[index + 10] === `${nestedConditionIndent}}`
+      && lines[index + 11] === `${conditionIndent}} else {`
+      && lines[index + 12] === `${statementIndent}dom.setAttribute(name, name == 'popover' && normalized == true ? '' : normalized);`
+      && lines[index + 13] === `${conditionIndent}}`) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function collectSerializedFalseMultilineFallbackBranches(
   lines: readonly string[],
 ): SerializedFalseMultilineFallbackBranch[] {

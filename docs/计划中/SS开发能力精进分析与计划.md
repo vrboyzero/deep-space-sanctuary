@@ -12309,13 +12309,55 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 
 - TypeScript 增量编译无错误：`corepack pnpm build:incremental` exit code=`0`；
 - focused=`31/31`、相关四文件=`192/192`、workspace-mutation 十一文件全集=`312/312`；
-- `corepack pnpm verify:coding-benchmark` 与 `git diff --check` 通过，仅保留既存 AJV `date-time` format 与 Windows 行尾提示；临时 `[DEBUG-*]` 标记为零。
+- `corepack pnpm verify:coding-benchmark` 与 `git diff --check` 通过，仅保留既存 AJV `date-time` format 与 Windows 行尾提示；临时 `[DEBUG-*]` 标记为零；checkpoint=`8706ef0`，明确排除 `tmp-codeintel-summary.json`。
 
 ##### 后续计划
 
 - **下一步准备做什么**：完成当前 diff 的轻量对抗 review 与 checkpoint 提交，然后按 corrected failure analysis 复核其余 failure family 的 current HEAD 覆盖。
 - **为什么先做它**：WSL2 a1 的本地产品、对抗与工程 Gate 已闭合；进入新 identity 前仍需证明其他历史 failure family 没有未覆盖的独立产品根因。
 - **当前还缺的关键闭环**：其他 failure family HEAD 覆盖复核、clean stable identity、正式不可覆盖 expected-report plan、新 identity 完整 `144/144` 候选链，以及第二个连续达标候选。
+
+#### P2-C product failure repair 实现结论：`post_write_correction_failed=6` 精确复核与闭合（2026-09-03）
+
+##### 已完成内容
+
+1. **六份 retained run 与最终源码逐项复核**：
+   - TS Windows a1/a2/a3 的最终 `changes.patch` SHA-256 均为 `4505759f...`，三份 current source SHA-256 均为 `0c9270cf...`，正确把 `ProtocolRequestType0<WorkspaceFolder[] | null | undefined, ...>` 收窄为 `WorkspaceFolder[] | null`；三项 evaluator 均为 tests/patch accepted、regression=`0`，历史失败分别发生在两次 context mismatch 与一次 repeated-current-source correction；
+   - Web Windows a1、WSL2 a2、WSL2 a3 的最终 patch 分别为 inline exact prefix、regex prefix 和 `normalized` alias 三种语义等价实现，三项 evaluator 同样为 tests/patch accepted、regression=`0`；历史失败分别发生在 objective output repair、smallest-change narrowness 与 correction context mismatch；
+   - 六项均确认是正确产品 patch 后的 post-write 收尾失败，不把历史 run 重解释为通过，也不放宽 evaluator 或 patch acceptance。
+
+2. **`react-workspace-mutation-serialized-false.ts` 与 `react-workspace-mutation.ts` 修改**：
+   - 新增 `normalized` alias 完整控制流识别，只接受 nullish/function 归一化、nullish removal、精确 aria/data false serialization、ordinary-false removal 与其余值 setAttribute 全部同时成立的冻结形状；
+   - reachable 与 preservation 两个最终行为 Gate 复用同一严格识别，缺 nullish、data prefix 漂移或 ordinary false 被序列化均继续失败关闭；
+   - Windows a1 inline exact prefix 与 WSL2 a2 regex prefix 保持由现有通用合同接受。
+
+3. **`react-workspace-mutation.ts` task-context 排序修改**：
+   - 当任务显式点名、且当前源码确有 namespace/module/class/interface/type/function 等 owner 声明时，该 owner context 先于 `undefined/null/false` 等高频字面量进入有限 evidence；
+   - TS a3 的 `repeated_current_source` correction 不再由 notification 中无关 `undefined` 抢占预算，完整保留 `WorkspaceFoldersRequest` 的 result、Handler 与 Middleware 三条当前声明；
+   - context 最多 `6` 项/`4096` 字符、实际 `2048` input limit、turn/token/cost 与 Provider retry 上限均未扩大。
+
+4. **冻结测试扩展/新建**：
+   - `react-workspace-mutation-web-fallback.test.ts` 固定三份 Web 最终源码正例及三类不完整 `normalized` alias 负例；
+   - 新建 `react-workspace-mutation-ts-cross-package.test.ts`，以三份 run 共享的真实 92 行 CRLF current source、完整 runtime Output Schema、`deepseek-v4-flash` tokenizer 与实际 `2048` 上限覆盖 Tool input-error 和 repeated-current-source 两条 request；
+   - `docs/project-map.md` 同步登记 task-named owner 排序与 `normalized` alias Gate 边界。
+
+5. **效果**：
+   - Web 同形回归先稳定 Red 为 `33 passed + 1 failed`，唯一失败正是 WSL2 a3 alias false positive；修复后合法三形均被接受，三类残缺形状仍被拒绝；
+   - TS 同形回归先稳定 Red 为 `1 passed + 1 failed`，修复后 a1/a2 input-error 与 a3 repeated-current-source request 均包含唯一正确 fault block；
+   - corrected analysis 的 `post_write_correction_failed=6` 当前本地根因路径全部闭合，真实 uplift 仍只允许由新 identity 完整候选证明。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` exit code=`0`；
+- Web focused=`37/37`、TS focused=`2/2`、共享三文件=`123/123`、workspace-mutation 十二文件全集=`320/320`；
+- 从实际 `dist` 与冻结 current source 重建的两类 TS request 分别为 `1932/2048`、`2045/2048`，result/Handler/Middleware 三条目标均完整保留；
+- `corepack pnpm verify:coding-benchmark` 与 `git diff --check` 通过，仅保留既存 AJV `date-time` format 与 Windows 行尾提示；本环节 Provider calls/cost=`0/$0`，费用守卫仍为 `35.33581920 RMB < 80 RMB`。
+
+##### 后续计划
+
+- **下一步准备做什么**：按 corrected failure analysis 依次复核 `accepted_patch_regression=1`、`token_budget_exhausted=2`、`model_empty_content_at_stop=1` 与 `output_schema_invalid=7`，每个子类一有结论即回写并只修当前 HEAD 仍可复现的产品根因。
+- **为什么先做它**：`post_write=6/6` 已闭合；剩余 family 数量小且分别覆盖 evaluator regression、预算终态、stop-empty 恢复和 structured output，可在冻结 identity 前以确定性 seam 快速排除遗漏。
+- **当前还缺的关键闭环**：上述 `11` 个历史终态的 current HEAD 覆盖复核与必要修复、clean stable identity、正式不可覆盖 expected-report plan、新 identity 完整 `144/144` 候选链，以及第二个连续达标候选。
 
 #### 后续工作量估算
 
@@ -12357,7 +12399,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 候选保持拒绝；usage/plan/unknown 分类已闭合，patch acceptance 的零 edit `10` 项本地路径已覆盖，mutation-after `4+5` 已逐 run 分层；TS 四项、Go Windows a3 与 Web Windows a2/a3 的当前本地根因路径已闭合；Web WSL2 a1 公共链、preservation、file-directive、canonical output、相关回归与工程 Gate已闭合；下一步复核其他 failure family** | 旧 aggregate=`97 passed + 47 product_workflow failed`、正式 infrastructure error=`0`；旧 qualification=`not_eligible/unscored` 且不得重解释；`12` 个 lifecycle usage 终态与精确 `144` 槽位 plan Gate 已机器化；corrected failure analysis=`19 patch_acceptance + 2 token_budget + 7 output_schema + 6 navigation + 5 mutation_patch + 6 post_write + 1 accepted_regression + 1 stop_empty`、`unknown=0`；mutation-after `9/9` 已精确分层；TS cross-package 两项由预算感知 post-write projection 覆盖，TS API a3 由 schema isolation 覆盖、a2 由 continuation 执行前 exact-set correction 覆盖；Go a3 与 Web Windows a3 的冻结 objective correction 均在实际 `2048` 上限下保留完整 fault source；Web Windows a2 由 SVG-inclusive predicate replacement 覆盖，a3 由 exact multiline fallback parser/rebuilder、grouped precedence parser 与严格最终 Gate 覆盖；WSL2 a1 新 parser/rebuilder 已阻止冻结窄 `ar*` / `da*` patch进入 executor，公共链=`3/3`，纯对抗=`22/22`，原相关四文件=`183/183`、原十一文件全集=`303/303`；新增 prior/proposed 单 file-directive 对抗首轮=`22 passed + 6 failed`，唯一规范化 `Update File` Gate 修复后 focused=`28/28`、相关四文件=`189/189`、十一文件全集=`309/309` 且首轮工程 Gate 通过；轻量 review 新增 canonical output path 正例及两条 incoming alias 负例，输出正例首轮=`30 passed + 1 failed`，改为复用已验证规范化 path 后 focused=`31/31`、相关四文件=`192/192`、十一文件全集=`312/312`；修复后 `corepack pnpm build:incremental`、`corepack pnpm verify:coding-benchmark`、`git diff --check` 全部通过，debug marker 为零；历史终态不重解释；本轮 Provider=`0/$0`，费用守卫沿用 `35.33581920 RMB < 80 RMB` | `1.75–3.5 人日既有基线 + failure-driven 修复量 + 两个连续候选运行/观察窗口` | 先提交当前 checkpoint并复核其余 failure family；全部必要修复闭合后冻结 clean identity、正式生成不可覆盖 expected-report plan，再运行完整候选链并逐环节回写 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 候选保持拒绝；usage/plan/unknown 分类、patch acceptance 零 edit `10` 项与 mutation-after `4+5` 已闭合；TS 四项、Go Windows a3、Web Windows a2/a3、Web WSL2 a1 及 `post_write_correction_failed=6/6` 的当前本地根因路径已闭合；下一步复核 `accepted_patch_regression`、`token_budget_exhausted`、`model_empty_content_at_stop` 与 `output_schema_invalid`** | 旧 aggregate=`97 passed + 47 product_workflow failed`、正式 infrastructure error=`0`；旧 qualification=`not_eligible/unscored` 且不得重解释；`12` 个 lifecycle usage 终态与精确 `144` 槽位 plan Gate 已机器化；corrected failure analysis=`19 patch_acceptance + 2 token_budget + 7 output_schema + 6 navigation + 5 mutation_patch + 6 post_write + 1 accepted_regression + 1 stop_empty`、`unknown=0`；mutation-after `9/9` 已精确分层；TS cross-package 两项由预算感知 post-write projection 覆盖，TS API a3 由 schema isolation 覆盖、a2 由 continuation 执行前 exact-set correction 覆盖；Go a3 与 Web Windows a3 的冻结 objective correction 均在实际 `2048` 上限下保留完整 fault source；Web Windows a2 由 SVG-inclusive predicate replacement 覆盖，a3 由 exact multiline fallback parser/rebuilder、grouped precedence parser 与严格最终 Gate 覆盖；WSL2 a1 parser/rebuilder、preservation、唯一规范化 file-directive 与 canonical output 合同已闭合；`post_write=6/6` 逐 run 复核确认产品 patch 均为 tests/patch accepted、regression=`0`，新增严格 `normalized` alias Gate 与 task-named owner 优先投影，focused=`37/37 + 2/2`、十二文件=`320/320`，最新 dist request=`1932/2048 + 2045/2048`；修复后 `corepack pnpm build:incremental`、`corepack pnpm verify:coding-benchmark`、`git diff --check` 全部通过，debug marker 为零；历史终态不重解释；本轮 Provider=`0/$0`，费用守卫沿用 `35.33581920 RMB < 80 RMB` | `1.75–3.5 人日既有基线 + failure-driven 修复量 + 两个连续候选运行/观察窗口` | 先提交当前 checkpoint并复核其余 `11` 个历史终态；全部必要修复闭合后冻结 clean identity、正式生成不可覆盖 expected-report plan，再运行完整候选链并逐环节回写 |
 
 
 #### 重要问题说明
@@ -12383,3 +12425,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 20、a3 Gate 收紧后的 workspace-mutation 十一文件首轮完整回归为 `289/290`，唯一失败是既有 grouped precedence 路径：correction 后源码把 `value === false && (`、exact aria/data predicates 与 closing parenthesis 分布在多行。旧实现没有真正解析该合法形状，而是因为通用 scanner 会把后续 `dom.setAttribute(name, 'false')` 语句误当作 predicate 才偶然返回 reachable；第 19 项修复正确禁止 body statement 冒充条件后，这个隐式依赖暴露为回归。处理方案不是撤销条件行边界，而是在相邻 serialized-false owner 中新增严格 grouped multiline parser，只接受完整 `value === false && (aria || data)`、匹配缩进/闭合与 literal false serialization；缺 grouping、缺 data 或结构漂移继续失败关闭。focused 修复后原失败单点=`1/1`、第 19 项及 grouped 对抗=`11/11`，缺 grouping 与 data 漂移仍被拒绝；十一文件全集重跑=`291/291`，本问题的测试回归已关闭。
 21、Web UI WSL2 a1 不是单纯“最终 Gate 能拒绝”的失败：冻结两次 patch 均成功、最终完整复读后，修复前 HEAD 仍接受合法 summary 并返回 `done`，但源码已删除 function guard 与普通非 `false` fallback，且用 `ar*` / `da*` 误代精确 `aria-*` / `data-*`。公共 `ToolEnabledAgent.run()` 同形回归稳定为 `2 passed / 1 expected Red`，唯一差异是实际执行冻结回归 patch而非期望完整恢复 patch。根因是通用 `branchPreservesSerializedFalseSubset()` 只检查 `name` 和逻辑运算符，无法证明 prefix 精确性，也不验证 baseline fallback preservation；Windows a3 parser 又要求 function/fallback 仍在，覆盖不到该中间态。处理方案现已完成 focused 实现：严格绑定 truth set、唯一 required path、首次 patch 的完整 baseline 删除、当前非截断 narrow-prefix stub 与冻结 output-repair 形状；在该 patch执行前从可信 evidence 重建 function/nullish/exact aria-data/ordinary non-false/ordinary false 完整控制流，并只对这份 rebuilt patch跳过会误报的通用 smallest-change 比较；同形错误最终源码另由严格 parser 失败关闭。公共链=`3/3`、增量编译通过，turn/token/cost/retry 与 evaluator 均未放宽。首轮对抗=`21/22` 又确认只把 narrow prefix 换成 exact prefix 仍会因通用 Gate 不验证 function/non-false 而被放行；现已复用首次完整 baseline 删除的 prior-patch provenance，在该精确路径上要求 function guard 与 ordinary setAttribute restoration evidence，不能把 exact prefix 当作完整成功。纯对抗修复后=`22/22`、与公共链联合=`25/25`；task/path/prior/current/proposed-patch 漂移、truncated 和 already-restored 均未触发 rebuild；相关四文件=`183/183`、workspace-mutation 十一文件全集=`303/303`。工程 Gate 尚待完成。
 22、WSL2 a1 rebuilder 的首轮对抗 review 发现 file-directive 完整性不能只依赖 `readSingleRequiredPathPatchChange()`：该读取器只计数 `*** Update File`，额外 `Add/Delete/Move File` 指令不会增加 section count；如果专用 rebuilder只匹配 required path 的局部行序列，就可能把含额外 directive 的 prior/proposed patch误认成精确 provenance。上游通用路径 Gate 通常会拒绝，但专用 source-derived correction 必须独立失败关闭，不能依赖调用顺序形成隐式安全边界。处理方案是 prior patch 与当前 proposed Tool call 都要求恰好一个 file directive，且必须逐字为规范化 required path 的 `*** Update File`；已新增 prior/proposed 两组、分别覆盖 `Add File`、`Delete File`、`Move to` 的六个负例，首轮 focused 精确出现 `22 passed + 6 failed`，六项均返回 rebuilt Tool call，已证实问题真实存在且同时影响 provenance 与 proposed patch。现已新增共享的唯一规范化 `Update File` directive 判定：所有 `readSingleRequiredPathPatchChange()` 用户与 dropped-fallback proposed patch 都独立复用；同一 focused 文件已由 Red 转为 `28/28` Green，冻结完整 correction 正例保持通过；serialized-false correction、通用 mutation Gate、Web fallback 与公共 Agent 四文件相关回归=`189/189`，workspace-mutation 十一文件全集=`309/309`，共享读取器收紧未造成相邻 correction 或完整 mutation 合同回归；首轮工程 Gate 全部通过。提交前轻量 review 进一步发现 rebuilder 的输出 header 仍使用原始 `requiredPaths[0]`，与新 Gate 的规范化 path 合同不自洽；新增规范化输出正例与 prior/proposed incoming alias 负例后，focused=`30 passed + 1 failed`，唯一 Red 精确显示输出 `./src/diff/props.js` 而非 `src/diff/props.js`。首次一行修复定位误命中同文件更早的 initial-no-op builder；经逐处 `rg` 校验后在测试前恢复该非目标行，并只让 dropped-fallback builder 复用已验证的 `requiredPath`。同一 focused 随后=`31/31` Green，alias launch path 输出 canonical header，incoming alias 仍失败关闭；相关四文件=`192/192`、workspace-mutation 十一文件全集=`312/312`，相邻 builder与完整 mutation 合同未见回归。修复后的增量构建、benchmark verifier、diff check 均通过，debug marker 为零；问题已闭合。
+23、`post_write_correction_failed=6` 不能继续作为一个笼统的 correction failure 处理。逐 run 复核确认六份初始产品 patch 均已通过 frozen tests、patch acceptance 且 regression=`0`：TS Windows a1/a2/a3 的最终 patch SHA 都是 `4505759f...`，三份 current source SHA 都是 `0c9270cf...`；Web 三份则分别采用 inline exact prefix、regex prefix 与 `normalized` alias。当前 HEAD 精确重放后，Web Windows a1/WSL2 a2 已由现有 Gate 覆盖，但 WSL2 a3 因 alias 不再出现字面 `value === false` 而被可达性 Gate 误报；TS a1/a2 的 Tool input-error request 能完整保留目标，a3 的 `repeated_current_source` instruction 更长，notification 中无关 `undefined` context 先占预算，导致后排 `WorkspaceFoldersRequest` context 被中段裁剪并丢失 result/Handler/Middleware。处理方案分两层：serialized-false owner 新增只接受完整 nullish/function normalization、精确 aria/data false serialization、ordinary-false removal 与其余值 setAttribute 的 alias detector；source-context 投影让任务点名且可信源码确有声明的 owner 在字面量前进入有限 evidence。两组回归分别先稳定 Red 为 `33+1`、`1+1`，修复后 focused=`37/37`、`2/2`，十二文件全集=`320/320`，最新实际 dist request=`1932/2048`、`2045/2048` 且三条 TS 目标全部保留；预算和 evaluator 均未放宽。取证过程中另发现两项执行纪律问题：一次对三个已知 runtime 根做了递归文件枚举，虽未越出绑定 run、未读正文且命令已结束，但输出过大；另一次临时 request 展开脚本漏配 assistant tool-call envelope，自身报 `Unexpected end of JSON input`。两者均不属于产品失败；后续处理固定为只读已知 artifact/fixture 精确路径，并复用生产一致的 user→assistant tool-call→tool 三消息 harness，禁止再以递归枚举或不完整 envelope 取证。本项已闭合，旧六个终态不重解释。

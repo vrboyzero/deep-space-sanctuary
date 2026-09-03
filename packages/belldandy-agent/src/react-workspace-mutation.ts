@@ -10,6 +10,7 @@ import {
   collectSerializedFalseMultilineFallbackBranches,
   hasDroppedSerializedFalseNarrowPrefixFallback,
   hasGroupedSerializedFalseMultilineBranch,
+  hasNormalizedSerializedFalseAttributeBranch,
   readSiblingBranchBody,
 } from "./react-workspace-mutation-serialized-false.js";
 import {
@@ -1535,6 +1536,7 @@ export function hasUnpreservedSerializedFalseWitnessCurrentSource(
   return readLatestWorkspaceMutationSourceEvidence(messages, priorGuardPaths).some((source) => {
     const lines = source.split(/\r?\n/);
     if (hasDroppedSerializedFalseNarrowPrefixFallback(lines)) return true;
+    if (hasNormalizedSerializedFalseAttributeBranch(lines)) return false;
     if (hasComplementarySerializedFalseRemovalBranches(lines)) return false;
     const multilineFallbackBranches = collectSerializedFalseMultilineFallbackBranches(lines);
     if (multilineFallbackBranches.length === 1) {
@@ -2336,6 +2338,7 @@ export function hasUnreachableSerializedFalseWitnessCurrentSource(
     if (hasDroppedSerializedFalseNarrowPrefixFallback(lines)) return true;
     if (hasElseIfAfterUnconditionalElse(lines) || hasReattachedSiblingBranchTail(lines)) return true;
     if (!lines.some((line) => /\.setAttribute\s*\(/.test(line))) return false;
+    if (hasNormalizedSerializedFalseAttributeBranch(lines)) return false;
     if (hasComplementarySerializedFalseRemovalBranches(lines)) return false;
     if (collectSerializedFalseMultilineFallbackBranches(lines).length === 1
       || hasGroupedSerializedFalseMultilineBranch(lines)) return false;
@@ -3394,13 +3397,18 @@ function collectTaskRelevantFileContexts(
   }
   const sourceTaskText = selectTaskTextForSourceContext(taskText);
   const identifiers = [...new Set(sourceTaskText.match(/[A-Za-z_$][A-Za-z0-9_$]{3,}/g) ?? [])]
-    .filter((identifier) => isTaskSourceIdentifier(identifier, sourceTaskText))
-    .sort((left, right) => (
-      taskSourceIdentifierPriority(right, sourceTaskText)
-        - taskSourceIdentifierPriority(left, sourceTaskText)
-      || right.length - left.length
-      || left.localeCompare(right)
-    ));
+    .filter((identifier) => isTaskSourceIdentifier(identifier, sourceTaskText));
+  const taskNamedSourceDeclarations = new Set(identifiers.filter((identifier) => (
+    hasTaskNamedSourceDeclaration(fileContent, identifier)
+  )));
+  identifiers.sort((left, right) => (
+    Number(taskNamedSourceDeclarations.has(right))
+      - Number(taskNamedSourceDeclarations.has(left))
+    || taskSourceIdentifierPriority(right, sourceTaskText)
+      - taskSourceIdentifierPriority(left, sourceTaskText)
+    || right.length - left.length
+    || left.localeCompare(right)
+  ));
   const contexts: Array<{
     identifier: string;
     lines: string;
@@ -3470,6 +3478,14 @@ function collectTaskRelevantFileContexts(
     }
   }
   return contexts;
+}
+
+function hasTaskNamedSourceDeclaration(fileContent: string, identifier: string): boolean {
+  const escapedIdentifier = identifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    String.raw`^(?:export\s+)?(?:declare\s+)?(?:abstract\s+)?(?:namespace|module|class|interface|type|enum|function|func|def|struct|trait|record)\s+${escapedIdentifier}(?![A-Za-z0-9_$])`,
+    "m",
+  ).test(fileContent);
 }
 
 function isTaskSourceIdentifier(identifier: string, taskText: string): boolean {
