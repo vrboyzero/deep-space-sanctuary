@@ -12535,16 +12535,17 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 
 ##### 验证结果
 
-- TypeScript 编译状态：Windows frozen staging 的 `corepack pnpm build` 已完整通过，包含 `tsc -b` 与 workspace artifact verifier；WSL2 原生 build 尚未执行，不提前记为通过；
+- TypeScript 编译无错误：Windows 与 WSL2 frozen staging 的 `corepack pnpm build` 均完整通过，包含 `tsc -b` 与 workspace artifact verifier；
 - Windows/WSL2 identity 四字段逐字一致，两个 staging 新建前目标均不存在；Provider calls/cost=`0/$0`；
 - Windows `corepack pnpm install --offline --frozen-lockfile` 完成 `493` 个包、`downloaded=0`、exit code=`0`；随后完整 build、`verify:coding-benchmark` 均 exit code=`0`，写后 production identity 仍为 `workspaceDirty=false`、worktree=`cfe97460…`；
+- WSL2 同一 frozen install 完成 `494` 个平台原生包、reused=`493`、`downloaded=0`、exit code=`0`；完整 build、`verify:coding-benchmark` 均 exit code=`0`，写后 production identity 仍为 `workspaceDirty=false`、worktree=`cfe97460…`；
 - WSL identity 首次探针因 PowerShell 嵌套 `bash -lc` 引号解析失败，改为 `wsl.exe -- node` 直接 argv 后同一生产 resolver 成功；该工具调用失败未启动 Gateway、runner 或 Provider。
 
 ##### 后续计划
 
-- **下一步准备做什么**：Windows staging 已闭合；在 WSL2 frozen clone 执行原生 offline frozen install、完整 build 与 repository verifier，再生成两端 repository inputs。所有 identity 仍一致后，先创建并验证不可覆盖 expected-report plan，才允许第一个 candidate run。
-- **为什么先做它**：plan 必须绑定两端均可实际执行且原生依赖完整的 clean source/harness；WSL2 是尚未关闭的最后一个 build 前置。
-- **当前还缺的关键闭环**：WSL2 原生 install/build/verifier、两端 repository inputs、不可覆盖 `144/144` expected-report plan、收费前端口/进程 Gate、完整候选链，以及第二个连续达标候选。
+- **下一步准备做什么**：双平台 staging build/verifier 已闭合；从冻结 manifest 与现有真实仓 snapshots 生成 Windows/WSL2 repository inputs，并逐端复核 `4` 个 receipt、`8` 个真实任务 preflight 与 identity。随后先创建并验证不可覆盖 expected-report plan，才允许第一个 candidate run。
+- **为什么先做它**：runner 的八个真实仓任务必须在 Provider 前绑定可复算的本平台 source/cache receipt；这是 plan 冻结和正式 canary 前最后一组数据前置。
+- **当前还缺的关键闭环**：两端 repository inputs、不可覆盖 `144/144` expected-report plan、收费前端口/进程 Gate、完整候选链，以及第二个连续达标候选。
 
 #### 后续工作量估算
 
@@ -12586,7 +12587,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 候选保持拒绝；corrected analysis 的全部产品失败 family 已逐项收敛；新候选 identity=`c02eef7` 双平台 clean staging 已冻结，Windows 原生 install/build/verifier 已闭合，WSL2/input/expected-report plan 待闭合** | 旧 aggregate=`97 passed + 47 product_workflow failed`、正式 infrastructure error=`0`，不得重解释；usage `12` 个终态、unknown `19/19` 与 corrected failure analysis 已闭合；`output_schema=7/7` 最终 focused=`33/33`、相邻=`162/162`、Agent=`885 passed + 1 skipped`、Core=`62/62`，工程 Gate 全绿，实现 checkpoint=`4f9ba94d7dfeebc43dbb5231c3c81bf1d1893b60`；Windows `.tmp/p2c-candidate-c02eef7-harness` 与 WSL2 `/var/tmp/star-sanctuary-p2c-candidate-c02eef7` 均绑定 commit=`c02eef7a69a0a10cc15c674c523d5b4b64d97197`、clean=`true`、lockfile=`844c0021…`、worktree=`cfe97460…`；Windows offline install=`493`、downloaded=`0`，完整 build 与 benchmark verifier 通过且写后 identity 未漂移；当前 Provider=`0/$0`，累计费用守卫=`35.33581920 RMB`，下一 run 最坏=`36.13581920 RMB < 80 RMB` | `1.75–3.5 人日既有基线 + 双平台准备/候选运行/观察窗口` | 完成 WSL2 原生 offline build/verifier 与两端 repository inputs；随后必须先生成、复核不可覆盖 `144/144` expected-report plan，才运行第一个候选槽位并逐环节回写 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 候选保持拒绝；corrected analysis 的全部产品失败 family 已逐项收敛；新候选 identity=`c02eef7` 双平台 clean staging 及原生 install/build/verifier 已闭合，repository inputs 与 expected-report plan 待闭合** | 旧 aggregate=`97 passed + 47 product_workflow failed`、正式 infrastructure error=`0`，不得重解释；usage `12` 个终态、unknown `19/19` 与 corrected failure analysis 已闭合；`output_schema=7/7` 最终 focused=`33/33`、相邻=`162/162`、Agent=`885 passed + 1 skipped`、Core=`62/62`，工程 Gate 全绿，实现 checkpoint=`4f9ba94d7dfeebc43dbb5231c3c81bf1d1893b60`；Windows/WSL2 staging 均绑定 commit=`c02eef7a69a0a10cc15c674c523d5b4b64d97197`、clean=`true`、lockfile=`844c0021…`、worktree=`cfe97460…`；Windows/WSL2 offline install 分别=`493/494`、downloaded=`0/0`，两端完整 build 与 benchmark verifier 通过且写后 identity 未漂移；当前 Provider=`0/$0`，累计费用守卫=`35.33581920 RMB`，下一 run 最坏=`36.13581920 RMB < 80 RMB` | `1.75–3.5 人日既有基线 + 双平台准备/候选运行/观察窗口` | 生成并验真两端 repository inputs；随后必须先生成、复核不可覆盖 `144/144` expected-report plan，才运行第一个候选槽位并逐环节回写 |
 
 
 #### 重要问题说明
@@ -12621,3 +12622,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 28、本轮首次实现把 `json_object` 接线条件写成“存在 structured-output session 且无 Tool”，没有区分根 Schema 类型；但 Core `compileOutputSchema()` 接受合法 array/primitive 根，OpenAI JSON object mode 会把这些合同人为收窄。公共 `ToolEnabledAgent.run()` 反例模拟相同 repair：根 Schema=`type:array` 时，当前第二次请求仍携带 `response_format=json_object`，定向结果稳定为 `1 failed`，证明是本次接线回归而非 validator、预算或 Provider usage 问题。处理方案已落实：相邻 `structured-output.ts` owner 新增纯判定，只对根 Schema 明确 `type="object"` 返回 true；主 `tool-agent.ts` 仅接线该结果。非 object repair 继续关闭 DeepSeek thinking但不声明 object mode，定向已由 `1 failed` 转为 `1 passed` 且终态=`done`；object/array/finalization/validator focused=`32/32`、相邻=`161/161`、Agent=`884 passed + 1 skipped`、Core 相关=`62/62`；最终扩大到 focused=`33/33`、相邻=`162/162`、Agent=`885 passed + 1 skipped` 后，仓库工程 Gate 亦已通过。
 29、finalization 文档要求“Schema 无法稳定序列化时失败关闭”，但首版 `JSON.stringify({ schema })` 在 Schema 的 `toJSON()` 返回 `undefined` 时会合法生成 `{}`，从而保留标签却丢失合同正文。真实 CLI Schema 来自 JSON 文件，通常不带方法，但公共 owner 入参为 `unknown`，不能让该边界静默退化。新增回归首轮因测试文件漏 import `vi` 在进入被测函数前失败，该结果不计作产品 Red；修正夹具后，测试精确观察到 request=`defined`、合同=`{}`、`toJSON calls=1`，形成有效 `1 failed`。处理方案已落实：先直接序列化 Schema 一次，结果为 `undefined` 或抛错即返回 `undefined`，否则用该结果构造 `{"schema":...}`；这样既失败关闭，也不因二次 `toJSON` 产生漂移。单点已由有效 `1 failed` 转为 `1 passed`，`toJSON calls=1`；完整 Schema/预算 focused=`33/33`、相邻=`162/162`、Agent=`885 passed + 1 skipped`、Core=`62/62`，增量构建、benchmark verifier、diff check 与 debug-marker Gate 均通过，并由实现 checkpoint=`4f9ba94d7dfeebc43dbb5231c3c81bf1d1893b60` 固定。
 30、WSL2 identity 首次只读探针使用 PowerShell → `wsl.exe` → `bash -lc` → Node `-e` 的四层嵌套字符串，括号在到达 Node 前被 PowerShell 二次解析，得到 `ParserError: Missing ')' in method call`；该失败发生在生产 resolver 调用前，不是 repository identity 或产品失败，也没有启动 Gateway、runner 或 Provider。处理方案是去掉中间 `bash -lc`，通过 `wsl.exe -d Ubuntu-22.04 -- node ...` 直接传递 argv；重跑后生产 `resolveBenchmarkRepositoryIdentity()` 成功返回与 Windows 完全一致的四字段 identity。后续 WSL 单命令探针固定优先直接 argv，仅在确需 shell 语义时才使用脚本文件或单层 shell。
+31、WSL2 `verify:coding-benchmark` exit code=`0`，但 Node 同时输出既存 `[DEP0040] punycode` deprecation warning，AJV 仍输出既存 `date-time` format warning；两类提示均未改变 verifier 的最终 aligned 结论，也不是本轮 structured-output 或 candidate identity 回归。技术债裁决=`record_only`：当前不升级依赖或改变 Schema format 插件，以免扩大冻结候选边界；后续依赖治理任务可单独定位 `punycode` 的传递依赖并评估兼容升级，当前 Gate 按真实 warning 原样记录。
