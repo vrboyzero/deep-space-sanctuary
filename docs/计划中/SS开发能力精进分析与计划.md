@@ -12661,6 +12661,41 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：该低成本只读诊断任务可同时证明真实 Provider route、Gateway 生命周期、plan slot、report/ledger 原子写入和费用累加，而不先扩大到 24/72 个任务。
 - **当前还缺的关键闭环**：首个 canary、其余 `143` 个计划槽位、完整 aggregate/资格链，以及第二个连续达标候选。
 
+#### P2-C 新候选 canary 实现结论：Windows `tests.failed-diagnosis` attempt 1（2026-09-03）
+
+##### 已完成内容
+
+1. **`tmp/run-p2c-candidate-matrix-c02eef7.ps1` 首个正式槽位执行**：
+   - 运行 plan 中唯一的 `tests.failed-diagnosis.windows-native.a1`，未改变 model、turn/token、费用或 retry 上限；
+   - 单任务 source report 顶层按合同为 `partial`，唯一 run=`passed`、`infrastructureRetries=0`、usage=`provider_reported`；
+   - report SHA-256=`3342cd789223bb6ee0bba105812249473f81bc768e949b8f4011e8d00c87b0d8`，声明的 `7` 个 artifact 全部存在。
+
+2. **candidate-global/platform ledger 与费用 Gate 更新**：
+   - 两份 ledger schema 均为 v2，processed=`1`；candidate Provider cost=`$0.00064773`，全局 observed=`$2.37541513`、reserved=`$2.04221000`；
+   - 当前 guard=`$4.41762513 = 35.34100104 RMB`，下一次计划内最坏=`36.14100104 RMB < 80 RMB`；
+   - global ledger 已先于 Windows platform ledger 原子落盘，report identity/path/SHA 与 plan 槽位一致。
+
+3. **`tmp/cleanup-p2c-c02eef7-canary-env.ps1` 新建并执行**：
+   - 只处理 canary runtime 内两个已知 `.env` / `.env.local`，逐文件验证绝对路径 containment、常规文件、非 reparse point、长度与 SHA-256；
+   - 两个目标均送入 Windows 回收站，剩余环境文件=`0`；cleanup log=`artifacts/cleanup/p2c-c02eef7-canary-env-2026-09-03.json`，SHA-256=`56bb17e3d7f8b2ef3d2bf9879c1a6255baa7065bede643bf56d72c8ca42bb29f`。
+
+4. **效果**：
+   - `candidate-1` 当前 coverage=`1/144`，Windows=`1/72`，WSL2=`0/72`；预冻结分母与 plan SHA 保持不变；
+   - 首个真实 Provider route、Gateway 生命周期、planned report 落盘、usage/cost 入账与敏感环境回收链均已贯通；
+   - 后置串行静默性复核 Windows/WSL2 candidate processes=`0/0`，端口与 pinned OCI 容器最近一次独立复核仍为零。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节未修改 TypeScript；冻结 Windows/WSL2 staging 最近一次完整 `corepack pnpm build` 均已通过；
+- 首个计划槽位=`1/1 passed`（本环节新增产品测试=`0`），plan-aware launcher 最近一次生产回归仍为 `37/37`；
+- report schema/status/run 外键、plan slot、ledger v2、Provider usage/cost、`7/7` artifact 存在性、cleanup log 与双平台零候选进程均已独立复核。
+
+##### 后续计划
+
+- **下一步准备做什么**：每次付费前继续独立串行复算 plan/identity、费用、端口、Windows/WSL2 进程和 OCI 容器，随后完成 Windows attempt 1 剩余 `23` 个计划槽位；每个报告形成结论后立即更新 ledger 与本进度表。
+- **为什么先做它**：同一平台同一 attempt 顺序推进可最小化工具链切换和恢复歧义，并尽早暴露 Windows 产品失败或 infrastructure failure；任一无报告/infrastructure 情况仍会保守预留 `$0.10` 并停止。
+- **当前还缺的关键闭环**：Windows attempt 1 剩余 `23` 项、其余 `120` 个双平台槽位、完整 aggregate/失败归类/资格评分，以及第二个连续达标候选。
+
 #### 后续工作量估算
 
 **本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；CLI/TUI 双平台首帧与退出收敛也已修复并通过真实 PTY 验证；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
@@ -12701,7 +12736,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 候选保持拒绝；新候选 identity=`c02eef7` 的双平台 staging/build/repository inputs、运行前 expected-report plan、plan-aware launcher 与收费前 Gate 均已闭合，首个 canary 待执行** | corrected failure analysis 的 usage `12` 个终态、unknown `19/19` 与全部产品失败 family 已逐项收敛；实现 checkpoint=`4f9ba94…`；双平台 candidate identity=`c02eef7…/844c0021…/cfe97460…`，inputs 均 receipts=`4/4`、preflights=`8/8 passed`；candidate-1 plan reports/unique IDs/unique paths=`144/144/144`、manifest=`dfaf7ebe…`、plan=`64458b50…`；launcher tests=`37/37`、真实 slot probe=`2/2`，端口/进程/容器=`0`，下一 run 最坏=`36.13581920 RMB < 80 RMB`；当前 candidate Provider=`0/$0` | `1.75–3.5 人日既有基线 + 双平台准备/候选运行/观察窗口` | 紧邻运行复核费用与静默性后执行单个 Windows canary；report/ledger 验真并回写后再扩矩阵 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 候选保持拒绝；新候选 identity=`c02eef7` 已完成双平台准备、运行前 expected-report plan、launcher Gate 与首个 Windows canary，当前 coverage=`1/144`** | corrected failure analysis 的 usage `12` 个终态、unknown `19/19` 与全部产品失败 family 已逐项收敛；实现 checkpoint=`4f9ba94…`；双平台 candidate identity=`c02eef7…/844c0021…/cfe97460…`；candidate-1 plan reports/unique IDs/unique paths=`144/144/144`、plan=`64458b50…`；Windows canary=`1/1 passed`、usage=`provider_reported`、cost=`$0.00064773`、report=`3342cd78…`、artifact=`7/7`、环境文件剩余=`0`；当前 guard=`35.34100104 RMB`，下一 run 最坏=`36.14100104 RMB < 80 RMB` | `1.75–3.5 人日既有基线 + 候选运行/观察窗口` | 串行复核收费前 Gate 后完成 Windows attempt 1 剩余 `23` 项；逐报告回写，不等待完整矩阵 |
 
 
 #### 重要问题说明
@@ -12749,3 +12784,8 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 41、Docker 安装路径的只读探针再次把 `foreach { ... }` 语句块后直接接 `| Format-List`，触发与问题 37 同类的 PowerShell `An empty pipe element is not allowed`，未完成该条路径判断；service/context/pipe 的其他独立检查不受影响。根因是恢复后的临时命令仍沿用了错误语法模式，说明仅在单次命令中修正不足。处理方案已落实为本轮后续所有 PowerShell 集合投影先赋值 `$rows` 再单独进入 pipeline，简单路径直接逐项 `Test-Path/Get-Item`；修正后 Docker Desktop/CLI 两个路径均确认为常规非 reparse 文件，才执行启动。
 42、串行 WSL 静默性 Gate 的 `ps` 输出附带 `your 131072x1 screen size is bogus. expect trouble`，但 `ps`、`ss` 均 exit code=`0`，候选相关进程与 `28891/28892` listener 仍精确为零。该 warning 来自当前自动化 PTY 向 WSL 传递的异常终端尺寸，不是 benchmark、Gateway 或候选进程状态。技术债裁决=`record_only`：正式 runner 不依赖交互终端尺寸，本轮不修改宿主 PTY；后续 Gate 继续按 exit code 与结构化匹配结果判定并原样记录 warning。
 43、plan-aware launcher 初版让 state/fixture 和正式 report 一样使用完整 `attempt-N/<taskId>`，对抗复核发现这可能重新触发旧 `df54f67` 已发生的 Windows Git managed-worktree branch lock `Filename too long`；plan 只约束 report path，并不要求内部运行目录可读。处理方案是正式 artifact 保持预冻结 plan 逐字不变，非证据 state/fixture 改用 frozen manifest 顺序派生的 `w|l/aN/tNN` 短键；同时把 ledger 原子写序调整为 candidate-global 先于 platform，使中断恢复以总账为先。旧 collection/retry marker 扫描=`0`，双平台 cost Gate 与 production slot probe 重跑均通过。
+44、首个 canary 落盘后的手工验真把单任务 report 顶层 `status` 断言为 `completed`，因此返回 `Canary report contract mismatch`；随后逐项输出确认 schema=`coding-agent-benchmark-report/v3`、顶层 status=`partial`、唯一 run=`passed`，task/platform/attempt/infrastructureRetries 均正确。根因是把完整 aggregate 的覆盖完成语义误套到仅包含一个 manifest task 的 source report，正式 report 本身未损坏，plan/ledger/resource 独立检查均已通过。处理方案是单 report 验真要求顶层 `partial`、run count=`1` 与 run 终态/外键正确；只有 `144/144` aggregate 才要求 `completed`，不修改或重生成 canary report。
+45、canary 后置验真时又把候选进程静默性检查与 report/identity probes 放入同一个并行批次，scan 因而命中同批两个 `pwsh` 与一个 identity Node；PID/父进程/命令行均证明是当前 probes，不是 runner/Gateway 孤儿，端口和 OCI 容器独立检查仍为零，也未停止任何进程。根因是问题 39 的“串行 quiescence”只应用在付费前 Gate，没有提升为所有前后置进程检查的硬约束。处理方案再次升级：从本项起，凡命令行 pattern 含 candidate/benchmark 的进程检查，只允许作为独立 `exec` 调用，前后不得放入 parallel batch；其他 probes 全部退出后已以独立调用串行重跑，Windows/WSL2 candidate process count=`0/0`，canary 静默性收口完成。
+46、恢复后的 canary 环境文件元数据探针再次把 `foreach { ... }` 后直接连接 `| Format-List`，第三次触发 PowerShell `An empty pipe element is not allowed`；该命令在解析阶段失败，未读取环境文件正文、未清理文件也未改变 artifact。根因是虽然问题 37/41 已记录正确写法，但临时命令仍允许自由拼接同一错误结构，文档提示没有成为可执行模板。处理方案已落实：本轮所有后续逐项检查只使用 `foreach` 内 `Write-Output`，需要格式化时先赋值数组再单独 pipeline；正式 cleanup 逻辑已落入 parser=`0 errors` 的独立脚本，按两个既定 hash 验证并回收成功。该重复语法模式从此不得再以内联 `foreach | ...` 形式生成。
+47、canary 声明 artifact 的首次独立复核把 `run.artifacts` 的七个路径字符串误当成 `{ path, sha256 }` 对象解析，因空 `.path` 产生虚假的 `missing=7` 并以 exit code=`1` 结束；报告、artifact 与 ledger 均未被修改。根因是没有先检查 v3 report 的字段形状，就沿用了其他 receipt 的对象式 artifact 假设。处理方案是先输出属性类型/键，再按报告目录解析七个相对路径字符串；修正后 declared=`7`、missing=`0`。后续 source report 只按其 v3 Schema/生产 verifier 验真，artifact 内容 hash 由各自 owner/aggregate 合同复算，不再臆造当前字段不存在的 per-entry hash。
+48、canary 文档 checkpoint 提交前的 staged 文件保护错误拒绝了正确的单文件清单：`git diff --cached --name-only` 在默认 `core.quotePath=true` 下把中文路径输出为带引号的八进制转义文本，直接与未转义路径比较必然不等。失败发生在 `git commit` 之前，staged 文档保持完整，`tmp-codeintel-summary.json` 仍未暂存。处理方案是使用 `git -c core.quotePath=false diff --cached --name-only` 获取可比较路径，并继续要求清单恰为唯一计划文档后才提交；不取消或绕过单文件保护。
