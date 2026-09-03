@@ -179,7 +179,7 @@ import {
   hasExactWorkspaceMutationPatchPaths,
   hasOnlyWorkspaceMutationPatchPaths,
   hasPriorPatchAdjacentDuplicateClosingDelimiterCurrentSource,
-  hasRegressiveTraceValueImportCorrection,
+  hasUnsafeCorrectionAfterCompletedTraceValuesApiMigration,
   hasRedundantWorkspaceMutationPatchHunks,
   hasRevertedSmallestChangeCorrectionHunks,
   hasUnreachableSerializedFalseWitnessCurrentSource,
@@ -5076,8 +5076,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
               successfulWorkspaceMutationPatchInputs,
               input.text,
             );
-          const regressiveTraceValueImportCorrection = workspaceMutationObjectiveReviewCall
-            && hasRegressiveTraceValueImportCorrection(
+          const unsafeCompletedTraceValuesApiMigrationCorrection = workspaceMutationObjectiveReviewCall
+            && hasUnsafeCorrectionAfterCompletedTraceValuesApiMigration(
               validatedMutationToolCall,
               mutationRecoverySourceMessages,
               workspaceMutationCallRequiredPaths,
@@ -5091,7 +5091,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
               taskText: input.text,
               requiredChangedPaths: workspaceMutationCallRequiredPaths,
             });
-          if (regressiveTraceValueImportCorrection || regressiveCommandNameCorrection) {
+          if (unsafeCompletedTraceValuesApiMigrationCorrection || regressiveCommandNameCorrection) {
             workspaceMutationObjectiveCorrectionAttempted = true;
             workspaceMutationObjectiveReviewPending = true;
             lastToolCallFingerprint = undefined;
@@ -5099,9 +5099,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
             consecutiveDuplicateToolCalls = 0;
             recentToolCallTraces.length = 0;
             lastSuccessfulToolResult = undefined;
-            logWarn(`[workspace-mutation] rejected a regressive ${regressiveCommandNameCorrection
-              ? "Command.Name"
-              : "TraceValue import"} correction; retaining current source for tool-free review`, {
+            logWarn(regressiveCommandNameCorrection
+              ? "[workspace-mutation] rejected a regressive Command.Name correction; retaining current source for tool-free review"
+              : "[workspace-mutation] rejected a correction after the TraceValues API migration was already complete; retaining current source for tool-free review", {
               requiredPathCount: workspaceMutationCallRequiredPaths.length,
               conversationId: input.conversationId,
               agentId: resolvedAgentId,

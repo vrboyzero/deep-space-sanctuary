@@ -149,7 +149,7 @@ const CONNECTION_PATH = "jsonrpc/src/common/connection.ts";
 const PROTOCOL_PATH = "protocol/src/common/protocol.ts";
 const REQUIRED_PATHS = [API_PATH, CONNECTION_PATH, PROTOCOL_PATH] as const;
 
-export function isRegressiveTraceValueImportCorrection(
+export function isUnsafeCorrectionAfterCompletedTraceValuesApiMigration(
   input: TraceValuesApiMigrationRegressionInput,
 ): boolean {
   const requiredPaths = input.requiredPaths.map(normalizePath);
@@ -159,6 +159,20 @@ export function isRegressiveTraceValueImportCorrection(
     || !currentSourcesMatchCompletedMigration(input.currentSources)) {
     return false;
   }
+
+  if (input.correctionChanges.length === 0
+    || input.correctionChanges.some((change) => !REQUIRED_PATHS.includes(
+      normalizePath(change.path) as typeof REQUIRED_PATHS[number],
+    ))) {
+    return false;
+  }
+  const removesAbsentCurrentSourceLine = input.correctionChanges.some((change) => {
+    const sourceLines = new Set(
+      (input.currentSources.get(normalizePath(change.path)) ?? "").split(/\r?\n/),
+    );
+    return change.removed.some((line) => !sourceLines.has(line));
+  });
+  if (removesAbsentCurrentSourceLine) return true;
 
   if (input.correctionChanges.length !== 1) return false;
   const correction = input.correctionChanges[0];

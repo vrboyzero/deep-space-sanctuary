@@ -17,7 +17,7 @@ import {
   rankTaskSourceIdentifierOccurrences,
   selectTaskTextForSourceContext,
 } from "./react-workspace-mutation-source-context.js";
-import { isRegressiveTraceValueImportCorrection } from "./react-workspace-mutation-ts-api-migration.js";
+import { isUnsafeCorrectionAfterCompletedTraceValuesApiMigration } from "./react-workspace-mutation-ts-api-migration.js";
 
 export const WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE = 4_096;
 export const WORKSPACE_MUTATION_RECOVERY_MIN_OUTPUT_TOKEN_RESERVE = 1_024;
@@ -2563,7 +2563,7 @@ function readLatestRequiredFileReadSourceContents(
   return sourceByPath.size === requiredPaths.length ? sourceByPath : undefined;
 }
 
-export function hasRegressiveTraceValueImportCorrection(
+export function hasUnsafeCorrectionAfterCompletedTraceValuesApiMigration(
   toolCall: WorkspaceMutationNavigationToolCall,
   messages: WorkspaceMutationSourceMessage[],
   requiredPaths: readonly string[],
@@ -2588,7 +2588,7 @@ export function hasRegressiveTraceValueImportCorrection(
   const priorChanges = priorSuccessfulPatchInputs.flatMap((priorPatchInput) => (
     collectWorkspaceMutationPatchLineChanges(priorPatchInput) ?? []
   ));
-  return isRegressiveTraceValueImportCorrection({
+  return isUnsafeCorrectionAfterCompletedTraceValuesApiMigration({
     taskText,
     requiredPaths,
     currentSources,

@@ -13,7 +13,10 @@ afterEach(() => {
 });
 
 describe("ToolEnabledAgent TypeScript API migration correction", () => {
-  it("does not execute the frozen correction that removes required TraceValue import", async () => {
+  it.each([
+    { name: "the frozen correction that removes required TraceValue import", kind: "trace-value-import" },
+    { name: "a frozen stale correction whose lines are absent from the completed migration", kind: "stale-layout" },
+  ] as const)("does not execute $name", async ({ kind }) => {
     const requiredPaths = [
       "jsonrpc/src/common/api.ts",
       "jsonrpc/src/common/connection.ts",
@@ -65,6 +68,24 @@ describe("ToolEnabledAgent TypeScript API migration correction", () => {
       `+${regressedApiImport}`,
       "*** End Patch",
     ].join("\n");
+    const staleLayoutCorrection = [
+      "*** Begin Patch",
+      "*** Update File: jsonrpc/src/common/api.ts",
+      "@@",
+      "-export type TraceValue = Trace.Values;",
+      "-export { Trace as TraceValues };",
+      "*** Update File: jsonrpc/src/common/connection.ts",
+      "@@",
+      "-export { TraceValues, TraceValue } from './api';",
+      "*** Update File: protocol/src/common/protocol.ts",
+      "@@",
+      "-import { TraceValues } from 'vscode-jsonrpc';",
+      "+import { TraceValue } from 'vscode-jsonrpc';",
+      "*** End Patch",
+    ].join("\n");
+    const objectiveCorrection = kind === "trace-value-import"
+      ? regressiveCorrection
+      : staleLayoutCorrection;
     const baselineSources: Record<string, string> = {
       [requiredPaths[0]!]: [
         "import {",
@@ -137,8 +158,8 @@ describe("ToolEnabledAgent TypeScript API migration correction", () => {
         });
       }
       if (instruction.includes("Post-mutation objective review phase")) {
-        return jsonResponse(modelToolCall("regressive-correction", "apply_patch", {
-          input: regressiveCorrection,
+        return jsonResponse(modelToolCall("unnecessary-correction", "apply_patch", {
+          input: objectiveCorrection,
         }));
       }
       if (instruction.includes("Post-mutation verification phase")) {
@@ -177,6 +198,17 @@ describe("ToolEnabledAgent TypeScript API migration correction", () => {
         currentSources = correctedSources;
       } else if (patchInput === regressiveCorrection) {
         currentSources = regressedSources;
+      } else if (patchInput === staleLayoutCorrection) {
+        return {
+          id: request.id,
+          name: request.name,
+          success: false,
+          output: "",
+          error: "Failed to find expected lines in jsonrpc/src/common/api.ts",
+          failureKind: "input_error",
+          metadata: { repairAction: "apply_patch_input_invalid" },
+          durationMs: 1,
+        };
       }
       return {
         id: request.id,

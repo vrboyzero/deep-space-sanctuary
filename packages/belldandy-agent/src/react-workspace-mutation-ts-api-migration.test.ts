@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  isRegressiveTraceValueImportCorrection,
+  isUnsafeCorrectionAfterCompletedTraceValuesApiMigration,
   rebuildTraceValuesApiMigrationToolCall,
   type TraceValuesApiMigrationRegressionInput,
 } from "./react-workspace-mutation-ts-api-migration.js";
@@ -91,8 +91,39 @@ describe("TraceValues API migration recovery", () => {
 });
 
 describe("TraceValues API migration correction regression", () => {
-  it("detects removal of the still-exported TraceValue import after a complete migration", () => {
-    expect(isRegressiveTraceValueImportCorrection(fixture())).toBe(true);
+  it.each([
+    {
+      name: "removal of the still-exported TraceValue import",
+      mutate: (input: TraceValuesApiMigrationRegressionInput) => input,
+    },
+    {
+      name: "a stale multi-file correction whose removed lines are absent",
+      mutate: (input: TraceValuesApiMigrationRegressionInput) => ({
+        ...input,
+        correctionChanges: [
+          {
+            path: apiPath,
+            removed: [
+              "export type TraceValue = Trace.Values;",
+              "export { Trace as TraceValues };",
+            ],
+            added: [],
+          },
+          {
+            path: connectionPath,
+            removed: ["export { TraceValues, TraceValue } from './api';"],
+            added: [],
+          },
+          {
+            path: protocolPath,
+            removed: ["import { TraceValues } from 'vscode-jsonrpc';"],
+            added: ["import { TraceValue } from 'vscode-jsonrpc';"],
+          },
+        ],
+      }),
+    },
+  ])("detects $name after a complete migration", ({ mutate }) => {
+    expect(isUnsafeCorrectionAfterCompletedTraceValuesApiMigration(mutate(fixture()))).toBe(true);
   });
 
   it.each([
@@ -169,7 +200,7 @@ describe("TraceValues API migration correction regression", () => {
       },
     },
   ])("fails closed for $name", ({ mutate }) => {
-    expect(isRegressiveTraceValueImportCorrection(mutate(fixture()))).toBe(false);
+    expect(isUnsafeCorrectionAfterCompletedTraceValuesApiMigration(mutate(fixture()))).toBe(false);
   });
 });
 
