@@ -68,12 +68,21 @@ export function estimateReactFinalizationInputTokens(
 export function buildReactFinalizationRequest(input: {
   messages: ReactFinalizationSourceMessage[];
   maxInputTokens: number;
+  structuredOutputSchema?: unknown;
   tokenEstimateContext?: TokenEstimateOptions;
 }): ReactFinalizationRequest | undefined {
   const maxInputTokens = normalizePositiveInt(input.maxInputTokens);
   if (maxInputTokens <= 0) {
     return undefined;
   }
+
+  const finalOutputContract = serializeFinalOutputContract(input.structuredOutputSchema);
+  if (input.structuredOutputSchema !== undefined && !finalOutputContract) {
+    return undefined;
+  }
+  const finalizationInstruction = finalOutputContract
+    ? `${FINALIZATION_INSTRUCTION}\nFinal-output contract data:\n${finalOutputContract}`
+    : FINALIZATION_INSTRUCTION;
 
   const systemMessages = input.messages
     .filter((message) => message.role === "system" && typeof message.content === "string")
@@ -82,7 +91,7 @@ export function buildReactFinalizationRequest(input: {
       content: String(message.content),
     }));
   const systemTokens = estimateReactFinalizationInputTokens(systemMessages, input.tokenEstimateContext);
-  const instructionTokens = estimateTokens(FINALIZATION_INSTRUCTION, input.tokenEstimateContext) + 4;
+  const instructionTokens = estimateTokens(finalizationInstruction, input.tokenEstimateContext) + 4;
   if (systemTokens + instructionTokens >= maxInputTokens) {
     return undefined;
   }
@@ -95,7 +104,7 @@ export function buildReactFinalizationRequest(input: {
     .join("\n\n");
   const availableAfterInstruction = Math.max(
     0,
-    userTokenBudget - estimateTokens(FINALIZATION_INSTRUCTION, input.tokenEstimateContext),
+    userTokenBudget - estimateTokens(finalizationInstruction, input.tokenEstimateContext),
   );
   const taskBudget = Math.min(
     Math.max(MIN_TASK_TOKENS, Math.floor(availableAfterInstruction * 0.35)),
@@ -116,7 +125,7 @@ export function buildReactFinalizationRequest(input: {
     }))
     .slice(-MAX_EVIDENCE_ITEMS);
   const baseSections = [
-    FINALIZATION_INSTRUCTION,
+    finalizationInstruction,
     "",
     "Task:",
     boundedTask,
@@ -169,6 +178,9 @@ export function buildReactFinalizationRequest(input: {
   if (!boundedUserText) {
     return undefined;
   }
+  if (finalOutputContract && !boundedUserText.includes(finalOutputContract)) {
+    return undefined;
+  }
 
   const messages: ReactFinalizationMessage[] = [
     ...systemMessages,
@@ -184,6 +196,18 @@ export function buildReactFinalizationRequest(input: {
     evidenceCount: evidenceSections.length,
     truncatedEvidenceCount,
   };
+}
+
+function serializeFinalOutputContract(structuredOutputSchema: unknown): string | undefined {
+  if (structuredOutputSchema === undefined) {
+    return undefined;
+  }
+  try {
+    const serializedSchema = JSON.stringify(structuredOutputSchema);
+    return serializedSchema === undefined ? undefined : `{"schema":${serializedSchema}}`;
+  } catch {
+    return undefined;
+  }
 }
 
 function collectToolNames(messages: ReactFinalizationSourceMessage[]): Map<string, string> {

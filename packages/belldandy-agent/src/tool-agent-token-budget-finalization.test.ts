@@ -110,12 +110,15 @@ describe("ToolEnabledAgent ordinary model-loop token headroom", () => {
     const secondPayload = JSON.parse(String(fetchSpy.mock.calls[1]?.[1]?.body ?? "{}"));
     expect(secondPayload.tools).toBeUndefined();
     expect(secondPayload.max_tokens).toBe(512);
+    expect(secondPayload.response_format).toEqual({ type: "json_object" });
+    expect(secondPayload.thinking).toEqual({ type: "disabled" });
     expect(secondPayload.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({
         role: "user",
         content: expect.stringContaining("Finalization-only phase"),
       }),
     ]));
+    expect(secondPayload.messages.at(-1)?.content).toContain('"required":["summary"]');
     expect(items.some((item) => item.type === "budget_exhausted")).toBe(false);
     expect(items).toContainEqual({
       type: "final",

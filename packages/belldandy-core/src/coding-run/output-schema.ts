@@ -35,9 +35,10 @@ export function compileOutputSchema(schema: unknown):
           if (validate(parsed.output)) return { ok: true, outputText: parsed.outputText };
           const firstError = validate.errors?.[0];
           const location = firstError?.instancePath || "/";
+          const detail = formatSafeValidationDetail(firstError);
           return {
             ok: false,
-            message: `Final output does not match --output-schema at ${location}.`,
+            message: `Final output does not match --output-schema at ${location}${detail}.`,
           };
         },
       },
@@ -48,6 +49,19 @@ export function compileOutputSchema(schema: unknown):
       message: `Invalid --output-schema: ${toSafeCodingRunErrorMessage(error).slice(0, 320)}`,
     };
   }
+}
+
+function formatSafeValidationDetail(error: {
+  keyword?: string;
+  params?: Record<string, unknown>;
+} | undefined): string {
+  if (error?.keyword !== "maxLength" && error?.keyword !== "minLength") {
+    return "";
+  }
+  const limit = error.params?.limit;
+  return Number.isSafeInteger(limit) && Number(limit) >= 0
+    ? ` (keyword=${error.keyword}, limit=${String(limit)})`
+    : "";
 }
 
 function parseStructuredJsonOutput(text: string): { output: unknown; outputText: string } | undefined {

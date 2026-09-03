@@ -178,7 +178,8 @@ describe("ToolEnabledAgent structured output", () => {
     const agent = new ToolEnabledAgent({
       baseUrl: "https://api.openai.com/v1",
       apiKey: "test-key",
-      model: "gpt-test",
+      model: "deepseek-v4-flash",
+      thinking: { type: "enabled" },
       toolExecutor,
       streamingEnabled: true,
     });
@@ -200,6 +201,8 @@ describe("ToolEnabledAgent structured output", () => {
     expect(requestBodies).toHaveLength(2);
     expect(requestBodies[0]?.tools).toHaveLength(1);
     expect(requestBodies[1]?.tools).toBeUndefined();
+    expect(requestBodies[1]?.response_format).toEqual({ type: "json_object" });
+    expect(requestBodies[1]?.thinking).toEqual({ type: "disabled" });
     expect(execute).not.toHaveBeenCalled();
     expect(items.filter((item) => item.type === "delta").map((item) => item.delta).join(""))
       .toBe("{\"status\":\"ok\"}");
@@ -212,6 +215,133 @@ describe("ToolEnabledAgent structured output", () => {
       modelCalls: 2,
       providerReportedModelCalls: 2,
     }));
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("repairs an overlong system summary with JSON mode and thinking disabled", async () => {
+    const overlongSummary = "S".repeat(1_001);
+    const requestBodies: Array<Record<string, any>> = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requestBodies.push(requestBody);
+      if (requestBodies.length === 1) {
+        return jsonResponse({
+          choices: [{ message: { content: JSON.stringify({ summary: overlongSummary }) } }],
+          usage: { prompt_tokens: 3, completion_tokens: 2 },
+        });
+      }
+      const repairContractApplied = requestBody.response_format?.type === "json_object"
+        && requestBody.thinking?.type === "disabled";
+      return jsonResponse({
+        choices: [{
+          message: {
+            content: repairContractApplied
+              ? '{"summary":"system evidence passed"}'
+              : JSON.stringify({ summary: overlongSummary }),
+          },
+        }],
+        usage: { prompt_tokens: 4, completion_tokens: 3 },
+      });
+    });
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "deepseek-v4-flash",
+      thinking: { type: "enabled" },
+      toolExecutor: createToolExecutor(),
+      streamingEnabled: false,
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "structured-system-summary-max-length",
+      text: "return the system evidence summary",
+      structuredOutput: {
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["summary"],
+          properties: { summary: { type: "string", maxLength: 1_000 } },
+        },
+        validateOutput: (text: string) => {
+          try {
+            const output = JSON.parse(text) as { summary?: unknown };
+            return typeof output.summary === "string" && output.summary.length <= 1_000
+              ? { ok: true as const, outputText: text.trim() }
+              : {
+                ok: false as const,
+                message: "Final output does not match --output-schema at /summary (keyword=maxLength, limit=1000).",
+              };
+          } catch {
+            return { ok: false as const, message: "Final output is not valid JSON." };
+          }
+        },
+      },
+    } as any));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(requestBodies[1]).not.toHaveProperty("tools");
+    expect(requestBodies[1]?.response_format).toEqual({ type: "json_object" });
+    expect(requestBodies[1]?.thinking).toEqual({ type: "disabled" });
+    expect(items).toContainEqual({
+      type: "final",
+      text: '{"summary":"system evidence passed"}',
+    });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("does not force JSON object mode for a non-object output schema", async () => {
+    const requestBodies: Array<Record<string, any>> = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requestBodies.push(requestBody);
+      return jsonResponse({
+        choices: [{
+          message: {
+            content: requestBodies.length === 1
+              ? "not-json"
+              : requestBody.response_format?.type === "json_object"
+                ? '{"value":"wrong root type"}'
+                : '["ok"]',
+          },
+        }],
+        usage: { prompt_tokens: 3, completion_tokens: 2 },
+      });
+    });
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "deepseek-v4-flash",
+      thinking: { type: "enabled" },
+      toolExecutor: createToolExecutor(),
+      streamingEnabled: false,
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "structured-array-schema-repair",
+      text: "return the result list",
+      structuredOutput: {
+        schema: {
+          type: "array",
+          items: { type: "string" },
+        },
+        validateOutput: (text: string) => {
+          try {
+            const output = JSON.parse(text) as unknown;
+            return Array.isArray(output) && output.every((item) => typeof item === "string")
+              ? { ok: true as const, outputText: text.trim() }
+              : { ok: false as const, message: "Final output must be a string array." };
+          } catch {
+            return { ok: false as const, message: "Final output is not valid JSON." };
+          }
+        },
+      },
+    } as any));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(requestBodies[1]).not.toHaveProperty("tools");
+    expect(requestBodies[1]).not.toHaveProperty("response_format");
+    expect(requestBodies[1]?.thinking).toEqual({ type: "disabled" });
+    expect(items).toContainEqual({ type: "final", text: '["ok"]' });
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
@@ -988,6 +1118,92 @@ describe("ToolEnabledAgent structured output", () => {
       status: "error",
       code: "output_schema_invalid",
     }));
+  });
+
+  it("uses JSON mode and a complete schema for bounded structured finalization", async () => {
+    let callIndex = 0;
+    const requestBodies: Array<Record<string, any>> = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      requestBodies.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, any>);
+      callIndex++;
+      if (callIndex === 1) {
+        return jsonResponse({
+          choices: [{
+            message: {
+              content: "",
+              tool_calls: [{
+                id: "call-finalization-evidence",
+                type: "function",
+                function: { name: "file_read", arguments: "{\"path\":\"large.json\"}" },
+              }],
+            },
+          }],
+          usage: { prompt_tokens: 1_000, completion_tokens: 50 },
+        });
+      }
+      return jsonResponse({
+        choices: [{ message: { content: '{"rootCause":"exact dependency cause"}' } }],
+        usage: { prompt_tokens: 700, completion_tokens: 100 },
+      });
+    });
+    const execute = vi.fn(async () => ({
+      id: "call-finalization-evidence",
+      name: "file_read",
+      success: true,
+      output: "X".repeat(30_000),
+      durationMs: 0,
+    }));
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "deepseek-v4-flash",
+      thinking: { type: "enabled" },
+      maxTotalTokens: 3_000,
+      maxOutputTokens: 4_096,
+      toolExecutor: createToolExecutor({
+        getDefinitions: () => [{
+          type: "function",
+          function: {
+            name: "file_read",
+            description: "read file",
+            parameters: { type: "object" },
+          },
+        }],
+        execute,
+      }),
+      streamingEnabled: false,
+    });
+    const schema = {
+      type: "object",
+      additionalProperties: false,
+      required: ["rootCause"],
+      properties: {
+        rootCause: { const: "exact dependency cause" },
+      },
+    };
+
+    const items = await collectItems(agent.run({
+      conversationId: "structured-bounded-finalization-schema",
+      text: "diagnose the dependency mismatch",
+      structuredOutput: {
+        schema,
+        validateOutput: (text: string) => text === '{"rootCause":"exact dependency cause"}'
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "rootCause must match" },
+      },
+    } as any));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(requestBodies[1]).not.toHaveProperty("tools");
+    expect(requestBodies[1]?.max_tokens).toBe(1_024);
+    expect(requestBodies[1]?.response_format).toEqual({ type: "json_object" });
+    expect(requestBodies[1]?.thinking).toEqual({ type: "disabled" });
+    expect(requestBodies[1]?.messages.at(-1)?.content).toContain(JSON.stringify({ schema }));
+    expect(items).toContainEqual({
+      type: "final",
+      text: '{"rootCause":"exact dependency cause"}',
+    });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 });
 

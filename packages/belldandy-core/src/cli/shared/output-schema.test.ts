@@ -52,4 +52,25 @@ describe("compileOutputSchema", () => {
       message: "Final output is not valid JSON.",
     });
   });
+
+  it("reports the bounded maxLength keyword and limit for structured repair", () => {
+    const compiled = compileOutputSchema({
+      type: "object",
+      required: ["summary"],
+      properties: {
+        summary: { type: "string", maxLength: 1000 },
+      },
+      additionalProperties: false,
+    });
+
+    expect(compiled.ok).toBe(true);
+    if (!compiled.ok) return;
+
+    expect(compiled.validator.validateOutput(JSON.stringify({
+      summary: "x".repeat(1001),
+    }))).toEqual({
+      ok: false,
+      message: "Final output does not match --output-schema at /summary (keyword=maxLength, limit=1000).",
+    });
+  });
 });

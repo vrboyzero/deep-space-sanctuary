@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildReactFinalizationRequest,
   estimateReactModelCallBudgetInputTokens,
@@ -88,6 +88,47 @@ describe("ReAct finalization request", () => {
     ]);
     expect(request?.messages[1]?.content).toContain("[tool=file_read]");
     expect(request?.messages.some((message) => message.role === ("tool" as string))).toBe(false);
+  });
+
+  it("keeps a complete structured-output schema outside bounded task clipping", () => {
+    const schema = {
+      type: "object",
+      additionalProperties: false,
+      required: ["rootCause"],
+      properties: {
+        rootCause: { const: "exact dependency cause" },
+      },
+    };
+    const request = buildReactFinalizationRequest({
+      maxInputTokens: 700,
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+      structuredOutputSchema: schema,
+      messages: [
+        { role: "system", content: "Keep the repository read-only." },
+        { role: "user", content: `Diagnose the dependency mismatch. ${"task ".repeat(4_000)}` },
+      ],
+    });
+
+    expect(request).toBeDefined();
+    expect(request?.estimatedInputTokens).toBeLessThanOrEqual(700);
+    expect(request?.messages.at(-1)?.content).toContain(
+      `Final-output contract data:\n${JSON.stringify({ schema })}`,
+    );
+  });
+
+  it("fails closed when schema serialization erases the contract", () => {
+    const toJSON = vi.fn(() => undefined);
+    const request = buildReactFinalizationRequest({
+      maxInputTokens: 700,
+      structuredOutputSchema: { toJSON },
+      messages: [
+        { role: "system", content: "Keep the repository read-only." },
+        { role: "user", content: "Return the final result." },
+      ],
+    });
+
+    expect(request).toBeUndefined();
+    expect(toJSON).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed when the retained system contract leaves no finalization input budget", () => {

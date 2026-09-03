@@ -111,7 +111,7 @@ import {
   readPrefixComparableSnapshot,
 } from "./prompt-budget-observability.js";
 import { selectToolMessagesForCompression } from "./tool-result-adaptive-keep.js";
-import { createStructuredOutputSession } from "./structured-output.js";
+import { createStructuredOutputSession, isJsonObjectRootSchema } from "./structured-output.js";
 import { filterProviderControlFrameSuffix } from "./provider-control-frame.js";
 import {
   isBareAgentAutomationProfile,
@@ -3342,6 +3342,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           const candidate = buildReactFinalizationRequest({
             messages: preflightRequestMessages,
             maxInputTokens: remainingInputTokens,
+            structuredOutputSchema: input.structuredOutput?.schema,
             tokenEstimateContext: dispatchTokenEstimateContext,
           });
           if (!candidate) {
@@ -3446,6 +3447,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           const candidate = buildReactFinalizationRequest({
             messages: preflightRequestMessages,
             maxInputTokens: remainingInputTokens,
+            structuredOutputSchema: input.structuredOutput?.schema,
             tokenEstimateContext: dispatchTokenEstimateContext,
           });
           const candidateMinimumCost = candidate
@@ -3640,6 +3642,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             const candidate = buildReactFinalizationRequest({
               messages: preflightRequestMessages,
               maxInputTokens: remainingInputTokens,
+              structuredOutputSchema: input.structuredOutput?.schema,
               tokenEstimateContext: dispatchTokenEstimateContext,
             });
             const candidateMinimumCost = candidate
@@ -3840,8 +3843,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
             : undefined,
           finalizationOnlyCall
             || workspaceMutationObjectiveReviewCall
-            || (structuredOutputRepairCall && workspaceMutationObserved),
-          workspaceMutationObjectiveReviewRequest?.jsonObjectOutputRequired,
+            || structuredOutputRepairCall,
+          workspaceMutationObjectiveReviewRequest?.jsonObjectOutputRequired === true
+            || (structuredOutputSession !== undefined
+              && tools.length === 0
+              && (finalizationOnlyCall || structuredOutputRepairCall)
+              && isJsonObjectRootSchema(input.structuredOutput?.schema)),
         );
         if (boundedStructuredOutputRepairRequest) {
           pendingBoundedStructuredOutputRepairRequest = undefined;

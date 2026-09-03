@@ -18,6 +18,13 @@ export type StructuredOutputSession = {
   rejectRepair: (message: string) => Extract<StructuredOutputReview, { action: "reject" }>;
 };
 
+export function isJsonObjectRootSchema(schema: unknown): boolean {
+  return typeof schema === "object"
+    && schema !== null
+    && !Array.isArray(schema)
+    && (schema as { type?: unknown }).type === "object";
+}
+
 export function createStructuredOutputSession(
   contract: AgentStructuredOutputContract,
 ): StructuredOutputSession {
