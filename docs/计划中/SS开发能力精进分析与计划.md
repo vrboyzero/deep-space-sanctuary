@@ -12401,6 +12401,43 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：accepted regression 已由确定性执行前 Gate 闭合；token-budget 两项直接覆盖预算终态和可能遗漏的成功结果恢复，是冻结 clean identity 前下一组最小且高风险合同。
 - **当前还缺的关键闭环**：`token_budget=2`、`stop_empty=1` 与 `output_schema=7` 的逐 run current-HEAD 复核及必要修复、clean stable identity、正式不可覆盖 expected-report plan、新 identity 完整 `144/144` 候选链，以及第二个连续达标候选。
 
+#### P2-C product failure repair 实现结论：`token_budget_exhausted=2/2` ordinary preflight headroom（2026-09-03）
+
+##### 已完成内容
+
+1. **两个 retained run 精确复核**：
+   - `real-js-failed-test-fix-wsl2-linux-a1-1788383271418` 在前三次模型调用后已读到冻结测试与完整 `lib/request.js`，累计 usage=`11087`；旧 preflight 对第四次请求只计 messages=`9807`，漏掉 Tool schema=`1769`，于是继续调用、累计至 `22114`，随后只读 `run_command` 审批失败且剩余预算无法构造 finalization；
+   - `system-parallel-read-isolation-wsl2-linux-a1-1788384802021` 的外部 harness evidence 实际为 `passed`，三个 child 均 completed 且 sensitive/orphan/duplicate=`0/0/0`；模型却重复枚举同一 510-byte scenario，第五轮后累计=`18084`，旧 preflight 只按 messages=`4353` 放行第六轮，Provider 最终累计=`24057`，超出硬上限 `57` token；
+   - 两项均为零 workspace mutation，usage=`provider_reported` 且终态合同完整；旧失败不重解释，根因是普通 model-call headroom 漏算 Tool schema 并未复用已有 `1.2` messages 安全系数。
+
+2. **`react-finalization.ts` 与 `tool-agent.ts` 修改**：
+   - 新增无 I/O 的预算输入 owner，统一计算 `ceil(messages × 1.2) + complete tool schema`，与既有输入裁剪口径一致；
+   - 普通循环、workspace-mutation headroom、cost preflight 与 opt-in model-call reservation 统一使用该保守值，实际 Provider dispatch、turn/token/cost 与 retry 上限不变；
+   - 冻结数值重算后 Express 第四轮 projected=`25649/24000`，parallel-read 第六轮 projected=`26182/24000`，均会在超限调用前切换为既有无 Tool finalization。
+
+3. **回归测试与项目地图更新**：
+   - 新建公共 `ToolEnabledAgent.run()` 回归，先稳定 Red 为第二次请求仍携带 Tool schema，再验证修复后仅执行一次 read、第二次请求无 Tool 且返回合法 structured summary；
+   - `react-finalization.test.ts` 固化两份 retained snapshot 的 messages/schema/cumulative usage 数值，避免未来再次漏算 schema 或移除安全系数；
+   - `docs/project-map.md` 同步普通 preflight、finalization owner 与回归入口。
+
+4. **效果**：
+   - 普通 read loop 在仍有足够 task/tool evidence 时提前保留终态输出空间，不再依赖 Provider 调用后才发现累计预算超限；
+   - 冻结 snapshot 上的 finalization request 均可实际构造：Express=`6210/9907`、parallel-read=`2044/4076` input token，分别保留 `6` 与 `8` 份有界 evidence；
+   - corrected analysis 的 `token_budget_exhausted=2/2` 当前本地产品根因路径闭合，真实 uplift 仍只由新 identity 候选证明。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` exit code=`0`；
+- 公共回归修复前=`1 failed` Red，修复后 finalization focused=`5/5`、预算/structured-output/ToolAgent 联合=`117/117`；
+- Agent 全包=`69` files passed、`1` file skipped，tests=`878` passed、`1` skipped；
+- 冻结 prompt snapshot 离线重建两份 finalization plan 均为 `built=true`，`corepack pnpm verify:coding-benchmark` 与 `git diff --check` 通过；本环节 Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：精确复核 corrected analysis 唯一的 `model_empty_content_at_stop=1`，对账 stop reason、首轮 usage、空正文恢复请求、最终终态与当前 HEAD 的一次性 empty-content finalization 覆盖。
+- **为什么先做它**：token-budget 两项已由通用 preflight 公式闭合；stop-empty 与同一 finalization owner 相邻，可先确认是否已有覆盖，再进入数量更大的 `output_schema_invalid=7`。
+- **当前还缺的关键闭环**：`stop_empty=1` 与 `output_schema=7` 的逐 run current-HEAD 复核及必要修复、clean stable identity、正式不可覆盖 expected-report plan、新 identity 完整 `144/144` 候选链，以及第二个连续达标候选。
+
 #### 后续工作量估算
 
 **本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；CLI/TUI 双平台首帧与退出收敛也已修复并通过真实 PTY 验证；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
@@ -12441,7 +12478,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 候选保持拒绝；usage/plan/unknown 分类、patch acceptance 零 edit `10` 项与 mutation-after `4+5`、`post_write_correction_failed=6/6`、`accepted_patch_regression=1/1` 的当前本地根因路径已闭合；下一步复核 `token_budget_exhausted=2`，再处理 `model_empty_content_at_stop=1` 与 `output_schema_invalid=7`** | 旧 aggregate=`97 passed + 47 product_workflow failed`、正式 infrastructure error=`0`；旧 qualification=`not_eligible/unscored` 且不得重解释；`12` 个 lifecycle usage 终态与精确 `144` 槽位 plan Gate 已机器化；corrected failure analysis=`19 patch_acceptance + 2 token_budget + 7 output_schema + 6 navigation + 5 mutation_patch + 6 post_write + 1 accepted_regression + 1 stop_empty`、`unknown=0`；mutation-after `9/9` 已精确分层；TS cross-package 两项由预算感知 post-write projection 覆盖，TS API a3 由 schema isolation 覆盖、a2 由 continuation 执行前 exact-set correction 覆盖；Go a3 与 Web Windows a3 的冻结 objective correction 均在实际 `2048` 上限下保留完整 fault source；Web Windows a2 由 SVG-inclusive predicate replacement 覆盖，a3 由 exact multiline fallback parser/rebuilder、grouped precedence parser 与严格最终 Gate 覆盖；WSL2 a1 parser/rebuilder、preservation、唯一规范化 file-directive 与 canonical output 合同已闭合；`post_write=6/6` 新增严格 `normalized` alias Gate 与 task-named owner 优先投影，十二文件=`320/320`，最新 dist request=`1932/2048 + 2045/2048`；`accepted_regression=1/1` 已由 checkpoint=`b72426c` 新增 TraceValues migration owner，冻结错误 correction 执行前被拒绝且正确 current source进入 tool-free final review，源码/dist focused=`9/9`、workspace-mutation=`329/329`、Agent=`876 passed + 1 skipped`；增量编译、benchmark verifier、diff check 全部通过，debug marker 为零；历史终态不重解释；本轮 Provider=`0/$0`，费用守卫沿用 `35.33581920 RMB < 80 RMB` | `1.75–3.5 人日既有基线 + failure-driven 修复量 + 两个连续候选运行/观察窗口` | 精确复核其余 `10` 个历史终态；全部必要修复闭合后冻结 clean identity、正式生成不可覆盖 expected-report plan，再运行完整候选链并逐环节回写 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 候选保持拒绝；usage/plan/unknown 分类、patch acceptance 零 edit `10` 项与 mutation-after `4+5`、`post_write_correction_failed=6/6`、`accepted_patch_regression=1/1`、`token_budget_exhausted=2/2` 的当前本地根因路径已闭合；下一步复核 `model_empty_content_at_stop=1`，再处理 `output_schema_invalid=7`** | 旧 aggregate=`97 passed + 47 product_workflow failed`、正式 infrastructure error=`0`；旧 qualification=`not_eligible/unscored` 且不得重解释；`12` 个 lifecycle usage 终态与精确 `144` 槽位 plan Gate 已机器化；corrected failure analysis=`19 patch_acceptance + 2 token_budget + 7 output_schema + 6 navigation + 5 mutation_patch + 6 post_write + 1 accepted_regression + 1 stop_empty`、`unknown=0`；mutation-after `9/9` 已精确分层；TS cross-package 两项由预算感知 post-write projection 覆盖，TS API a3 由 schema isolation 覆盖、a2 由 continuation 执行前 exact-set correction 覆盖；Go a3 与 Web Windows a3 的冻结 objective correction 均在实际 `2048` 上限下保留完整 fault source；Web Windows a2 由 SVG-inclusive predicate replacement 覆盖，a3 由 exact multiline fallback parser/rebuilder、grouped precedence parser 与严格最终 Gate 覆盖；WSL2 a1 parser/rebuilder、preservation、唯一规范化 file-directive 与 canonical output 合同已闭合；`post_write=6/6` 新增严格 `normalized` alias Gate 与 task-named owner 优先投影，十二文件=`320/320`，最新 dist request=`1932/2048 + 2045/2048`；`accepted_regression=1/1` 已由 checkpoint=`b72426c` 新增 TraceValues migration owner，冻结错误 correction 执行前被拒绝且正确 current source进入 tool-free final review；`token_budget=2/2` 已让普通 preflight 使用完整 Tool schema 与 `1.2` messages safety factor，两份冻结 projected=`25649 + 26182`，finalization plan=`6210/9907 + 2044/4076`；最新 finalization focused=`5/5`、联合=`117/117`、Agent=`878 passed + 1 skipped`；增量编译、benchmark verifier、diff check 全部通过；历史终态不重解释；本轮 Provider=`0/$0`，费用守卫沿用 `35.33581920 RMB < 80 RMB` | `1.75–3.5 人日既有基线 + failure-driven 修复量 + 两个连续候选运行/观察窗口` | 精确复核其余 `8` 个历史终态；全部必要修复闭合后冻结 clean identity、正式生成不可覆盖 expected-report plan，再运行完整候选链并逐环节回写 |
 
 
 #### 重要问题说明
@@ -12470,3 +12507,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 23、`post_write_correction_failed=6` 不能继续作为一个笼统的 correction failure 处理。逐 run 复核确认六份初始产品 patch 均已通过 frozen tests、patch acceptance 且 regression=`0`：TS Windows a1/a2/a3 的最终 patch SHA 都是 `4505759f...`，三份 current source SHA 都是 `0c9270cf...`；Web 三份则分别采用 inline exact prefix、regex prefix 与 `normalized` alias。当前 HEAD 精确重放后，Web Windows a1/WSL2 a2 已由现有 Gate 覆盖，但 WSL2 a3 因 alias 不再出现字面 `value === false` 而被可达性 Gate 误报；TS a1/a2 的 Tool input-error request 能完整保留目标，a3 的 `repeated_current_source` instruction 更长，notification 中无关 `undefined` context 先占预算，导致后排 `WorkspaceFoldersRequest` context 被中段裁剪并丢失 result/Handler/Middleware。处理方案分两层：serialized-false owner 新增只接受完整 nullish/function normalization、精确 aria/data false serialization、ordinary-false removal 与其余值 setAttribute 的 alias detector；source-context 投影让任务点名且可信源码确有声明的 owner 在字面量前进入有限 evidence。两组回归分别先稳定 Red 为 `33+1`、`1+1`，修复后 focused=`37/37`、`2/2`，十二文件全集=`320/320`，最新实际 dist request=`1932/2048`、`2045/2048` 且三条 TS 目标全部保留；预算和 evaluator 均未放宽。取证过程中另发现两项执行纪律问题：一次对三个已知 runtime 根做了递归文件枚举，虽未越出绑定 run、未读正文且命令已结束，但输出过大；另一次临时 request 展开脚本漏配 assistant tool-call envelope，自身报 `Unexpected end of JSON input`。两者均不属于产品失败；后续处理固定为只读已知 artifact/fixture 精确路径，并复用生产一致的 user→assistant tool-call→tool 三消息 harness，禁止再以递归枚举或不完整 envelope 取证。本项已闭合，旧六个终态不重解释。
 24、`accepted_patch_regression=1` 唯一对应 `real-ts-api-migration-wsl2-linux-a1-1788382712289`，不能归因于路径 coverage 或初始 mutation。冻结事件证明第一次 `apply_patch` 已正确从 connection/api 移除 `TraceValues`、保留 api 的 `TraceValue` import/export，并把 protocol consumer 改回 `TraceValue`；三文件完整复读后，post-write objective correction 又从 api import 删除仍被下方 export 使用的 `TraceValue`，该错误 patch成功执行，随后合法 summary 令 runtime 返回 `run.completed`。machine evaluator 因只做任务字符串/路径检查而给出 patch accepted，但冻结 verifier 的 TypeScript build 失败，最终 tests=`false`、regression=`1`；这是真实产品 Gate 缺口，不是 evaluator 误报。处理方案已收敛为：先用公共 `ToolEnabledAgent.run()` 同形 Red 证明当前 HEAD 仍会执行该 correction；再把严格绑定原任务、三条 canonical required paths、正确 prior delta 与三份完整 current source 的 TraceValues migration 判定放入相邻模块，在执行前只拦截会删除仍由 api barrel export 使用的 `TraceValue` correction，保留当前正确源码并进入既有 tool-free final review。任一 task/path/prior/current-source 漂移或其他 TypeScript import 编辑必须保持原行为，不能把该冻结修复扩大成通用字符串豁免。
 处理结果：公共链修复前精确 Red 为错误 correction 已执行；checkpoint=`b72426c` 的新 owner 与执行前接线完成后，纯函数/公共源码 focused=`9/9`、实际 `dist`=`9/9`、workspace-mutation 全集=`329/329`、Agent 全包=`876 passed + 1 skipped`。对抗 review 进一步把 prior provenance 收紧为精确 effective delta，额外 required-path 内改动与 comment-shaped 伪装均不触发；最终 executor 只收到正确 initial patch，current source 保留 singular `TraceValue` import/export 并进入 tool-free final review。本项已闭合，旧 run 仍保持 tests failure/regression=`1`，真实 uplift 只由新 identity 完整候选证明。
+25、`token_budget_exhausted=2` 不是模型单纯“用满预算”。Express diagnosis 在前三轮已取得冻结 test 与完整 `lib/request.js`，但旧普通 preflight 对第四轮只计 messages=`9807`，遗漏 Tool schema=`1769`；第四轮又请求需审批的只读命令，最终 usage=`22114` 后仅剩 `1886` token，旧 finalization 无法构造。parallel-read 的外部 system evidence 已为 passed，模型第五轮后 usage=`18084`，旧 preflight 以 messages=`4353` 放行第六轮，Provider 实际累计=`24057`，硬超限 `57` token后即使返回无 Tool正文也必须失败关闭。处理方案不是提高 `24000` 上限或增加 retry，而是让普通 model-call headroom 与既有输入裁剪使用同一口径：`ceil(messages × 1.2) + complete tool schema`，同时用于 token/cost/headroom reservation。两份冻结投影分别变为 `25649/24000` 与 `26182/24000`，都会提前切入既有 bounded finalization；原 snapshot 离线重建仍可得到 `6210/9907`、`2044/4076` 的可执行 finalization plan。公共链先 Red 为 Tool schema 仍随第二次普通请求发送，修复后无 Tool finalization 完成合法 JSON；focused=`5/5`、预算/structured-output/ToolAgent 联合=`117/117`、Agent 全包=`878 passed + 1 skipped`，增量编译、benchmark verifier 与 diff check 全绿。本项当前本地根因路径已闭合，旧两个 budget 终态不重解释，正式改善只由新 identity 候选证明。

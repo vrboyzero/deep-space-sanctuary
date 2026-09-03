@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildReactFinalizationRequest,
+  estimateReactModelCallBudgetInputTokens,
   estimateReactFinalizationInputTokens,
   REACT_FINALIZATION_OUTPUT_TOKEN_RESERVE,
 } from "./react-finalization.js";
@@ -10,6 +11,16 @@ describe("ReAct finalization request", () => {
   it("keeps the terminal reserve aligned with the opt-in cost-containment contract", () => {
     expect(REACT_FINALIZATION_OUTPUT_TOKEN_RESERVE)
       .toBe(MODEL_LOOP_COST_CONTAINMENT_LIMITS.minimumOutputTokenReserve);
+  });
+
+  it("includes retained tool schemas and the established message safety factor in model-call headroom", () => {
+    const expressInput = estimateReactModelCallBudgetInputTokens(9_807, 1_769);
+    const parallelReadInput = estimateReactModelCallBudgetInputTokens(4_353, 1_850);
+
+    expect(expressInput).toBe(13_538);
+    expect(11_087 + expressInput + REACT_FINALIZATION_OUTPUT_TOKEN_RESERVE).toBe(25_649);
+    expect(parallelReadInput).toBe(7_074);
+    expect(18_084 + parallelReadInput + REACT_FINALIZATION_OUTPUT_TOKEN_RESERVE).toBe(26_182);
   });
 
   it("builds a bounded tool-free transcript with the task and recent evidence", () => {

@@ -3,6 +3,16 @@ import { estimateTokens, type TokenEstimateOptions } from "./tokenizer.js";
 export const REACT_FINALIZATION_OUTPUT_TOKEN_RESERVE = 1_024;
 export const REACT_FINALIZATION_INPUT_SAFETY_FACTOR = 1.2;
 
+export function estimateReactModelCallBudgetInputTokens(
+  messageTokens: number,
+  toolDefinitionTokens: number,
+): number {
+  const boundedMessageTokens = normalizeNonNegativeInt(messageTokens);
+  const boundedToolDefinitionTokens = normalizeNonNegativeInt(toolDefinitionTokens);
+  return Math.ceil(boundedMessageTokens * REACT_FINALIZATION_INPUT_SAFETY_FACTOR)
+    + boundedToolDefinitionTokens;
+}
+
 export type ReactFinalizationSourceMessage = {
   role: string;
   content?: unknown;
@@ -244,4 +254,11 @@ function normalizePositiveInt(value: number): number {
     return 0;
   }
   return Math.max(1, Math.floor(value));
+}
+
+function normalizeNonNegativeInt(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+  return Math.floor(value);
 }

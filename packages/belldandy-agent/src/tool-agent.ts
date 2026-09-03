@@ -139,6 +139,7 @@ import {
 } from "./react-workspace-mutation-serialized-false-correction.js";
 import {
   buildReactFinalizationRequest,
+  estimateReactModelCallBudgetInputTokens,
   REACT_FINALIZATION_INPUT_SAFETY_FACTOR,
   REACT_FINALIZATION_OUTPUT_TOKEN_RESERVE,
   type ReactFinalizationRequest,
@@ -2931,6 +2932,14 @@ export class ToolEnabledAgent implements BelldandyAgent {
           dispatchTokenEstimateContext,
         );
         const preflightPromptTokens = preflightSystemPromptTokens + preflightContextTokens;
+        const preflightToolDefinitionTokens = tools.reduce(
+          (total, tool) => total + estimateToolDefinitionTokens(tool),
+          0,
+        );
+        const preflightBudgetInputTokens = estimateReactModelCallBudgetInputTokens(
+          preflightPromptTokens,
+          preflightToolDefinitionTokens,
+        );
         let workspaceMutationRecoveryCall = false;
         let workspaceMutationContinuationCall = false;
         let workspaceMutationInputCorrectionCall = false;
@@ -3019,7 +3028,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           : 0;
         const protectedMinimumCost = headroomCandidate
           ? calculateUsageCostUsd({
-              inputTokens: preflightPromptTokens
+              inputTokens: preflightBudgetInputTokens
                 + headroomCandidate.estimatedInputTokens
                 + headroomCandidate.finalizationInputTokenReserve,
               outputTokens: protectedOutputTokens,
@@ -3030,7 +3039,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           ? !requiresRequiredPathSourceNavigation(headroomCandidate)
             && isMutationRecoveryReadyForHeadroom(headroomCandidate)
             && runBudget.checkModelCallPreflight({
-              minimumInputTokens: preflightPromptTokens
+              minimumInputTokens: preflightBudgetInputTokens
                 + headroomCandidate.estimatedInputTokens
                 + headroomCandidate.finalizationInputTokenReserve,
               minimumOutputTokens: protectedOutputTokens,
@@ -3380,7 +3389,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           ?? workspaceMutationRecoveryRequest?.estimatedInputTokens
           ?? finalizationRequest?.estimatedInputTokens
           ?? boundedStructuredOutputRepairRequest?.estimatedInputTokens
-          ?? preflightPromptTokens;
+          ?? preflightBudgetInputTokens;
         const reservedOutputTokens = workspaceMutationVerificationCall
           ? mutationVerificationOutputTokens + finalizationOutputTokens
           : workspaceMutationObjectiveReviewCall
@@ -3500,12 +3509,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
           && !workspaceMutationObjectiveReviewCall
         ) {
           const ordinaryMinimumCost = calculateUsageCostUsd({
-            inputTokens: preflightPromptTokens,
+            inputTokens: preflightBudgetInputTokens,
             outputTokens: finalizationOutputTokens,
             pricing: this.opts.usagePricing,
           });
           const ordinaryPreflight = runBudget.checkModelCallPreflight({
-            minimumInputTokens: preflightPromptTokens,
+            minimumInputTokens: preflightBudgetInputTokens,
             minimumOutputTokens: finalizationOutputTokens,
             ...(ordinaryMinimumCost ? { minimumCostUsd: ordinaryMinimumCost.totalUsd } : {}),
           });
