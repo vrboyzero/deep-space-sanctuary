@@ -12918,6 +12918,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - Agent 全包=`75` files passed、`1` skipped，tests=`917` passed、`1` skipped（含 `32` 个新增/扩展 recovery 回归场景）；
 - 关键切片：三类 pure recovery=`26/26`、三条 runtime 同形链=`3/3`、相邻回归=`115/115`、workspace-mutation 主回归=`161/161`、structured-output=`49/49`、whole-branch=`2/2`；
 - `corepack pnpm verify:coding-benchmark` exit code=`0`，`git diff --check` 通过，Agent source `[DEBUG-*]` 与新增文件尾随空白扫描均零命中；`tmp-codeintel-summary.json` 未读取、未修改、未暂存。
+- implementation checkpoint=`916349deafdd6ce249f1a06cc94abea2cddc664a`（`fix(agent): close frozen mutation failures`），提交清单恰为 `19` 个任务文件；提交后工作树仅保留明确排除的未跟踪 `tmp-codeintel-summary.json`。
 
 ##### 后续计划
 
@@ -12965,7 +12966,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 保持拒绝，`c02eef7` candidate-1 Windows attempt 1 保持冻结；8 个真实失败的当前本地根因路径已闭合，等待新 identity** | usage `12` 个终态与 unknown `19/19` 已收敛；旧 plan=`144/144/144`、Windows attempt 1=`24/24`（`16 passed + 8 product_workflow failed`）均不覆盖；本地 Agent=`917 passed + 1 skipped`、pure recovery=`26/26`、build/verifier/diff Gate 通过，Provider calls/cost=`0/$0` | `1.75–3.5 人日既有基线 + 候选运行/观察窗口` | 提交 implementation/document checkpoint，冻结全新双平台 identity；任何候选 run 前先创建并独立验证新 plan=`144/144/144`，再逐环节回写完整候选链 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 保持拒绝，`c02eef7` candidate-1 Windows attempt 1 保持冻结；8 个真实失败的当前本地根因路径已闭合，implementation checkpoint 已提交** | usage `12` 个终态与 unknown `19/19` 已收敛；旧 plan=`144/144/144`、Windows attempt 1=`24/24`（`16 passed + 8 product_workflow failed`）均不覆盖；implementation=`916349d…`，Agent=`917 passed + 1 skipped`、pure recovery=`26/26`、build/verifier/diff Gate 通过，Provider calls/cost=`0/$0` | `1.75–3.5 人日既有基线 + 候选运行/观察窗口` | 提交记录 implementation hash 的 document checkpoint 并冻结其全新双平台 identity；任何候选 run 前先创建并独立验证新 plan=`144/144/144`，再逐环节回写完整候选链 |
 
 
 #### 重要问题说明
@@ -13063,3 +13064,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 91、stale-evidence 修复后的 `corepack pnpm build:incremental` 复跑通过，`tsc -b` 退出码=`0` 且无 TypeScript 错误；新增 `Set`/receipt selector 分支及两条测试均满足 workspace 编译合同。该命令未调用 Provider，calls/cost=`0/$0`。后续复跑 `corepack pnpm verify:coding-benchmark` 并完成最终静态审计；当前关键闭环仍是 clean checkpoint、新 identity 和首个候选副作用前的 expected-report plan。
 92、stale-evidence 修复后的 `corepack pnpm verify:coding-benchmark` 复跑通过，退出码=`0`，终态继续为 `[verify:coding-benchmark] v1/v2/v3 manifests, schemas, docs, and platform gates are aligned`；既有 AJV `date-time` unknown-format warning 未升级为失败，仍按问题 84 的 `record_only` 裁决处理。该命令未调用 Provider，calls/cost=`0/$0`。后续完成最终 diff/debug/清单审计并写入结构化实现结论，再精确暂存排除 `tmp-codeintel-summary.json`；当前关键闭环仍是 implementation checkpoint、记录该 checkpoint 的 clean candidate identity 与全新不可覆盖 plan。
 93、最终 pure recovery 汇总为 `3 files / 26/26 passed`：覆盖 TraceValues 三文件原子迁移、Express subdomain offset 规范化与 serialized-false expanded branch 重建的正向形状，以及 task/path/prior/source/correction 漂移、截断 source、最新同路径截断 receipt 否决等负例。该切片与 Agent 全包、编译和 verifier 结果一致，未发现 builder 误触发或 stale source 回退；Provider calls/cost=`0/$0`。后续写入本阶段结构化实现结论与唯一进度表，形成 implementation checkpoint；当前关键闭环是 checkpoint hash、记录该 hash 的新 clean candidate identity 以及任何候选 run 前的 `144/144/144` expected-report plan。
+94、implementation checkpoint 已以 `916349deafdd6ce249f1a06cc94abea2cddc664a`（`fix(agent): close frozen mutation failures`）提交，提交结果为 `19 files changed, 2468 insertions(+), 30 deletions(-)`；提交后 `git status --short --branch` 仅显示明确排除的未跟踪 `tmp-codeintel-summary.json`，该文件未读取、未修改、未暂存。处理方案是先提交本条与 checkpoint hash 形成 document checkpoint，并把该新 clean commit 冻结为候选 source/harness identity；在它之前不得创建新 plan 或启动任何候选 run。Provider calls/cost=`0/$0`。
