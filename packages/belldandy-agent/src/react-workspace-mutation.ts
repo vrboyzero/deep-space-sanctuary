@@ -5,6 +5,7 @@ import {
   rebuildClosingDelimiterDeletionOnlyToolCall as rebuildTrustedClosingDelimiterDeletionOnlyToolCall,
 } from "./react-workspace-mutation-objective-correction.js";
 import {
+  branchAdmitsUnrestrictedBooleanFalse,
   branchReceivesFalseExcludedByPreviousSibling,
   readSiblingBranchBody,
 } from "./react-workspace-mutation-serialized-false.js";
@@ -2282,14 +2283,17 @@ export function hasUnreachableSerializedFalseWitnessCurrentSource(
         lines,
         index,
       );
+      const admitsUnrestrictedBooleanFalse = branchAdmitsUnrestrictedBooleanFalse(line);
       if (!/\bvalue\s*(?:===?|!==?)\s*false\b/.test(line)
         && !/\bfalse\s*(?:===?|!==?)\s*value\b/.test(line)
+        && !admitsUnrestrictedBooleanFalse
         && !receivesPreviouslyExcludedFalse) {
         return false;
       }
       const admitsFalse = /\bvalue\s*===?\s*false\b/.test(line)
         || /\bfalse\s*===?\s*value\b/.test(line)
         || (/\bvalue\s*!==?\s*false\b/.test(line) && line.includes("||"))
+        || admitsUnrestrictedBooleanFalse
         || receivesPreviouslyExcludedFalse;
       return admitsFalse
         && branchPreservesSerializedFalseSubset(line, body);

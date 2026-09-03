@@ -45,6 +45,32 @@ const malformedCorrection = [
   "+\t\t} else if (value === false && name[4] == '-') {",
   "*** End Patch",
 ].join("\n");
+const svgExcludedBooleanCondition = "\t\t} else if (typeof value == 'boolean' && !value && !isSvg) {";
+const svgInclusiveBooleanCondition = "\t\t} else if (typeof value == 'boolean' && !value) {";
+const svgExcludedBooleanSource = [
+  "\t\tif (typeof value == 'function') {",
+  "\t\t\t// never serialize functions as attribute values",
+  svgExcludedBooleanCondition,
+  "\t\t\t// False for boolean attributes (aria-/, data-/) means false.",
+  "\t\t\tif (/^(aria|data)-/.test(name)) {",
+  "\t\t\t\tdom.setAttribute(name, 'false');",
+  "\t\t\t} else {",
+  "\t\t\t\tdom.removeAttribute(name);",
+  "\t\t\t}",
+  "\t\t} else if (value != NULL && value !== false) {",
+  "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+  "\t\t} else {",
+  "\t\t\tdom.removeAttribute(name);",
+  "\t\t}",
+].join("\n");
+const svgExcludedBooleanPatch = [
+  "*** Begin Patch",
+  `*** Update File: ${requiredPath}`,
+  "@@",
+  `+${svgExcludedBooleanCondition}`,
+  "+\t\t\t// False for boolean attributes (aria-/, data-/) means false.",
+  "*** End Patch",
+].join("\n");
 const nullishSerializationCondition = "\t\t} else if ((name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') || (name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-')) {";
 const nullishSerializationStatement = "\t\t\tdom.setAttribute(name, value == NULL || value === false ? String(value) : value);";
 const nullishSerializationSource = [
@@ -1147,6 +1173,80 @@ describe("serialized-false semantic-narrowing correction", () => {
         "*** End Patch",
       ].join("\n"),
     });
+  });
+
+  it("rebuilds the SVG-excluded boolean false branch as one source-derived predicate replacement", () => {
+    const rebuilt = rebuildSerializedFalseSemanticNarrowingToolCall({
+      toolCall: call(malformedCorrection),
+      messages: sourceMessages(svgExcludedBooleanSource),
+      taskText,
+      priorSuccessfulPatchInputs: [svgExcludedBooleanPatch],
+      requiredPaths: [requiredPath],
+      correctionReason: undefined,
+    });
+
+    expect(JSON.parse(rebuilt!.function.arguments)).toEqual({
+      input: [
+        "*** Begin Patch",
+        `*** Update File: ${requiredPath}`,
+        "@@",
+        `-${svgExcludedBooleanCondition}`,
+        `+${svgInclusiveBooleanCondition}`,
+        "*** End Patch",
+      ].join("\n"),
+    });
+  });
+
+  it.each([
+    {
+      name: "unrelated task",
+      task: "Rename a variable with the smallest change.",
+      messages: sourceMessages(svgExcludedBooleanSource),
+      patches: [svgExcludedBooleanPatch],
+      paths: [requiredPath],
+    },
+    {
+      name: "multiple required paths",
+      task: taskText,
+      messages: sourceMessages(svgExcludedBooleanSource),
+      patches: [svgExcludedBooleanPatch],
+      paths: [requiredPath, "src/other.js"],
+    },
+    {
+      name: "unbound prior patch",
+      task: taskText,
+      messages: sourceMessages(svgExcludedBooleanSource),
+      patches: [svgExcludedBooleanPatch.replace(requiredPath, "src/other.js")],
+      paths: [requiredPath],
+    },
+    {
+      name: "truncated current source",
+      task: taskText,
+      messages: sourceMessages(svgExcludedBooleanSource, true),
+      patches: [svgExcludedBooleanPatch],
+      paths: [requiredPath],
+    },
+    {
+      name: "changed current branch",
+      task: taskText,
+      messages: sourceMessages(svgExcludedBooleanSource.replace("/^(aria|data)-/", "/^aria-/")),
+      patches: [svgExcludedBooleanPatch],
+      paths: [requiredPath],
+    },
+  ])("does not rebuild the SVG-excluded boolean branch with $name", ({
+    task,
+    messages,
+    patches,
+    paths,
+  }) => {
+    expect(rebuildSerializedFalseSemanticNarrowingToolCall({
+      toolCall: call(malformedCorrection),
+      messages,
+      taskText: task,
+      priorSuccessfulPatchInputs: patches,
+      requiredPaths: paths,
+      correctionReason: undefined,
+    })).toBeUndefined();
   });
 
   it.each([

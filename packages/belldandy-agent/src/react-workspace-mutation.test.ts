@@ -1141,6 +1141,21 @@ describe("ReAct workspace mutation recovery", () => {
       "\t\t\tdom.removeAttribute(name);",
       "\t\t}",
     ].join("\n");
+    const booleanFalseSource = (condition: string) => [
+      "\t\tif (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      condition,
+      "\t\t\tif (/^(aria|data)-/.test(name)) {",
+      "\t\t\t\tdom.setAttribute(name, 'false');",
+      "\t\t\t} else {",
+      "\t\t\t\tdom.removeAttribute(name);",
+      "\t\t\t}",
+      "\t\t} else if (value != NULL && value !== false) {",
+      "\t\t\tdom.setAttribute(name, value);",
+      "\t\t} else {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t}",
+    ].join("\n");
     const unpreservedSubsetSource = [
       "\t\t} else if (typeof value == 'string') {",
       "\t\t\tdom.setAttribute(name, value);",
@@ -1163,6 +1178,21 @@ describe("ReAct workspace mutation recovery", () => {
     )).toBe(false);
     expect(hasUnreachableSerializedFalseWitnessCurrentSource(
       sourceEvidence(unreachableSource),
+      task,
+      [priorPatch],
+    )).toBe(true);
+    expect(hasUnreachableSerializedFalseWitnessCurrentSource(
+      sourceEvidence(booleanFalseSource("\t\t} else if (typeof value == 'boolean' && !value) {")),
+      task,
+      [priorPatch],
+    )).toBe(false);
+    expect(hasUnreachableSerializedFalseWitnessCurrentSource(
+      sourceEvidence(booleanFalseSource("\t\t} else if (typeof value == 'boolean' && !value && !isSvg) {")),
+      task,
+      [priorPatch],
+    )).toBe(true);
+    expect(hasUnreachableSerializedFalseWitnessCurrentSource(
+      sourceEvidence(booleanFalseSource("\t\t} else if (typeof value == 'boolean' && !value && shouldSerialize) {")),
       task,
       [priorPatch],
     )).toBe(true);

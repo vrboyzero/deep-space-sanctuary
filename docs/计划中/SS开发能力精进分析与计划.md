@@ -12102,6 +12102,43 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：Go a3 已有精确本地覆盖；Windows a2 是剩余三项中唯一实际执行 correction Tool 后因截短 source context mismatch 失败的样本，最适合先区分 evidence 投影缺陷与 patch executor 问题。
 - **当前还缺的关键闭环**：Web UI Windows a2/a3 与 WSL2 a1 的当前 HEAD 覆盖判断及必要修复、其他 failure family 产品闭环、clean stable identity、正式不可覆盖 expected-report plan、新 identity 完整 `144/144` 候选链，以及第二个连续达标候选。
 
+#### P2-C product failure repair 实现结论：Web UI Windows a2 SVG-inclusive boolean-false correction（2026-09-03）
+
+##### 已完成内容
+
+1. **`react-workspace-mutation-serialized-false-correction.ts` 扩展**：
+   - 新增严格绑定 truth-set task、唯一 required path、prior successful patch 与完整 current source 的 SVG-excluded boolean-false 分支识别；
+   - 只有当前源码恰含一个完整匹配分支时，才从可信源码生成单行 predicate replacement，删除 `&& !isSvg`；
+   - 不复用截断 correction context，不修改其他分支，也不扩大 correction、turn、token、cost 或 Provider retry 边界。
+
+2. **`react-workspace-mutation-serialized-false.ts` 与 `react-workspace-mutation.ts` 接入**：
+   - 在相邻小模块中新增完整 boolean-false predicate 判定，超大主文件只保留 import 与最终行为 Gate 调用；
+   - 最终 Gate 只承认完整的 `typeof value == 'boolean' && !value` 分支，不再误拒绝已覆盖 HTML/SVG 的修复；
+   - `!isSvg` 或任意其他附加 guard 仍判为 false witness 不可达并失败关闭。
+
+3. **回归测试扩展/新建**：
+   - `react-workspace-mutation-serialized-false-correction.test.ts` 覆盖唯一 source-derived replacement，以及 task、required path、prior patch、完整源码和分支形状漂移的五类拒绝边界；
+   - `react-workspace-mutation.test.ts` 同时覆盖 SVG-inclusive 正例、`!isSvg` 负例与非 SVG 附加 guard 负例；
+   - 新建 `tool-agent-workspace-mutation-web-boolean-branch.test.ts`，通过公共 `ToolEnabledAgent.run()` 精确重放 initial mutation、截断 correction `input_error`、source-derived retry、完整复读与最终 objective review。
+
+4. **效果**：
+   - 冻结 Web Windows a2 不再因截断注释行反复提交同一不可应用 correction；
+   - 最小 correction 将 false `aria-*` / `data-*` 的序列化行为同时覆盖 HTML 与 SVG，普通 false 及全部 nullish 行为保持原合同；
+   - 旧 `df54f67` a2 终态仍保持失败且不重解释，真实 uplift 只由新 identity 候选证明。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` exit code=`0`；
+- workspace-mutation 十文件完整回归 `278/278` 通过，含公共 Agent 冻结同形链、source-derived correction 正负边界及最终行为 Gate；
+- `corepack pnpm verify:coding-benchmark` 与 `git diff --check` 通过，仅保留既存 AJV `date-time` format 和 Windows 行尾提示；
+- 本环节 Provider calls/cost=`0/$0`，未修改冻结 artifact、aggregate 或 qualification。
+
+##### 后续计划
+
+- **下一步准备做什么**：精确重建 Web UI Windows a3 的 broad patch、structured-output/input correction 与 narrowness Gate，判断当前 HEAD 是否已覆盖，若仍失败则先建立公共 Agent Red 再做最小修复。
+- **为什么先做它**：Windows a2 的真实 correction context mismatch 已闭合；a3 是剩余 Web 样本中最后一个 patch-acceptance 失败，先处理它可把 mutation recovery 与 WSL2 accepted-but-regressed evaluator 问题分开。
+- **当前还缺的关键闭环**：Web UI Windows a3 与 WSL2 a1 的当前 HEAD 覆盖判断及必要修复、其他 failure family 产品闭环、clean stable identity、正式不可覆盖 expected-report plan、新 identity 完整 `144/144` 候选链，以及第二个连续达标候选。
+
 #### 后续工作量估算
 
 **本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；CLI/TUI 双平台首帧与退出收敛也已修复并通过真实 PTY 验证；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
@@ -12142,7 +12179,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 候选保持拒绝；usage/plan/unknown 分类已闭合，patch acceptance 的零 edit `10` 项本地路径已覆盖，mutation-after `4+5` 已逐 run 分层；TS 四项与 Go Windows a3 的当前本地根因路径已闭合，转查 Web `3` 项** | 旧 aggregate=`97 passed + 47 product_workflow failed`、正式 infrastructure error=`0`；旧 qualification=`not_eligible/unscored` 且不得重解释；`12` 个 lifecycle usage 终态与精确 `144` 槽位 plan Gate 已机器化；corrected failure analysis=`19 patch_acceptance + 2 token_budget + 7 output_schema + 6 navigation + 5 mutation_patch + 6 post_write + 1 accepted_regression + 1 stop_empty`、`unknown=0`；mutation-after `9/9` 已精确分层；TS cross-package 两项由预算感知 post-write projection 覆盖，TS API a3 由 schema isolation 覆盖、a2 由 continuation 执行前 exact-set correction 覆盖；Go a3 冻结 objective correction 在实际 `2048` 上限下保留完整 `Command.Name` 与 `strings.LastIndex`，完整两文件=`160/160`、增量构建、repository verifier 与 diff check 全绿；历史终态不重解释，等待新候选证明 uplift；本轮 Provider=`0/$0`，费用守卫沿用 `35.33581920 RMB < 80 RMB` | `1.75–3.5 人日既有基线 + failure-driven 修复量 + 两个连续候选运行/观察窗口` | 重建 Web UI Windows a2/a3 与 WSL2 a1 的 post-write evidence/Gate；全部必要修复闭合后冻结 clean identity、正式生成不可覆盖 expected-report plan，再运行完整候选链并逐环节回写 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 候选保持拒绝；usage/plan/unknown 分类已闭合，patch acceptance 的零 edit `10` 项本地路径已覆盖，mutation-after `4+5` 已逐 run 分层；TS 四项、Go Windows a3 与 Web Windows a2 的当前本地根因路径已闭合，剩余 Web `2` 项** | 旧 aggregate=`97 passed + 47 product_workflow failed`、正式 infrastructure error=`0`；旧 qualification=`not_eligible/unscored` 且不得重解释；`12` 个 lifecycle usage 终态与精确 `144` 槽位 plan Gate 已机器化；corrected failure analysis=`19 patch_acceptance + 2 token_budget + 7 output_schema + 6 navigation + 5 mutation_patch + 6 post_write + 1 accepted_regression + 1 stop_empty`、`unknown=0`；mutation-after `9/9` 已精确分层；TS cross-package 两项由预算感知 post-write projection 覆盖，TS API a3 由 schema isolation 覆盖、a2 由 continuation 执行前 exact-set correction 覆盖；Go a3 冻结 objective correction 在实际 `2048` 上限下保留完整 `Command.Name` 与 `strings.LastIndex`；Web Windows a2 由严格 source-derived predicate replacement 与 SVG-inclusive 最终 Gate 覆盖，workspace-mutation 十文件=`278/278`、增量构建、repository verifier 与 diff check 全绿；历史终态不重解释，等待新候选证明 uplift；本轮 Provider=`0/$0`，费用守卫沿用 `35.33581920 RMB < 80 RMB` | `1.75–3.5 人日既有基线 + failure-driven 修复量 + 两个连续候选运行/观察窗口` | 重建 Web UI Windows a3 与 WSL2 a1 的 post-write evidence/Gate；全部必要修复闭合后冻结 clean identity、正式生成不可覆盖 expected-report plan，再运行完整候选链并逐环节回写 |
 
 
 #### 重要问题说明
@@ -12163,3 +12200,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 15、TS cross-package 的冻结 post-write request 已从 runtime prompt snapshot 精确复现：a2 最终 correction 绑定 seq 12 revision=`6eadc142…`，完整 current source=`3582` 字符，真实 fault line 是 `ProtocolRequestType0<WorkspaceFolder[] | null | undefined, ...>`；由于正文小于固定 `4096` 字符，旧逻辑没有生成 task-relevant contexts，但序列化 file evidence 又超出该 call 的 token 配额，通用 `75% head + 25% tail` clip 将整个 `WorkspaceFoldersRequest` 中段移除，只留下前部 initialize contract 与尾部 notification declarations。处理方案不是降低全局门槛或扩大预算，而是在每个 evidence section 已知实际 token 配额后判断 raw evidence 是否可完整容纳：超额时即使正文小于 `4096` 也复用既有最多 `6` 项/`4096` 字符的任务相关投影；能完整容纳的中小文件继续保留全文件，anchor 与总 token/cost/turn/retry 合同不变。同形回归已先稳定 Red 为目标行缺失，再 Green 为目标行及相邻当前声明完整可见；完整两文件回归=`157/157`，TypeScript 增量构建、repository verifier 与 diff check 均通过。旧两次失败终态不重解释，真实 uplift 仍只由新 identity 候选证明。
 16、TS API migration 的两个 mutation-after 终态具有不同根因。a3 的 atomic correction snapshot 中 `connection.ts` 只保留由 schema literal `false` 提权的远端实现块，真实 `TraceValues` alias 行缺失，因此已由 `b7377a4` 的 Output Schema Contract 隔离覆盖；a2 的 missing-path continuation snapshot 则完整包含 api/protocol 的全部 `TraceValues` 目标，但模型仍只提交 api section，旧 runtime 先成功执行该严格子集、再因 protocol 未覆盖而失败。处理方案是在执行结构可识别且路径均受信任的 continuation patch 前，用不依赖 `32` 项 diagnostics 截断的完整 header 扫描要求每个 missing path 恰出现一次；若仅遗漏路径且尚未 correction，则不执行该 patch并进入既有一次性 atomic input correction，二次不完整继续失败关闭，越界/未知 Tool 保留原边界。公共 Agent 同形回归先 Red 为 `requests=3` 且局部 patch 已执行，再 Green 为遗漏 patch 零执行、correction 一次覆盖 api+protocol；`40` 路径纯边界验证 exact/omit/duplicate，目标合计 `2/2`，完整两文件回归=`159/159`，TypeScript 增量构建、repository verifier 与 diff check 均通过。旧 a2/a3 终态不重解释。
 17、Go Windows a3 的最终源码只增加无关 `// CommandNamed returns...` 注释，旧 post-write correction snapshot 又只投影两个 `false` context，完全遗漏真正的 `Command.Name` 与 `strings.LastIndex`，因此模型随后两次只能提交 context-only patch。当前 HEAD 不能仅凭相似短 task 单测判定覆盖；本轮用冻结最终 `command.go`、原 task（含 runtime Output Schema）、`deepseek-v4-flash` tokenizer、objective input-correction reason 和实际 `2048` 输入上限精确重建，结果 request=`built`、estimated input=`2046`、missing source=`0`，首个 context 完整包含 `func (c *Command) Name()` 与 `strings.LastIndex`，误导 comment 降为第二项。处理方案由既有 `b7377a4` schema isolation 与 `9eb914c` task-qualified ranking 联合提供，本轮新增冻结同形回归固化真实阶段/预算；完整两文件=`160/160`，增量构建、repository verifier 与 diff check 通过。旧 a3 仍保持失败，不重解释。
+18、Web UI Windows a2 的 initial patch 已成功加入 `typeof value == 'boolean' && !value && !isSvg`，但 objective correction 引用了被 evidence 投影截断的注释 `// False for boolean attributes (aria-/, data-/) m`，executor 首次 context mismatch 后旧 deterministic rebuilder 不识别该真实分支，模型再提交相同截断 patch并终止。公共 Agent 同形测试先稳定 Red 为 `initial success -> truncated input_error -> repeated truncated input_error`；处理方案是在单 required path、完整 truth-set task、prior successful patch 和唯一完整 current-source branch 全部绑定时，从可信源码生成只删除 `&& !isSvg` 的单行 replacement，不依赖失败 Tool 正文或截断 correction。首次 Green 又发现最终行为 Gate 只识别显式 `value === false`，会误拒绝正确的 `!value` boolean branch；补充等价 predicate 后的对抗检查进一步发现仅排除 `isSvg` 会误放行其他附加 guard，因此最终收紧为只接受完整且无任何额外限制的 `else if (typeof value == 'boolean' && !value)`。`!isSvg`、任意其他 guard、task/path/prior/source 漂移均继续失败关闭；公共链最终为 source-derived correction success、完整复读与 final review done，十文件 `278/278`、增量构建、repository verifier 与 diff check 全绿。旧 a2 终态不重解释。

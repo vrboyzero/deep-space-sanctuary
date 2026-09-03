@@ -45,3 +45,7 @@ export function branchReceivesFalseExcludedByPreviousSibling(
   }
   return false;
 }
+
+export function branchAdmitsUnrestrictedBooleanFalse(condition: string): boolean {
+  return /^\s*}\s*else\s+if\s*\(\s*typeof\s+value\s*={2,3}\s*(['"])boolean\1\s*&&\s*!\s*value\s*\)\s*\{\s*$/.test(condition);
+}

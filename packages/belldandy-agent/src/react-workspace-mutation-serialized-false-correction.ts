@@ -38,6 +38,10 @@ const ARIA_SERIALIZED_FALSE_CONDITION_SUFFIX = "if (name[0] == 'a' && name[1] ==
 const DATA_SERIALIZED_FALSE_CONDITION_SUFFIX = "} else if (name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-') {";
 const NON_NULL_ATTRIBUTE_CONDITION_SUFFIX = "} else if (value != NULL) {";
 const PLACEHOLDER_NULLISH_CONDITION_SUFFIX = "if (value == NULL && name in dom) { ... }";
+const SVG_EXCLUDED_BOOLEAN_FALSE_CONDITION_SUFFIX = "} else if (typeof value == 'boolean' && !value && !isSvg) {";
+const SVG_INCLUSIVE_BOOLEAN_FALSE_CONDITION_SUFFIX = "} else if (typeof value == 'boolean' && !value) {";
+const BOOLEAN_FALSE_BRANCH_COMMENT = "// False for boolean attributes (aria-/, data-/) means false.";
+const BOOLEAN_FALSE_PREFIX_CONDITION = "if (/^(aria|data)-/.test(name)) {";
 
 type NullishSerializationBranch = {
   condition: string;
@@ -526,14 +530,40 @@ export function rebuildSerializedFalseSemanticNarrowingToolCall<
     input.priorSuccessfulPatchInputs,
     requiredPath,
   );
+  const priorPatchAddedSvgExcludedBooleanBranch = priorPatchAddedLine(
+    input.priorSuccessfulPatchInputs,
+    requiredPath,
+    SVG_EXCLUDED_BOOLEAN_FALSE_CONDITION_SUFFIX,
+  );
   if (!requiredPath
     || (input.correctionReason === "serialized_false_nullish_serialization_requires_atomic_repair"
       ? !priorPatchAddedNullishBranch
-      : !priorPatchAddedBroadCondition)) return undefined;
+      : !priorPatchAddedBroadCondition && !priorPatchAddedSvgExcludedBooleanBranch)) return undefined;
 
   const source = readCompleteSource(input.messages, requiredPath);
   if (!source) return undefined;
   const lineEnding = source.includes("\r\n") ? "\r\n" : "\n";
+  if (input.correctionReason !== "serialized_false_nullish_serialization_requires_atomic_repair"
+    && priorPatchAddedSvgExcludedBooleanBranch) {
+    const branches = collectSvgExcludedBooleanFalseBranches(source);
+    if (branches.length !== 1) return undefined;
+    const branch = branches[0]!;
+    const patch = [
+      "*** Begin Patch",
+      `*** Update File: ${input.requiredPaths[0]}`,
+      "@@",
+      `-${branch.condition}`,
+      `+${branch.indent}${SVG_INCLUSIVE_BOOLEAN_FALSE_CONDITION_SUFFIX}`,
+      "*** End Patch",
+    ].join(lineEnding);
+    return {
+      ...input.toolCall,
+      function: {
+        ...input.toolCall.function,
+        arguments: JSON.stringify({ input: patch }),
+      },
+    } as T;
+  }
   const nullishBranches = collectNullishSerializationBranches(source);
   if (input.correctionReason === "serialized_false_nullish_serialization_requires_atomic_repair"
     && requiresSerializedFalseTruthSet(input.taskText)
@@ -622,6 +652,55 @@ function priorPatchAddedBroadSerializedFalseCondition(
     }
     return false;
   });
+}
+
+function priorPatchAddedLine(
+  patchInputs: readonly string[],
+  requiredPath: string,
+  lineSuffix: string,
+): boolean {
+  return patchInputs.some((patchInput) => {
+    let currentPath = "";
+    for (const line of patchInput.split(/\r?\n/)) {
+      if (line.startsWith("*** Update File: ")) {
+        currentPath = normalizePath(line.slice("*** Update File: ".length));
+        continue;
+      }
+      if (currentPath === requiredPath
+        && line.startsWith("+")
+        && line.slice(1).trimStart() === lineSuffix) {
+        return true;
+      }
+    }
+    return false;
+  });
+}
+
+function collectSvgExcludedBooleanFalseBranches(
+  source: string,
+): Array<{ condition: string; indent: string }> {
+  const lines = source.split(/\r?\n/);
+  const branches: Array<{ condition: string; indent: string }> = [];
+  for (let index = 0; index <= lines.length - 12; index += 1) {
+    const condition = lines[index] ?? "";
+    const indent = condition.slice(0, condition.length - condition.trimStart().length);
+    if (condition.trimStart() !== SVG_EXCLUDED_BOOLEAN_FALSE_CONDITION_SUFFIX
+      || (lines[index + 1] ?? "").trim() !== BOOLEAN_FALSE_BRANCH_COMMENT
+      || (lines[index + 2] ?? "").trim() !== BOOLEAN_FALSE_PREFIX_CONDITION
+      || (lines[index + 3] ?? "").trim() !== SERIALIZED_FALSE_LITERAL_STATEMENT
+      || (lines[index + 4] ?? "").trim() !== "} else {"
+      || (lines[index + 5] ?? "").trim() !== EXISTING_REMOVAL_STATEMENT
+      || (lines[index + 6] ?? "").trim() !== "}"
+      || (lines[index + 7] ?? "").trim() !== PREVIOUS_SERIALIZED_FALSE_CONDITION_SUFFIX
+      || (lines[index + 8] ?? "").trim() !== EXISTING_ATTRIBUTE_STATEMENT
+      || (lines[index + 9] ?? "").trim() !== "} else {"
+      || (lines[index + 10] ?? "").trim() !== EXISTING_REMOVAL_STATEMENT
+      || (lines[index + 11] ?? "").trim() !== "}") {
+      continue;
+    }
+    branches.push({ condition, indent });
+  }
+  return branches;
 }
 
 function priorPatchAddedNullishSerializationBranch(
