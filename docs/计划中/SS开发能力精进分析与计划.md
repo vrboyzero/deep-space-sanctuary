@@ -12793,12 +12793,13 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - PowerShell parser=`3683` tokens、`0` errors；真实 reconciliation=`1/1 passed`（本环节新增产品测试=`0`）；
 - resume-state verifier reports/IDs/paths=`144/144/144`、processed/remaining=`9/135`；费用 Gate 下一单最坏=`36.16401192 RMB < 80 RMB`。
 - cleanup script parser=`0` errors，log targets/remaining=`16/0`，所有目标写后存在性复核均为 false。
+- cleanup 后紧邻续跑的完整 Gate 再次通过：双平台 identity 无漂移、ports=`0/0`、Windows/WSL2 candidate processes=`0/0`、pinned OCI identity 精确匹配且 active containers=`0`。
 
 ##### 后续计划
 
-- **下一步准备做什么**：环境回收已闭合；重跑 resume plan/identity、费用、端口、Windows/WSL2 进程与 OCI 六项收费前 Gate，随后继续 Windows attempt 1 剩余 `15` 项。`bug.reproducible-fix` 则先补公共状态机 Red，再做不放宽安全 Gate 的 tool-free final-review fallback。
-- **为什么先做它**：账本和敏感环境均已恢复一致，最新资源静默性是重新触达 Provider 前的最后前置；产品失败已冻结，可在本平台横截面完成后集中修复，避免测试与 formal 争用宿主资源。
-- **当前还缺的关键闭环**：最新六项 Gate、Windows attempt 1 剩余报告、产品失败 TDD/实现/回归、新 identity 与完整候选重跑。
+- **下一步准备做什么**：最新六项 Gate 已闭合；以同一 launcher 恢复 Windows attempt 1 剩余 `15` 项，并在每个 report 后继续 global-first 入账。`bug.reproducible-fix` 则先补公共状态机 Red，再做不放宽安全 Gate 的 tool-free final-review fallback。
+- **为什么先做它**：账本、敏感环境与资源静默性均已恢复一致；产品失败已冻结，可在本平台横截面完成后集中修复，避免测试与 formal 争用宿主资源。
+- **当前还缺的关键闭环**：Windows attempt 1 剩余报告、后续环境清理与后置静默性、产品失败 TDD/实现/回归、新 identity 与完整候选重跑。
 
 #### 后续工作量估算
 
