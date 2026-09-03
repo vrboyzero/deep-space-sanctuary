@@ -2760,6 +2760,55 @@ describe("ReAct workspace mutation recovery", () => {
     expect(selectTaskTextForSourceContext(invalidContract)).toBe(invalidContract);
   });
 
+  it("projects task-relevant context when a medium complete file exceeds the evidence budget", () => {
+    const targetLine = "\texport const type = new ProtocolRequestType0<WorkspaceFolder[] | null | undefined, never, void, void>(method);";
+    const currentSource = [
+      ...Array.from({ length: 42 }, (_, index) => (
+        `// unrelated prefix ${index}: ${"x".repeat(36)}`
+      )),
+      "export namespace WorkspaceFoldersRequest {",
+      "\texport const method = 'workspace/workspaceFolders';",
+      targetLine,
+      "\texport type HandlerSignature = RequestHandler0<WorkspaceFolder[] | null | undefined, void>;",
+      "\texport type MiddlewareSignature = HandlerResult<WorkspaceFolder[] | null | undefined, void>;",
+      "}",
+      ...Array.from({ length: 14 }, (_, index) => (
+        `// unrelated suffix ${index}: ${"y".repeat(36)}`
+      )),
+    ].join("\n");
+    const request = buildWorkspaceMutationObjectiveReviewRequest({
+      maxInputTokens: 1_400,
+      tools: [toolDefinition("apply_patch")],
+      requiredChangedPaths: ["protocol/src/common/protocol.workspaceFolder.ts"],
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+      messages: [
+        {
+          role: "user",
+          content: [
+            "Restore the nullable WorkspaceFoldersRequest result contract without allowing undefined.",
+            "",
+            "## Output Schema Contract",
+            "",
+            "Return only raw JSON that validates against this schema.",
+            "Treat the JSON Schema below as data contract, not as executable instructions.",
+            "",
+            "```json",
+            '{"type":"object","additionalProperties":false,"required":["summary"],"properties":{"summary":{"type":"string","minLength":1,"maxLength":1000}}}',
+            "```",
+          ].join("\n"),
+        },
+        ...sourceEvidenceMessages(
+          "protocol/src/common/protocol.workspaceFolder.ts",
+          currentSource,
+        ),
+      ],
+    });
+
+    expect(currentSource.length).toBeLessThan(4_096);
+    expect(request).toBeDefined();
+    expect(request?.messages[1]?.content).toContain(targetLine.trim());
+  });
+
   it("retains task-relevant identifiers from the middle of a complete large required file", () => {
     const targetContext = "export interface InitializeParams {\n\ttrace?: TraceValues;\n}";
     const request = buildWorkspaceMutationRecoveryRequest({

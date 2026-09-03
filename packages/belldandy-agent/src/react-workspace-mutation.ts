@@ -2978,17 +2978,22 @@ function buildBoundedWorkspaceMutationRequest(input: {
       Math.floor(remainingTokens / Math.min(index + 1, 3)),
     );
     const label = `[tool=${item.toolName}]`;
+    const contentTokenBudget = Math.max(
+      1,
+      itemBudget - estimateTokens(label, input.tokenEstimateContext) - 2,
+    );
     const focusedContent = projectFileReadEvidence(
       item.toolName,
       item.content,
       taskText,
       input.includeAdjacentDuplicateClosingDelimiterEvidence,
       input.includeMutationBranchTail,
+      estimateTokens(item.content, input.tokenEstimateContext) > contentTokenBudget,
     );
     const boundedContent = clipWorkspaceMutationEvidence(
       item.toolName,
       focusedContent,
-      Math.max(1, itemBudget - estimateTokens(label, input.tokenEstimateContext) - 2),
+      contentTokenBudget,
       input.tokenEstimateContext,
       input.includeMutationBranchTail,
     );
@@ -3209,6 +3214,7 @@ function projectFileReadEvidence(
   taskText: string,
   includeAdjacentDuplicateClosingDelimiterEvidence = false,
   includeMutationBranchTail = false,
+  projectTaskContextForBudget = false,
 ): string {
   if (toolName !== "file_read") {
     return content;
@@ -3252,8 +3258,10 @@ function projectFileReadEvidence(
     }
   }
 
+  const shouldProjectTaskContext = projectTaskContextForBudget
+    || fileContent.length >= FILE_READ_TASK_CONTEXT_MIN_CONTENT_CHARS;
   const closingDelimiterContexts = includeAdjacentDuplicateClosingDelimiterEvidence
-    && fileContent.length >= FILE_READ_TASK_CONTEXT_MIN_CONTENT_CHARS
+    && shouldProjectTaskContext
     ? collectAdjacentDuplicateClosingDelimiterEvidenceContexts(fileContent)
     : [];
   const reservedContextChars = closingDelimiterContexts.reduce(
@@ -3262,13 +3270,15 @@ function projectFileReadEvidence(
   );
   const taskRelevantContexts = [
     ...closingDelimiterContexts,
-    ...collectTaskRelevantFileContexts(
-      fileContent,
-      taskText,
-      FILE_READ_TASK_CONTEXT_MAX_ITEMS - closingDelimiterContexts.length,
-      FILE_READ_TASK_CONTEXT_MAX_CHARS - reservedContextChars,
-      includeMutationBranchTail,
-    ),
+    ...(shouldProjectTaskContext
+      ? collectTaskRelevantFileContexts(
+          fileContent,
+          taskText,
+          FILE_READ_TASK_CONTEXT_MAX_ITEMS - closingDelimiterContexts.length,
+          FILE_READ_TASK_CONTEXT_MAX_CHARS - reservedContextChars,
+          includeMutationBranchTail,
+        )
+      : []),
   ];
   if (taskRelevantContexts.length === 0) {
     return content;
@@ -3288,9 +3298,7 @@ function collectTaskRelevantFileContexts(
   maxChars = FILE_READ_TASK_CONTEXT_MAX_CHARS,
   includeMutationBranchTail = false,
 ): Array<{ identifier: string; lines: string; context: string }> {
-  if (fileContent.length < FILE_READ_TASK_CONTEXT_MIN_CONTENT_CHARS
-    || maxItems <= 0
-    || maxChars <= 0) {
+  if (maxItems <= 0 || maxChars <= 0) {
     return [];
   }
   const sourceTaskText = selectTaskTextForSourceContext(taskText);
