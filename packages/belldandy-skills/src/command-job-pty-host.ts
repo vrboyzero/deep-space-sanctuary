@@ -1,4 +1,5 @@
 import type { PtyHostControl, PtyHostEvent } from "./command-job-pty-host-runtime.js";
+import { createPtyTerminalResponseFilter } from "./command-job-pty-terminal.js";
 
 type NodePtyProcess = {
   write(data: string): void;
@@ -32,15 +33,28 @@ async function start(message: Extract<PtyHostControl, { type: "start" }>): Promi
   const nodePty = (imported.default ?? imported) as NodePtyModule;
   if (typeof nodePty.spawn !== "function") throw new Error("node-pty does not expose spawn().");
 
-  ptyProcess = nodePty.spawn(message.invocation.executable, message.invocation.args, {
+  const startedProcess = nodePty.spawn(message.invocation.executable, message.invocation.args, {
     name: "xterm-color",
     cols: 80,
     rows: 24,
     cwd: message.invocation.cwd,
     env: message.invocation.env,
   });
-  ptyProcess.onData((data) => send({ type: "data", data }));
-  ptyProcess.onExit((event) => {
+  ptyProcess = startedProcess;
+  const terminalFilter = createPtyTerminalResponseFilter();
+  startedProcess.onData((data) => {
+    const filtered = terminalFilter.consume(data);
+    try {
+      for (const response of filtered.responses) startedProcess.write(response);
+    } catch (error) {
+      fail(error);
+      return;
+    }
+    if (filtered.output) send({ type: "data", data: filtered.output });
+  });
+  startedProcess.onExit((event) => {
+    const trailingOutput = terminalFilter.flush();
+    if (trailingOutput) send({ type: "data", data: trailingOutput });
     send({ type: "exit", exitCode: event.exitCode, ...(event.signal !== undefined ? { signal: event.signal } : {}) });
     setImmediate(() => process.exit(0));
   });
