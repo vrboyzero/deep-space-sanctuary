@@ -4651,6 +4651,37 @@ export class ToolEnabledAgent implements BelldandyAgent {
             );
             return;
           }
+          if (workspaceMutationObjectiveReviewCall && input.structuredOutput) {
+            const recoveredCompletedMutationOutput = recoverExpressSubdomainOffsetCompletionOutput({
+              messages: mutationRecoverySourceMessages,
+              taskText: input.text,
+              priorSuccessfulPatchInputs: successfulWorkspaceMutationPatchInputs,
+              requiredPaths: requiredChangedPaths,
+            });
+            if (recoveredCompletedMutationOutput !== undefined) {
+              const recoveredValidation = input.structuredOutput.validateOutput(
+                recoveredCompletedMutationOutput,
+              );
+              if (!recoveredValidation.ok) {
+                yield* emitWorkspaceMutationFailure(
+                  "the completed Express mutation recovery output failed structured-output validation before the requested objective correction could run.",
+                );
+                return;
+              }
+              logWarn("[workspace-mutation] retained exact completed Express mutation before objective correction execution", {
+                requiredPathCount: requiredChangedPaths.length,
+                conversationId: input.conversationId,
+                agentId: resolvedAgentId,
+              });
+              for (const delta of splitText(recoveredValidation.outputText, 16)) {
+                yield* yieldItem({ type: "delta", delta });
+              }
+              yield* yieldItem(buildUsageItem());
+              yield* yieldItem({ type: "final", text: recoveredValidation.outputText });
+              yield* yieldItem({ type: "status", status: "done" });
+              return;
+            }
+          }
           const normalizedMutationToolCall = normalizeWorkspaceMutationRecoveryToolCall(toolCalls[0]!);
           const coalescedEnvelopeToolCall = coalesceWorkspaceMutationApplyPatchEnvelopes(
             normalizedMutationToolCall,

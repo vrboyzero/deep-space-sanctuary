@@ -51,6 +51,45 @@ describe("ToolEnabledAgent frozen product-failure recoveries", () => {
     expect(result.items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("stops before an unsafe Express correction after the exact direct fix", async () => {
+    const scenario = expressDirectFixUnsafeCorrectionScenario();
+    const result = await runScenario(scenario);
+
+    expect(result.executedPatches).toEqual([scenario.initialPatch]);
+    expect(result.items.at(-2)).toEqual({ type: "final", text: scenario.successJson });
+    expect(result.items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("fails closed before an unsafe Express correction when the recovered summary is rejected", async () => {
+    const scenario = {
+      ...expressDirectFixUnsafeCorrectionScenario(),
+      successJson: '{"summary":"a different contract-specific value"}',
+    };
+    const result = await runScenario(scenario);
+
+    expect(result.executedPatches).toEqual([scenario.initialPatch]);
+    expect(result.items.at(-2)).toEqual({
+      type: "final",
+      text: "required workspace mutation was not completed: the completed Express mutation recovery output failed structured-output validation before the requested objective correction could run.",
+    });
+    expect(result.items.at(-1)).toEqual({ type: "status", status: "error" });
+  });
+
+  it("does not let exact Express completion bypass the single-correction-call contract", async () => {
+    const scenario = {
+      ...expressDirectFixUnsafeCorrectionScenario(),
+      objectiveCorrectionCallCount: 2,
+    };
+    const result = await runScenario(scenario);
+
+    expect(result.executedPatches).toEqual([scenario.initialPatch]);
+    expect(result.items.at(-2)).toEqual({
+      type: "final",
+      text: "required workspace mutation was not completed: the post-write objective review may request at most one allowed workspace mutation tool.",
+    });
+    expect(result.items.at(-1)).toEqual({ type: "status", status: "error" });
+  });
+
   it("keeps the exact direct Express fix failed when its recovered summary is rejected", async () => {
     const scenario = {
       ...expressDirectFixMalformedSummaryScenario(),
@@ -95,6 +134,7 @@ type Scenario = {
   postInitialSources: Record<string, string>;
   correctedSources: Record<string, string>;
   mode: "recovery" | "objective" | "objective-output-repair";
+  objectiveCorrectionCallCount?: number;
 };
 
 async function runScenario(scenario: Scenario): Promise<{
@@ -126,7 +166,11 @@ async function runScenario(scenario: Scenario): Promise<{
         return jsonResponse(modelFinal("The one-line fix restores the expected behavior."));
       }
       return executedPatches.length === 1
-        ? jsonResponse(modelToolCall(`correction-${requestCount}`, scenario.modelCorrectionPatch))
+        ? jsonResponse(modelToolCall(
+            `correction-${requestCount}`,
+            scenario.modelCorrectionPatch,
+            scenario.objectiveCorrectionCallCount,
+          ))
         : jsonResponse(modelFinal(scenario.successJson));
     }
     if (scenario.mode === "recovery") {
@@ -346,6 +390,56 @@ function expressDirectFixMalformedSummaryScenario(): Scenario {
   };
 }
 
+function expressDirectFixUnsafeCorrectionScenario(): Scenario {
+  const requiredPath = "lib/request.js";
+  const baseline = expressGetter("hostname.split('.').reverse()", "subdomains.slice(offset + 1)");
+  const corrected = expressGetter("hostname.split('.').reverse()", "subdomains.slice(offset)");
+  const directPatch = [
+    "*** Begin Patch",
+    `*** Update File: ${requiredPath}`,
+    "@@",
+    "-  return subdomains.slice(offset + 1);",
+    "+  return subdomains.slice(offset);",
+    "*** End Patch",
+  ].join("\n");
+  const unsafeCorrectionPatch = [
+    "*** Begin Patch",
+    `*** Update File: ${requiredPath}`,
+    "@@",
+    "   var offset = this.app.get('subdomain offset');",
+    "+  var val = hostname.split('.').reverse();",
+    "+  if (!offset) return val;",
+    "   var subdomains = !isIP(hostname)",
+    "     ? hostname.split('.').reverse()",
+    "     : [hostname];",
+    " ",
+    "-  return subdomains.slice(offset);",
+    "+  return subdomains.slice(offset);",
+    " });",
+    "*** End Patch",
+  ].join("\n");
+  const unsafeSource = corrected.replace(
+    "  var subdomains = !isIP(hostname)",
+    [
+      "  var val = hostname.split('.').reverse();",
+      "  if (!offset) return val;",
+      "  var subdomains = !isIP(hostname)",
+    ].join("\r\n"),
+  );
+  return {
+    conversationId: "conv-frozen-express-direct-fix-unsafe-correction",
+    taskText: "Reproduce the frozen JavaScript regression in the real repository, implement the smallest safe fix, and preserve the existing test contract. The frozen regression is covered by test/benchmark-v3/real-js-bug-fix.js. Restore the documented req.subdomains offset behavior with the smallest change in lib/request.js. Do not modify tests, dependencies, package metadata, or any other source file. Return exactly one JSON object with a non-empty summary.",
+    requiredPaths: [requiredPath],
+    successJson: '{"summary":"restored the documented req.subdomains offset behavior"}',
+    initialPatch: directPatch,
+    modelCorrectionPatch: unsafeCorrectionPatch,
+    baselineSources: { [requiredPath]: baseline },
+    postInitialSources: { [requiredPath]: corrected },
+    correctedSources: { [requiredPath]: unsafeSource },
+    mode: "objective",
+  };
+}
+
 function expressGetter(splitExpression: string, sliceExpression: string): string {
   return [
     "var isIP = require('node:net').isIP;",
@@ -514,17 +608,17 @@ function toolDefinition(name: string) {
   };
 }
 
-function modelToolCall(id: string, input: string) {
+function modelToolCall(id: string, input: string, callCount = 1) {
   return {
     choices: [{
       finish_reason: "tool_calls",
       message: {
         content: null,
-        tool_calls: [{
-          id,
+        tool_calls: Array.from({ length: callCount }, (_, index) => ({
+          id: `${id}-${index}`,
           type: "function",
           function: { name: "apply_patch", arguments: JSON.stringify({ input }) },
-        }],
+        })),
       },
     }],
     usage: { prompt_tokens: 300, completion_tokens: 60 },
