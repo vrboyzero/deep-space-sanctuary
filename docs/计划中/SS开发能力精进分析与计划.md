@@ -12351,7 +12351,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - TypeScript 增量编译无错误：`corepack pnpm build:incremental` exit code=`0`；
 - Web focused=`37/37`、TS focused=`2/2`、共享三文件=`123/123`、workspace-mutation 十二文件全集=`320/320`；
 - 从实际 `dist` 与冻结 current source 重建的两类 TS request 分别为 `1932/2048`、`2045/2048`，result/Handler/Middleware 三条目标均完整保留；
-- `corepack pnpm verify:coding-benchmark` 与 `git diff --check` 通过，仅保留既存 AJV `date-time` format 与 Windows 行尾提示；本环节 Provider calls/cost=`0/$0`，费用守卫仍为 `35.33581920 RMB < 80 RMB`。
+- `corepack pnpm verify:coding-benchmark` 与 `git diff --check` 通过，仅保留既存 AJV `date-time` format 与 Windows 行尾提示；checkpoint=`a1552e2`，明确排除 `tmp-codeintel-summary.json`；本环节 Provider calls/cost=`0/$0`，费用守卫仍为 `35.33581920 RMB < 80 RMB`。
 
 ##### 后续计划
 
