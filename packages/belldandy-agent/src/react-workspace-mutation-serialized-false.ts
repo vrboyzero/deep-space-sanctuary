@@ -72,6 +72,10 @@ const UNCONDITIONAL_FALLBACK = "} else {";
 const GUARDED_ORDINARY_FALLBACK = "} else if (value !== false) {";
 const ORDINARY_ATTRIBUTE_STATEMENT = "dom.setAttribute(name, name == 'popover' && value == true ? '' : value);";
 const SERIALIZED_FALSE_LITERAL_STATEMENT = "dom.setAttribute(name, 'false');";
+const DROPPED_FALLBACK_NULLISH_CONDITION = "if (value == NULL) {";
+const NARROW_PREFIX_PREDICATE = "name[0] == 'a' && name[1] == 'r' || name[0] == 'd' && name[1] == 'a'";
+const NARROW_PREFIX_FALSE_REMOVAL_CONDITION = `} else if (value === false && !(${NARROW_PREFIX_PREDICATE})) {`;
+const NARROW_PREFIX_FALSE_SERIALIZATION_CONDITION = `} else if (value === false && (${NARROW_PREFIX_PREDICATE})) {`;
 
 export function collectSerializedFalseMultilineFallbackBranches(
   lines: readonly string[],
@@ -150,6 +154,29 @@ export function hasGroupedSerializedFalseMultilineBranch(
       && lines[index + 7] === `${conditionIndent}${UNCONDITIONAL_FALLBACK}`
       && lines[index + 8] === `${statementIndent}${ATTRIBUTE_REMOVAL_STATEMENT}`
       && lines[index + 9] === `${conditionIndent}}`) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function hasDroppedSerializedFalseNarrowPrefixFallback(
+  lines: readonly string[],
+): boolean {
+  for (let index = 0; index <= lines.length - 7; index += 1) {
+    const nullishCondition = lines[index] ?? "";
+    const conditionIndent = nullishCondition.slice(
+      0,
+      nullishCondition.length - nullishCondition.trimStart().length,
+    );
+    const statementIndent = `${conditionIndent}\t`;
+    if (nullishCondition === `${conditionIndent}${DROPPED_FALLBACK_NULLISH_CONDITION}`
+      && lines[index + 1] === `${statementIndent}${ATTRIBUTE_REMOVAL_STATEMENT}`
+      && lines[index + 2] === `${conditionIndent}${NARROW_PREFIX_FALSE_REMOVAL_CONDITION}`
+      && lines[index + 3] === `${statementIndent}${ATTRIBUTE_REMOVAL_STATEMENT}`
+      && lines[index + 4] === `${conditionIndent}${NARROW_PREFIX_FALSE_SERIALIZATION_CONDITION}`
+      && lines[index + 5] === `${statementIndent}${SERIALIZED_FALSE_LITERAL_STATEMENT}`
+      && lines[index + 6] === `${conditionIndent}}`) {
       return true;
     }
   }

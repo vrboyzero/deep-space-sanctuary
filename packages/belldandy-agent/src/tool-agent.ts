@@ -129,6 +129,7 @@ import {
 import {
   hasSerializedFalseNullishSerializationCurrentSource,
   rebuildSerializedFalseBroadFirstCharacterToolCall,
+  rebuildSerializedFalseDroppedFallbackToolCall,
   rebuildSerializedFalseInitialNoOpToolCall,
   rebuildSerializedFalseNarrowArPrefixToolCall,
   rebuildSerializedFalseNestedUnreachableToolCall,
@@ -4659,6 +4660,15 @@ export class ToolEnabledAgent implements BelldandyAgent {
               requiredPaths: workspaceMutationCallRequiredPaths,
             })
             : undefined;
+          const rebuiltSerializedFalseDroppedFallbackToolCall = workspaceMutationObjectiveReviewCall
+            ? rebuildSerializedFalseDroppedFallbackToolCall({
+                toolCall: constrainedMutationToolCall,
+                messages: mutationRecoverySourceMessages,
+                taskText: input.text,
+                priorSuccessfulPatchInputs: successfulWorkspaceMutationPatchInputs,
+                requiredPaths: workspaceMutationCallRequiredPaths,
+              })
+            : undefined;
           const rebuiltSerializedFalseSiblingDoubleElseToolCall = workspaceMutationObjectiveReviewCall
             && !workspaceMutationObjectiveInputCorrectionCall
             ? rebuildSerializedFalseSiblingDoubleElseToolCall({
@@ -4693,6 +4703,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             ?? rebuiltSerializedFalseToolCall
             ?? rebuiltSerializedFalseInitialNoOpRecoveryToolCall
             ?? rebuiltSerializedFalsePlaceholderCorrectionToolCall
+            ?? rebuiltSerializedFalseDroppedFallbackToolCall
             ?? rebuiltSerializedFalseNarrowArPrefixToolCall
             ?? rebuiltSerializedFalseSiblingDoubleElseToolCall
             ?? rebuiltSerializedFalseNestedUnreachableToolCall
@@ -4701,6 +4712,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           const semanticValidationToolCall = rebuiltSerializedFalseToolCall
             || rebuiltSerializedFalseInitialNoOpRecoveryToolCall
             || rebuiltSerializedFalsePlaceholderCorrectionToolCall
+            || rebuiltSerializedFalseDroppedFallbackToolCall
             || rebuiltSerializedFalseNarrowArPrefixToolCall
             || rebuiltSerializedFalseSiblingDoubleElseToolCall
             || rebuiltSerializedFalseNestedUnreachableToolCall
@@ -4769,6 +4781,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
           if (rebuiltSerializedFalseNarrowArPrefixToolCall) {
             logWarn("[workspace-mutation] rebuilt trusted narrow ar-prefix correction as baseline serialized-false condition", {
+              requiredPathCount: workspaceMutationCallRequiredPaths.length,
+              conversationId: input.conversationId,
+              agentId: resolvedAgentId,
+            });
+          }
+          if (rebuiltSerializedFalseDroppedFallbackToolCall) {
+            logWarn("[workspace-mutation] rebuilt trusted dropped-fallback correction as a complete serialized-false branch", {
               requiredPathCount: workspaceMutationCallRequiredPaths.length,
               conversationId: input.conversationId,
               agentId: resolvedAgentId,
@@ -4960,6 +4979,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             continue;
           }
           if (workspaceMutationObjectiveReviewCall
+            && !rebuiltSerializedFalseDroppedFallbackToolCall
             && ((hasDisjointSmallestChangeCorrectionHunks(
                 semanticValidationToolCall,
                 successfulWorkspaceMutationPatchInputs,

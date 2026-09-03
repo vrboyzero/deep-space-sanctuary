@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { rebuildSerializedFalseSemanticNarrowingToolCall } from "./react-workspace-mutation-serialized-false-correction.js";
+import {
+  rebuildSerializedFalseDroppedFallbackToolCall,
+  rebuildSerializedFalseSemanticNarrowingToolCall,
+} from "./react-workspace-mutation-serialized-false-correction.js";
 import {
   hasUnpreservedSerializedFalseWitnessCurrentSource,
   hasUnreachableSerializedFalseWitnessCurrentSource,
@@ -241,6 +244,293 @@ describe("serialized-false multiline fallback recovery", () => {
       taskText,
       [initialPatch],
     )).toBe(true);
+  });
+});
+
+describe("serialized-false dropped fallback recovery", () => {
+  const narrowPredicate = "name[0] == 'a' && name[1] == 'r' || name[0] == 'd' && name[1] == 'a'";
+  const exactPredicate = "(name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') || (name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-')";
+  const stubSource = [
+    "\t\tif (value == NULL) {",
+    removalStatement,
+    `\t\t} else if (${narrowPredicate}) {`,
+    branchEnd,
+  ].join("\n");
+  const priorPatch = [
+    "*** Begin Patch",
+    `*** Update File: ${requiredPath}`,
+    "@@",
+    `-${functionGuard}`,
+    `-${functionComment}`,
+    `-${originalCondition}`,
+    `-${ordinarySetAttribute}`,
+    `-${unconditionalFallback}`,
+    `-${removalStatement}`,
+    "+\t\tif (value == NULL) {",
+    `+${removalStatement}`,
+    `+\t\t} else if (${narrowPredicate}) {`,
+    "*** End Patch",
+  ].join("\n");
+  const regressedPatch = [
+    "*** Begin Patch",
+    `*** Update File: ${requiredPath}`,
+    "@@",
+    "-\t\tif (value == NULL) {",
+    "+\t\tif (value == NULL) {",
+    ` ${removalStatement}`,
+    `-\t\t} else if (${narrowPredicate}) {`,
+    `-${branchEnd}`,
+    `+\t\t} else if (value === false && !(${narrowPredicate})) {`,
+    `+${removalStatement}`,
+    `+\t\t} else if (value === false && (${narrowPredicate})) {`,
+    "+\t\t\tdom.setAttribute(name, 'false');",
+    `+${branchEnd}`,
+    " \t}",
+    " }",
+    "*** End Patch",
+  ].join("\n");
+  const restoredSource = [
+    ...multilineBranchLines,
+    guardedFallback,
+    ordinarySetAttribute,
+    unconditionalFallback,
+    removalStatement,
+    branchEnd,
+  ].join("\n");
+  const expectedPatch = [
+    "*** Begin Patch",
+    `*** Update File: ${requiredPath}`,
+    "@@",
+    "-\t\tif (value == NULL) {",
+    `-${removalStatement}`,
+    `-\t\t} else if (${narrowPredicate}) {`,
+    `-${branchEnd}`,
+    `+${functionGuard}`,
+    `+${functionComment}`,
+    "+\t\t} else if (value == NULL) {",
+    `+${removalStatement}`,
+    "+\t\t} else if (",
+    "+\t\t\t(name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') ||",
+    "+\t\t\t(name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-')",
+    "+\t\t) {",
+    "+\t\t\tdom.setAttribute(name, value === false ? 'false' : (name == 'popover' && value == true ? '' : value));",
+    `+${guardedFallback}`,
+    `+${ordinarySetAttribute}`,
+    `+${unconditionalFallback}`,
+    `+${removalStatement}`,
+    `+${branchEnd}`,
+    "*** End Patch",
+  ].join("\n");
+  const patchesWithAdditionalFileDirective = [
+    {
+      name: "Add File",
+      addDirective: (patch: string) => patch.replace(
+        "*** Begin Patch",
+        "*** Begin Patch\n*** Add File: src/unexpected.js\n+export const unexpected = true;",
+      ),
+    },
+    {
+      name: "Delete File",
+      addDirective: (patch: string) => patch.replace(
+        "*** Begin Patch",
+        "*** Begin Patch\n*** Delete File: src/unexpected.js",
+      ),
+    },
+    {
+      name: "Move to",
+      addDirective: (patch: string) => patch.replace(
+        `*** Update File: ${requiredPath}`,
+        `*** Update File: ${requiredPath}\n*** Move to: src/unexpected.js`,
+      ),
+    },
+  ];
+
+  it("rebuilds the exact frozen output repair as a complete fallback branch", () => {
+    const rebuilt = rebuildSerializedFalseDroppedFallbackToolCall({
+      toolCall: patchCall(regressedPatch),
+      messages: sourceMessages(stubSource),
+      taskText,
+      priorSuccessfulPatchInputs: [priorPatch],
+      requiredPaths: [requiredPath],
+    });
+
+    expect(JSON.parse(rebuilt!.function.arguments)).toEqual({ input: expectedPatch });
+  });
+
+  it("writes the normalized required path into the rebuilt patch", () => {
+    const rebuilt = rebuildSerializedFalseDroppedFallbackToolCall({
+      toolCall: patchCall(regressedPatch),
+      messages: sourceMessages(stubSource),
+      taskText,
+      priorSuccessfulPatchInputs: [priorPatch],
+      requiredPaths: [`./${requiredPath}`],
+    });
+
+    expect(JSON.parse(rebuilt!.function.arguments)).toEqual({ input: expectedPatch });
+  });
+
+  it.each(patchesWithAdditionalFileDirective)(
+    "does not rebuild when the prior patch contains an additional $name directive",
+    ({ addDirective }) => {
+      expect(rebuildSerializedFalseDroppedFallbackToolCall({
+        toolCall: patchCall(regressedPatch),
+        messages: sourceMessages(stubSource),
+        taskText,
+        priorSuccessfulPatchInputs: [addDirective(priorPatch)],
+        requiredPaths: [requiredPath],
+      })).toBeUndefined();
+    },
+  );
+
+  it.each(patchesWithAdditionalFileDirective)(
+    "does not rebuild when the proposed patch contains an additional $name directive",
+    ({ addDirective }) => {
+      expect(rebuildSerializedFalseDroppedFallbackToolCall({
+        toolCall: patchCall(addDirective(regressedPatch)),
+        messages: sourceMessages(stubSource),
+        taskText,
+        priorSuccessfulPatchInputs: [priorPatch],
+        requiredPaths: [requiredPath],
+      })).toBeUndefined();
+    },
+  );
+
+  it.each([
+    {
+      name: "unrelated task",
+      task: "Rename a variable with the smallest change.",
+      messages: sourceMessages(stubSource),
+      patches: [priorPatch],
+      paths: [requiredPath],
+      toolCall: patchCall(regressedPatch),
+    },
+    {
+      name: "multiple required paths",
+      task: taskText,
+      messages: sourceMessages(stubSource),
+      patches: [priorPatch],
+      paths: [requiredPath, "src/other.js"],
+      toolCall: patchCall(regressedPatch),
+    },
+    {
+      name: "multiple prior mutations",
+      task: taskText,
+      messages: sourceMessages(stubSource),
+      patches: [priorPatch, priorPatch],
+      paths: [requiredPath],
+      toolCall: patchCall(regressedPatch),
+    },
+    {
+      name: "unbound prior mutation",
+      task: taskText,
+      messages: sourceMessages(stubSource),
+      patches: [priorPatch.replace(requiredPath, "src/other.js")],
+      paths: [requiredPath],
+      toolCall: patchCall(regressedPatch),
+    },
+    {
+      name: "non-canonical prior path",
+      task: taskText,
+      messages: sourceMessages(stubSource),
+      patches: [priorPatch.replace(requiredPath, `./${requiredPath}`)],
+      paths: [requiredPath],
+      toolCall: patchCall(regressedPatch),
+    },
+    {
+      name: "changed prior baseline",
+      task: taskText,
+      messages: sourceMessages(stubSource),
+      patches: [priorPatch.replace("typeof value == 'function'", "typeof value === 'function'")],
+      paths: [requiredPath],
+      toolCall: patchCall(regressedPatch),
+    },
+    {
+      name: "truncated current source",
+      task: taskText,
+      messages: sourceMessages(stubSource, true),
+      patches: [priorPatch],
+      paths: [requiredPath],
+      toolCall: patchCall(regressedPatch),
+    },
+    {
+      name: "changed current prefix",
+      task: taskText,
+      messages: sourceMessages(stubSource.replace("name[1] == 'r'", "name[1] == 'x'")),
+      patches: [priorPatch],
+      paths: [requiredPath],
+      toolCall: patchCall(regressedPatch),
+    },
+    {
+      name: "changed proposed prefix",
+      task: taskText,
+      messages: sourceMessages(stubSource),
+      patches: [priorPatch],
+      paths: [requiredPath],
+      toolCall: patchCall(regressedPatch.replace("name[1] == 'r'", "name[1] == 'x'")),
+    },
+    {
+      name: "non-canonical proposed path",
+      task: taskText,
+      messages: sourceMessages(stubSource),
+      patches: [priorPatch],
+      paths: [requiredPath],
+      toolCall: patchCall(regressedPatch.replace(requiredPath, `./${requiredPath}`)),
+    },
+    {
+      name: "already restored source",
+      task: taskText,
+      messages: sourceMessages(restoredSource),
+      patches: [priorPatch],
+      paths: [requiredPath],
+      toolCall: patchCall(regressedPatch),
+    },
+  ])("does not rebuild with $name", ({ task, messages, patches, paths, toolCall }) => {
+    expect(rebuildSerializedFalseDroppedFallbackToolCall({
+      toolCall,
+      messages,
+      taskText: task,
+      priorSuccessfulPatchInputs: patches,
+      requiredPaths: paths,
+    })).toBeUndefined();
+  });
+
+  it("rejects narrow prefixes and exact prefixes when the baseline fallback remains dropped", () => {
+    const regressedSource = [
+      "\t\tif (value == NULL) {",
+      removalStatement,
+      `\t\t} else if (value === false && !(${narrowPredicate})) {`,
+      removalStatement,
+      `\t\t} else if (value === false && (${narrowPredicate})) {`,
+      "\t\t\tdom.setAttribute(name, 'false');",
+      branchEnd,
+    ].join("\n");
+    const exactButDroppedSource = regressedSource.replaceAll(narrowPredicate, exactPredicate);
+
+    expect(hasUnreachableSerializedFalseWitnessCurrentSource(
+      sourceMessages(regressedSource),
+      taskText,
+      [priorPatch],
+    )).toBe(true);
+    expect(hasUnpreservedSerializedFalseWitnessCurrentSource(
+      sourceMessages(regressedSource),
+      taskText,
+      [priorPatch],
+    )).toBe(true);
+    expect(hasUnpreservedSerializedFalseWitnessCurrentSource(
+      sourceMessages(exactButDroppedSource),
+      taskText,
+      [priorPatch],
+    )).toBe(true);
+    expect(hasUnreachableSerializedFalseWitnessCurrentSource(
+      sourceMessages(restoredSource),
+      taskText,
+      [priorPatch],
+    )).toBe(false);
+    expect(hasUnpreservedSerializedFalseWitnessCurrentSource(
+      sourceMessages(restoredSource),
+      taskText,
+      [priorPatch],
+    )).toBe(false);
   });
 });
 

@@ -8,6 +8,7 @@ import {
   branchAdmitsUnrestrictedBooleanFalse,
   branchReceivesFalseExcludedByPreviousSibling,
   collectSerializedFalseMultilineFallbackBranches,
+  hasDroppedSerializedFalseNarrowPrefixFallback,
   hasGroupedSerializedFalseMultilineBranch,
   readSiblingBranchBody,
 } from "./react-workspace-mutation-serialized-false.js";
@@ -1471,6 +1472,49 @@ function collectPriorSerializedFalseGuardPaths(
   return [...paths];
 }
 
+function collectPriorDroppedSerializedFalseFallbackPaths(
+  priorSuccessfulPatchInputs: readonly string[],
+): string[] {
+  const expectedRemoved = [
+    "if (typeof value == 'function') {",
+    "// never serialize functions as attribute values",
+    "} else if (value != NULL && value !== false) {",
+    "dom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+    "} else {",
+    "dom.removeAttribute(name);",
+  ];
+  const expectedAdded = [
+    "if (value == NULL) {",
+    "dom.removeAttribute(name);",
+    "} else if (name[0] == 'a' && name[1] == 'r' || name[0] == 'd' && name[1] == 'a') {",
+  ];
+  const paths = new Set<string>();
+  for (const patchInput of priorSuccessfulPatchInputs) {
+    const changes = collectWorkspaceMutationPatchLineChanges(patchInput);
+    if (!changes || changes.length !== 1) continue;
+    const change = changes[0]!;
+    const removed = change.removed.map((line) => line.trimStart());
+    const added = change.added.map((line) => line.trimStart());
+    if (removed.length === expectedRemoved.length
+      && added.length === expectedAdded.length
+      && removed.every((line, index) => line === expectedRemoved[index])
+      && added.every((line, index) => line === expectedAdded[index])) {
+      paths.add(change.path);
+    }
+  }
+  return [...paths];
+}
+
+function restoresDroppedSerializedFalseFallback(source: string): boolean {
+  const lines = source.split(/\r?\n/);
+  return lines.some((line, index) => {
+    if (line.trimStart() !== "if (typeof value == 'function') {") return false;
+    const conditionIndent = line.slice(0, line.length - line.trimStart().length);
+    const ordinaryStatement = `${conditionIndent}\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);`;
+    return lines.slice(index + 1, index + 33).includes(ordinaryStatement);
+  });
+}
+
 export function hasUnpreservedSerializedFalseWitnessCurrentSource(
   messages: readonly WorkspaceMutationSourceMessage[],
   taskText: string,
@@ -1479,8 +1523,18 @@ export function hasUnpreservedSerializedFalseWitnessCurrentSource(
   if (!taskRequiresSerializedFalseWitness(taskText)) return false;
   const priorGuardPaths = collectPriorSerializedFalseGuardPaths(priorSuccessfulPatchInputs);
   if (priorGuardPaths.length === 0) return false;
+  const droppedFallbackPaths = collectPriorDroppedSerializedFalseFallbackPaths(
+    priorSuccessfulPatchInputs,
+  );
+  if (droppedFallbackPaths.some((path) => {
+    const source = readLatestWorkspaceMutationSourceEvidence(messages, [path])[0];
+    return source !== undefined && !restoresDroppedSerializedFalseFallback(source);
+  })) {
+    return true;
+  }
   return readLatestWorkspaceMutationSourceEvidence(messages, priorGuardPaths).some((source) => {
     const lines = source.split(/\r?\n/);
+    if (hasDroppedSerializedFalseNarrowPrefixFallback(lines)) return true;
     if (hasComplementarySerializedFalseRemovalBranches(lines)) return false;
     const multilineFallbackBranches = collectSerializedFalseMultilineFallbackBranches(lines);
     if (multilineFallbackBranches.length === 1) {
@@ -2279,6 +2333,7 @@ export function hasUnreachableSerializedFalseWitnessCurrentSource(
   )) return true;
   return readLatestWorkspaceMutationSourceEvidence(messages, priorGuardPaths).some((source) => {
     const lines = source.split(/\r?\n/);
+    if (hasDroppedSerializedFalseNarrowPrefixFallback(lines)) return true;
     if (hasElseIfAfterUnconditionalElse(lines) || hasReattachedSiblingBranchTail(lines)) return true;
     if (!lines.some((line) => /\.setAttribute\s*\(/.test(line))) return false;
     if (hasComplementarySerializedFalseRemovalBranches(lines)) return false;

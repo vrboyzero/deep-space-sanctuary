@@ -49,6 +49,10 @@ const MULTILINE_DATA_PREFIX_PREDICATE = "(name[0] == 'd' && name[1] == 'a' && na
 const MULTILINE_SERIALIZED_FALSE_STATEMENT = "dom.setAttribute(name, value === false ? 'false' : (name == 'popover' && value == true ? '' : value));";
 const NULLISH_REMOVAL_CONDITION_SUFFIX = "} else if (value == NULL) {";
 const GUARDED_ORDINARY_FALLBACK_SUFFIX = "} else if (value !== false) {";
+const DROPPED_FALLBACK_NULLISH_CONDITION_SUFFIX = "if (value == NULL) {";
+const DROPPED_FALLBACK_NARROW_PREFIX_PREDICATE = "name[0] == 'a' && name[1] == 'r' || name[0] == 'd' && name[1] == 'a'";
+const DROPPED_FALLBACK_NARROW_PREFIX_STUB_SUFFIX = `} else if (${DROPPED_FALLBACK_NARROW_PREFIX_PREDICATE}) {`;
+const DROPPED_FALLBACK_NARROW_FALSE_REMOVAL_SUFFIX = `} else if (value === false && !(${DROPPED_FALLBACK_NARROW_PREFIX_PREDICATE})) {`;
 
 type NullishSerializationBranch = {
   condition: string;
@@ -111,6 +115,15 @@ type InitialSerializedFalseBranch = {
   removalStatement: string;
   branchEnd: string;
   conditionIndent: string;
+};
+
+type DroppedFallbackNarrowPrefixStub = {
+  nullishCondition: string;
+  removalStatement: string;
+  prefixCondition: string;
+  branchEnd: string;
+  conditionIndent: string;
+  statementIndent: string;
 };
 
 type PostWriteSiblingSerializedFalseBranch = {
@@ -295,6 +308,83 @@ export function rebuildSerializedFalseNarrowArPrefixToolCall<
     `-${branch.serializationStatement}`,
     `+${branch.conditionIndent}${BASELINE_SERIALIZED_FALSE_CONDITION_SUFFIX}`,
     `+${branch.statementIndent}${EXISTING_ATTRIBUTE_STATEMENT}`,
+    "*** End Patch",
+  ].join(lineEnding);
+  return {
+    ...input.toolCall,
+    function: {
+      ...input.toolCall.function,
+      arguments: JSON.stringify({ input: patch }),
+    },
+  } as T;
+}
+
+export function rebuildSerializedFalseDroppedFallbackToolCall<
+  T extends { function: { name: string; arguments: string } },
+>(input: {
+  toolCall: T;
+  messages: readonly SourceMessage[];
+  taskText: string;
+  priorSuccessfulPatchInputs: readonly string[];
+  requiredPaths: readonly string[];
+}): T | undefined {
+  if (input.toolCall.function.name !== "apply_patch"
+    || input.requiredPaths.length !== 1
+    || !requiresSerializedFalseTruthSet(input.taskText)) {
+    return undefined;
+  }
+  const requiredPath = normalizePath(input.requiredPaths[0] ?? "");
+  const priorMatches = requiredPath && priorPatchReplacedBaselineWithNarrowPrefixStub(
+    input.priorSuccessfulPatchInputs,
+    requiredPath,
+  );
+  if (!requiredPath || !priorMatches) {
+    return undefined;
+  }
+  const source = readCompleteSource(input.messages, requiredPath);
+  if (!source) return undefined;
+  const stubs = collectDroppedFallbackNarrowPrefixStubs(source);
+  if (stubs.length !== 1) return undefined;
+  const stub = stubs[0]!;
+  if (!toolCallHasSingleRequiredPathUpdateDirective(input.toolCall, requiredPath)
+    || !toolCallHasContiguousRequiredPathLines(input.toolCall, requiredPath, [
+    `-${stub.nullishCondition}`,
+    `+${stub.nullishCondition}`,
+    ` ${stub.removalStatement}`,
+    `-${stub.prefixCondition}`,
+    `-${stub.branchEnd}`,
+    `+${stub.conditionIndent}${DROPPED_FALLBACK_NARROW_FALSE_REMOVAL_SUFFIX}`,
+    `+${stub.removalStatement}`,
+    `+${stub.conditionIndent}${INITIAL_NARROW_PREFIX_SERIALIZED_FALSE_CONDITION_SUFFIX}`,
+    `+${stub.statementIndent}${SERIALIZED_FALSE_LITERAL_STATEMENT}`,
+    `+${stub.branchEnd}`,
+  ])) {
+    return undefined;
+  }
+
+  const lineEnding = source.includes("\r\n") ? "\r\n" : "\n";
+  const patch = [
+    "*** Begin Patch",
+    `*** Update File: ${requiredPath}`,
+    "@@",
+    `-${stub.nullishCondition}`,
+    `-${stub.removalStatement}`,
+    `-${stub.prefixCondition}`,
+    `-${stub.branchEnd}`,
+    `+${stub.conditionIndent}${FUNCTION_ATTRIBUTE_GUARD_SUFFIX}`,
+    `+${stub.statementIndent}${FUNCTION_ATTRIBUTE_COMMENT}`,
+    `+${stub.conditionIndent}${NULLISH_REMOVAL_CONDITION_SUFFIX}`,
+    `+${stub.removalStatement}`,
+    `+${stub.conditionIndent}${MULTILINE_SERIALIZED_FALSE_CONDITION_START_SUFFIX}`,
+    `+${stub.statementIndent}${MULTILINE_ARIA_PREFIX_PREDICATE}`,
+    `+${stub.statementIndent}${MULTILINE_DATA_PREFIX_PREDICATE}`,
+    `+${stub.conditionIndent}${MULTILINE_SERIALIZED_FALSE_CONDITION_END_SUFFIX}`,
+    `+${stub.statementIndent}${MULTILINE_SERIALIZED_FALSE_STATEMENT}`,
+    `+${stub.conditionIndent}${GUARDED_ORDINARY_FALLBACK_SUFFIX}`,
+    `+${stub.statementIndent}${EXISTING_ATTRIBUTE_STATEMENT}`,
+    `+${stub.conditionIndent}} else {`,
+    `+${stub.removalStatement}`,
+    `+${stub.branchEnd}`,
     "*** End Patch",
   ].join(lineEnding);
   return {
@@ -892,6 +982,31 @@ function priorPatchAddedNarrowPrefixSerializedFalseBranch(
   ));
 }
 
+function priorPatchReplacedBaselineWithNarrowPrefixStub(
+  patchInputs: readonly string[],
+  requiredPath: string,
+): boolean {
+  if (patchInputs.length !== 1) return false;
+  const patchInput = patchInputs[0]!;
+  const change = readSingleRequiredPathPatchChange({
+    function: { arguments: JSON.stringify({ input: patchInput }) },
+  }, requiredPath);
+  if (!change) return false;
+  const normalizeLines = (lines: readonly string[]) => lines.map((line) => line.trimStart());
+  return JSON.stringify(normalizeLines(change.removed)) === JSON.stringify([
+    FUNCTION_ATTRIBUTE_GUARD_SUFFIX,
+    FUNCTION_ATTRIBUTE_COMMENT,
+    PREVIOUS_SERIALIZED_FALSE_CONDITION_SUFFIX,
+    EXISTING_ATTRIBUTE_STATEMENT,
+    "} else {",
+    EXISTING_REMOVAL_STATEMENT,
+  ]) && JSON.stringify(normalizeLines(change.added)) === JSON.stringify([
+    DROPPED_FALLBACK_NULLISH_CONDITION_SUFFIX,
+    EXISTING_REMOVAL_STATEMENT,
+    DROPPED_FALLBACK_NARROW_PREFIX_STUB_SUFFIX,
+  ]);
+}
+
 function priorPatchAddedPostWriteSiblingSerializedFalseBranch(
   patchInput: string,
   requiredPath: string,
@@ -1084,6 +1199,36 @@ function collectNarrowPrefixSerializedFalseBranches(
   });
 }
 
+function collectDroppedFallbackNarrowPrefixStubs(
+  source: string,
+): DroppedFallbackNarrowPrefixStub[] {
+  const lines = source.split(/\r?\n/);
+  return lines.flatMap((nullishCondition, index) => {
+    if (nullishCondition.trimStart() !== DROPPED_FALLBACK_NULLISH_CONDITION_SUFFIX) return [];
+    const conditionIndent = nullishCondition.slice(
+      0,
+      nullishCondition.length - nullishCondition.trimStart().length,
+    );
+    const statementIndent = `${conditionIndent}\t`;
+    const removalStatement = lines[index + 1] ?? "";
+    const prefixCondition = lines[index + 2] ?? "";
+    const branchEnd = lines[index + 3] ?? "";
+    if (removalStatement !== `${statementIndent}${EXISTING_REMOVAL_STATEMENT}`
+      || prefixCondition !== `${conditionIndent}${DROPPED_FALLBACK_NARROW_PREFIX_STUB_SUFFIX}`
+      || branchEnd !== `${conditionIndent}}`) {
+      return [];
+    }
+    return [{
+      nullishCondition,
+      removalStatement,
+      prefixCondition,
+      branchEnd,
+      conditionIndent,
+      statementIndent,
+    }];
+  });
+}
+
 function collectInitialSerializedFalseBranches(source: string): InitialSerializedFalseBranch[] {
   const lines = source.split(/\r?\n/);
   return lines.flatMap((functionGuard, index) => {
@@ -1198,6 +1343,7 @@ function readSingleRequiredPathPatchChange(
     return undefined;
   }
   if (typeof patch !== "string") return undefined;
+  if (!patchHasSingleRequiredPathUpdateDirective(patch, requiredPath)) return undefined;
   let currentPath = "";
   let sectionCount = 0;
   const removed: string[] = [];
@@ -1220,6 +1366,32 @@ function readSingleRequiredPathPatchChange(
   return sectionCount === 1 && removed.length > 0 && added.length > 0
     ? { removed, added, context }
     : undefined;
+}
+
+function toolCallHasSingleRequiredPathUpdateDirective(
+  toolCall: { function: { arguments: string } },
+  requiredPath: string,
+): boolean {
+  try {
+    const args = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
+    return typeof args.input === "string"
+      && patchHasSingleRequiredPathUpdateDirective(args.input, requiredPath);
+  } catch {
+    return false;
+  }
+}
+
+function patchHasSingleRequiredPathUpdateDirective(
+  patch: string,
+  requiredPath: string,
+): boolean {
+  const fileDirectives = patch.split(/\r?\n/).filter((line) =>
+    line.startsWith("*** Update File: ")
+    || line.startsWith("*** Add File: ")
+    || line.startsWith("*** Delete File: ")
+    || line.startsWith("*** Move to: "));
+  return fileDirectives.length === 1
+    && fileDirectives[0] === `*** Update File: ${requiredPath}`;
 }
 
 function toolCallHasContiguousRequiredPathLines(
