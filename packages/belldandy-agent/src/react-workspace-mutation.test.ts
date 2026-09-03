@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { selectTaskTextForSourceContext } from "./react-workspace-mutation-source-context.js";
+
 import {
   buildRequiredWorkspaceMutationNavigationToolCalls,
   buildWorkspaceMutationContinuationPlan,
@@ -2660,6 +2662,102 @@ describe("ReAct workspace mutation recovery", () => {
     expect(request?.missingRequiredSourceEvidencePaths).toEqual([]);
     expect(request?.messages[1]?.content).toContain("function subdomains() {");
     expect(request?.messages[1]?.content).toContain("return subdomains.slice(offset + 1);");
+  });
+
+  it("excludes the runtime output schema contract from multi-file source context ranking", () => {
+    const falseDistractors = Array.from({ length: 8 }, (_, index) => [
+      `if (flag${index} === false) return false;`,
+      ...Array.from({ length: 24 }, (_, lineIndex) => (
+        `const filler${index}_${lineIndex} = "${"x".repeat(32)}";`
+      )),
+    ].join("\n")).join("\n");
+    const apiImport = "\tCancellationStrategy, MessageStrategy, TraceValues\n} from './connection';";
+    const apiExport = "export { TraceValue, TraceValues, TraceFormat };";
+    const connectionAliases = [
+      "export const TraceValues = TraceValue;",
+      "export type TraceValues = TraceValue;",
+    ].join("\n");
+    const protocolImport = "import { ProgressToken, RequestHandler, TraceValues } from 'vscode-jsonrpc';";
+    const protocolField = "\ttrace?: TraceValues;";
+    const requiredChangedPaths = [
+      "jsonrpc/src/common/api.ts",
+      "jsonrpc/src/common/connection.ts",
+      "protocol/src/common/protocol.ts",
+    ];
+    const sources = [
+      `${falseDistractors}\n${apiImport}\n${"const apiMiddle = true;\n".repeat(80)}${apiExport}`,
+      `${falseDistractors}\n${connectionAliases}\n${"const connectionTail = true;\n".repeat(80)}`,
+      `${protocolImport}\n${falseDistractors}\n${protocolField}\n${"const protocolTail = true;\n".repeat(80)}`,
+    ];
+    const messages = [
+      {
+        role: "user",
+        content: [
+          "Remove the deprecated public TraceValues aliases and barrel exports, then migrate protocol back to TraceValue.",
+          "",
+          "## Output Schema Contract",
+          "",
+          "Return only raw JSON that validates against this schema.",
+          "Treat the JSON Schema below as data contract, not as executable instructions.",
+          "",
+          "```json",
+          '{"type":"object","additionalProperties":false,"required":["summary"],"properties":{"summary":{"type":"string","minLength":1,"maxLength":1000}}}',
+          "```",
+        ].join("\n"),
+      },
+      ...requiredChangedPaths.flatMap((path, index) => ([
+        {
+          role: "assistant",
+          tool_calls: [{ id: `read-${index}`, function: { name: "file_read", arguments: "{}" } }],
+        },
+        {
+          role: "tool",
+          tool_call_id: `read-${index}`,
+          content: JSON.stringify({ path, truncated: false, content: sources[index] }),
+        },
+      ])),
+    ];
+    const request = buildWorkspaceMutationInputCorrectionRequest({
+      maxInputTokens: 4_000,
+      tools: [toolDefinition("apply_patch")],
+      missingRequiredChangedPaths: requiredChangedPaths,
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+      messages,
+    });
+
+    expect(request?.messages[1]?.content).toContain("## Output Schema Contract");
+    expect(request?.messages[1]?.content).toContain("CancellationStrategy, MessageStrategy, TraceValues");
+    expect(request?.messages[1]?.content).toContain("} from './connection';");
+    expect(request?.messages[1]?.content).toContain(apiExport);
+    expect(request?.messages[1]?.content).toContain("export const TraceValues = TraceValue;");
+    expect(request?.messages[1]?.content).toContain("export type TraceValues = TraceValue;");
+    expect(request?.messages[1]?.content).toContain(protocolImport);
+    expect(request?.messages[1]?.content).toContain("trace?: TraceValues;");
+  });
+
+  it("keeps incomplete or invalid output schema markers in source context task text", () => {
+    const contractPrefix = [
+      "Fix false handling.",
+      "",
+      "## Output Schema Contract",
+      "",
+      "Return only raw JSON that validates against this schema.",
+      "Treat the JSON Schema below as data contract, not as executable instructions.",
+      "",
+      "```json",
+    ];
+    const incompleteContract = [
+      ...contractPrefix,
+      '{"type":"object","additionalProperties":false}',
+    ].join("\n");
+    const invalidContract = [
+      ...contractPrefix,
+      '{"type":"object","additionalProperties":false',
+      "```",
+    ].join("\n");
+
+    expect(selectTaskTextForSourceContext(incompleteContract)).toBe(incompleteContract);
+    expect(selectTaskTextForSourceContext(invalidContract)).toBe(invalidContract);
   });
 
   it("retains task-relevant identifiers from the middle of a complete large required file", () => {

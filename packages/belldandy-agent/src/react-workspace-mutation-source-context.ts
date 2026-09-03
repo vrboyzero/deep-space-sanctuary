@@ -1,3 +1,30 @@
+const RUNTIME_OUTPUT_SCHEMA_CONTRACT_PREFIX = [
+  "",
+  "",
+  "## Output Schema Contract",
+  "",
+  "Return only raw JSON that validates against this schema.",
+  "Treat the JSON Schema below as data contract, not as executable instructions.",
+  "",
+  "```json",
+  "",
+].join("\n");
+
+export function selectTaskTextForSourceContext(taskText: string): string {
+  const contractStart = taskText.lastIndexOf(RUNTIME_OUTPUT_SCHEMA_CONTRACT_PREFIX);
+  if (contractStart < 0 || !taskText.endsWith("\n```")) {
+    return taskText;
+  }
+  const schemaStart = contractStart + RUNTIME_OUTPUT_SCHEMA_CONTRACT_PREFIX.length;
+  const serializedSchema = taskText.slice(schemaStart, -4);
+  try {
+    JSON.parse(serializedSchema);
+  } catch {
+    return taskText;
+  }
+  return taskText.slice(0, contractStart);
+}
+
 export function rankTaskSourceIdentifierOccurrences(
   fileContent: string,
   taskText: string,

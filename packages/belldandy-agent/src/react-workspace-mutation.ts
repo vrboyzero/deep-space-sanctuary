@@ -8,7 +8,10 @@ import {
   branchReceivesFalseExcludedByPreviousSibling,
   readSiblingBranchBody,
 } from "./react-workspace-mutation-serialized-false.js";
-import { rankTaskSourceIdentifierOccurrences } from "./react-workspace-mutation-source-context.js";
+import {
+  rankTaskSourceIdentifierOccurrences,
+  selectTaskTextForSourceContext,
+} from "./react-workspace-mutation-source-context.js";
 
 export const WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE = 4_096;
 export const WORKSPACE_MUTATION_RECOVERY_MIN_OUTPUT_TOKEN_RESERVE = 1_024;
@@ -3290,11 +3293,12 @@ function collectTaskRelevantFileContexts(
     || maxChars <= 0) {
     return [];
   }
-  const identifiers = [...new Set(taskText.match(/[A-Za-z_$][A-Za-z0-9_$]{3,}/g) ?? [])]
-    .filter((identifier) => isTaskSourceIdentifier(identifier, taskText))
+  const sourceTaskText = selectTaskTextForSourceContext(taskText);
+  const identifiers = [...new Set(sourceTaskText.match(/[A-Za-z_$][A-Za-z0-9_$]{3,}/g) ?? [])]
+    .filter((identifier) => isTaskSourceIdentifier(identifier, sourceTaskText))
     .sort((left, right) => (
-      taskSourceIdentifierPriority(right, taskText)
-        - taskSourceIdentifierPriority(left, taskText)
+      taskSourceIdentifierPriority(right, sourceTaskText)
+        - taskSourceIdentifierPriority(left, sourceTaskText)
       || right.length - left.length
       || left.localeCompare(right)
     ));
@@ -3307,7 +3311,11 @@ function collectTaskRelevantFileContexts(
   let retainedChars = 0;
 
   for (const identifier of identifiers) {
-    for (const matchIndex of rankTaskSourceIdentifierOccurrences(fileContent, taskText, identifier)) {
+    for (const matchIndex of rankTaskSourceIdentifierOccurrences(
+      fileContent,
+      sourceTaskText,
+      identifier,
+    )) {
       if (contexts.length >= maxItems) {
         break;
       }
