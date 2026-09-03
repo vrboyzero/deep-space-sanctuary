@@ -12696,6 +12696,42 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：同一平台同一 attempt 顺序推进可最小化工具链切换和恢复歧义，并尽早暴露 Windows 产品失败或 infrastructure failure；任一无报告/infrastructure 情况仍会保守预留 `$0.10` 并停止。
 - **当前还缺的关键闭环**：Windows attempt 1 剩余 `23` 项、其余 `120` 个双平台槽位、完整 aggregate/失败归类/资格评分，以及第二个连续达标候选。
 
+#### P2-C Windows attempt 1 扩展前 Gate 结论：resume-state 与六项静默性复核（2026-09-03）
+
+##### 已完成内容
+
+1. **`tmp/verify-p2c-resume-state-c02eef7.mjs` 新建**：
+   - 为首个 report 已存在后的恢复场景重建全部 `144` 个 plan slot，并继续调用 production run validator；
+   - 每个槽位只接受“global ledger 已处理且 report hash/identity/单 run 外键一致”或“未处理且目标不存在”，拒绝游离报告、缺失报告和并发漂移；
+   - 当前复核 reports/unique IDs/unique paths=`144/144/144`、processed/remaining=`1/143`。
+
+2. **双平台 identity 与费用 Gate 复核**：
+   - Windows/WSL2 production resolver 均返回 clean commit=`c02eef7…`、lockfile=`844c0021…`、worktree=`cfe97460…`；
+   - 正式 launcher `-CostGuardCheckOnly` 返回 observed=`$2.37541513`、reserved=`$2.04221000`、processed=`1`；
+   - 下一单最坏=`36.14100104 RMB < 80 RMB`，single-run 上限仍为 `$0.10`。
+
+3. **串行资源静默性 Gate**：
+   - Windows/WSL2 `28891/28892` listener=`0/0`；
+   - Windows candidate/benchmark processes=`0`，WSL2 candidate/benchmark processes=`0`，两项进程检查均为独立调用；
+   - pinned OCI image ID 与 RepoDigest 精确匹配 `sha256:62f550…`，活动容器=`0`，未执行 pull/retag。
+
+4. **效果**：
+   - Windows attempt 1 剩余批次的 plan、identity、费用与宿主资源前置均已重新闭合；
+   - 首跑前 verifier 保持严格不存在性合同，恢复场景由独立只读 verifier 承担，没有放宽预冻结分母；
+   - 当前未新增 Provider 调用或费用，coverage 保持 `1/144`。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节未修改 TypeScript；冻结双平台 staging 最近一次完整 build 仍为通过；
+- resume-state verifier syntax/runtime=`1/1 passed`（本环节新增产品测试=`0`），production identity=`2/2`、费用 Gate=`1/1`；
+- ports/processes/OCI 六项复核全部通过；WSL `ps` 仅保留已记录的 PTY 尺寸 warning，不影响 exit code 与零匹配结论。
+
+##### 后续计划
+
+- **下一步准备做什么**：以 `-Platform windows-native -StartAttempt 1 -EndAttempt 1 -MaxNewRuns 23` 恢复执行，launcher 将跳过 ledger 中 canary，并在每个新 run 前重算费用、每个 report 后先写 global ledger；任一 infrastructure/no-report/usage 不完整立即停止并回写。
+- **为什么先做它**：当前六项 Gate 已是紧邻执行的最新证据；一次只扩展 Windows attempt 1 能在平台切换前形成完整 `24/24` 横截面，同时保留逐 run 可恢复点。
+- **当前还缺的关键闭环**：Windows attempt 1 的 `23` 个计划报告及逐项终态、环境清理与后置静默性，随后才是 attempt 2/3、WSL2 三轮、aggregate/资格评分和第二候选。
+
 #### 后续工作量估算
 
 **本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；CLI/TUI 双平台首帧与退出收敛也已修复并通过真实 PTY 验证；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
@@ -12789,3 +12825,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 46、恢复后的 canary 环境文件元数据探针再次把 `foreach { ... }` 后直接连接 `| Format-List`，第三次触发 PowerShell `An empty pipe element is not allowed`；该命令在解析阶段失败，未读取环境文件正文、未清理文件也未改变 artifact。根因是虽然问题 37/41 已记录正确写法，但临时命令仍允许自由拼接同一错误结构，文档提示没有成为可执行模板。处理方案已落实：本轮所有后续逐项检查只使用 `foreach` 内 `Write-Output`，需要格式化时先赋值数组再单独 pipeline；正式 cleanup 逻辑已落入 parser=`0 errors` 的独立脚本，按两个既定 hash 验证并回收成功。该重复语法模式从此不得再以内联 `foreach | ...` 形式生成。
 47、canary 声明 artifact 的首次独立复核把 `run.artifacts` 的七个路径字符串误当成 `{ path, sha256 }` 对象解析，因空 `.path` 产生虚假的 `missing=7` 并以 exit code=`1` 结束；报告、artifact 与 ledger 均未被修改。根因是没有先检查 v3 report 的字段形状，就沿用了其他 receipt 的对象式 artifact 假设。处理方案是先输出属性类型/键，再按报告目录解析七个相对路径字符串；修正后 declared=`7`、missing=`0`。后续 source report 只按其 v3 Schema/生产 verifier 验真，artifact 内容 hash 由各自 owner/aggregate 合同复算，不再臆造当前字段不存在的 per-entry hash。
 48、canary 文档 checkpoint 提交前的 staged 文件保护错误拒绝了正确的单文件清单：`git diff --cached --name-only` 在默认 `core.quotePath=true` 下把中文路径输出为带引号的八进制转义文本，直接与未转义路径比较必然不等。失败发生在 `git commit` 之前，staged 文档保持完整，`tmp-codeintel-summary.json` 仍未暂存。处理方案是使用 `git -c core.quotePath=false diff --cached --name-only` 获取可比较路径，并继续要求清单恰为唯一计划文档后才提交；不取消或绕过单文件保护。
+49、首个 canary 完成后的下一批 plan/identity Gate 误调用了只适用于“首跑前”的 `tmp/verify-p2c-expected-report-plan-c02eef7.mjs`，该脚本按设计要求 formal root 与全部 planned report 不存在，因此在发现已合法存在的首份报告后返回 `Formal report root must not exist before the first candidate run`，后续 identity 子步骤未执行。根因是把创建前不可覆盖 verifier 复用于 resume 场景，而不是 plan 或 identity 漂移。处理方案是新增只读 `tmp/verify-p2c-resume-state-c02eef7.mjs`：仍重建并通过生产 validator 校验 `144/144/144` 槽位，但对每个槽位要求“global ledger 已处理且 report hash/单 run 外键一致”或“未处理且文件不存在”，任何无 ledger 报告、缺失已处理报告、hash/identity 漂移均失败关闭；语法与真实恢复态复核已通过，processed/remaining=`1/143`，Windows/WSL2 production identity 仍完全一致。首跑前 verifier 保持原合同，不为恢复兼容而放宽。
