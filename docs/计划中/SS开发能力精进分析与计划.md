@@ -11690,6 +11690,44 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：`144/144` 只闭合 benchmark coverage，higher-dimension hard Gate 仍要求 current-candidate 的跨层外键、双平台交互/交付证据和绿色 private CI，必须在同一 aggregate 上继续绑定，避免把局部成功当作资格结论。
 - **当前还缺的关键闭环**：candidate-global receipt、CodeIntel/CLI/TUI/Git delivery/private CI official API/ZIP receipt、qualification 与七维最低分/原始加权 `>=9.500`，以及第二个连续冻结候选；当前不宣称 9.5 已达成。
 
+#### P2-C candidate qualification 实现结论：`df54f67` candidate-global、拒绝结论与失败聚类（2026-09-03）
+
+##### 已完成内容
+
+1. **`candidate-global-receipt.json` 新建并绑定**：
+   - 以已验真的 `artifacts/p2c-df54f67/candidate-1/aggregate-v3` 为唯一 aggregate 输入，receipt 的 manifest/report/index SHA-256 与 source/harness identity 均精确绑定 `df54f67…` / `505219ab…`；receipt SHA-256=`d1e77454702755aa1487b708f95d3abf2cbfe73ec60a81c8faa5f7af9d2a9567`；
+   - 首次 Windows 单进程全根预检发现 `fixtures/wsl2-linux` 的 `741` 个 Linux symlink 在盘符视图中被误投影为不可读常规文件，因此按 fail-closed 规则未写 receipt；随后仍复用冻结 `df54f67` 公共 collector，在 Windows/WSL2 各自原生视图扫描 `7` 个声明根并只合并版本化计数，再交由同一生产 writer 不可覆盖写入；
+   - 最终扫描 `452,157` 个常规文件、计数但不跟随 `3,369` 个 symlink/reparse point，unreadable/finding=`0/0`；双平台已登记 listener、已退出 Gateway PID 与 `294` 个已回收 runtime env 精确路径的 orphan=`0`。`139` 个历史 Gateway PID 中有 `2` 个已被无关系统/浏览器进程复用，经命令行与父进程复核后未误杀、也未冒充 candidate-owned PID。
+
+2. **`candidate-qualification.json` 新建并验真**：
+   - 生产 qualification 返回 `not_eligible / unscored`，七维 score 与 raw weighted 均为 `null`；报告 SHA-256=`31d14d2acd45f683a5fa4a089d4733d3afde35c07ea86a2ce2e034baeb37a505`，evidence digest=`c925d750…`、entry count=`1347`；
+   - 首个 hard Gate blocker 为 `candidate_run_events_hard_gate_failed`：`incompleteProviderUsageCountMaximum` observed/maximum=`12/0`；精确来源是双平台三轮 `gateway.client-cancel` 的 `6` 个 `usage=unavailable` 与 `gateway.process-restart` 的 `6` 个 `usage=not_reached`；
+   - current aggregate 另未保留运行前预冻结的 `expected-reports` projection；该 latent blocker 因 usage Gate 先失败而未出现在本次单一 blocking reason 中，但不能事后补造，后续新 candidate 必须在采集前冻结 plan。
+
+3. **`failure-analysis-v1/failure-analysis.json` 新建并验真**：
+   - 对 aggregate 中全部 `47` 个 `product_workflow` 失败执行离线 artifact/trace 聚类，报告 SHA-256=`e84a4b8ba6362051e93b275fb181207fb67e1588e4af3838b8e05b1d0e7a5283`；
+   - 已识别 `patch_acceptance_failed=19`、`output_schema_invalid=7`、`token_budget_exhausted=2`，另有 `unknown=19`，覆盖 TS/JS/Go/Web 与一个 system run；
+   - 因未知 family 仍存在，报告状态=`incomplete`、nextAction=`blocked_unknown_failure_evidence`，没有以人工猜测替换机器分类，也没有复制模型正文或 Tool output。
+
+4. **效果**：
+   - `df54f67` 已从“完整 aggregate 但未判定”推进为机器可复算的正式拒绝候选；当前不能授予七维分数，也不能作为两个连续达标候选之一；
+   - qualification 在 run-event hard Gate 已确定失败，因此本候选不再采集无法改变结论的 CodeIntel/CLI/TUI/Git delivery/private CI receipt，避免额外 Provider、CI 与执行成本；
+   - 本环节只闭合拒绝证据与诊断入口，不进入产品修复，不修改冻结 aggregate、历史 Formal 或 `origin/main`。
+
+##### 验证结果
+
+- TypeScript 编译状态沿用冻结 `df54f67` 的 Windows/WSL2 完整 `corepack pnpm build` 通过结果；本环节未改源码，因此未重复构建；
+- candidate-global/resource/qualification/failure-analysis 定向 Vitest `4` 个文件、`44/44` 测试通过；
+- aggregate、qualification 与 failure analysis 三个生产 verifier 均通过，qualification 可逐字节重建为 `not_eligible`，failure analysis 可重建全部 `47` 个失败；
+- candidate-global sensitive/resource Gate=`0 finding / 0 unreadable / 0 orphan`，receipt/aggregate 三项 SHA 与 source/harness binding 复核通过；
+- `28891/28892` listener、candidate Gateway/runner/扫描进程、OCI container 与新生成 runtime env 均为 `0`；本环节 Provider calls/cost=`0/$0`，仅保留既有 AJV `date-time` warning。
+
+##### 后续计划
+
+- **下一步准备做什么**：暂停后先诊断并收敛 `gateway.client-cancel` / `gateway.process-restart` 的终态 usage 合同，确认是 runner usage 丢失、fixture 的合法 `not_reached` 语义，还是 qualification 选择集错误；同时为下个候选在运行前生成不可变 expected-report plan。随后扩展 failure analysis 对 `19` 个 unknown 的可观察签名，再按 `patch_acceptance_failed`、`output_schema_invalid` 与真实 unknown 根因修复产品能力。
+- **为什么先做它**：usage hard Gate 在所有维度 receipt 和数值评分之前阻断，且缺失的 expected-report plan 无法事后补造；若不先修复这两项 provenance/终态合同，即使补齐本候选的 private CI 或局部能力证据也不会获得资格。
+- **当前还缺的关键闭环**：12 个终态 usage 的可解释且可复算证据、预冻结 expected-report plan、19 个 unknown failure 的完整分类、47 个产品失败对应的真实能力修复、新 stable identity 的完整候选链，以及两个连续候选的每维最低分与 raw weighted `>=9.500`。
+
 #### 后续工作量估算
 
 **本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；CLI/TUI 双平台首帧与退出收敛也已修复并通过真实 PTY 验证；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
@@ -11730,4 +11768,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **candidate bootstrap、本地原生 collector/可恢复 runner、同 identity Linux staging、CodeIntel、`cli_tui`、`git_delivery` receipt/仓库接线、七维 evaluator/report、双平台 TUI 首帧与 WSL recovery 修复、v2 recovery fixture、CodeIntel canonical LF/frozen-input 边界及 infrastructure retry provenance 已完成；`df54f67…` 已仅推送 `private/main`，双平台 `144/144` 矩阵与 aggregate 已完成并验真** | `df54f67…` Windows/WSL2 identity=`505219ab…`、各 `4` receipt/`8` preflight、完整 build 通过；正式 report=`144/144`（Windows `51 passed/21 failed`、WSL2 `46 passed/26 failed`），全部 `infrastructureRetries=0`、正式 infrastructure error=`0`；aggregate=`completed`、`eligibleForProductComparison=true`，aggregate provider usage=`132`、unavailable=`6`、not_reached=`6`、product failure=`47`；另 1 个 Windows 长路径无 report infrastructure 诊断 usage `$0.00059841` 保留在 global ledger 但不进入 aggregate 分母；global observed=`$2.37476740`、reserved=`$2.04221000`、candidate=`$0.09713830`、guard=`35.33581920 RMB < 80 RMB`；aggregate report/index SHA-256=`78e1a8ef…/2dd2d32d…`，尚无 qualification/七维 score/第二连续候选 | `1.75–3.5 人日剩余基线 + 两个连续候选运行/观察窗口` | 下一恢复点：以已验真的 `aggregate-v3` 为唯一输入，回填 candidate-global、CodeIntel、CLI/TUI、Git delivery 与 private CI receipt，再运行 qualification/七维原始加权并组织第二个连续候选 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **候选工具链与 `df54f67…` 双平台 `144/144` aggregate 已完成；candidate-global 已闭合，但正式 qualification=`not_eligible/unscored`，该候选已拒绝并停止后续 receipt 采集** | aggregate=`97 passed + 47 product_workflow failed`、正式 infrastructure error=`0`；candidate-global 原生双平台扫描 regular/link/unreadable/finding/orphan=`452157/3369/0/0/0`；qualification 首个 blocker=`incompleteProviderUsageCount 12 > 0`（client-cancel unavailable=`6`、process-restart not_reached=`6`），另有未预冻结 expected-report plan 的 latent blocker；failure analysis=`19 patch_acceptance + 7 output_schema + 2 token_budget + 19 unknown`、状态=`incomplete`；本候选不生成七维 score，不计入连续达标候选；费用仍为 global observed/reserved/candidate=`$2.37476740/$2.04221000/$0.09713830`、guard=`35.33581920 RMB < 80 RMB` | `1.75–3.5 人日既有基线 + failure-driven 修复量 + 两个连续候选运行/观察窗口` | 下一恢复点：先收敛 12 个 usage 终态合同并为新 candidate 预冻结 expected-report plan；再补齐 19 个 unknown 分类、修复真实产品失败，形成新 stable identity 后重跑完整资格链；本环节完成后暂停 |
