@@ -12795,6 +12795,60 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - cleanup script parser=`0` errors，log targets/remaining=`16/0`，所有目标写后存在性复核均为 false。
 - cleanup 后紧邻续跑的完整 Gate 再次通过：双平台 identity 无漂移、ports=`0/0`、Windows/WSL2 candidate processes=`0/0`、pinned OCI identity 精确匹配且 active containers=`0`。
 
+#### P2-C Windows attempt 1 环境收口结论：剩余 runtime 清理（2026-09-03）
+
+##### 已完成内容
+
+1. **`tmp/cleanup-p2c-c02eef7-windows-a1-remaining-env.ps1` 新建并执行**：
+   - 仅处理 frozen ledger 已映射的 `t10`–`t24` 十五个 Windows attempt 1 state root；逐个验证绝对路径 containment、常规文件、非 reparse point、长度与既定 SHA-256；
+   - `.env` / `.env.local` 共 `30` 个目标全部送入 Windows 回收站，未读取或回显敏感正文；
+   - cleanup log=`artifacts/cleanup/p2c-c02eef7-windows-a1-remaining-env-2026-09-03.json`，SHA-256=`54527a9c587a17def9a977ee8293619b462d9dd1c54bd2f06f15a0da5b78b310`，filesystem remaining=`0`。
+
+2. **效果**：
+   - Windows attempt 1 的 `24` 个 runtime 环境文件均已按授权回收，report、ledger 与诊断 artifact 保持原位；
+   - 不涉及根工作区 `.env/.env.local`、WSL2 staging 或 `tmp-codeintel-summary.json`。
+
+##### 验证结果
+
+- cleanup script PowerShell parser=`0` errors；targets/remaining=`30/0`，每个目标写后存在性均为 false；
+- 本环节无 Provider 调用、无产品代码修改，cleanup log 可独立解析并复核。
+
+##### 后续计划
+
+- **下一步准备做什么**：将 8 个失败 report 的稳定错误签名与资源收口结果逐项回写，再建立公共回归反馈环并修复真实产品缺陷；不继续同 identity 的 attempt 2/3。
+- **为什么先做它**：敏感环境与候选运行资源已清理，失败 artifact 仍完整可诊断；先做根因闭环可以避免在旧缺陷上重复付费。
+- **当前还缺的关键闭环**：8 个失败的根因分类、产品修复与回归、新 clean identity、重新预冻结 plan 和完整 `144/144` 候选链。
+
+#### P2-C Windows attempt 1 横截面结论：`c02eef7` 首轮 24 项（2026-09-03）
+
+##### 已完成内容
+
+1. **Windows attempt 1 planned matrix**：
+   - `candidate-1` 在 frozen plan 下完成 `24/24` Windows attempt 1 槽位，global ledger processed=`24`，formal report=`24`；plan/identity/path 未漂移；
+   - 终态为 `16 passed / 8 product_workflow failed`，没有 infrastructure_error、无 report 或 usage incomplete；两个 local-fixture task（client-cancel/process-restart）均按 `not_reached` 合同通过；
+   - Provider observed=`$2.39212212`、candidate observed=`$0.01735472`、reserved=`$2.04221000`，下一单最坏仍低于 `80 RMB`。
+
+2. **失败横截面初步分布**：
+   - `bug.reproducible-fix`、`real-ts.api-migration`、`real-ts.cross-package-refactor`、`real-js.bug-fix`、`real-go.public-api-migration`、`real-go.bug-fix`、`real-web.ui-regression`、`system.restart-delivery-reconciliation` 共 `8` 项需产品/运行链诊断；
+   - 其中前七项为 workspace/product workflow 失败，restart-delivery 单独保留为系统运行链失败，暂不合并归因；所有失败均保留原始 report，不重跑、不覆盖。
+
+3. **效果**：
+   - 当前 candidate 已足以暴露新 identity 下的真实失败形状，但仍是 `24/144` partial evidence，不能用于完整 qualification 或评分；
+   - 后续优先读取每个失败的 `run.failed` code、tool phase、tests/patch/regression 三态和稳定 artifact 引用，按共享生产根因建立回归；
+   - 在产品修复与 clean identity 冻结前暂停该 candidate 的 attempt 2/3，避免把已知失败重复付费扩大。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本轮未修改产品 TypeScript；冻结 staging build 仍为通过；
+- Windows attempt 1 report/ledger coverage=`24/24`，usage contracts=`24/24`，report SHA 与 plan slot 均已入账；
+- 端口、候选进程、OCI 资源的上一轮独立 Gate 全部为零；本阶段 Provider 调用只来自计划内 `15` 个 provider task，local-fixture 未产生费用。
+
+##### 后续计划
+
+- **下一步准备做什么**：先完成剩余 15 个 runtime 的 `.env/.env.local` hash-bound 回收与资源静默性复核；随后逐个提取 9 个失败的结构化签名，优先对共享 workspace-mutation/post-write 与 restart-delivery 根因写 Red 回归并修复。
+- **为什么先做它**：失败报告已经冻结且费用已结算，先收敛根因可以避免在同一缺陷上重复消耗 attempt 2/3；环境清理和文档落盘同时保证断点可恢复。
+- **当前还缺的关键闭环**：9 个失败的可证伪根因、产品修复与回归、基于修复后 clean identity 的新 plan，以及新候选完整 `144/144` 链。
+
 ##### 后续计划
 
 - **下一步准备做什么**：最新六项 Gate 已闭合；以同一 launcher 恢复 Windows attempt 1 剩余 `15` 项，并在每个 report 后继续 global-first 入账。`bug.reproducible-fix` 则先补公共状态机 Red，再做不放宽安全 Gate 的 tool-free final-review fallback。
@@ -12898,3 +12952,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 50、`bug.reproducible-fix.windows-native.a1` 在正确修改 `src/calculate.mjs`、visible test passed、patch accepted、regression=`0` 后仍以 `product_workflow` 失败；唯一失败消息是 post-write objective correction patch 未包含合法 required-path file section。冻结事件证明初始完整读、正确 `apply_patch` 与写后完整复读均成功，随后共 `7` 次 provider model calls、usage/cost 完整，因此不是 fixture/evaluator/infrastructure 失败。精确 Gateway 阶段日志进一步确认：call 5 objective review 返回 `497` 字非法终态；call 6 phase-aware output repair 同时返回 `183` 字内容与一个无合法 required-path section 的 correction Tool call；该 patch 未执行，runtime 转入 required Tool input correction，call 7 仍无合法 section后失败。根因收敛为“未执行任何 correction 时仍强迫第二次 patch”，安全 path Gate 本身正确。处理方案先以公开 `ToolEnabledAgent.run()` 固定同形 Red；随后只在一次 input correction 已耗尽、已有可信 mutation 和完整 post-write read、且无 correction 被执行时，标记 correction 耗尽并转入既有 tool-free final objective review。该 fallback 不直接成功，最终 JSON 仍经原 Schema/确定性 current-source guards 校验；其他越界/第二 correction/缺失证据继续失败关闭，真实改善只由后续新 identity 证明。
 51、`gateway.client-cancel.windows-native.a1` report 已通过且按新 manifest 明确为 `local_fixture`，run/env/preflight/events/cancel-injection 均证明没有 Provider，但 operator launcher 仍沿用旧候选逻辑，只接受 `usage=unavailable` 并为其 reserve `$0.10`；新生产 runner 规范化输出为 `not_reached`，qualification 也精确要求该状态，于是 launcher 在正确 report 落盘后、ledger 前错误停止。根因是一次性矩阵脚本未同步 12 个 local-fixture usage 终态合同，不是产品 runner 或资格 owner 回归。处理已完成：client-cancel/process-restart 统一要求 manifest/run/environment/preflight/无 `run.usage`/终态及专属 lifecycle artifact 一致；合法 `not_reached` 不新增 reserve。新增的 existing-report reconciliation 只消费精确 planned report，真实运行已在零 Gateway/Provider 情况下把该 entry global-first 原子入账，report SHA 保持 `d09d7890…`，processed/remaining=`9/135`、费用三项不变；resume verifier 与下一单费用 Gate 均通过。
 52、定位测试与旧 launcher 时两条 `rg` 命令把 `scripts/*.test.mjs`、`scripts/run-coding-agent-benchmark*.mjs` 之类 shell glob 直接作为 Windows 路径参数，ripgrep 返回“文件名、目录名或卷标语法不正确”；其他并列精确搜索仍返回有效证据，未改动文件。根因是把 POSIX shell glob 习惯带入 PowerShell/Windows 路径参数。处理方案固定为传入常规目录 `scripts`/`packages`，再用 `-g '*.test.mjs'`、`-g 'run-coding-agent-benchmark*.mjs'` 过滤；精确文件集合则在 PowerShell `Get-ChildItem -Filter` 后逐项 `Select-String`，不再把 `*` 放入 Windows literal path。
+53、Windows attempt 1 完成后，`t10`–`t24` 的 `.env/.env.local` 共 `30` 个文件按既定长度/hash 与路径 containment 校验后已送入回收站，cleanup log SHA=`54527a9c…`、remaining=`0`。本项不是失败；记录它是为了明确剩余环境清理已闭合，后续不得把这些文件当作可再次读取的诊断输入。
