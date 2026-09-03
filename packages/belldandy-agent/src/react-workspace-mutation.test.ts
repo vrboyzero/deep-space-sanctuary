@@ -23,6 +23,7 @@ import {
   hasNonGroupingSerializedFalsePrecedenceCorrectionHunks,
   hasNonReachabilitySerializedFalseDataPredicateCorrectionHunks,
   hasNonReachabilitySerializedFalseParentGuardCorrectionHunks,
+  hasOnlyWorkspaceMutationPatchPaths,
   hasRevertedSmallestChangeCorrectionHunks,
   hasRedundantWorkspaceMutationPatchHunks,
   hasUngroupedSerializedFalsePrecedenceCurrentSource,
@@ -1956,6 +1957,27 @@ describe("ReAct workspace mutation recovery", () => {
       unexpectedEndMarkerCount: 0,
       unexpectedEndMarkerPaths: [],
     });
+  });
+
+  it("checks patch path containment beyond the bounded diagnostic path list", () => {
+    const allowedPaths = Array.from({ length: 32 }, (_, index) => `src/allowed-${index}.ts`);
+    const call = applyPatchToolCall([
+      "*** Begin Patch",
+      ...allowedPaths.flatMap((path) => [
+        `*** Update File: ${path}`,
+        "@@",
+        "-old value",
+        "+new value",
+      ]),
+      "*** Update File: src/outside.ts",
+      "@@",
+      "-old outside",
+      "+new outside",
+      "*** End Patch",
+    ]);
+
+    expect(inspectWorkspaceMutationPatchHunks(call)?.paths).toHaveLength(32);
+    expect(hasOnlyWorkspaceMutationPatchPaths(call, allowedPaths)).toBe(false);
   });
 
   it("builds one bounded read-after-write request for each required path", () => {

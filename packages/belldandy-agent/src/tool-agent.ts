@@ -5005,6 +5005,38 @@ export class ToolEnabledAgent implements BelldandyAgent {
               });
               continue;
             }
+            const missingPaths = workspaceMutationPathCoverage.missingPaths();
+            const canCorrectRecoveryInputFailure = !workspaceMutationContinuationCall
+              && !workspaceMutationContinuationAttempted;
+            const canCorrectContinuationInputFailure = workspaceMutationContinuationCall
+              && workspaceMutationContinuationAttempted
+              && missingPaths.length < requiredChangedPaths.length;
+            const canCorrectMutationInputFailure = workspaceMutationRecoveryCall
+              && !workspaceMutationInputCorrectionCall
+              && !workspaceMutationInputCorrectionAttempted
+              && !workspaceMutationObserved
+              && workspaceMutationCallRequiredPaths.length > 0
+              && missingPaths.length === workspaceMutationCallRequiredPaths.length
+              && hasOnlyWorkspaceMutationPatchPaths(
+                validatedMutationToolCall,
+                workspaceMutationCallRequiredPaths,
+              )
+              && (canCorrectRecoveryInputFailure || canCorrectContinuationInputFailure);
+            if (canCorrectMutationInputFailure) {
+              workspaceMutationContinuationPending = true;
+              workspaceMutationInputCorrectionPending = true;
+              lastToolCallFingerprint = undefined;
+              lastToolCallName = undefined;
+              consecutiveDuplicateToolCalls = 0;
+              recentToolCallTraces.length = 0;
+              lastSuccessfulToolResult = undefined;
+              logWarn("[workspace-mutation] mutation patch failed local hunk validation; scheduling one input correction", {
+                missingRequiredPathCount: missingPaths.length,
+                conversationId: input.conversationId,
+                agentId: resolvedAgentId,
+              });
+              continue;
+            }
             yield* emitWorkspaceMutationFailure(
               `the mutation-only apply_patch call contained a context-only hunk that could not be preserved safely; use unique safe Update File sections, valid hunk structure, and at least one real added or removed line per file. ${formatWorkspaceMutationPatchHunkDiagnostics(patchDiagnostics, patchPreservationDiagnostics)}`,
             );

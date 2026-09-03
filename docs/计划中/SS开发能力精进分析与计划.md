@@ -11846,6 +11846,43 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：这 `5` 项与已完成的 navigation 都位于 required-mutation 主链，且可能与后续 `post_write_correction_failed=6` 共用 patch 诊断和 correction 状态；先关闭最窄、签名最明确的入口可减少对 `patch_acceptance_failed=19` 的误归因。
 - **当前还缺的关键闭环**：其余 `41` 个历史产品失败的根因与产品修复、完整相关回归、clean stable identity、正式不可覆盖 expected-report plan、新 identity 的完整 `144/144` 候选链，以及第二个连续达标候选。
 
+#### P2-C product failure repair 实现结论：mutation patch atomic input correction（2026-09-03）
+
+##### 已完成内容
+
+1. **`tool-agent.ts` 修改**：
+   - 首次或 missing-path continuation 的 mutation-only patch 若在执行前被判为 context-only、empty hunk 或 invalid envelope，会在未发生 workspace mutation 且 required coverage 未漂移时进入现有一次性 atomic input correction；
+   - correction 资格继续受原 model-call、turn、token、cost 与 Tool 预算约束，第二次结构仍非法、unexpected End Patch、无可信 required path 或已越过恢复阶段时失败关闭；
+   - post-write objective correction 使用原有独立 input-correction 状态，不与首次 mutation correction 混用。
+
+2. **`react-workspace-mutation.ts` 路径授权修复**：
+   - `hasOnlyWorkspaceMutationPatchPaths` 不再把最多保留 `32` 项的 diagnostics paths 当作授权全集；
+   - 授权判断从 Tool 的结构化 JSON 参数中全量扫描全部 `Update/Add/Delete File` header，任一 unsafe 或 outside path 都会拒绝；
+   - diagnostics 继续保持有界、安全的路径显示，授权与诊断职责分离。
+
+3. **两文件回归扩展**：
+   - 首个代表性调用链先得到 Red：`2` 次模型请求后失败且 `apply_patch` 未执行；修复后 non-actionable section、empty hunk、invalid envelope 三种历史签名均进入一次 correction 并完成 read-after-write；
+   - 完整回归首次发现两条越界负例从 `2` 次请求增至 `3`，补路径 containment 后又由第 `33` 个 outside section 暴露截断授权缺陷；新增纯函数 Red 后改为全量扫描；
+   - 两条越界调用链恢复执行前失败，已有 post-write context-only correction、unexpected End Patch、二次 correction 失败和 continuation 边界保持通过。
+
+4. **效果**：
+   - Provider 首次给出仅含上下文或空 hunk 的 required-path patch 时，不再直接丢失整次 run，而是获得唯一一次可审计修复机会；
+   - 超过 `32` 个 file section 也不能借 diagnostics 截断绕过 required-path containment；
+   - 旧 `df54f67` 的 `5` 个终态保持冻结，本地缺陷闭合不等同于历史结果或真实双平台 uplift 已改变。
+
+##### 验证结果
+
+- TypeScript 增量编译无错误：`corepack pnpm build:incremental` exit code=`0`；
+- `react-workspace-mutation.test.ts` 与 `tool-agent-workspace-mutation.test.ts` 完整回归 `152/152` 通过；
+- 目标三签名、路径截断攻击及两条越界调用链聚焦回归 `6/6` 通过，post-write context-only correction 单独通过；
+- `git diff --check` 通过，仅保留 Windows 行尾转换提示；本环节 Provider calls/cost=`0/$0`，未运行正式候选或执行网络写入。
+
+##### 后续计划
+
+- **下一步准备做什么**：对最大失败簇 `patch_acceptance_failed=19` 按 task、平台、patch 失败签名和是否已进入 atomic correction 分层，先选择跨任务共同的 `apply_patch` context mismatch 建立冻结重放，再修复仍存在的产品路径。
+- **为什么先做它**：该簇占旧候选产品失败的 `19/47` 且跨 Go、JS、TS 与 Web 任务；先区分当前代码已覆盖的历史缺陷与仍缺失的共同入口，能避免为旧 artifact 重复开发或通过 evaluator 改写真实失败。
+- **当前还缺的关键闭环**：其余 `36` 个历史产品失败的逐簇诊断与必要产品修复、完整相关回归、clean stable identity、正式不可覆盖 expected-report plan、新 identity 的完整 `144/144` 候选链，以及第二个连续达标候选。
+
 #### 后续工作量估算
 
 **本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；CLI/TUI 双平台首帧与退出收敛也已修复并通过真实 PTY 验证；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
@@ -11886,7 +11923,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 候选保持拒绝；usage/expected-report/unknown 分类已闭合，navigation 产品修复本地闭合，继续处理 mutation patch 失败簇** | 旧 aggregate=`97 passed + 47 product_workflow failed`、正式 infrastructure error=`0`；旧 qualification=`not_eligible/unscored` 且不得重解释；`12` 个 lifecycle usage 终态与精确 `144` 槽位 plan Gate 已机器化；corrected failure analysis=`19 patch_acceptance + 2 token_budget + 7 output_schema + 6 navigation + 5 mutation_patch + 6 post_write + 1 accepted_regression + 1 stop_empty`、`unknown=0`；navigation 修复先 Red 后 Green，runtime-owned required reads 相关回归 `148/148`、增量构建通过；历史 navigation=`6` 不重解释，等待新候选证明 uplift；本轮 Provider=`0/$0`，费用守卫沿用 `35.33581920 RMB < 80 RMB` | `1.75–3.5 人日既有基线 + failure-driven 修复量 + 两个连续候选运行/观察窗口` | 先最小重放并修复 `mutation_patch_contract_invalid=5`，再逐簇关闭真实产品失败；完整验证后冻结 clean identity，正式生成不可覆盖 expected-report plan，再运行完整候选链并逐环节回写 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 候选保持拒绝；usage/plan/分类已闭合，navigation 与 mutation-patch 产品修复本地闭合，进入 patch acceptance 最大失败簇** | 旧 aggregate=`97 passed + 47 product_workflow failed`、正式 infrastructure error=`0`；旧 qualification=`not_eligible/unscored` 且不得重解释；`12` 个 lifecycle usage 终态与精确 `144` 槽位 plan Gate 已机器化；corrected failure analysis=`19 patch_acceptance + 2 token_budget + 7 output_schema + 6 navigation + 5 mutation_patch + 6 post_write + 1 accepted_regression + 1 stop_empty`、`unknown=0`；runtime-owned navigation 与一次性 malformed-patch correction 均先 Red 后 Green，workspace mutation 完整相关回归 `152/152`，全量路径授权不复用截断 diagnostics；历史 `6+5` 项不重解释，等待新候选证明 uplift；本轮 Provider=`0/$0`，费用守卫沿用 `35.33581920 RMB < 80 RMB` | `1.75–3.5 人日既有基线 + failure-driven 修复量 + 两个连续候选运行/观察窗口` | 分层重放 `patch_acceptance_failed=19` 并只修当前仍存在的产品根因；完整验证后冻结 clean identity，正式生成不可覆盖 expected-report plan，再运行完整候选链并逐环节回写 |
 
 
 #### 重要问题说明
@@ -11899,3 +11936,5 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 7、新增 expected-report producer CLI 的首轮测试为 `3 passed + 1 failed`：参数 parser 的 `for` 步长已经按 flag/value 前进 `2`，循环体又重复递增 `1`，因此第二个参数值被误当作 flag。处理方案是删除循环体内的重复递增，并保留重复 flag、未知 flag、缺失必填值的失败关闭校验；修复后 producer `4/4`、最终联合批次 `80/80` 通过。该 CLI 不提供隐式默认 candidate ID/report root/output，避免误写正式 plan。
 8、现有 failure analysis 的 `19` 个 unknown 经冻结 aggregate 的终态 metadata 重放后已收敛为五类：bounded source navigation 未覆盖 required paths=`6`、mutation-only patch 合同无可执行变更=`5`、post-write review/correction 失败=`6`、patch 已接受但测试回归=`1`、`finish_reason=stop` 仅有 reasoning 无可见内容=`1`。根因不是 artifact 缺失，而是 v1 classifier 只识别 length stop、早期 mutation recovery、patch rejection、budget 与 output schema，未覆盖后来新增的 required-mutation 阶段化错误。处理方案是新增 `failure-analysis/v2` 的五个受控 family，只保存 reason code/计数/布尔/哈希，不保存错误消息、模型正文或 Tool output；verifier 按报告版本重建，旧 v1 artifact 保持原语义。首次 repository verifier 因 README 未保留旧 schemaVersion 字面量、project map 未登记 legacy schema 而失败，补齐双版本文档引用后已通过。首次 v2 生产重放又因新签名先于 v1 patch acceptance 判定而错误抢占 `7` 项，得到 `12/9/9` 的错误分布；新增优先级回归先 Red 后 Green，分类器现先保留 v1 非 unknown 结果，再处理 v2 扩展。错误的 `failure-analysis-v2` 目录作为被拒绝诊断证据原地保留，未覆盖、未删除；新 `failure-analysis-v2-corrected` 已不可覆盖生成并从原 aggregate 验证 `47/47`，结果为 `completed/unknown=0`，精确 family 分布=`19/2/7/6/5/6/1/1`，SHA-256=`1ae99f127a92dac4f1f542464ae324dff0165d48ace569692903ed2be9ff7550`。checkpoint 的首次 cached diff check 另发现 legacy schema 在 JSON 末尾多一空行；这是纯格式问题，删除该空行并重新 Gate，不影响已验证 schema 内容或 artifact。19 个 unknown 分类环节已关闭，下一步转入真实产品失败修复。
 9、corrected failure analysis 的 `required_source_navigation_incomplete=6` 全部来自 `real-go.public-api-migration` 的双平台三轮；冻结 events 证明普通阶段能读取 benchmark test，但 bounded navigation 的 Provider 响应没有一次精确覆盖 runtime 已知的全部缺失 required paths，随后统一以“did not request each missing required source path exactly once”失败。根因是 runtime 已持有受信任路径清单，却把确定性的完整读取计划再次委托给模型；并非 file reader、repository snapshot 或路径不可用。回归已先得到 Red：Provider 少报一个路径时请求数停在 `2` 而非继续到 `5`。处理方案已接入：在既有最多 `3` 路 navigation 边界内，由 runtime 合成仅含缺失 required path 的无 anchor、固定 full-file limit `file_read`；Provider 已给出完整合法集合时仍保留，额外路径被筛除，重复、混合 Tool、非法参数或遗漏会改用 runtime 精确集合，mutation/turn/token/cost/retry 上限不放宽。两文件联动与安全边界回归 `148/148`、TypeScript 增量构建和 diff check 已通过；这关闭了本地产品缺陷，但旧 `6` 个终态仍保持冻结，不重解释为通过，新候选重跑前不声称真实双平台 uplift。
+10、`mutation_patch_contract_invalid=5` 的冻结终态均是 mutation-only `apply_patch` 在本地执行前含 context-only hunk：`non_actionable_update_section=3`、`empty_hunk=1`、`invalid_envelope=1`。其中四项发生在首次 mutation 前且 `editCallCount=0`，另一项发生在既有成功 patch 与测试通过后的 post-write correction；主要问题不是 Tool executor 或 patch acceptance，而是结构校验后的 recovery 路由。代表性首次 context-only 调用链先得到 Red：`2` 次模型请求后失败且 Tool 未执行；处理已完成，首次或 continuation 的三类结构错误在全部 file section 属于可信 required paths、coverage 未漂移且尚未 correction 时，进入现有一次性 atomic input correction，第二次非法、无可信路径或 unexpected End Patch 继续失败关闭。第五项对应的既有 post-write context-only correction 也已单独复跑通过；不新增模型调用额度、Provider retry 或 token/cost 上限。完整两文件回归最终 `152/152` 通过，因此该 family 的当前本地产品路径已闭合；旧 `5` 个终态不重解释，新候选前不声称真实双平台 uplift。
+11、mutation patch 首版修复的三个目标 fixture 转 Green 后，完整 workspace-mutation 回归出现 `2 failed + 149 passed`：两个越界 patch 用例的模型请求由预期 `2` 增至 `3`，Tool 仍未执行。首层根因是新 correction 资格缺少全部 file section 的 required-path containment；增加现有 `hasOnlyWorkspaceMutationPatchPaths` 后第一条负例恢复，但 `32` 个 required actionable section 后再附 outside section 的大 patch 仍失败。进一步确认该 helper 复用了面向有界日志的 diagnostics，而 diagnostics 的 `paths` 只保留前 `32` 项，不能作为完整授权依据；新增纯函数回归先稳定 Red 为“diagnostics=`32` 但 authorization=`true`”。处理已完成：diagnostics 保留有界显示，`hasOnly...` 改从结构化 Tool 参数全量扫描全部 file headers，任一 unsafe/outside path 均拒绝；correction 资格复用该完整授权。目标三签名、截断攻击及两条越界调用链 `6/6`、完整两文件 `152/152` 通过，越界 patch 恢复执行前立即失败。本次发现并同步修复了一个潜在授权缺陷，没有通过放宽断言或删除安全测试掩盖回归。

@@ -5444,6 +5444,128 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
   });
 
+  it.each([
+    {
+      reason: "non-actionable section",
+      initialPatch: [
+        "*** Begin Patch",
+        "*** Update File: command.go",
+        "@@",
+        " package command",
+        "*** End Patch",
+      ].join("\n"),
+    },
+    {
+      reason: "empty hunk",
+      initialPatch: [
+        "*** Begin Patch",
+        "*** Update File: command.go",
+        "@@",
+        "*** End Patch",
+      ].join("\n"),
+    },
+    {
+      reason: "invalid envelope",
+      initialPatch: [
+        "",
+        "*** Begin Patch",
+        "*** Update File: command.go",
+        "@@",
+        " package command",
+        "*** End Patch",
+      ].join("\n"),
+    },
+  ])("corrects one $reason patch from the initial mutation-only call", async ({ initialPatch }) => {
+    const requiredChangedPaths = ["command.go"];
+    const correctedPatch = [
+      "*** Begin Patch",
+      "*** Update File: command.go",
+      "@@",
+      "-const legacy = true",
+      "+const legacy = false",
+      "*** End Patch",
+    ].join("\n");
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const isPhase = (phase: string) => body.messages?.some((message: any) => (
+        message.role === "system" && String(message.content).includes(phase)
+      ));
+      if (isPhase("Mutation-only recovery phase")) {
+        return response(modelToolCall("patch-context-only", "apply_patch", {
+          input: initialPatch,
+        }, 300, 60));
+      }
+      if (isPhase("Atomic input correction phase")) {
+        return response(modelToolCall("patch-corrected", "apply_patch", {
+          input: correctedPatch,
+        }, 300, 60));
+      }
+      if (isPhase("Post-mutation verification phase")) {
+        return response(modelUnanchoredVerificationReads(requiredChangedPaths));
+      }
+      if (requests.length === 1) {
+        return response({
+          choices: [{ finish_reason: "stop", message: { content: "I need to change command.go." } }],
+          usage: { prompt_tokens: 200, completion_tokens: 30 },
+        });
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: "fixed and verified" } }],
+        usage: { prompt_tokens: 200, completion_tokens: 30 },
+      });
+    });
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: request.name === "file_read"
+        ? JSON.stringify({
+            path: request.arguments?.path,
+            truncated: false,
+            content: "const legacy = false",
+          })
+        : "Patch applied successfully",
+      ...(request.name === "apply_patch" ? {
+        metadata: {
+          workspaceMutation: {
+            schemaVersion: 1,
+            changedPaths: requiredChangedPaths,
+          },
+        },
+      } : {}),
+      durationMs: 1,
+    }));
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 4 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-initial-context-only-correction",
+      text: "Fix command.go.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(5);
+    expect(requests[2]?.messages[0]?.content).toContain("Atomic input correction phase");
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "apply_patch",
+      "file_read",
+    ]);
+    expect(execute.mock.calls[0]?.[0].arguments).toEqual({ input: correctedPatch });
+    expect(items).toContainEqual({ type: "final", text: "fixed and verified" });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("preserves context-only hunks for one atomic recovery patch execution", async () => {
     const requiredChangedPaths = [
       "jsonrpc/src/common/api.ts",

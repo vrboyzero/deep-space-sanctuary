@@ -944,8 +944,36 @@ export function hasOnlyWorkspaceMutationPatchPaths(
     return false;
   }
   const allowedPathIdentities = new Set(allowedPaths.map(normalizeSourcePath));
-  return allowedPathIdentities.size === allowedPaths.length
-    && diagnostics.paths.every((path) => allowedPathIdentities.has(normalizeSourcePath(path)));
+  if (allowedPathIdentities.size !== allowedPaths.length) {
+    return false;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(toolCall.function.arguments);
+  } catch {
+    return false;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return false;
+  }
+  const patch = (parsed as Record<string, unknown>).input;
+  if (typeof patch !== "string") {
+    return false;
+  }
+
+  let fileSectionCount = 0;
+  for (const line of patch.trim().split(/\r?\n/)) {
+    const header = /^\*\*\* (?:Update|Add|Delete) File:?\s+(.+)$/.exec(line);
+    if (!header) {
+      continue;
+    }
+    fileSectionCount += 1;
+    const path = normalizeWorkspaceMutationDiagnosticPath(header[1] ?? "");
+    if (path === "<unsafe>" || !allowedPathIdentities.has(normalizeSourcePath(path))) {
+      return false;
+    }
+  }
+  return fileSectionCount > 0;
 }
 
 export function hasRedundantWorkspaceMutationPatchHunks(
