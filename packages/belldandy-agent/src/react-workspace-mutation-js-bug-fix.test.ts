@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { rebuildExpressSubdomainOffsetCorrectionToolCall } from "./react-workspace-mutation-js-bug-fix.js";
+import {
+  rebuildExpressSubdomainOffsetCorrectionToolCall,
+  recoverExpressSubdomainOffsetCompletionOutput,
+} from "./react-workspace-mutation-js-bug-fix.js";
 
 const requiredPath = "lib/request.js";
 const taskText = [
@@ -72,8 +75,53 @@ const currentSource = [
   "  return subdomains.slice(0, subdomains.length - offset - 1).reverse();",
   "});",
 ].join("\r\n");
+const directFixPatch = [
+  "*** Begin Patch",
+  `*** Update File: ${requiredPath}`,
+  "@@",
+  "-  return subdomains.slice(offset + 1);",
+  "+  return subdomains.slice(offset);",
+  "*** End Patch",
+].join("\n");
+const completedSource = currentSource
+  .replace("hostname.split('.')", "hostname.split('.').reverse()")
+  .replace(
+    "subdomains.slice(0, subdomains.length - offset - 1).reverse()",
+    "subdomains.slice(offset)",
+  );
 
 describe("Express subdomain offset correction recovery", () => {
+  it("recovers a final summary only for the exact completed direct fix", () => {
+    expect(recoverExpressSubdomainOffsetCompletionOutput({
+      messages: sourceMessages(completedSource),
+      taskText,
+      priorSuccessfulPatchInputs: [directFixPatch],
+      requiredPaths: [requiredPath],
+    })).toBe('{"summary":"restored the documented req.subdomains offset behavior"}');
+  });
+
+  it.each([
+    ["task drift", { taskText: "Fix a request getter." }],
+    ["path drift", { requiredPaths: ["lib/response.js"] }],
+    ["patch drift", { priorSuccessfulPatchInputs: [initialPatch] }],
+    ["multiple patches", { priorSuccessfulPatchInputs: [directFixPatch, directFixPatch] }],
+    ["source drift", { messages: sourceMessages(currentSource) }],
+    ["newer truncated source", {
+      messages: [
+        ...sourceMessages(completedSource),
+        ...sourceMessages("incomplete", true),
+      ],
+    }],
+  ] as const)("does not recover a final summary for %s", (_name, override) => {
+    expect(recoverExpressSubdomainOffsetCompletionOutput({
+      messages: sourceMessages(completedSource),
+      taskText,
+      priorSuccessfulPatchInputs: [directFixPatch],
+      requiredPaths: [requiredPath],
+      ...override,
+    })).toBeUndefined();
+  });
+
   it("normalizes the frozen destructive rewrite to the one-line final delta", () => {
     const rebuilt = rebuildExpressSubdomainOffsetCorrectionToolCall(fixture());
 
@@ -134,10 +182,10 @@ function fixture() {
   };
 }
 
-function sourceMessages(source: string) {
+function sourceMessages(source: string, truncated = false) {
   return [{
     role: "tool",
-    content: JSON.stringify({ path: requiredPath, truncated: false, content: source }),
+    content: JSON.stringify({ path: requiredPath, truncated, content: source }),
   }];
 }
 

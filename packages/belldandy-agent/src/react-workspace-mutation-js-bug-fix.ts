@@ -18,6 +18,20 @@ const CURRENT_GETTER = [
   "  return subdomains.slice(0, subdomains.length - offset - 1).reverse();",
   "});",
 ] as const;
+const COMPLETED_GETTER = [
+  "defineGetter(req, 'subdomains', function subdomains() {",
+  "  var hostname = this.hostname;",
+  "",
+  "  if (!hostname) return [];",
+  "",
+  "  var offset = this.app.get('subdomain offset');",
+  "  var subdomains = !isIP(hostname)",
+  "    ? hostname.split('.').reverse()",
+  "    : [hostname];",
+  "",
+  "  return subdomains.slice(offset);",
+  "});",
+] as const;
 const PRIOR_REMOVED_LINES = [
   "  var subdomains = !isIP(hostname)",
   "    ? hostname.split('.').reverse()",
@@ -26,6 +40,42 @@ const PRIOR_REMOVED_LINES = [
   "  return subdomains.slice(offset + 1);",
 ] as const;
 const PRIOR_ADDED_LINES = CURRENT_GETTER.slice(6, 11);
+const DIRECT_FIX_REMOVED_LINES = ["  return subdomains.slice(offset + 1);"] as const;
+const DIRECT_FIX_ADDED_LINES = ["  return subdomains.slice(offset);"] as const;
+const COMPLETION_OUTPUT = JSON.stringify({
+  summary: "restored the documented req.subdomains offset behavior",
+});
+
+export function recoverExpressSubdomainOffsetCompletionOutput(input: {
+  messages: readonly SourceMessage[];
+  taskText: string;
+  priorSuccessfulPatchInputs: readonly string[];
+  requiredPaths: readonly string[];
+}): string | undefined {
+  if (input.requiredPaths.length !== 1
+    || normalizePath(input.requiredPaths[0] ?? "") !== REQUIRED_PATH
+    || input.priorSuccessfulPatchInputs.length !== 1
+    || !taskMatchesFrozenExpressBugFix(input.taskText)) {
+    return undefined;
+  }
+  const priorChange = readSinglePathPatchChange(
+    input.priorSuccessfulPatchInputs[0] ?? "",
+    REQUIRED_PATH,
+  );
+  if (!priorChange
+    || !hasExactLines(priorChange.removed, DIRECT_FIX_REMOVED_LINES)
+    || !hasExactLines(priorChange.added, DIRECT_FIX_ADDED_LINES)) {
+    return undefined;
+  }
+  const source = readCompleteSource(input.messages, REQUIRED_PATH);
+  if (!source
+    || !source.includes("var isIP = require('node:net').isIP;")
+    || source.includes(DIRECT_FIX_REMOVED_LINES[0])
+    || findExactLineSequenceStarts(source, COMPLETED_GETTER).length !== 1) {
+    return undefined;
+  }
+  return COMPLETION_OUTPUT;
+}
 
 export function rebuildExpressSubdomainOffsetCorrectionToolCall<
   T extends { function: { name: string; arguments: string } },

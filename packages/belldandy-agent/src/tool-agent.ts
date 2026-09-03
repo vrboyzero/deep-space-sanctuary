@@ -139,7 +139,10 @@ import {
   rebuildSerializedFalseSemanticNarrowingToolCall,
 } from "./react-workspace-mutation-serialized-false-correction.js";
 import { isRegressiveCommandNameCorrection } from "./react-workspace-mutation-go-correction.js";
-import { rebuildExpressSubdomainOffsetCorrectionToolCall } from "./react-workspace-mutation-js-bug-fix.js";
+import {
+  rebuildExpressSubdomainOffsetCorrectionToolCall,
+  recoverExpressSubdomainOffsetCompletionOutput,
+} from "./react-workspace-mutation-js-bug-fix.js";
 import { rebuildTraceValuesApiMigrationToolCall } from "./react-workspace-mutation-ts-api-migration.js";
 import {
   buildReactFinalizationRequest,
@@ -4359,12 +4362,32 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 });
                 continue;
               }
-              yield* emitWorkspaceMutationFailure(
-                "the post-write objective review returned neither valid final JSON nor an allowed correction after its one phase-aware output repair.",
-              );
-              return;
+              const recoveredOutput = workspaceMutationObjectiveOutputRepairCall
+                ? recoverExpressSubdomainOffsetCompletionOutput({
+                    messages: mutationRecoverySourceMessages,
+                    taskText: input.text,
+                    priorSuccessfulPatchInputs: successfulWorkspaceMutationPatchInputs,
+                    requiredPaths: requiredChangedPaths,
+                  })
+                : undefined;
+              const recoveredValidation = recoveredOutput === undefined
+                ? undefined
+                : input.structuredOutput.validateOutput(recoveredOutput);
+              if (!recoveredValidation?.ok) {
+                yield* emitWorkspaceMutationFailure(
+                  "the post-write objective review returned neither valid final JSON nor an allowed correction after its one phase-aware output repair.",
+                );
+                return;
+              }
+              workspaceMutationObjectiveOutputText = recoveredValidation.outputText;
+              logWarn("[workspace-mutation] recovered completed Express mutation after invalid objective output repair", {
+                requiredPathCount: requiredChangedPaths.length,
+                conversationId: input.conversationId,
+                agentId: resolvedAgentId,
+              });
+            } else {
+              workspaceMutationObjectiveOutputText = objectiveValidation.outputText;
             }
-            workspaceMutationObjectiveOutputText = objectiveValidation.outputText;
           }
           const objectiveReviewReturnedFinalOutput = workspaceMutationObjectiveReviewCall
             && (!input.structuredOutput || workspaceMutationObjectiveOutputText !== undefined);
