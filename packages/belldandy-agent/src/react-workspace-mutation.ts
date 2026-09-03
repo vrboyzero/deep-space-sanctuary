@@ -7,6 +7,8 @@ import {
 import {
   branchAdmitsUnrestrictedBooleanFalse,
   branchReceivesFalseExcludedByPreviousSibling,
+  collectSerializedFalseMultilineFallbackBranches,
+  hasGroupedSerializedFalseMultilineBranch,
   readSiblingBranchBody,
 } from "./react-workspace-mutation-serialized-false.js";
 import {
@@ -1480,6 +1482,10 @@ export function hasUnpreservedSerializedFalseWitnessCurrentSource(
   return readLatestWorkspaceMutationSourceEvidence(messages, priorGuardPaths).some((source) => {
     const lines = source.split(/\r?\n/);
     if (hasComplementarySerializedFalseRemovalBranches(lines)) return false;
+    const multilineFallbackBranches = collectSerializedFalseMultilineFallbackBranches(lines);
+    if (multilineFallbackBranches.length === 1) {
+      return !multilineFallbackBranches[0]!.ordinaryFalseRemoved;
+    }
     return lines.some((line, index) => {
       if (!/}\s*else\s+if\s*\(/.test(line)) return false;
       const hasNullGuard = /\bvalue\s*!=\s*NULL\b/.test(line);
@@ -2276,7 +2282,10 @@ export function hasUnreachableSerializedFalseWitnessCurrentSource(
     if (hasElseIfAfterUnconditionalElse(lines) || hasReattachedSiblingBranchTail(lines)) return true;
     if (!lines.some((line) => /\.setAttribute\s*\(/.test(line))) return false;
     if (hasComplementarySerializedFalseRemovalBranches(lines)) return false;
+    if (collectSerializedFalseMultilineFallbackBranches(lines).length === 1
+      || hasGroupedSerializedFalseMultilineBranch(lines)) return false;
     const hasReachableSerializedFalseBranch = lines.some((line, index) => {
+      if (!/^\s*}\s*else\s+if\s*\(/.test(line)) return false;
       const body = readSiblingBranchBody(lines, index);
       if (branchDirectlyPreservesSerializedFalsePrefixes(line, body)) return true;
       const receivesPreviouslyExcludedFalse = branchReceivesFalseExcludedByPreviousSibling(

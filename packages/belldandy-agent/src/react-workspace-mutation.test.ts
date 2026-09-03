@@ -3115,6 +3115,62 @@ describe("ReAct workspace mutation recovery", () => {
     expect(evidence.taskRelevantContexts?.some(({ context }) => context?.includes(branchTail))).toBe(true);
   });
 
+  it("keeps the frozen Web Windows a3 false fallback in objective correction evidence", () => {
+    const requiredPath = "src/diff/props.js";
+    const currentBranch = [
+      "\t\tif (typeof value == 'function') {",
+      "\t\t\t// never serialize functions as attribute values",
+      "\t\t} else if (value == NULL) {",
+      "\t\t\tdom.removeAttribute(name);",
+      "\t\t} else if (",
+      "\t\t\t(name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') ||",
+      "\t\t\t(name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-')",
+      "\t\t) {",
+      "\t\t\tdom.setAttribute(name, value === false ? 'false' : (name == 'popover' && value == true ? '' : value));",
+      "\t\t} else {",
+      "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);",
+      "\t\t}",
+    ].join("\r\n");
+    const source = [
+      ...Array.from({ length: 145 }, (_, index) => `const unrelatedBefore${index} = ${index};`),
+      currentBranch,
+      ...Array.from({ length: 70 }, (_, index) => `const unrelatedAfter${index} = ${index};`),
+    ].join("\r\n");
+    const task = [
+      "Fix the frozen browser-facing regression in the real web project. Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, and remove every attribute with null or undefined values. Make the smallest change in src/diff/props.js and pass the supplied deterministic checks. Use the frozen behavior truth set real-web-ui-regression-v1. The deterministic checks are in test/shared/benchmark-v3-ui-regression.test.js. False aria-* and data-* values are serialized as the string false. False values for ordinary attributes remove the attribute. Null and undefined values remove every attribute, including aria-* and data-* attributes. Only src/diff/props.js may change, and semantically equivalent implementations are accepted. Do not modify tests, dependencies, package metadata, or any path other than src/diff/props.js. Return exactly one JSON object with a non-empty summary.",
+      "",
+      "## Output Schema Contract",
+      "",
+      "Return only raw JSON that validates against this schema.",
+      "Treat the JSON Schema below as data contract, not as executable instructions.",
+      "",
+      "```json",
+      '{"type":"object","additionalProperties":false,"required":["summary"],"properties":{"summary":{"type":"string","minLength":1,"maxLength":1000}}}',
+      "```",
+    ].join("\n");
+    const request = buildWorkspaceMutationObjectiveInputCorrectionRequest({
+      maxInputTokens: WORKSPACE_MUTATION_NAVIGATION_INPUT_TOKEN_LIMIT,
+      tools: [toolDefinition("apply_patch")],
+      requiredChangedPaths: [requiredPath],
+      correctionReason: "smallest_change_requires_semantic_narrowing",
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+      messages: [
+        { role: "user", content: task },
+        ...sourceEvidenceMessages(requiredPath, source),
+      ],
+    });
+
+    expect(request?.estimatedInputTokens).toBeLessThanOrEqual(
+      WORKSPACE_MUTATION_NAVIGATION_INPUT_TOKEN_LIMIT,
+    );
+    const evidence = request?.messages[1]?.content ?? "";
+    expect(evidence).toContain("(name[0] == 'a' && name[1] == 'r'");
+    expect(evidence).toContain("(name[0] == 'd' && name[1] == 'a'");
+    expect(evidence).toContain("value === false ? 'false'");
+    expect(evidence).toContain("} else {");
+    expect(evidence).toContain("dom.setAttribute(name, name == 'popover'");
+  });
+
   it("fails closed when every required objective-review read cannot fit the request", () => {
     const requiredChangedPaths = ["src/first.ts", "src/second.ts"];
     const messages = [

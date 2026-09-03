@@ -215,6 +215,244 @@ describe("ToolEnabledAgent serialized-false boolean branch correction", () => {
     expect(requests.some((request) => String(request.messages?.[0]?.content ?? "")
       .includes("Post-mutation objective correction input retry phase"))).toBe(true);
   });
+
+  it("rebuilds the frozen broad fallback correction without rewriting correct prefix branches", async () => {
+    const requiredPath = "src/diff/props.js";
+    const lineEnding = "\r\n";
+    const functionGuard = "\t\tif (typeof value == 'function') {";
+    const functionComment = "\t\t\t// never serialize functions as attribute values";
+    const originalCondition = "\t\t} else if (value != NULL && value !== false) {";
+    const ordinarySetAttribute = "\t\t\tdom.setAttribute(name, name == 'popover' && value == true ? '' : value);";
+    const removalStatement = "\t\t\tdom.removeAttribute(name);";
+    const unconditionalFallback = "\t\t} else {";
+    const guardedFallback = "\t\t} else if (value !== false) {";
+    const branchEnd = "\t\t}";
+    const baselineBranch = [
+      functionGuard,
+      functionComment,
+      originalCondition,
+      ordinarySetAttribute,
+      unconditionalFallback,
+      removalStatement,
+      branchEnd,
+    ].join(lineEnding);
+    const postWriteBranch = [
+      functionGuard,
+      functionComment,
+      "\t\t} else if (value == NULL) {",
+      removalStatement,
+      "\t\t} else if (",
+      "\t\t\t(name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') ||",
+      "\t\t\t(name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-')",
+      "\t\t) {",
+      "\t\t\tdom.setAttribute(name, value === false ? 'false' : (name == 'popover' && value == true ? '' : value));",
+      unconditionalFallback,
+      ordinarySetAttribute,
+      branchEnd,
+    ].join(lineEnding);
+    const correctedBranch = postWriteBranch.replace(
+      [unconditionalFallback, ordinarySetAttribute, branchEnd].join(lineEnding),
+      [
+        guardedFallback,
+        ordinarySetAttribute,
+        unconditionalFallback,
+        removalStatement,
+        branchEnd,
+      ].join(lineEnding),
+    );
+    const sourcePrefix = Array.from(
+      { length: 145 },
+      (_, index) => `const unrelatedBefore${index} = ${index};`,
+    ).join(lineEnding);
+    const sourceSuffix = Array.from(
+      { length: 70 },
+      (_, index) => `const unrelatedAfter${index} = ${index};`,
+    ).join(lineEnding);
+    const baselineSource = `${sourcePrefix}${lineEnding}${baselineBranch}${lineEnding}${sourceSuffix}`;
+    const postWriteSource = baselineSource.replace(baselineBranch, postWriteBranch);
+    const correctedSource = postWriteSource.replace(postWriteBranch, correctedBranch);
+    const initialPatch = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      ` ${functionGuard}`,
+      ` ${functionComment}`,
+      `-${originalCondition}`,
+      `-${ordinarySetAttribute}`,
+      "+\t\t} else if (value == NULL) {",
+      `+${removalStatement}`,
+      "+\t\t} else if (",
+      "+\t\t\t(name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') ||",
+      "+\t\t\t(name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-')",
+      "+\t\t) {",
+      "+\t\t\tdom.setAttribute(name, value === false ? 'false' : (name == 'popover' && value == true ? '' : value));",
+      ` ${unconditionalFallback}`,
+      `-${removalStatement}`,
+      `+${ordinarySetAttribute}`,
+      ` ${branchEnd}`,
+      "*** End Patch",
+    ].join("\n");
+    const contextOnlyOutputRepair = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      ` ${unconditionalFallback}`,
+      ` ${ordinarySetAttribute}`,
+      "*** End Patch",
+    ].join("\n");
+    const broadInputCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${functionGuard}`,
+      "+\t\tif (typeof value == 'function' || value === false) {",
+      ` ${functionComment}`,
+      "*** End Patch",
+    ].join("\n");
+    const expectedCorrection = [
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${unconditionalFallback}`,
+      `-${ordinarySetAttribute}`,
+      `+${guardedFallback}`,
+      `+${ordinarySetAttribute}`,
+      `+${unconditionalFallback}`,
+      `+${removalStatement}`,
+      ` ${branchEnd}`,
+      "*** End Patch",
+    ].join(lineEnding);
+    const task = [
+      "Fix the frozen browser-facing regression in the real web project. Preserve false values for aria-* and data-* attributes by serializing them, remove ordinary attributes with false values, and remove every attribute with null or undefined values. Make the smallest change in src/diff/props.js and pass the supplied deterministic checks. Use the frozen behavior truth set real-web-ui-regression-v1. The deterministic checks are in test/shared/benchmark-v3-ui-regression.test.js. False aria-* and data-* values are serialized as the string false. False values for ordinary attributes remove the attribute. Null and undefined values remove every attribute, including aria-* and data-* attributes. Only src/diff/props.js may change, and semantically equivalent implementations are accepted. Do not modify tests, dependencies, package metadata, or any path other than src/diff/props.js. Return exactly one JSON object with a non-empty summary.",
+    ].join("\n");
+    const successJson = '{"summary":"Verified exact false and nullish attribute behavior."}';
+    const requests: Array<Record<string, any>> = [];
+    const executedPatches: string[] = [];
+    let currentSource = baselineSource;
+    let ordinaryCallCount = 0;
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      const instruction = String(body.messages?.[0]?.content ?? "");
+      if (instruction.includes("Post-mutation final objective review phase")) {
+        return jsonResponse({
+          choices: [{ finish_reason: "stop", message: { content: successJson } }],
+          usage: { prompt_tokens: 300, completion_tokens: 30 },
+        });
+      }
+      if (instruction.includes("Post-mutation verification phase")) {
+        return jsonResponse(modelToolCall(`read-current-source-${requests.length}`, "file_read", {
+          path: requiredPath,
+          limit: 1_048_576,
+        }));
+      }
+      if (instruction.includes("Post-mutation objective correction input retry phase")) {
+        return jsonResponse(modelToolCall("broad-input-correction", "apply_patch", {
+          input: broadInputCorrection,
+        }));
+      }
+      if (instruction.includes("Post-mutation objective review output repair phase")) {
+        return jsonResponse(modelToolCall("context-only-output-repair", "apply_patch", {
+          input: contextOnlyOutputRepair,
+        }));
+      }
+      if (instruction.includes("Post-mutation objective review phase")) {
+        return jsonResponse({
+          choices: [{
+            finish_reason: "stop",
+            message: { content: "The branch still needs a contract correction." },
+          }],
+          usage: { prompt_tokens: 300, completion_tokens: 30 },
+        });
+      }
+      ordinaryCallCount += 1;
+      return jsonResponse(ordinaryCallCount === 1
+        ? modelToolCall("read-baseline-source", "file_read", { path: requiredPath })
+        : modelToolCall("apply-broad-branch", "apply_patch", { input: initialPatch }));
+    });
+
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: requiredPath,
+            size: currentSource.length,
+            truncated: false,
+            content: currentSource,
+          }),
+          durationMs: 1,
+        };
+      }
+      const patchInput = String(request.arguments?.input ?? "");
+      executedPatches.push(patchInput);
+      if (patchInput === initialPatch) {
+        currentSource = postWriteSource;
+      } else if (patchInput === expectedCorrection) {
+        currentSource = correctedSource;
+      } else {
+        return {
+          id: request.id,
+          name: request.name,
+          success: false,
+          output: "",
+          error: "Unexpected correction reached the patch executor",
+          failureKind: "input_error" as const,
+          metadata: { repairAction: "apply_patch_input_invalid" },
+          durationMs: 1,
+        };
+      }
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: [requiredPath] },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent(execute);
+
+    const items = await collect(agent.run({
+      conversationId: "conv-frozen-web-multiline-fallback",
+      text: task,
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths: [requiredPath],
+          toolLoopIterationBudget: 10,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === successJson
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(postWriteSource.length).toBeGreaterThan(4_096);
+    expect(items.at(-2)).toEqual({ type: "final", text: successJson });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+    expect(executedPatches).toEqual([initialPatch, expectedCorrection]);
+    expect(executedPatches).not.toContain(contextOnlyOutputRepair);
+    expect(executedPatches).not.toContain(broadInputCorrection);
+    expect(currentSource).toBe(correctedSource);
+    expect(requests.some((request) => String(request.messages?.[0]?.content ?? "")
+      .includes("Post-mutation objective review output repair phase"))).toBe(true);
+    expect(requests.some((request) => String(request.messages?.[0]?.content ?? "")
+      .includes("Post-mutation objective correction input retry phase"))).toBe(true);
+  });
 });
 
 function createAgent(execute: ReturnType<typeof vi.fn>): ToolEnabledAgent {

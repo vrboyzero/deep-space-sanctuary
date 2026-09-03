@@ -1,3 +1,5 @@
+import { collectSerializedFalseMultilineFallbackBranches } from "./react-workspace-mutation-serialized-false.js";
+
 type SourceMessage = {
   role: string;
   content?: unknown;
@@ -42,6 +44,11 @@ const SVG_EXCLUDED_BOOLEAN_FALSE_CONDITION_SUFFIX = "} else if (typeof value == 
 const SVG_INCLUSIVE_BOOLEAN_FALSE_CONDITION_SUFFIX = "} else if (typeof value == 'boolean' && !value) {";
 const BOOLEAN_FALSE_BRANCH_COMMENT = "// False for boolean attributes (aria-/, data-/) means false.";
 const BOOLEAN_FALSE_PREFIX_CONDITION = "if (/^(aria|data)-/.test(name)) {";
+const MULTILINE_ARIA_PREFIX_PREDICATE = "(name[0] == 'a' && name[1] == 'r' && name[2] == 'i' && name[3] == 'a' && name[4] == '-') ||";
+const MULTILINE_DATA_PREFIX_PREDICATE = "(name[0] == 'd' && name[1] == 'a' && name[2] == 't' && name[3] == 'a' && name[4] == '-')";
+const MULTILINE_SERIALIZED_FALSE_STATEMENT = "dom.setAttribute(name, value === false ? 'false' : (name == 'popover' && value == true ? '' : value));";
+const NULLISH_REMOVAL_CONDITION_SUFFIX = "} else if (value == NULL) {";
+const GUARDED_ORDINARY_FALLBACK_SUFFIX = "} else if (value !== false) {";
 
 type NullishSerializationBranch = {
   condition: string;
@@ -535,14 +542,48 @@ export function rebuildSerializedFalseSemanticNarrowingToolCall<
     requiredPath,
     SVG_EXCLUDED_BOOLEAN_FALSE_CONDITION_SUFFIX,
   );
+  const priorPatchAddedMultilineFallbackBranch = priorPatchAddedSerializedFalseMultilineFallbackBranch(
+    input.priorSuccessfulPatchInputs,
+    requiredPath,
+  );
   if (!requiredPath
     || (input.correctionReason === "serialized_false_nullish_serialization_requires_atomic_repair"
       ? !priorPatchAddedNullishBranch
-      : !priorPatchAddedBroadCondition && !priorPatchAddedSvgExcludedBooleanBranch)) return undefined;
+      : !priorPatchAddedBroadCondition
+        && !priorPatchAddedSvgExcludedBooleanBranch
+        && !priorPatchAddedMultilineFallbackBranch)) return undefined;
 
   const source = readCompleteSource(input.messages, requiredPath);
   if (!source) return undefined;
   const lineEnding = source.includes("\r\n") ? "\r\n" : "\n";
+  if (input.correctionReason !== "serialized_false_nullish_serialization_requires_atomic_repair"
+    && priorPatchAddedMultilineFallbackBranch
+    && requiresSerializedFalseTruthSet(input.taskText)) {
+    const branches = collectSerializedFalseMultilineFallbackBranches(source.split(/\r?\n/))
+      .filter((branch) => !branch.ordinaryFalseRemoved);
+    if (branches.length !== 1) return undefined;
+    const branch = branches[0]!;
+    const patch = [
+      "*** Begin Patch",
+      `*** Update File: ${input.requiredPaths[0]}`,
+      "@@",
+      `-${branch.fallbackCondition}`,
+      `-${branch.fallbackStatement}`,
+      `+${branch.conditionIndent}${GUARDED_ORDINARY_FALLBACK_SUFFIX}`,
+      `+${branch.fallbackStatement}`,
+      `+${branch.conditionIndent}} else {`,
+      `+${branch.statementIndent}${EXISTING_REMOVAL_STATEMENT}`,
+      ` ${branch.branchEnd}`,
+      "*** End Patch",
+    ].join(lineEnding);
+    return {
+      ...input.toolCall,
+      function: {
+        ...input.toolCall.function,
+        arguments: JSON.stringify({ input: patch }),
+      },
+    } as T;
+  }
   if (input.correctionReason !== "serialized_false_nullish_serialization_requires_atomic_repair"
     && priorPatchAddedSvgExcludedBooleanBranch) {
     const branches = collectSvgExcludedBooleanFalseBranches(source);
@@ -674,6 +715,39 @@ function priorPatchAddedLine(
     }
     return false;
   });
+}
+
+function priorPatchAddedSerializedFalseMultilineFallbackBranch(
+  patchInputs: readonly string[],
+  requiredPath: string,
+): boolean {
+  if (patchInputs.length !== 1) return false;
+  let currentPath = "";
+  const added = new Set<string>();
+  const removed = new Set<string>();
+  for (const line of patchInputs[0]!.split(/\r?\n/)) {
+    if (line.startsWith("*** Update File: ")) {
+      currentPath = normalizePath(line.slice("*** Update File: ".length));
+      continue;
+    }
+    if (line.startsWith("*** ")) {
+      currentPath = "";
+      continue;
+    }
+    if (currentPath !== requiredPath) continue;
+    if (line.startsWith("+")) added.add(line.slice(1).trimStart());
+    if (line.startsWith("-")) removed.add(line.slice(1).trimStart());
+  }
+  return removed.has(PREVIOUS_SERIALIZED_FALSE_CONDITION_SUFFIX)
+    && removed.has(EXISTING_ATTRIBUTE_STATEMENT)
+    && removed.has(EXISTING_REMOVAL_STATEMENT)
+    && added.has(NULLISH_REMOVAL_CONDITION_SUFFIX)
+    && added.has(MULTILINE_SERIALIZED_FALSE_CONDITION_START_SUFFIX)
+    && added.has(MULTILINE_ARIA_PREFIX_PREDICATE)
+    && added.has(MULTILINE_DATA_PREFIX_PREDICATE)
+    && added.has(MULTILINE_SERIALIZED_FALSE_CONDITION_END_SUFFIX)
+    && added.has(MULTILINE_SERIALIZED_FALSE_STATEMENT)
+    && added.has(EXISTING_ATTRIBUTE_STATEMENT);
 }
 
 function collectSvgExcludedBooleanFalseBranches(
