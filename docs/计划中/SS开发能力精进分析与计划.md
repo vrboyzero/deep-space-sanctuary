@@ -12732,6 +12732,74 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：当前六项 Gate 已是紧邻执行的最新证据；一次只扩展 Windows attempt 1 能在平台切换前形成完整 `24/24` 横截面，同时保留逐 run 可恢复点。
 - **当前还缺的关键闭环**：Windows attempt 1 的 `23` 个计划报告及逐项终态、环境清理与后置静默性，随后才是 attempt 2/3、WSL2 三轮、aggregate/资格评分和第二候选。
 
+#### P2-C Windows attempt 1 中间结论：首批八项 ledger 与 local-fixture 停点（2026-09-03）
+
+##### 已完成内容
+
+1. **Windows attempt 1 首批 planned reports 执行**：
+   - canary 后新增 `rules.nested-precedence`、`feature.cross-file`、`navigation.large-repository`、`command.interactive-control`、`safety.boundary-enforcement`、`gateway.disconnect-recovery` 六项 passed；
+   - `bug.reproducible-fix` 形成 `product_workflow` failed，usage=`provider_reported`；初始 patch、test 与 evaluator 均正确，但 post-write objective correction 最终因 required-path patch section 非法而失败关闭；
+   - global ledger 当前 processed=`8`、其中 passed/failed=`7/1`，Provider observed=`$2.37829149`、candidate observed=`$0.00352409`、reserved=`$2.04221000`。
+
+2. **`gateway.client-cancel` planned report 保留**：
+   - report=`passed`、modelExecution=`local_fixture`、usage=`not_reached`，唯一 terminal=`run.cancelled`；preflight pricing=`not_applicable/fixture_provider`，cancel injection=`confirmed`、request count=`1`；
+   - report SHA-256=`d09d789017c567538eae337e7f9f79321eb36be24360114fc6996f0a3b984492`，未调用 Provider、未产生可计费用；
+   - operator launcher 因仍只接受旧 `unavailable` 分支，在 ledger 写入前失败关闭；该 report 不重跑，当前 formal files=`9`、ledger coverage=`8/144`。
+
+3. **效果**：
+   - 每份已接受 report 均已即时进入 global/platform ledger，产品失败保留在预冻结分母内；
+   - local fixture 的停点发生在下一 planned task 启动前，没有活动 runner 会话，也没有不确定 Provider 调用；
+   - 后续必须先恢复 report/ledger 一致性，不能绕过已存在 report 或改变 plan path。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节尚未修改 TypeScript；冻结 staging 最近一次完整 build 仍通过；
+- ledger 中 `8/8` report path/hash/identity 可对账，正式文件共 `9`；`gateway.client-cancel` 的 report/preflight/events/cancel-injection 四层本地 fixture 证据一致；
+- 当前 Provider usage 均已完整记录；client-cancel 由本地 fixture 在模型前取消，无 Provider usage/cost，launcher 已按不完整 operator 合同停止而未伪造入账。
+
+##### 后续计划
+
+- **下一步准备做什么**：先为 launcher 的 local-fixture 证据判定和 existing-report reconciliation 建立静态/真实反馈信号，修复后只读验证并把该 report 原子补入 global/platform ledger；随后重新执行 resume-state 与六项收费前 Gate，再继续 Windows attempt 1 未处理槽位。
+- **为什么先做它**：目前 plan 文件与 report 正确，唯一不一致是 operator ledger；若直接续跑会因现存 artifact 或游离 report 失败，并破坏可恢复审计链。
+- **当前还缺的关键闭环**：client-cancel ledger reconciliation、`bug.reproducible-fix` 可重复根因与产品回归修复、Windows attempt 1 剩余 `15` 个 report、环境清理和后置静默性。
+
+#### P2-C Windows attempt 1 恢复实现结论：local-fixture usage 与 existing-report reconciliation（2026-09-03）
+
+##### 已完成内容
+
+1. **`tmp/run-p2c-candidate-matrix-c02eef7.ps1` 修改**：
+   - client-cancel/process-restart 不再按旧 `unavailable` 特判，而是统一要求 manifest/run/environment/preflight/events 与专属 lifecycle artifact 证明 `local_fixture + not_reached`；
+   - 合法本地 fixture 不新增费用或 reserved，任何 Provider usage、错误模型指纹、缺失终态或 lifecycle 外键漂移继续失败关闭；
+   - 新增 `-ReconcileExistingReport`，只允许显式 `TaskId`，复用 plan/identity/report/usage 校验后消费既有 planned report，不创建 state/fixture、不启动 Gateway/Provider。
+
+2. **`gateway.client-cancel.windows-native.a1` 原地 reconciliation**：
+   - 精确复核 report=`passed`、terminal=`run.cancelled`、usage=`not_reached`、无 `run.usage`、cancel request=`1` 与 binding/terminal seq 一致；
+   - global ledger 先于 Windows ledger 原子追加唯一 entry，report path/hash 保持 `d09d7890…`，未覆盖或重跑报告；
+   - observed/candidate/reserved 保持 `$2.37829149/$0.00352409/$2.04221000`，processed/remaining=`9/135`。
+
+3. **`tmp/cleanup-p2c-c02eef7-windows-a1-batch-01-env.ps1` 新建并执行**：
+   - 从 ledger 与 frozen manifest 映射八个尚未清理的精确 state 短键，逐个验证 `.env/.env.local` containment、常规文件、非 reparse point、长度与 SHA-256；
+   - `16` 个目标全部送入 Windows 回收站，filesystem remaining=`0`；
+   - cleanup log=`artifacts/cleanup/p2c-c02eef7-windows-a1-batch-01-env-2026-09-03.json`，SHA-256=`3351499e1999c0e62e7337254bd58bfac27f5de69814052768b49b4256f6c402`。
+
+4. **效果**：
+   - formal report 与 global/platform ledger 恢复一一对应，coverage=`9/144`、Windows=`9/72`；
+   - 12 个本地 lifecycle usage 终态合同在实际 candidate operator 链闭合，不再把无 Provider 的合法 `not_reached` 误记为未知费用；
+   - 下一轮 resume 可跳过九个已处理槽位并继续，不改变 frozen plan 或 source/harness identity。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节只修改未提交的一次性 PowerShell operator，冻结 staging 未变；
+- PowerShell parser=`3683` tokens、`0` errors；真实 reconciliation=`1/1 passed`（本环节新增产品测试=`0`）；
+- resume-state verifier reports/IDs/paths=`144/144/144`、processed/remaining=`9/135`；费用 Gate 下一单最坏=`36.16401192 RMB < 80 RMB`。
+- cleanup script parser=`0` errors，log targets/remaining=`16/0`，所有目标写后存在性复核均为 false。
+
+##### 后续计划
+
+- **下一步准备做什么**：环境回收已闭合；重跑 resume plan/identity、费用、端口、Windows/WSL2 进程与 OCI 六项收费前 Gate，随后继续 Windows attempt 1 剩余 `15` 项。`bug.reproducible-fix` 则先补公共状态机 Red，再做不放宽安全 Gate 的 tool-free final-review fallback。
+- **为什么先做它**：账本和敏感环境均已恢复一致，最新资源静默性是重新触达 Provider 前的最后前置；产品失败已冻结，可在本平台横截面完成后集中修复，避免测试与 formal 争用宿主资源。
+- **当前还缺的关键闭环**：最新六项 Gate、Windows attempt 1 剩余报告、产品失败 TDD/实现/回归、新 identity 与完整候选重跑。
+
 #### 后续工作量估算
 
 **本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；CLI/TUI 双平台首帧与退出收敛也已修复并通过真实 PTY 验证；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
@@ -12826,3 +12894,6 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 47、canary 声明 artifact 的首次独立复核把 `run.artifacts` 的七个路径字符串误当成 `{ path, sha256 }` 对象解析，因空 `.path` 产生虚假的 `missing=7` 并以 exit code=`1` 结束；报告、artifact 与 ledger 均未被修改。根因是没有先检查 v3 report 的字段形状，就沿用了其他 receipt 的对象式 artifact 假设。处理方案是先输出属性类型/键，再按报告目录解析七个相对路径字符串；修正后 declared=`7`、missing=`0`。后续 source report 只按其 v3 Schema/生产 verifier 验真，artifact 内容 hash 由各自 owner/aggregate 合同复算，不再臆造当前字段不存在的 per-entry hash。
 48、canary 文档 checkpoint 提交前的 staged 文件保护错误拒绝了正确的单文件清单：`git diff --cached --name-only` 在默认 `core.quotePath=true` 下把中文路径输出为带引号的八进制转义文本，直接与未转义路径比较必然不等。失败发生在 `git commit` 之前，staged 文档保持完整，`tmp-codeintel-summary.json` 仍未暂存。处理方案是使用 `git -c core.quotePath=false diff --cached --name-only` 获取可比较路径，并继续要求清单恰为唯一计划文档后才提交；不取消或绕过单文件保护。
 49、首个 canary 完成后的下一批 plan/identity Gate 误调用了只适用于“首跑前”的 `tmp/verify-p2c-expected-report-plan-c02eef7.mjs`，该脚本按设计要求 formal root 与全部 planned report 不存在，因此在发现已合法存在的首份报告后返回 `Formal report root must not exist before the first candidate run`，后续 identity 子步骤未执行。根因是把创建前不可覆盖 verifier 复用于 resume 场景，而不是 plan 或 identity 漂移。处理方案是新增只读 `tmp/verify-p2c-resume-state-c02eef7.mjs`：仍重建并通过生产 validator 校验 `144/144/144` 槽位，但对每个槽位要求“global ledger 已处理且 report hash/单 run 外键一致”或“未处理且文件不存在”，任何无 ledger 报告、缺失已处理报告、hash/identity 漂移均失败关闭；语法与真实恢复态复核已通过，processed/remaining=`1/143`，Windows/WSL2 production identity 仍完全一致。首跑前 verifier 保持原合同，不为恢复兼容而放宽。
+50、`bug.reproducible-fix.windows-native.a1` 在正确修改 `src/calculate.mjs`、visible test passed、patch accepted、regression=`0` 后仍以 `product_workflow` 失败；唯一失败消息是 post-write objective correction patch 未包含合法 required-path file section。冻结事件证明初始完整读、正确 `apply_patch` 与写后完整复读均成功，随后共 `7` 次 provider model calls、usage/cost 完整，因此不是 fixture/evaluator/infrastructure 失败。精确 Gateway 阶段日志进一步确认：call 5 objective review 返回 `497` 字非法终态；call 6 phase-aware output repair 同时返回 `183` 字内容与一个无合法 required-path section 的 correction Tool call；该 patch 未执行，runtime 转入 required Tool input correction，call 7 仍无合法 section后失败。根因收敛为“未执行任何 correction 时仍强迫第二次 patch”，安全 path Gate 本身正确。处理方案先以公开 `ToolEnabledAgent.run()` 固定同形 Red；随后只在一次 input correction 已耗尽、已有可信 mutation 和完整 post-write read、且无 correction 被执行时，标记 correction 耗尽并转入既有 tool-free final objective review。该 fallback 不直接成功，最终 JSON 仍经原 Schema/确定性 current-source guards 校验；其他越界/第二 correction/缺失证据继续失败关闭，真实改善只由后续新 identity 证明。
+51、`gateway.client-cancel.windows-native.a1` report 已通过且按新 manifest 明确为 `local_fixture`，run/env/preflight/events/cancel-injection 均证明没有 Provider，但 operator launcher 仍沿用旧候选逻辑，只接受 `usage=unavailable` 并为其 reserve `$0.10`；新生产 runner 规范化输出为 `not_reached`，qualification 也精确要求该状态，于是 launcher 在正确 report 落盘后、ledger 前错误停止。根因是一次性矩阵脚本未同步 12 个 local-fixture usage 终态合同，不是产品 runner 或资格 owner 回归。处理已完成：client-cancel/process-restart 统一要求 manifest/run/environment/preflight/无 `run.usage`/终态及专属 lifecycle artifact 一致；合法 `not_reached` 不新增 reserve。新增的 existing-report reconciliation 只消费精确 planned report，真实运行已在零 Gateway/Provider 情况下把该 entry global-first 原子入账，report SHA 保持 `d09d7890…`，processed/remaining=`9/135`、费用三项不变；resume verifier 与下一单费用 Gate 均通过。
+52、定位测试与旧 launcher 时两条 `rg` 命令把 `scripts/*.test.mjs`、`scripts/run-coding-agent-benchmark*.mjs` 之类 shell glob 直接作为 Windows 路径参数，ripgrep 返回“文件名、目录名或卷标语法不正确”；其他并列精确搜索仍返回有效证据，未改动文件。根因是把 POSIX shell glob 习惯带入 PowerShell/Windows 路径参数。处理方案固定为传入常规目录 `scripts`/`packages`，再用 `-g '*.test.mjs'`、`-g 'run-coding-agent-benchmark*.mjs'` 过滤；精确文件集合则在 PowerShell `Get-ChildItem -Filter` 后逐项 `Select-String`，不再把 `*` 放入 Windows literal path。
