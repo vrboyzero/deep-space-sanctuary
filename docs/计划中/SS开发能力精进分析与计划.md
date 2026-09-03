@@ -12620,6 +12620,47 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：plan 已冻结但 launcher 仍是旧路径合同；必须先让每个实际 run 在 Gateway 启动前由 production validator 证明 candidate/manifest/source/harness/slot 全部一致。
 - **当前还缺的关键闭环**：plan-aware 矩阵脚本与收费前 Gate、canary、其余 `143` 个计划槽位及完整 aggregate/资格链，以及第二个连续达标候选。
 
+#### P2-C 新候选执行准备阶段结论：plan-aware launcher 与收费前 Gate（2026-09-03）
+
+##### 已完成内容
+
+1. **`tmp/run-p2c-candidate-matrix-c02eef7.ps1` 新建**：
+   - 只绑定 candidate=`candidate-1`、identity=`c02eef7…`、manifest=`dfaf7ebe…` 与 plan=`64458b50…`，不接受旧 collection root 或自动 infrastructure retry；
+   - 每个 artifact root 只能从 plan 的 `platform/task/attempt` 唯一槽位解析，并同时向 Windows/WSL host launcher传入 `--candidate-id`、`--expected-report-plan`；
+   - 费用上限保持 `$0.10/run`、`12 turns / 24,000 tokens`、Provider retry=`0`、model=`deepseek-v4-flash`，global/platform ledger 每个报告后立即原子写入且 global 先于 platform；无 planned report 时保守增加 `$0.10` reserved 并停止。
+
+2. **非证据运行路径缩短**：
+   - 正式 report 严格保持 plan 的 `<platform>/attempt-N/<taskId>/benchmark-report.json`；
+   - state/fixture 改用稳定短键 `r|f/w|l/aN/tNN`，避免旧候选已发生过的 Git managed-worktree branch lock 长路径失败；
+   - task 短键只来自 frozen manifest 顺序，不参与 report identity 或 aggregate 外键。
+
+3. **`tmp/verify-p2c-launch-slots-c02eef7.mjs` 新建并验真**：
+   - 直接调用 production `validateCodingAgentBenchmarkCandidateExpectedReportLaunch()`；
+   - Windows/WSL 的 `tests.failed-diagnosis` attempt 1 均在不启动 Gateway 的情况下通过 plan path 与 source/harness 四字段 identity 校验。
+
+4. **WSL2 toolchain 与环境 Gate**：
+   - 新建 `/var/tmp/star-sanctuary-p2c-c02eef7-toolchain`，仅含指向 Go 1.24.2、gopls 0.21.0 与既有 Docker bridge 的三个显式 symlink；
+   - Docker Desktop 从本机既有 `4.56.0` 安装启动，daemon server=`29.1.3`；未 pull/retag，pinned node image 的实际 ID 与 RepoDigest 均精确为 `sha256:62f550…`；
+   - 串行复核 Windows/WSL 候选相关进程=`0`、`28891/28892` listener=`0`、pinned image 活动容器=`0`。
+
+5. **效果**：
+   - 首个及后续 run 在 Gateway/Provider 前同时受 plan、identity、费用和目标不存在性约束；
+   - product/model failure 仍保留为正式分母，infrastructure/no-report 会写 ledger 后停止，不自动借 retry 改变槽位；
+   - 当前仍未执行 candidate Provider call，formal root、runtime 与 ledger 尚未创建。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节未修改 TypeScript；frozen staging 的最近一次双平台完整 build 仍为通过；
+- expected-plan/Windows/WSL launcher 三文件回归=`37/37`，PowerShell parser=`3052+` tokens/零错误，旧 layout/retry marker=`0`；
+- production launch-slot probe=`2/2`，Windows/WSL `-CostGuardCheckOnly` 均通过，processed=`0`、下一 run 最坏=`36.13581920 RMB < 80 RMB`；
+- plan 独立复核仍为 reports/unique IDs/unique paths=`144/144/144`，formal root=`absent`；端口、进程、容器与 toolchain Gate 全部通过。
+
+##### 后续计划
+
+- **下一步准备做什么**：紧邻运行再串行复算 plan/identity、费用、端口、候选进程和 OCI 容器，然后只执行 Windows `tests.failed-diagnosis` attempt 1 canary；报告一落盘就验真并立即回写结果。
+- **为什么先做它**：该低成本只读诊断任务可同时证明真实 Provider route、Gateway 生命周期、plan slot、report/ledger 原子写入和费用累加，而不先扩大到 24/72 个任务。
+- **当前还缺的关键闭环**：首个 canary、其余 `143` 个计划槽位、完整 aggregate/资格链，以及第二个连续达标候选。
+
 #### 后续工作量估算
 
 **本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；CLI/TUI 双平台首帧与退出收敛也已修复并通过真实 PTY 验证；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
@@ -12660,7 +12701,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 候选保持拒绝；corrected analysis 的全部产品失败 family 已逐项收敛；新候选 identity=`c02eef7` 双平台 clean staging、原生 install/build/verifier、repository inputs 与运行前 expected-report plan 已闭合，plan-aware launcher 待闭合** | 旧 aggregate=`97 passed + 47 product_workflow failed`、正式 infrastructure error=`0`，不得重解释；usage `12` 个终态、unknown `19/19` 与 corrected failure analysis 已闭合；`output_schema=7/7` 最终 focused=`33/33`、相邻=`162/162`、Agent=`885 passed + 1 skipped`、Core=`62/62`，工程 Gate 全绿，实现 checkpoint=`4f9ba94d7dfeebc43dbb5231c3c81bf1d1893b60`；Windows/WSL2 staging 均绑定 commit=`c02eef7a69a0a10cc15c674c523d5b4b64d97197`、clean=`true`、lockfile=`844c0021…`、worktree=`cfe97460…`；repository inputs 两端均为 receipts=`4/4`、preflights=`8/8 passed`；candidate-1 plan 在首个 run 前冻结 reports/unique IDs/unique paths=`144/144/144`，manifest=`dfaf7ebe…`、plan=`64458b50…`，重复创建按 `EEXIST` 失败且 hash 不变；当前 Provider=`0/$0`，累计费用守卫=`35.33581920 RMB`，下一 run 最坏=`36.13581920 RMB < 80 RMB` | `1.75–3.5 人日既有基线 + 双平台准备/候选运行/观察窗口` | 新建并验真 plan-aware 矩阵脚本，完成收费前端口/进程 Gate 后只启动一个 Windows canary；结论立即回写再扩到剩余槽位 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 候选保持拒绝；新候选 identity=`c02eef7` 的双平台 staging/build/repository inputs、运行前 expected-report plan、plan-aware launcher 与收费前 Gate 均已闭合，首个 canary 待执行** | corrected failure analysis 的 usage `12` 个终态、unknown `19/19` 与全部产品失败 family 已逐项收敛；实现 checkpoint=`4f9ba94…`；双平台 candidate identity=`c02eef7…/844c0021…/cfe97460…`，inputs 均 receipts=`4/4`、preflights=`8/8 passed`；candidate-1 plan reports/unique IDs/unique paths=`144/144/144`、manifest=`dfaf7ebe…`、plan=`64458b50…`；launcher tests=`37/37`、真实 slot probe=`2/2`，端口/进程/容器=`0`，下一 run 最坏=`36.13581920 RMB < 80 RMB`；当前 candidate Provider=`0/$0` | `1.75–3.5 人日既有基线 + 双平台准备/候选运行/观察窗口` | 紧邻运行复核费用与静默性后执行单个 Windows canary；report/ledger 验真并回写后再扩矩阵 |
 
 
 #### 重要问题说明
@@ -12702,3 +12743,9 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 35、读取旧 WSL preparation 摘要时，命令中的 `| head -40` 没有封装为 Linux shell argv，管道由宿主 PowerShell 解释，导致宿主找不到 `head`；失败仅发生在只读展示命令，不影响任何 artifact。处理方案是对无需 shell 的操作继续使用 `wsl.exe -- <command> <argv>`，本次改为直接传递 `sed -n 1,40p <path>` 后成功；确需管道时才显式使用单层 `sh -lc`，且不得再叠加 Node `-e` 或 PowerShell 字符串插值。
 36、expected-report producer 的运行前接口探测先后以直接 `--help` 和 `pnpm script -- --help` 调用，分别返回严格 parser 的 `Invalid expected-report plan argument near --help` 与 Linux preparation parser 对独立 `--` 缺值的失败；两次均在身份解析和文件创建前退出，没有生成 plan 或 repository input。根因是这两个一次性 producer 没有定义 help 分支，且 pnpm 的额外 separator 被脚本作为 argv 接收。处理方案是直接阅读已冻结 parser 的允许参数集合，并使用 `node <producer> --flag value` 的逐项 argv 调用；不为当前候选修改 frozen CLI，也不把参数错误绕过为默认值。技术债裁决=`record_only`：未来若将其作为人工常用 CLI，可单独补 help 合同与测试。
 37、expected-report plan 不存在性 Gate 的首版 PowerShell 把 `foreach { ... }` 语句块后直接连接 `| Format-Table`，解析阶段报 `An empty pipe element is not allowed`，因此该次没有形成有效证据，也没有写入任何文件。处理方案是先把四个精确目标投影到 `$rows`，再单独格式化并断言 existing count=`0`；修正后 `artifacts/p2c-c02eef7`、`candidate-1`、`formal` 与 `expected-report-plan.json` 四层均确认为不存在，才允许 producer 继续。
+38、新 plan-aware launcher 的首次 `-CostGuardCheckOnly` 在 PowerShell 第 275 行返回 `String.Format` 参数数量错误；`ScriptStackTrace` 精确定位费用摘要字符串声明 `{0}` 至 `{7}` 八个占位符，但参数列表漏传 `$Platform`，实际只有七个值。该失败发生在 runtime、ledger、artifact、Gateway 与 Provider 创建前，formal root 仍不存在，与 plan 内容或费用计算无关。处理方案已完成：把 `$Platform` 恢复为第二个 format 参数后，Windows/WSL2 同一只读 Gate 均通过，摘要精确输出 candidate/platform/plan hash/费用/processed=`0`，下一单最坏=`36.13581920 RMB`。
+39、正式 canary 前的首次“孤儿进程 Gate”与 identity/toolchain 等只读探针并行执行，Windows scan 命中同一并行批次的三个 `pwsh`、两个 `wsl.exe` 与一个 Node，WSL scan 同样命中正在运行的 Go/identity probe；所有 PID/父进程/命令行均绑定本次并行 Gate，本批结束后自然退出，不是真实孤儿，也未停止任何进程。根因是静默性断言与会制造相关进程的检查并发，验证方法自相干扰。处理方案已落实：进程/端口/容器 quiescence Gate 放在其他准备探针结束后单独串行执行，不排除原命令行模式；复核结果 Windows/WSL 候选相关进程=`0`、端口 listener=`0`。
+40、首次 OCI image Gate 调用 Docker API 时返回 `dockerDesktopLinuxEngine` named pipe 不存在，因此无法完成 image ID 与活动容器核对；失败发生在 Gateway、runner 与 Provider 前，不能解释为 pinned image 丢失。只读复核确认 Docker 进程=`0`、`com.docker.service=Stopped/Manual`、context=`desktop-linux` 且安装文件存在，根因即 Docker Desktop 尚未启动。处理方案已完成：仅从既有 `Docker Desktop.exe 4.56.0` 隐藏启动，daemon server=`29.1.3` 后复核本地 pinned node image ID/RepoDigest 均精确为 `sha256:62f550…`、相关活动容器=`0`；未 pull、改 tag 或换 digest。
+41、Docker 安装路径的只读探针再次把 `foreach { ... }` 语句块后直接接 `| Format-List`，触发与问题 37 同类的 PowerShell `An empty pipe element is not allowed`，未完成该条路径判断；service/context/pipe 的其他独立检查不受影响。根因是恢复后的临时命令仍沿用了错误语法模式，说明仅在单次命令中修正不足。处理方案已落实为本轮后续所有 PowerShell 集合投影先赋值 `$rows` 再单独进入 pipeline，简单路径直接逐项 `Test-Path/Get-Item`；修正后 Docker Desktop/CLI 两个路径均确认为常规非 reparse 文件，才执行启动。
+42、串行 WSL 静默性 Gate 的 `ps` 输出附带 `your 131072x1 screen size is bogus. expect trouble`，但 `ps`、`ss` 均 exit code=`0`，候选相关进程与 `28891/28892` listener 仍精确为零。该 warning 来自当前自动化 PTY 向 WSL 传递的异常终端尺寸，不是 benchmark、Gateway 或候选进程状态。技术债裁决=`record_only`：正式 runner 不依赖交互终端尺寸，本轮不修改宿主 PTY；后续 Gate 继续按 exit code 与结构化匹配结果判定并原样记录 warning。
+43、plan-aware launcher 初版让 state/fixture 和正式 report 一样使用完整 `attempt-N/<taskId>`，对抗复核发现这可能重新触发旧 `df54f67` 已发生的 Windows Git managed-worktree branch lock `Filename too long`；plan 只约束 report path，并不要求内部运行目录可读。处理方案是正式 artifact 保持预冻结 plan 逐字不变，非证据 state/fixture 改用 frozen manifest 顺序派生的 `w|l/aN/tNN` 短键；同时把 ledger 原子写序调整为 candidate-global 先于 platform，使中断恢复以总账为先。旧 collection/retry marker 扫描=`0`，双平台 cost Gate 与 production slot probe 重跑均通过。
