@@ -173,6 +173,7 @@ import {
   hasExactWorkspaceMutationPatchPaths,
   hasOnlyWorkspaceMutationPatchPaths,
   hasPriorPatchAdjacentDuplicateClosingDelimiterCurrentSource,
+  hasRegressiveTraceValueImportCorrection,
   hasRedundantWorkspaceMutationPatchHunks,
   hasRevertedSmallestChangeCorrectionHunks,
   hasUnreachableSerializedFalseWitnessCurrentSource,
@@ -4963,6 +4964,29 @@ export class ToolEnabledAgent implements BelldandyAgent {
               successfulWorkspaceMutationPatchInputs,
               input.text,
             );
+          const regressiveTraceValueImportCorrection = workspaceMutationObjectiveReviewCall
+            && hasRegressiveTraceValueImportCorrection(
+              validatedMutationToolCall,
+              mutationRecoverySourceMessages,
+              workspaceMutationCallRequiredPaths,
+              successfulWorkspaceMutationPatchInputs,
+              input.text,
+            );
+          if (regressiveTraceValueImportCorrection) {
+            workspaceMutationObjectiveCorrectionAttempted = true;
+            workspaceMutationObjectiveReviewPending = true;
+            lastToolCallFingerprint = undefined;
+            lastToolCallName = undefined;
+            consecutiveDuplicateToolCalls = 0;
+            recentToolCallTraces.length = 0;
+            lastSuccessfulToolResult = undefined;
+            logWarn("[workspace-mutation] rejected a regressive TraceValue import correction; retaining current source for tool-free review", {
+              requiredPathCount: workspaceMutationCallRequiredPaths.length,
+              conversationId: input.conversationId,
+              agentId: resolvedAgentId,
+            });
+            continue;
+          }
           if (revertedSmallestChangeCorrection && workspaceMutationObjectiveInputCorrectionCall) {
             workspaceMutationObjectiveCorrectionAttempted = true;
             workspaceMutationObjectiveReviewPending = true;

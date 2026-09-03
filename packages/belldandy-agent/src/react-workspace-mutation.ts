@@ -17,6 +17,7 @@ import {
   rankTaskSourceIdentifierOccurrences,
   selectTaskTextForSourceContext,
 } from "./react-workspace-mutation-source-context.js";
+import { isRegressiveTraceValueImportCorrection } from "./react-workspace-mutation-ts-api-migration.js";
 
 export const WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE = 4_096;
 export const WORKSPACE_MUTATION_RECOVERY_MIN_OUTPUT_TOKEN_RESERVE = 1_024;
@@ -2559,6 +2560,46 @@ function readLatestRequiredFileReadSourceContents(
     sourceByPath.set(requiredPathIdentity, record.content);
   }
   return sourceByPath.size === requiredPaths.length ? sourceByPath : undefined;
+}
+
+export function hasRegressiveTraceValueImportCorrection(
+  toolCall: WorkspaceMutationNavigationToolCall,
+  messages: WorkspaceMutationSourceMessage[],
+  requiredPaths: readonly string[],
+  priorSuccessfulPatchInputs: readonly string[],
+  taskText: string,
+): boolean {
+  if (toolCall.function.name !== "apply_patch") return false;
+  let parsedArguments: unknown;
+  try {
+    parsedArguments = JSON.parse(toolCall.function.arguments);
+  } catch {
+    return false;
+  }
+  if (!parsedArguments || typeof parsedArguments !== "object" || Array.isArray(parsedArguments)) {
+    return false;
+  }
+  const patchInput = (parsedArguments as Record<string, unknown>).input;
+  const currentSources = readLatestRequiredFileReadSourceContents(messages, requiredPaths);
+  if (typeof patchInput !== "string" || !currentSources) return false;
+  const correctionChanges = collectWorkspaceMutationPatchLineChanges(patchInput);
+  if (!correctionChanges) return false;
+  const priorChanges = priorSuccessfulPatchInputs.flatMap((priorPatchInput) => (
+    collectWorkspaceMutationPatchLineChanges(priorPatchInput) ?? []
+  ));
+  return isRegressiveTraceValueImportCorrection({
+    taskText,
+    requiredPaths,
+    currentSources,
+    priorChanges: priorChanges.map((change) => ({
+      path: change.path,
+      ...collectEffectiveWorkspaceMutationPatchLines(change),
+    })),
+    correctionChanges: correctionChanges.map((change) => ({
+      path: change.path,
+      ...collectEffectiveWorkspaceMutationPatchLines(change),
+    })),
+  });
 }
 
 function containsCompleteLineSequence(sourceLines: string[], candidateLines: string[]): boolean {
