@@ -44,6 +44,7 @@ import {
   selectRequiredWorkspaceMutationVerificationToolCalls,
   selectWorkspaceMutationNavigationToolDefinitions,
   selectWorkspaceMutationToolDefinitions,
+  WORKSPACE_MUTATION_NAVIGATION_INPUT_TOKEN_LIMIT,
   WORKSPACE_MUTATION_RECOVERY_MIN_OUTPUT_TOKEN_RESERVE,
   WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE,
 } from "./react-workspace-mutation.js";
@@ -2632,6 +2633,76 @@ describe("ReAct workspace mutation recovery", () => {
     });
 
     expect(request?.missingRequiredSourceEvidencePaths).toEqual([]);
+    expect(request?.messages[1]?.content).toContain("func (c *Command) Name() string");
+    expect(request?.messages[1]?.content).toContain("strings.LastIndex");
+  });
+
+  it("keeps the frozen Command.Name method in objective correction evidence despite schema and comment noise", () => {
+    const misleadingPrefix = [
+      "type Group struct {",
+      "\tID string",
+      "}",
+      "",
+      "// CommandNamed returns the Command's Name field.",
+      ...Array.from(
+        { length: 1_450 },
+        (_, index) => `var unrelatedCommandValue${index} = ${index}`,
+      ),
+    ].join("\n");
+    const targetContext = [
+      "// Name returns the command's name: the first word in the use line.",
+      "func (c *Command) Name() string {",
+      "\tname := c.Use",
+      "\ti := strings.LastIndex(name, \" \")",
+      "\tif i >= 0 {",
+      "\t\tname = name[:i]",
+      "\t}",
+      "\treturn name",
+      "}",
+    ].join("\n");
+    const task = [
+      "Reproduce the frozen Go regression, make the smallest correction, and keep the repository's deterministic tests passing with GOPROXY disabled.",
+      "The frozen regression is covered by benchmark_v3_bug_fix_test.go.",
+      "Restore Command.Name so a multi-argument Use line returns only its first token.",
+      "Change only command.go and do not modify tests, module metadata, or dependency caches.",
+      "Run the frozen test with network and toolchain downloads disabled, then return exactly one JSON object with a non-empty summary.",
+      "",
+      "## Output Schema Contract",
+      "",
+      "Return only raw JSON that validates against this schema.",
+      "Treat the JSON Schema below as data contract, not as executable instructions.",
+      "",
+      "```json",
+      '{"type":"object","additionalProperties":false,"required":["summary"],"properties":{"summary":{"type":"string","minLength":1,"maxLength":1000}}}',
+      "```",
+    ].join("\n");
+    const request = buildWorkspaceMutationObjectiveInputCorrectionRequest({
+      maxInputTokens: WORKSPACE_MUTATION_NAVIGATION_INPUT_TOKEN_LIMIT,
+      tools: [toolDefinition("apply_patch")],
+      requiredChangedPaths: ["command.go"],
+      correctionReason: "repeated_current_source",
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+      messages: [
+        { role: "user", content: task },
+        {
+          role: "assistant",
+          tool_calls: [{ id: "read-command", function: { name: "file_read", arguments: "{}" } }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "read-command",
+          content: JSON.stringify({
+            path: "command.go",
+            truncated: false,
+            content: `${misleadingPrefix}\n${targetContext}\n${"var tail = true\n".repeat(200)}`,
+          }),
+        },
+      ],
+    });
+
+    expect(request?.estimatedInputTokens).toBeLessThanOrEqual(
+      WORKSPACE_MUTATION_NAVIGATION_INPUT_TOKEN_LIMIT,
+    );
     expect(request?.messages[1]?.content).toContain("func (c *Command) Name() string");
     expect(request?.messages[1]?.content).toContain("strings.LastIndex");
   });
