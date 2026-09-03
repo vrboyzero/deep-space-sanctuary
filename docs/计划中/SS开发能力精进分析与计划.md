@@ -12513,6 +12513,38 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：实现 checkpoint 已冻结；候选 plan 还必须绑定包含本结论的稳定 clean HEAD，不能绑定未提交文档工作树。
 - **当前还缺的关键闭环**：文档 checkpoint、clean stable identity、正式不可覆盖 expected-report plan、新 identity 完整候选链，以及第二个连续达标候选。
 
+#### P2-C 新候选执行准备阶段结论：`c02eef7` 双平台 clean staging（2026-09-03）
+
+##### 已完成内容
+
+1. **稳定候选 identity 冻结**：
+   - 实现 checkpoint=`4f9ba94d7dfeebc43dbb5231c3c81bf1d1893b60`，记录该实现的 clean HEAD=`c02eef7a69a0a10cc15c674c523d5b4b64d97197`；
+   - 根工作树只保留明确排除的未跟踪 `tmp-codeintel-summary.json`，候选 source/harness 不直接复用根工作树。
+
+2. **Windows 与 WSL2 staging 新建**：
+   - Windows detached worktree=`.tmp/p2c-candidate-c02eef7-harness`；WSL2 clean clone=`/var/tmp/star-sanctuary-p2c-candidate-c02eef7`，两端均 detached 到 `c02eef7…`；
+   - 生产 `resolveBenchmarkRepositoryIdentity()` 复算两端均为 `workspaceDirty=false`、lockfile SHA-256=`844c0021f1c9135214c913636fd6ed6f9232593883bd5b6289f7ade51d2b7d2b`、canonical worktree SHA-256=`cfe97460e487b1bdea988b2d67eb0cda8d502bca81b31eb451fbb3ff0285ca51`。
+
+3. **费用守卫复算**：
+   - 冻结 ledger 的 Provider observed=`$2.37476740`、reserved unknown=`$2.04221000`，合计=`$4.41697740 = 35.33581920 RMB`；
+   - 下一次计划内单 run 仍固定上限 `$0.10`，最坏预留后=`36.13581920 RMB < 80 RMB`；model=`deepseek-v4-flash`、`12 turns / 24,000 tokens` 与 Provider retry=`0` 均不放宽。
+
+4. **效果**：
+   - 主文档可以在候选链执行中持续回写，而 source/harness identity 保持冻结不漂移；
+   - 旧 `df54f67` staging、报告和费用 ledger 只作为历史证据，不混入新候选的 `144` 个计划槽位。
+
+##### 验证结果
+
+- TypeScript 编译状态：`c02eef7` 对应实现已在上一结论完成最终 `build:incremental`；新 staging 的双平台原生 frozen install/build 尚未执行，不提前记为通过；
+- Windows/WSL2 identity 四字段逐字一致，两个 staging 新建前目标均不存在；Provider calls/cost=`0/$0`；
+- WSL identity 首次探针因 PowerShell 嵌套 `bash -lc` 引号解析失败，改为 `wsl.exe -- node` 直接 argv 后同一生产 resolver 成功；该工具调用失败未启动 Gateway、runner 或 Provider。
+
+##### 后续计划
+
+- **下一步准备做什么**：在两个 frozen staging 分别执行原生 offline frozen install、完整 build 与 repository verifier，再生成 Windows/WSL2 repository inputs；所有 identity 仍一致后，先创建并验证不可覆盖 expected-report plan，才允许第一个 candidate run。
+- **为什么先做它**：plan 必须绑定可实际执行且原生依赖完整的 clean source/harness；先关闭双平台 build/input 前置可以避免冻结一个随后无法运行的候选分母。
+- **当前还缺的关键闭环**：双平台原生 install/build/verifier、两端 repository inputs、不可覆盖 `144/144` expected-report plan、收费前端口/进程 Gate、完整候选链，以及第二个连续达标候选。
+
 #### 后续工作量估算
 
 **本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；CLI/TUI 双平台首帧与退出收敛也已修复并通过真实 PTY 验证；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
@@ -12553,7 +12585,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 候选保持拒绝；usage/plan/unknown 分类及 corrected analysis 的全部产品失败 family 已逐项收敛；`output_schema_invalid=7/7` 实现、最终回归与仓库工程 Gate 已闭合，实现 checkpoint=`4f9ba94` 已提交** | 旧 aggregate=`97 passed + 47 product_workflow failed`、正式 infrastructure error=`0`；旧 qualification=`not_eligible/unscored` 且不得重解释；`12` 个 lifecycle usage 终态与精确 `144` 槽位 plan Gate 已机器化；corrected failure analysis=`19 patch_acceptance + 2 token_budget + 7 output_schema + 6 navigation + 5 mutation_patch + 6 post_write + 1 accepted_regression + 1 stop_empty`、`unknown=0`；mutation-after `9/9` 已精确分层；TS cross-package 两项由预算感知 post-write projection 覆盖，TS API a3 由 schema isolation 覆盖、a2 由 continuation 执行前 exact-set correction 覆盖；Go a3 与 Web Windows a3 的冻结 objective correction 均在实际 `2048` 上限下保留完整 fault source；Web Windows a2 由 SVG-inclusive predicate replacement 覆盖，a3 由 exact multiline fallback parser/rebuilder、grouped precedence parser 与严格最终 Gate 覆盖；WSL2 a1 parser/rebuilder、preservation、唯一规范化 file-directive 与 canonical output 合同已闭合；`post_write=6/6` 新增严格 `normalized` alias Gate 与 task-named owner 优先投影，十二文件=`320/320`，最新 dist request=`1932/2048 + 2045/2048`；`accepted_regression=1/1` 已由 checkpoint=`b72426c` 新增 TraceValues migration owner，冻结错误 correction 执行前被拒绝且正确 current source进入 tool-free final review；`token_budget=2/2` 已由 checkpoint=`1974ab4` 让普通 preflight 使用完整 Tool schema 与 `1.2` messages safety factor，两份冻结 projected=`25649 + 26182`，finalization plan=`6210/9907 + 2044/4076`；`stop_empty=1/1` 已由 checkpoint=`669377c` 在冻结 system evidence 上接入 structured-repair stop 的一次性 finalization；`output_schema=7/7` 已把 Schema 作为 finalization 独立合同，并为无 Tool repair/finalization 启用 JSON mode 与 DeepSeek thinking-disable，最终 focused=`33/33`、相邻十文件=`162/162`、Agent=`885 passed + 1 skipped`、Core=`62/62`；`build:incremental`、benchmark verifier、diff check 与 debug-marker Gate 全绿；实现 checkpoint=`4f9ba94d7dfeebc43dbb5231c3c81bf1d1893b60`；历史终态不重解释；本轮 Provider=`0/$0`，费用守卫沿用 `35.33581920 RMB < 80 RMB` | `1.75–3.5 人日既有基线 + failure-driven 修复量 + 两个连续候选运行/观察窗口` | 提交本文 checkpoint 后冻结 clean HEAD；任何新 `144/144` 前先生成并验证不可覆盖 expected-report plan，再运行完整候选链并逐环节回写 |
+| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 候选保持拒绝；corrected analysis 的全部产品失败 family 已逐项收敛；新候选 identity=`c02eef7` 已冻结并完成双平台 clean staging，原生 build/input 与 expected-report plan 待闭合** | 旧 aggregate=`97 passed + 47 product_workflow failed`、正式 infrastructure error=`0`，不得重解释；usage `12` 个终态、unknown `19/19` 与 corrected failure analysis 已闭合；`output_schema=7/7` 最终 focused=`33/33`、相邻=`162/162`、Agent=`885 passed + 1 skipped`、Core=`62/62`，工程 Gate 全绿，实现 checkpoint=`4f9ba94d7dfeebc43dbb5231c3c81bf1d1893b60`；Windows `.tmp/p2c-candidate-c02eef7-harness` 与 WSL2 `/var/tmp/star-sanctuary-p2c-candidate-c02eef7` 均绑定 commit=`c02eef7a69a0a10cc15c674c523d5b4b64d97197`、clean=`true`、lockfile=`844c0021…`、worktree=`cfe97460…`；当前 Provider=`0/$0`，累计费用守卫=`35.33581920 RMB`，下一 run 最坏=`36.13581920 RMB < 80 RMB` | `1.75–3.5 人日既有基线 + 双平台准备/候选运行/观察窗口` | 在两个 frozen staging 完成原生 offline build/verifier 与 repository inputs；随后必须先生成、复核不可覆盖 `144/144` expected-report plan，才运行第一个候选槽位并逐环节回写 |
 
 
 #### 重要问题说明
@@ -12587,3 +12619,4 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 27、`output_schema_invalid=7` 实际由两类相邻合同缺口组成，不能通过放宽 Schema 或扩大预算处理。dependency Windows 的 bounded finalization 只从可裁剪 task 间接观察 Schema，精确 `rootCause` const 因裁剪丢失；dependency WSL2 的原候选字段正确但带 prose，旧完整 repair 无法装入剩余预算。其余五个 system run 的外部 evidence 均已通过，但 `summary=1020–1230` 超过 `maxLength=1000`，旧无 Tool repair 没有 `json_object` 且保留 DeepSeek thinking，导致再次超长或夹带 prose。处理方案是把 Schema 一次序列化后作为 finalization 不可裁剪的独立合同，完整合同放不进预算时失败关闭；OpenAI-compatible 无 Tool structured repair/finalization 在根 Schema 明确要求 object 时启用 JSON mode，并对 DeepSeek 关闭 thinking；validator 仅安全暴露 length keyword/limit。TDD 从 `4 failed + 25 passed` 收敛到 `30/30`，新增真实超长 summary 公共同形链后 focused=`31/31` 且终态=`done`；empty-content/streaming/workspace-mutation/Core 等相邻十文件=`160/160`，Agent 全包=`883 passed + 1 skipped`，Core 相关=`62/62`。轻量对抗发现的非 object 兼容性 Red 转入第 28 项处理；旧七个终态不重解释，真实 uplift 只由预冻结 expected-report plan 的新 identity 候选证明。
 28、本轮首次实现把 `json_object` 接线条件写成“存在 structured-output session 且无 Tool”，没有区分根 Schema 类型；但 Core `compileOutputSchema()` 接受合法 array/primitive 根，OpenAI JSON object mode 会把这些合同人为收窄。公共 `ToolEnabledAgent.run()` 反例模拟相同 repair：根 Schema=`type:array` 时，当前第二次请求仍携带 `response_format=json_object`，定向结果稳定为 `1 failed`，证明是本次接线回归而非 validator、预算或 Provider usage 问题。处理方案已落实：相邻 `structured-output.ts` owner 新增纯判定，只对根 Schema 明确 `type="object"` 返回 true；主 `tool-agent.ts` 仅接线该结果。非 object repair 继续关闭 DeepSeek thinking但不声明 object mode，定向已由 `1 failed` 转为 `1 passed` 且终态=`done`；object/array/finalization/validator focused=`32/32`、相邻=`161/161`、Agent=`884 passed + 1 skipped`、Core 相关=`62/62`；最终扩大到 focused=`33/33`、相邻=`162/162`、Agent=`885 passed + 1 skipped` 后，仓库工程 Gate 亦已通过。
 29、finalization 文档要求“Schema 无法稳定序列化时失败关闭”，但首版 `JSON.stringify({ schema })` 在 Schema 的 `toJSON()` 返回 `undefined` 时会合法生成 `{}`，从而保留标签却丢失合同正文。真实 CLI Schema 来自 JSON 文件，通常不带方法，但公共 owner 入参为 `unknown`，不能让该边界静默退化。新增回归首轮因测试文件漏 import `vi` 在进入被测函数前失败，该结果不计作产品 Red；修正夹具后，测试精确观察到 request=`defined`、合同=`{}`、`toJSON calls=1`，形成有效 `1 failed`。处理方案已落实：先直接序列化 Schema 一次，结果为 `undefined` 或抛错即返回 `undefined`，否则用该结果构造 `{"schema":...}`；这样既失败关闭，也不因二次 `toJSON` 产生漂移。单点已由有效 `1 failed` 转为 `1 passed`，`toJSON calls=1`；完整 Schema/预算 focused=`33/33`、相邻=`162/162`、Agent=`885 passed + 1 skipped`、Core=`62/62`，增量构建、benchmark verifier、diff check 与 debug-marker Gate 均通过，并由实现 checkpoint=`4f9ba94d7dfeebc43dbb5231c3c81bf1d1893b60` 固定。
+30、WSL2 identity 首次只读探针使用 PowerShell → `wsl.exe` → `bash -lc` → Node `-e` 的四层嵌套字符串，括号在到达 Node 前被 PowerShell 二次解析，得到 `ParserError: Missing ')' in method call`；该失败发生在生产 resolver 调用前，不是 repository identity 或产品失败，也没有启动 Gateway、runner 或 Provider。处理方案是去掉中间 `bash -lc`，通过 `wsl.exe -d Ubuntu-22.04 -- node ...` 直接传递 argv；重跑后生产 `resolveBenchmarkRepositoryIdentity()` 成功返回与 Windows 完全一致的四字段 identity。后续 WSL 单命令探针固定优先直接 argv，仅在确需 shell 语义时才使用脚本文件或单层 shell。
