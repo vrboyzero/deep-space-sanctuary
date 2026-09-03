@@ -951,33 +951,56 @@ export function hasOnlyWorkspaceMutationPatchPaths(
   if (allowedPathIdentities.size !== allowedPaths.length) {
     return false;
   }
+  const patchPathIdentities = readWorkspaceMutationPatchPathIdentities(toolCall);
+  return patchPathIdentities !== undefined
+    && patchPathIdentities.length > 0
+    && patchPathIdentities.every((path) => allowedPathIdentities.has(path));
+}
+
+export function hasExactWorkspaceMutationPatchPaths(
+  toolCall: WorkspaceMutationNavigationToolCall,
+  requiredPaths: readonly string[],
+): boolean {
+  if (!hasOnlyWorkspaceMutationPatchPaths(toolCall, requiredPaths)) {
+    return false;
+  }
+  const requiredPathIdentities = new Set(requiredPaths.map(normalizeSourcePath));
+  const patchPathIdentities = readWorkspaceMutationPatchPathIdentities(toolCall);
+  return patchPathIdentities !== undefined
+    && patchPathIdentities.length === requiredPathIdentities.size
+    && new Set(patchPathIdentities).size === requiredPathIdentities.size;
+}
+
+function readWorkspaceMutationPatchPathIdentities(
+  toolCall: WorkspaceMutationNavigationToolCall,
+): string[] | undefined {
   let parsed: unknown;
   try {
     parsed = JSON.parse(toolCall.function.arguments);
   } catch {
-    return false;
+    return undefined;
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return false;
+    return undefined;
   }
   const patch = (parsed as Record<string, unknown>).input;
   if (typeof patch !== "string") {
-    return false;
+    return undefined;
   }
 
-  let fileSectionCount = 0;
+  const pathIdentities: string[] = [];
   for (const line of patch.trim().split(/\r?\n/)) {
     const header = /^\*\*\* (?:Update|Add|Delete) File:?\s+(.+)$/.exec(line);
     if (!header) {
       continue;
     }
-    fileSectionCount += 1;
     const path = normalizeWorkspaceMutationDiagnosticPath(header[1] ?? "");
-    if (path === "<unsafe>" || !allowedPathIdentities.has(normalizeSourcePath(path))) {
-      return false;
+    if (path === "<unsafe>") {
+      return undefined;
     }
+    pathIdentities.push(normalizeSourcePath(path));
   }
-  return fileSectionCount > 0;
+  return pathIdentities;
 }
 
 export function hasRedundantWorkspaceMutationPatchHunks(

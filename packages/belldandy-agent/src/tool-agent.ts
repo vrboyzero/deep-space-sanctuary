@@ -169,6 +169,7 @@ import {
   hasNonReachabilitySerializedFalseDataPredicateCorrectionHunks,
   hasNonReachabilitySerializedFalseParentGuardCorrectionHunks,
   hasNoopSerializedFalseRemovalBranchCurrentSource,
+  hasExactWorkspaceMutationPatchPaths,
   hasOnlyWorkspaceMutationPatchPaths,
   hasPriorPatchAdjacentDuplicateClosingDelimiterCurrentSource,
   hasRedundantWorkspaceMutationPatchHunks,
@@ -4706,6 +4707,38 @@ export class ToolEnabledAgent implements BelldandyAgent {
             || rebuiltSerializedFalseBroadFirstCharacterToolCall
             ? validatedMutationToolCall
             : constrainedMutationToolCall;
+          const continuationHasOnlyMissingPaths = workspaceMutationContinuationCall
+            && hasOnlyWorkspaceMutationPatchPaths(
+              validatedMutationToolCall,
+              workspaceMutationCallRequiredPaths,
+            );
+          if (continuationHasOnlyMissingPaths
+            && !hasExactWorkspaceMutationPatchPaths(
+              validatedMutationToolCall,
+              workspaceMutationCallRequiredPaths,
+            )) {
+            const canCorrectIncompleteContinuation = !workspaceMutationInputCorrectionCall
+              && !workspaceMutationInputCorrectionAttempted;
+            if (canCorrectIncompleteContinuation) {
+              workspaceMutationContinuationPending = true;
+              workspaceMutationInputCorrectionPending = true;
+              lastToolCallFingerprint = undefined;
+              lastToolCallName = undefined;
+              consecutiveDuplicateToolCalls = 0;
+              recentToolCallTraces.length = 0;
+              lastSuccessfulToolResult = undefined;
+              logWarn("[workspace-mutation] missing-path continuation omitted a required path; scheduling one input correction", {
+                missingRequiredPathCount: workspaceMutationCallRequiredPaths.length,
+                conversationId: input.conversationId,
+                agentId: resolvedAgentId,
+              });
+              continue;
+            }
+            yield* emitWorkspaceMutationFailure(
+              "the bounded missing-path mutation continuation did not include exactly one patch section for every missing required path.",
+            );
+            return;
+          }
           if (rebuiltClosingDelimiterToolCall) {
             logWarn("[workspace-mutation] rebuilt trusted deletion-only closing-delimiter correction", {
               requiredPathCount: workspaceMutationCallRequiredPaths.length,

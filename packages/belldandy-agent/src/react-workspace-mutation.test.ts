@@ -20,6 +20,7 @@ import {
   hasExcludedFalseWitnessSmallestChangeCorrectionHunks,
   hasExpandedSmallestChangeCorrectionHunks,
   hasBroadenedSmallestChangeCorrectionHunks,
+  hasExactWorkspaceMutationPatchPaths,
   hasIncompleteSerializedFalseSiblingDataCoverageCurrentSource,
   hasNonDataCoverageSerializedFalseSiblingCorrectionHunks,
   hasNonDeletionOnlyClosingDelimiterCorrectionHunks,
@@ -1981,6 +1982,27 @@ describe("ReAct workspace mutation recovery", () => {
 
     expect(inspectWorkspaceMutationPatchHunks(call)?.paths).toHaveLength(32);
     expect(hasOnlyWorkspaceMutationPatchPaths(call, allowedPaths)).toBe(false);
+  });
+
+  it("requires every continuation path exactly once beyond bounded diagnostics", () => {
+    const requiredPaths = Array.from({ length: 40 }, (_, index) => `src/required-${index}.ts`);
+    const buildCall = (paths: string[]) => applyPatchToolCall([
+      "*** Begin Patch",
+      ...paths.flatMap((path, index) => ([
+        `*** Update File: ${path}`,
+        "@@",
+        `-export const value = ${index};`,
+        `+export const value = ${index + 1};`,
+      ])),
+      "*** End Patch",
+    ]);
+
+    expect(hasExactWorkspaceMutationPatchPaths(buildCall(requiredPaths), requiredPaths)).toBe(true);
+    expect(hasExactWorkspaceMutationPatchPaths(buildCall(requiredPaths.slice(0, -1)), requiredPaths)).toBe(false);
+    expect(hasExactWorkspaceMutationPatchPaths(
+      buildCall([...requiredPaths, requiredPaths[0]!]),
+      requiredPaths,
+    )).toBe(false);
   });
 
   it("builds one bounded read-after-write request for each required path", () => {
