@@ -12584,6 +12584,42 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：repository inputs 已是最后一组数据前置；此时冻结完整分母，才能让首个 canary 及后续每个报告都在副作用发生前证明自己属于同一候选和唯一计划槽位。
 - **当前还缺的关键闭环**：不可覆盖 `144/144` expected-report plan、适配 plan 路径的新矩阵脚本、收费前端口/进程 Gate、完整候选链，以及第二个连续达标候选。
 
+#### P2-C 新候选执行准备阶段结论：`candidate-1` expected-report plan 预冻结（2026-09-03）
+
+##### 已完成内容
+
+1. **`scripts/run-coding-agent-benchmark-expected-report-plan.mjs` frozen producer 执行**：
+   - 在任何 Gateway、benchmark run 与 Provider 调用前，以 candidate ID=`candidate-1`、source/harness=`c02eef7…` 创建 plan；
+   - report root 固定为 `artifacts/p2c-c02eef7/candidate-1/formal`，plan 固定为相邻 `expected-report-plan.json`；
+   - producer 精确生成 `<reportRoot>/<platform>/attempt-N/<taskId>/benchmark-report.json` 的 `144` 个槽位，formal root 在生成后仍不存在。
+
+2. **`tmp/verify-p2c-expected-report-plan-c02eef7.mjs` 独立验真**：
+   - 不依赖 producer 自报，直接从 frozen manifest 重建 `24 tasks × 2 platforms × 3 attempts`；
+   - 复核 schema、candidate ID、规范化 manifest SHA-256、source/harness 四字段 identity、每个 report 的 ID/metadata/path 及目标不存在；
+   - 再调用 production loader 和 run validator 对全部 `144` 个槽位逐项验真。
+
+3. **不可覆盖负例**：
+   - 使用完全相同参数第二次运行 producer，按文件 `wx` 合同返回 exit code=`1` 与 `EEXIST`；
+   - plan SHA-256 在失败前后均为 `64458b50cbc18c32a67af26459cdd8b665259554e8cc886d348cbb7f437d38c7`，没有覆盖或漂移。
+
+4. **效果**：
+   - 本候选的完整报告分母已在首个运行副作用前冻结，后续不能通过遗漏失败槽位改变 coverage；
+   - 每个 host launcher 必须同时提供 `--candidate-id candidate-1` 与 `--expected-report-plan`，且 artifact root 必须逐字落入唯一计划槽位；
+   - 旧 `df54f67` 仍因没有同类运行前 plan 而保持拒绝，本 plan 不用于事后补造旧候选证据。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节未修改 TypeScript；使用 frozen producer/validator 的既有已构建实现；
+- expected reports=`144/144`、unique report IDs=`144/144`、unique report paths=`144/144`，所有 planned report 在冻结时均不存在；
+- manifest SHA-256=`dfaf7ebecaa3f6109e3427670b53b23606fae19535e00abf64212c6090daa1ba`，plan SHA-256=`64458b50cbc18c32a67af26459cdd8b665259554e8cc886d348cbb7f437d38c7`；
+- source/harness 均为 clean commit=`c02eef7a69a0a10cc15c674c523d5b4b64d97197`、lockfile=`844c0021…`、worktree=`cfe97460…`；不可覆盖负例通过，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：新建只绑定本 plan 的矩阵编排脚本，移除旧 `collectionRoot/aN/slug` 布局，逐槽从 plan 解析 artifact root；先做脚本语法、identity/path/费用、端口与任务进程 Gate，再只运行一个 Windows canary。
+- **为什么先做它**：plan 已冻结但 launcher 仍是旧路径合同；必须先让每个实际 run 在 Gateway 启动前由 production validator 证明 candidate/manifest/source/harness/slot 全部一致。
+- **当前还缺的关键闭环**：plan-aware 矩阵脚本与收费前 Gate、canary、其余 `143` 个计划槽位及完整 aggregate/资格链，以及第二个连续达标候选。
+
 #### 后续工作量估算
 
 **本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；CLI/TUI 双平台首帧与退出收敛也已修复并通过真实 PTY 验证；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
@@ -12624,7 +12660,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 候选保持拒绝；corrected analysis 的全部产品失败 family 已逐项收敛；新候选 identity=`c02eef7` 双平台 clean staging、原生 install/build/verifier 与 repository inputs 已闭合，expected-report plan 待闭合** | 旧 aggregate=`97 passed + 47 product_workflow failed`、正式 infrastructure error=`0`，不得重解释；usage `12` 个终态、unknown `19/19` 与 corrected failure analysis 已闭合；`output_schema=7/7` 最终 focused=`33/33`、相邻=`162/162`、Agent=`885 passed + 1 skipped`、Core=`62/62`，工程 Gate 全绿，实现 checkpoint=`4f9ba94d7dfeebc43dbb5231c3c81bf1d1893b60`；Windows/WSL2 staging 均绑定 commit=`c02eef7a69a0a10cc15c674c523d5b4b64d97197`、clean=`true`、lockfile=`844c0021…`、worktree=`cfe97460…`；Windows/WSL2 offline install 分别=`493/494`、downloaded=`0/0`，两端完整 build 与 benchmark verifier 通过且写后 identity 未漂移；repository inputs 两端均为 receipts=`4/4`、preflights=`8/8 passed`，WSL2 Go provenance=`1.24.2`；当前 Provider=`0/$0`，累计费用守卫=`35.33581920 RMB`，下一 run 最坏=`36.13581920 RMB < 80 RMB` | `1.75–3.5 人日既有基线 + 双平台准备/候选运行/观察窗口` | 在任何新 run 前生成并验真不可覆盖 `144/144` expected-report plan；再接入逐字匹配 plan 路径的新矩阵脚本和收费前 Gate |
+| P2-C：9.5 稳定化与最终复核 | P2 | **旧 `df54f67…` 候选保持拒绝；corrected analysis 的全部产品失败 family 已逐项收敛；新候选 identity=`c02eef7` 双平台 clean staging、原生 install/build/verifier、repository inputs 与运行前 expected-report plan 已闭合，plan-aware launcher 待闭合** | 旧 aggregate=`97 passed + 47 product_workflow failed`、正式 infrastructure error=`0`，不得重解释；usage `12` 个终态、unknown `19/19` 与 corrected failure analysis 已闭合；`output_schema=7/7` 最终 focused=`33/33`、相邻=`162/162`、Agent=`885 passed + 1 skipped`、Core=`62/62`，工程 Gate 全绿，实现 checkpoint=`4f9ba94d7dfeebc43dbb5231c3c81bf1d1893b60`；Windows/WSL2 staging 均绑定 commit=`c02eef7a69a0a10cc15c674c523d5b4b64d97197`、clean=`true`、lockfile=`844c0021…`、worktree=`cfe97460…`；repository inputs 两端均为 receipts=`4/4`、preflights=`8/8 passed`；candidate-1 plan 在首个 run 前冻结 reports/unique IDs/unique paths=`144/144/144`，manifest=`dfaf7ebe…`、plan=`64458b50…`，重复创建按 `EEXIST` 失败且 hash 不变；当前 Provider=`0/$0`，累计费用守卫=`35.33581920 RMB`，下一 run 最坏=`36.13581920 RMB < 80 RMB` | `1.75–3.5 人日既有基线 + 双平台准备/候选运行/观察窗口` | 新建并验真 plan-aware 矩阵脚本，完成收费前端口/进程 Gate 后只启动一个 Windows canary；结论立即回写再扩到剩余槽位 |
 
 
 #### 重要问题说明
@@ -12664,3 +12700,5 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 33、`c02eef7` 首次 WSL2 repository-input preparation 返回 `partial ready=3 blocked=1`；production summary 明确显示 Node/Git/npm 正常但 `toolchain.go=null`，唯一 blocked repository=`spf13-cobra`、reason=`go_toolchain_unavailable`，其余三个 Node repository 的 `6` 个 preflight 已通过。根因是本次用 `wsl.exe -- node` 直接 argv 启动 producer 时没有给进程 `PATH` 前置既有冻结 Go toolchain；Go 1.24.2 binary 与 module cache 实际均存在，分别位于 `/var/tmp/star-sanctuary-p1a2-go1.24.2-linux-20260811-a/bin/go` 和 `/var/tmp/star-sanctuary-coding-agent-v3/p0.15-materials/go-module-cache`，不是 source/cache 损坏。处理方案已完成：原 canonical partial 目录已原子改名为 `/var/tmp/star-sanctuary-p2c-candidate-c02eef7-inputs-rejected-go-path` 作为只读诊断证据，未覆盖、未删除；随后使用只含明确 Linux 系统目录且前置冻结 Go 1.24.2 bin 的 `PATH`，在原 canonical 输出路径不可覆盖重跑，结果=`ready=4, blocked=0`、receipts=`4/4`、preflights=`8/8 passed`，toolchain 精确记录 `go version go1.24.2 linux/amd64`。该失败与修复均未启动 Gateway、runner 或 Provider，费用增量=`$0`。
 34、WSL2 通用材料路径 `/var/tmp/star-sanctuary-coding-agent-v3/p0.15-materials/toolchains/go/bin/go` 当前返回 Go `1.26.5`，而最近接受的 `df54f67` repository inputs 与正式 runner shim 均记录/指向 Go `1.24.2`；若只验证“go 可执行”就使用通用路径，会把未声明的 toolchain provenance 漂移混入新候选。处理方案是不用通用目录名承担版本冻结，当前 preparation 与后续矩阵均显式使用 `/var/tmp/star-sanctuary-p1a2-go1.24.2-linux-20260811-a/bin`，并在执行前验证 `go version go1.24.2 linux/amd64`；通用 1.26.5 材料保持原状，技术债裁决=`record_only`，不在本轮改写或删除。
 35、读取旧 WSL preparation 摘要时，命令中的 `| head -40` 没有封装为 Linux shell argv，管道由宿主 PowerShell 解释，导致宿主找不到 `head`；失败仅发生在只读展示命令，不影响任何 artifact。处理方案是对无需 shell 的操作继续使用 `wsl.exe -- <command> <argv>`，本次改为直接传递 `sed -n 1,40p <path>` 后成功；确需管道时才显式使用单层 `sh -lc`，且不得再叠加 Node `-e` 或 PowerShell 字符串插值。
+36、expected-report producer 的运行前接口探测先后以直接 `--help` 和 `pnpm script -- --help` 调用，分别返回严格 parser 的 `Invalid expected-report plan argument near --help` 与 Linux preparation parser 对独立 `--` 缺值的失败；两次均在身份解析和文件创建前退出，没有生成 plan 或 repository input。根因是这两个一次性 producer 没有定义 help 分支，且 pnpm 的额外 separator 被脚本作为 argv 接收。处理方案是直接阅读已冻结 parser 的允许参数集合，并使用 `node <producer> --flag value` 的逐项 argv 调用；不为当前候选修改 frozen CLI，也不把参数错误绕过为默认值。技术债裁决=`record_only`：未来若将其作为人工常用 CLI，可单独补 help 合同与测试。
+37、expected-report plan 不存在性 Gate 的首版 PowerShell 把 `foreach { ... }` 语句块后直接连接 `| Format-Table`，解析阶段报 `An empty pipe element is not allowed`，因此该次没有形成有效证据，也没有写入任何文件。处理方案是先把四个精确目标投影到 `$rows`，再单独格式化并断言 existing count=`0`；修正后 `artifacts/p2c-c02eef7`、`candidate-1`、`formal` 与 `expected-report-plan.json` 四层均确认为不存在，才允许 producer 继续。
