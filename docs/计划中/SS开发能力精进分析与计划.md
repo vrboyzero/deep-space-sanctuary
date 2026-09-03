@@ -13281,6 +13281,591 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 - **为什么先做它**：候选 source/harness identity 必须指向包含本次产品修复及完整回归说明的稳定 commit；只有先形成 clean checkpoint，后续 plan 与每份正式 report 才能绑定不可漂移的同一源码。
 - **当前还缺的关键闭环**：新 checkpoint hash、双平台 clean staging/build/identity、全新 repository inputs、不可覆盖 expected-report plan、新 identity 的完整候选链，以及第二个连续达标候选。
 
+#### P2-C 新候选执行准备阶段结论：`3f66b71` 双平台 clean staging（2026-09-04）
+
+##### 已完成内容
+
+1. **Windows detached staging 创建与核验**：
+   - 在目标不存在 Gate 后创建 `E:\project\star-sanctuary\.tmp\p2c-candidate-3f66b71-harness`；
+   - HEAD 精确冻结为 `3f66b710cffbcd38f0649ab6029a3df20eab7a50`，status 仅为 `## HEAD (no branch)`；
+   - `symbolic-ref -q HEAD` exit code=`1`，确认 detached 且工作树无修改或未跟踪项。
+
+2. **WSL2 ext4 detached staging 创建与核验**：
+   - 在目标不存在 Gate 后以 `--no-local --no-checkout` 创建 `/var/tmp/star-sanctuary-p2c-candidate-3f66b71`；
+   - HEAD、clean status 与 detached state 均逐字匹配 Windows staging；
+   - filesystem type=`ext2/ext3`，确认位于 WSL2 ext4 语义而不是 `/mnt/e` DrvFS。
+
+3. **效果**：
+   - 新候选两端 source/harness 已绑定同一 clean commit，根工作树的后续文档回写不会污染冻结源码；
+   - 旧 `bf1a481` staging、inputs、plan、reports 与 ledgers 均未复用或覆盖；
+   - 本环节未启动 Gateway、runner 或 Provider，calls/cost=`0/$0`。
+
+##### 验证结果
+
+- TypeScript 编译状态：本环节未修改源码，`3f66b71` 提交前的 `corepack pnpm build:incremental` 已通过；双平台 staging 完整 build 保留为下一环 Gate；
+- Windows/WSL2 的目标不存在、HEAD、clean status、detached state 与 WSL2 filesystem 检查合计 `8/8` 通过；
+- 两端 HEAD 均精确为 `3f66b710cffbcd38f0649ab6029a3df20eab7a50`，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：逐端执行 `corepack pnpm install --offline --frozen-lockfile`、完整 `corepack pnpm build` 与 `corepack pnpm verify:coding-benchmark`，处理并验证可能出现的 WSL2 file-mode-only 漂移，随后调用生产 `resolveBenchmarkRepositoryIdentity()` 复算 commit、clean、lockfile SHA-256 与 canonical worktree content SHA-256。
+- **为什么先做它**：repository inputs 与 expected-report plan 必须绑定可构建、benchmark 合同通过且跨平台四字段一致的 source/harness，不能只凭 commit 字符串推定内容身份。
+- **当前还缺的关键闭环**：双平台 install/build/verifier/四字段 identity、全新 repository inputs、不可覆盖 expected-report plan、新 identity 的完整候选链，以及第二个连续达标候选。
+
+#### P2-C 新候选执行准备阶段结论：`3f66b71` 双平台工程 Gate 与四字段 identity（2026-09-04）
+
+##### 已完成内容
+
+1. **Windows frozen staging 工程 Gate**：
+   - offline frozen install 完成 `493` packages、reused=`492`、downloaded=`0`；
+   - 完整 build 通过 version/Web assets、`tsc -b`、workspace entrypoint verifier 与 postbuild；
+   - benchmark verifier 返回 v1/v2/v3 manifests、schemas、docs 与 platform gates aligned，写后 staging 仍 clean detached。
+
+2. **WSL2 frozen staging 工程 Gate**：
+   - offline frozen install 完成 `494` packages、reused=`493`、downloaded=`0`；
+   - 唯一 `relay.mjs` mode `644→755` 漂移经路径、mode、`0/0` numstat 和相同 blob 全量验证后精确恢复 `644`；
+   - 完整 build 与 benchmark verifier 均通过，写后 staging 仍 clean detached。
+
+3. **生产 identity 逐端复算**：
+   - Windows 与 WSL2 均直接调用 frozen source 内 `resolveBenchmarkRepositoryIdentity()`；
+   - 两端 commit=`3f66b710cffbcd38f0649ab6029a3df20eab7a50`、workspaceDirty=`false`；
+   - lockfile SHA-256=`844c0021f1c9135214c913636fd6ed6f9232593883bd5b6289f7ade51d2b7d2b`，canonical worktree SHA-256=`1dc3387e8fc1bb86c785998e9dea28945179e61ecb12868ca189a23113ed3ee7`。
+
+4. **效果**：
+   - 新 source/harness 已具备跨平台一致、可构建、合同通过且可复算的冻结身份；
+   - 后续 repository inputs 与 expected-report plan 可绑定同一四字段，不受根工作树文档回写影响；
+   - 本环节未启动 Gateway、runner 或 Provider，calls/cost=`0/$0`。
+
+##### 验证结果
+
+- TypeScript 编译无错误：Windows/WSL2 完整 `corepack pnpm build` 均 exit code=`0`，两端 `tsc -b` 与 `verify:build` 通过；
+- offline install、完整 build、benchmark verifier 三项 Gate 在两平台合计 `6/6` 通过；
+- 双平台生产 identity 四字段逐字一致，两个 staging 最终均 clean detached；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：从四个 frozen repository seed 为 Windows 与 WSL2 生成只属于 `3f66b71` 的 repository inputs，并逐端独立验真 `4` 个 receipts、`8` 个 task preflights、config SHA 与生成后的 harness identity。
+- **为什么先做它**：expected-report plan 的八个真实仓任务只有在 source/cache/receipt/preflight 全部绑定本 identity 后才可执行；先闭合 inputs 可避免预冻结一个数据前置不完整的计划。
+- **当前还缺的关键闭环**：双平台 repository inputs、不可覆盖且独立验真的 `144/144/144` expected-report plan、plan-aware launcher、完整候选链，以及第二个连续达标候选。
+
+#### P2-C 新候选执行准备阶段结论：`3f66b71` 双平台 repository inputs（2026-09-04）
+
+##### 已完成内容
+
+1. **Windows inputs producer 与独立 verifier 创建**：
+   - `prepare-p2c-candidate-inputs-3f66b71.mjs` 只绑定 `3f66b71…/844c0021…/1dc3387e…` 四字段 identity 与全新 output root；
+   - 以 staging+rename 和逐文件 `wx` 生成 `4` 个 repository receipts、`8` 个 task preflights 与唯一 repository config；
+   - `verify-p2c-candidate-inputs-3f66b71.mjs` 从 frozen manifest 重建集合并调用生产 inspection/preflight owner，不信任 producer 自报。
+
+2. **WSL2 production snapshot preparation**：
+   - 新 toolchain 将 Go 固定为 `1.24.2`，并逐个验证 go/docker/gopls symlink 目标；
+   - 首次误用无 commit 后缀的 ready-cache parent，完整 partial evidence 已保留在 `-rejected-express-seed` 路径；
+   - 改用含 `<repositoryId>-<commit>/node_modules/.package-lock.json` 的正确 seed parent 后，canonical producer 返回 `ready=4, blocked=0`。
+
+3. **双平台 inputs 与 identity 验真**：
+   - Windows/WSL2 均独立验证 repositories/receipts/preflights=`4/4/8`，全部 preflight=`passed`；
+   - Windows config SHA-256=`7dd96eae192f07bb4124b32df504b711dde72f4054ff090e8fb690e732b4a6ae`，WSL2 config SHA-256=`ffaa88c3f3de2fe5948cd352ce89537a5eca37e114df484b9c78309ec31666c4`；
+   - 生成后两端 harness identity 仍逐字一致为 clean `3f66b71…/844c0021…/1dc3387e…`。
+
+4. **效果**：
+   - 八个真实仓任务在两平台均具备 current-candidate、离线、平台原生且可重算的 source/cache/receipt binding；
+   - expected-report plan 现在可以在所有运行副作用前冻结完整 `24 × 2 × 3` 分母；
+   - 旧 `bf1a481` inputs 未复用或覆盖，本环节 Gateway/runner/Provider calls/cost=`0/$0`。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节未修改 frozen source；双平台 staging 最近一次完整 build 均已通过；
+- Windows receipts=`4/4`、preflights=`8/8 passed`；WSL2 receipts=`4/4`、preflights=`8/8 passed`；
+- 两端独立 verifier 均 exit code=`0`，四字段 identity 无漂移；WSL2 rejected report SHA-256=`c3efe99244a4a093663999456f5cb0904020c44eb34820df70989dfdeecda219`。
+
+##### 后续计划
+
+- **下一步准备做什么**：在任何 Gateway、runner 或 Provider 调用前创建 `candidate-1` 的全新不可覆盖 expected-report plan，并独立复核 reports、unique IDs、unique paths=`144/144/144`、manifest SHA-256、source/harness 四字段、plan SHA-256、formal root/全部 report 目标不存在及 `EEXIST` 负例。
+- **为什么先做它**：inputs 已是最后一组数据前置；现在冻结完整分母，才能保证后续任何失败槽位都不能通过漏记、路径替换或事后补造改变 coverage。
+- **当前还缺的关键闭环**：新 expected-report plan、plan-aware launcher、收费前费用/进程/端口/OCI Gate、完整候选链，以及第二个连续达标候选。
+
+#### P2-C 新候选执行准备阶段结论：`3f66b71/candidate-1` expected-report plan 预冻结（2026-09-04）
+
+##### 已完成内容
+
+1. **production expected-report producer 首次写入**：
+   - 写入前 artifact/candidate/formal/plan 四层目标均不存在；
+   - source/harness 绑定 clean `3f66b71…/844c0021…/1dc3387e…`，report root 固定为 `artifacts/p2c-3f66b71/candidate-1/formal`；
+   - 在任何新 Gateway、runner 或 Provider 调用前原子写入完整 `144` 个计划槽位，formal root 与所有 report 目标仍不存在。
+
+2. **独立 verifier 验真**：
+   - 从 frozen manifest 重建 `24 tasks × 2 platforms × 3 attempts`，不信任 producer 自报；
+   - 逐项核对 report ID/path/metadata、candidate、manifest 与 source/harness 四字段 identity；
+   - production loader 与 run validator 对全部 `144` 个槽位逐项通过。
+
+3. **不可覆盖负例**：
+   - 完全相同参数第二次运行 producer，以 exit code=`1` 与 `EEXIST` 失败；
+   - plan SHA-256 失败前后均为 `153fb4eb445eaca3518b0652aad310d1588add544c6d52ba8248102b2be91d18`；
+   - 负例后独立 verifier 再次全绿，formal root 仍不存在。
+
+4. **效果**：
+   - 新候选完整分母已先于首个运行副作用冻结，后续不能通过漏记失败槽位改变 coverage；
+   - 每份实际 report 必须匹配 plan 中唯一的 candidate/task/platform/attempt/path；
+   - 旧 `bf1a481` plan/report 保持历史冻结，不进入新 identity。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节未修改 frozen source；使用双平台完整 build 已通过的 producer/validator；
+- expected reports=`144/144`、unique report IDs=`144/144`、unique report paths=`144/144`，formal root/全部 report 目标=`absent`；
+- manifest SHA-256=`dfaf7ebecaa3f6109e3427670b53b23606fae19535e00abf64212c6090daa1ba`，plan SHA-256=`153fb4eb445eaca3518b0652aad310d1588add544c6d52ba8248102b2be91d18`；不可覆盖负例通过，Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：创建只绑定本 plan、identity、双平台 config SHA 与全新 artifact/runtime 根的 plan-aware launcher/resume verifier/静默 Gate；先做 PowerShell syntax、launch-slot 与 `-CostGuardCheckOnly` 零费用验证，再串行复核进程、端口和 pinned OCI image。
+- **为什么先做它**：plan 已冻结，但 host launcher 还必须在启动 Gateway 前证明每个 artifact root 来自唯一计划槽位，并把新 candidate 的 usage/cost 原子写入独立 global/platform ledger。
+- **当前还缺的关键闭环**：plan-aware launcher 与 resume verifier、收费前费用/进程/端口/OCI Gate、首个 canary、其余 `143` 个槽位及 aggregate/资格/评分链。
+
+#### P2-C 新候选执行准备阶段结论：`3f66b71` plan-aware launcher 与正式前 Gate（2026-09-04）
+
+##### 已完成内容
+
+1. **plan-aware launcher 与独立 helper 创建**：
+   - launcher 只绑定 candidate=`candidate-1`、identity=`3f66b71…/844c0021…/1dc3387e…`、manifest=`dfaf7ebe…` 与 plan=`153fb4eb…`；
+   - 双平台 repository config 分别绑定 `7dd96eae…/ffaa88c3…`，global observed baseline 从旧冻结 ledger 的 `$2.39714364` 开始；
+   - syntax、旧值零命中、双平台 production launch-slot 验证均通过。
+
+2. **零费用 cost Gate**：
+   - Windows/WSL2 `-CostGuardCheckOnly` 均返回 processed=`0`；
+   - observed/reserved=`$2.39714364/$2.04221000`，single-run max=`$0.10`；
+   - 下一 run 最坏=`36.31482912 RMB < 80 RMB`，candidate observed=`$0`。
+
+3. **正式前静默性 Gate**：
+   - Windows 与 WSL2 候选/benchmark/workspace-scanner 匹配进程均为 `0`；
+   - Windows/WSL2 `28891/28892` listener=`0/0`；
+   - Docker server=`29.1.3`，pinned image ID/RepoDigest=`sha256:62f550…`，活动容器=`0`。
+
+4. **效果**：
+   - launcher 在 Gateway 前验证 plan、identity、config、artifact path 与费用上限；
+   - cost-only 阶段不伪造空 ledger，首份正式 report 后才启用 resume verifier；
+   - 当前仍无新 Gateway、runner、Provider 或 formal report 副作用。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节未修改 frozen source；使用双平台完整 build 已通过的 harness；
+- PowerShell/MJS syntax、旧值零命中、Windows/WSL2 launch slots、双端 cost-only 与 process/port/OCI Gate 全部通过；
+- expected-report plan 仍为 `144/144/144`、SHA=`153fb4eb…`，formal root 不存在；Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：紧邻运行再做一次 Windows cost-only 复算，然后只执行 plan 中唯一 `tests.failed-diagnosis.windows-native.a1` canary；正式 report 原子落盘后立即停下，独立验证 report/artifacts/ledger/usage，再安全回收 runtime env 和复核资源静默。
+- **为什么先做它**：单槽 canary 能以最小费用验证新 identity 的真实 Gateway/runner/Provider/plan/ledger 联动，并在扩大到后续批次前尽早暴露产品或基础设施问题。
+- **当前还缺的关键闭环**：canary 的完整验真与清理、其余 `143` 个槽位、aggregate/failure analysis/资格/评分链，以及第二个连续达标候选。
+
+#### P2-C 新候选 canary 实现结论：Windows `tests.failed-diagnosis` attempt 1（2026-09-04）
+
+##### 已完成内容
+
+1. **唯一预冻结 canary 槽位执行**：
+   - 紧邻运行的 cost Gate 再次确认 next worst=`36.31482912 RMB < 80 RMB`；
+   - `tests.failed-diagnosis.windows-native.a1` 终态=`passed + provider_reported + infrastructureRetries=0`；
+   - 本次 Provider cost=`$0.00094657`，`MaxNewRuns=1` 阻止任何第二槽。
+
+2. **report、artifacts 与 ledger 独立验真**：
+   - resume verifier 确认 plan/IDs/paths=`144/144/144`、processed/remaining=`1/143`；
+   - report 的 identity、逻辑外键、report SHA 与 platform/global ledger 全部一致；
+   - declared artifacts=`7/7`，candidate/global observed=`$0.00094657/$2.39809021`，reserved=`$2.04221000`。
+
+3. **环境清理与 post-run quiescence**：
+   - 两份 `.env/.env.local` 经 containment、regular/non-reparse、length 与 SHA-256 验证后送 Windows 回收站，remaining=`0`；
+   - cleanup log SHA-256=`13bcb50ddc387d018ff7a01121fea3434722f34327128e8f11fff377fcef021f`；
+   - Windows/WSL2 相关进程、`28891/28892` listener 与 pinned-image 活动容器均为 `0`。
+
+4. **效果**：
+   - 新 identity 的真实 plan/Gateway/runner/Provider/report/ledger 联动已用单槽闭合；
+   - usage 与费用进入新 candidate 独立账本，没有混入旧 `bf1a481` 证据；
+   - 当前可信 coverage=`1/144 passed`，无敏感环境或运行资源残留。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节未修改 frozen source；使用双平台完整 build 已通过的 harness；
+- Windows canary=`1/1 passed`、declared artifacts=`7/7`，resume-state verifier=`passed`；
+- expected-report plan SHA=`153fb4eb…`，费用、env 回收与 post-run 静默 Gate 全部通过。
+
+##### 后续计划
+
+- **下一步准备做什么**：复算 plan/resume-state、双平台 inputs/identity、费用、进程、端口与 OCI Gate，然后以 `MaxNewRuns=4` 执行 Windows attempt 1 中 canary 后的下一组未处理槽位；任一 product/infrastructure/no-report 终态立即冻结扩大。
+- **为什么先做它**：四槽小批能在持续推进 coverage 的同时保持 report/ledger/env/resource 每批独立闭环，并尽早捕获新的真实产品失败。
+- **当前还缺的关键闭环**：Windows attempt 1 其余 `23` 个槽位、Windows attempts 2/3、WSL2 `72` 个槽位，以及 aggregate/failure analysis/资格/评分链。
+
+#### P2-C 新候选 Windows attempt 1 实现结论：batch 01 完整闭环（2026-09-04）
+
+##### 已完成内容
+
+1. **四个预冻结正式槽位执行**：
+   - `rules.nested-precedence`、`feature.cross-file`、`bug.reproducible-fix`、`navigation.large-repository` 均为 `passed`；
+   - 四项均为 `provider_reported + infrastructureRetries=0`；
+   - launcher 在每个 run 前继续执行费用守卫，未触发 product/infrastructure/no-report 停止。
+
+2. **report、artifacts 与 ledger 独立验真**：
+   - resume verifier 确认 plan/IDs/paths=`144/144/144`、processed/remaining=`5/139`；
+   - 五份累计 report 的 identity、逻辑外键、report SHA 与双层 ledger 全部一致；
+   - declared artifacts=`35/35`，candidate/global observed=`$0.00240685/$2.39955049`，reserved=`$2.04221000`。
+
+3. **环境清理与 post-batch quiescence**：
+   - `t01/t02/t03/t05` 的 `8` 个 `.env/.env.local` 经完整安全校验后送 Windows 回收站，remaining=`0`；
+   - cleanup log SHA-256=`3267b20ef097b1307866a4ff9dbf0041f35a600218fa193d25d7e6f67f5663cc`；
+   - Windows/WSL2 相关进程、`28891/28892` listener 与 pinned-image 活动容器均为 `0`。
+
+4. **效果**：
+   - 四个不同能力面均在新 identity 下通过，正式 evidence 与费用原子进入预冻结槽位；
+   - 本批无敏感环境或运行资源残留，旧候选证据未覆盖；
+   - 当前可信 coverage 从 `1/144` 推进到 `5/144 passed`。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节未修改 frozen source；使用双平台完整 build 已通过的 harness；
+- Windows attempt 1 累计 runs=`5/5 passed`、declared artifacts=`35/35`，resume-state verifier=`passed`；
+- plan/identity/费用、env 回收与 post-batch 静默 Gate 全部通过。
+
+##### 后续计划
+
+- **下一步准备做什么**：重新执行 resume/inputs/identity/cost/process/port/OCI Gate，再以 `MaxNewRuns=4` 运行 Windows attempt 1 batch 02；预期只处理下一组未完成计划槽位。
+- **为什么先做它**：每批重新从落盘 evidence 建立可信起点，可在网络或宿主中断后独立恢复，也防止费用与运行资源状态跨批漂移。
+- **当前还缺的关键闭环**：Windows attempt 1 剩余 `19` 个槽位、Windows attempts 2/3、WSL2 `72` 个槽位及最终 aggregate/资格/评分链。
+
+#### P2-C 新候选 Windows attempt 1 实现结论：batch 02 完整闭环（2026-09-04）
+
+##### 已完成内容
+
+1. **四个预冻结正式槽位执行**：
+   - `command.interactive-control`、`safety.boundary-enforcement`、`gateway.disconnect-recovery`、`gateway.client-cancel` 均为 `passed + infrastructureRetries=0`；
+   - 前三项 usage=`provider_reported`，本批 Provider cost=`$0.00103830`；
+   - `gateway.client-cancel` 按 local-fixture 合同 usage=`not_reached`，没有 Provider 调用或费用。
+
+2. **report、artifacts 与 ledger 独立验真**：
+   - resume verifier 确认 plan/IDs/paths=`144/144/144`、processed/remaining=`9/135`；
+   - 九份累计 report 的 identity、逻辑外键、infrastructureRetries、report SHA 与双层 ledger 全部一致；
+   - declared artifacts=`69/69`，candidate/global observed=`$0.00344515/$2.40058879`，reserved=`$2.04221000`。
+
+3. **环境清理与 post-batch quiescence**：
+   - `t06-t09` 的 `8` 个 `.env/.env.local` 经安全校验后送 Windows 回收站，remaining=`0`；
+   - cleanup log SHA-256=`6d9cd7943fe26cc028021a065b9f90e2d50839942b520546d9416826495e2e2f`；
+   - Windows/WSL2 相关进程、`28891/28892` listener 与 pinned-image 活动容器均为 `0`。
+
+4. **效果**：
+   - local-fixture 合法零 Provider usage 与三项真实 usage 均被正确保留和入账；
+   - 本批无 product/infrastructure/no-report 失败，且无敏感环境或运行资源残留；
+   - 当前可信 coverage 从 `5/144` 推进到 `9/144 passed`。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本环节未修改 frozen source；使用双平台完整 build 已通过的 harness；
+- Windows attempt 1 累计 runs=`9/9 passed`、declared artifacts=`69/69`，resume-state verifier=`passed`；
+- plan/identity/费用、env 回收与 post-batch 静默 Gate 全部通过。
+
+##### 后续计划
+
+- **下一步准备做什么**：重新复算全部 Gate，然后执行 Windows attempt 1 batch 03；该批包含 `real-ts.api-migration`，将直接验证本次 completed-state unsafe-correction 修复是否在新 identity 的真实 formal 路径生效。
+- **为什么先做它**：在相同 task/platform/attempt 槽位上获得新 identity 的真实终态，是关闭旧 `bf1a481` 产品失败的最直接证据；仍以失败即停避免扩大费用。
+- **当前还缺的关键闭环**：batch 03 的真实修复验证、Windows attempt 1 后续 `11` 个槽位、Windows attempts 2/3、WSL2 `72` 个槽位及最终 aggregate/资格/评分链。
+
+#### P2-C 新候选 Windows attempt 1 实现结论：batch 03 与 TS migration 动态修复闭环（2026-09-04）
+
+##### 已完成内容
+
+1. **四个预冻结正式槽位执行**：
+   - `gateway.process-restart` 以 local-fixture `not_reached` 通过；
+   - `git.dirty-worktree`、`git.delivery-guard` 与 `real-ts.api-migration` 均为 `passed + provider_reported + infrastructureRetries=0`；
+   - 累计 processed/coverage=`13/144`，未出现 product/infrastructure/no-report 失败。
+
+2. **TS migration guard 真实动态验证**：
+   - 初始三文件 `apply_patch` 成功，完整 read-after-write 证据随后形成；
+   - post-write review 确实请求第二个 correction，产品 guard 在工具执行前拒绝并切换到 tools=`0` 的 bounded review；
+   - events 中只有一个成功 patch、零 input_error/tool failure，machine evaluator=`taskCompleted/testsPassed/patchAccepted=true`、regression=`0`。
+
+3. **report、artifacts、ledger 与环境收口**：
+   - resume verifier 确认 plan/IDs/paths=`144/144/144`、processed/remaining=`13/131`、declared artifacts=`100/100`；
+   - candidate/global observed=`$0.00611345/$2.40325709`、reserved=`$2.04221000`；
+   - `t10-t13` 的 `8` 个 env 安全送回收站，cleanup log SHA-256=`1c1134ed2d69c10f21cc64e998cb7fbbb7ac6bf11d71aaf60f0eb7a72da71695`，post-run 资源均为 `0`。
+
+4. **效果**：
+   - 旧 `bf1a481` 同槽位的 stale correction 产品失败已在新 identity 下以真实动态 guard + machine evaluator 闭合；
+   - 历史失败 report 保持冻结，没有重解释或覆盖；
+   - 最终自由文本 summary 的单次残余误述已 `record_only`，不影响本次正式代码与 evaluator 合同。
+
+##### 验证结果
+
+- TypeScript 编译无错误：使用双平台完整 build 已通过的 frozen `3f66b71` harness；
+- Windows attempt 1 累计 runs=`13/13 passed`、declared artifacts=`100/100`，resume-state verifier=`passed`；
+- guard warning、单次 patch 事件链、machine evaluator、费用、env 回收与 post-run 静默 Gate 全部通过。
+
+##### 后续计划
+
+- **下一步准备做什么**：重新复算全部 Gate 后继续 Windows attempt 1 batch 04；同时在后续 TS migration attempts 观察自由文本 summary 是否重复误述，若形成可复现合同问题再拆分修复。
+- **为什么先做它**：关键产品失败已经动态闭环，可以继续探索剩余能力面；保持四槽小批能在新失败出现时及时冻结并保留完整证据。
+- **当前还缺的关键闭环**：Windows attempt 1 剩余 `11` 个槽位、Windows attempts 2/3、WSL2 `72` 个槽位，以及 aggregate/failure analysis/资格/评分链。
+
+#### P2-C 新候选 Windows attempt 1 实现结论：batch 04 产品失败与候选冻结（2026-09-04）
+
+##### 已完成内容
+
+1. **四槽批次在首个产品失败后冻结**：
+   - `real-ts.cross-package-refactor` 与 `real-js.failed-test-fix` 为 `passed + provider_reported + infrastructureRetries=0`；
+   - `real-js.bug-fix` 为 `failed/product_workflow + provider_reported`，机器 evaluator=`taskCompleted=false/testsPassed=true/patchAccepted=true`、regression=`0`；
+   - launcher 未在该产品失败后硬停止并启动了后续槽位，发现后已人工中断；该 fail-fast 缺口已裁决为 `fix_now`，本 identity 不再续跑。
+
+2. **中断边界与正式 evidence 验真**：
+   - resume verifier 确认 plan/IDs/paths=`144/144/144`、processed/remaining=`16/128`、declared artifacts=`127/127`；
+   - 累计终态为 `15 passed + 1 product_workflow failed`，candidate/global observed=`$0.01000643/$2.40715007`、reserved=`$2.04221000`；
+   - 第四槽 `real-go.public-api-migration` 只创建早期 Gateway runtime，未出现 listen、run、model dispatch、usage、fixture、report 或 ledger，确认未到 Provider且费用增量=`$0`。
+
+3. **环境与资源收口**：
+   - `t14-t17` 的 `8` 个 `.env/.env.local` 已逐项通过 containment、regular/non-reparse 与 SHA-256 Gate 后送 Windows 回收站，remaining=`0`；
+   - cleanup log SHA-256=`9da27a88a3cc7e1bb2d567bfcf050995087a9dcf9a72d86859110acf1cf74cca`；
+   - 清理后串行确认 Windows/WSL2 candidate process=`0/0`、双端 listener=`0/0`、pinned OCI 活动容器=`0`。
+
+4. **效果**：
+   - `3f66b71/candidate-1` 以不可变 `16/144` partial evidence 冻结，不覆盖失败、不补造第四槽终态；
+   - 真实 JS bug-fix 产品失败与 launcher fail-fast 控制缺口均已转入可复现修复队列；
+   - 敏感 runtime env 和受管运行资源全部收敛，正式 report/artifacts/ledger 保持可审计。
+
+##### 验证结果
+
+- TypeScript 编译无错误：本批未修改 frozen source，继续使用双平台完整 build 已通过的 `3f66b71` harness；
+- Windows attempt 1 累计 reports=`16/16`、declared artifacts=`127/127`，resume-state verifier=`passed`；
+- expected-report plan 仍为 `144/144/144`，中断费用边界、env 回收与 post-interrupt 静默 Gate 全部通过。
+
+##### 后续计划
+
+- **下一步准备做什么**：先从冻结的 `real-js.bug-fix` events/result/patch/workspace 建立最小 Red 回归并修复真实产品失败；同时为 launcher 增加 product failure、infrastructure failure 与 no-report 后不得启动下一 plan slot 的硬 fail-fast 回归。
+- **为什么先做它**：当前候选已因真实产品失败失去继续资格，而 launcher 还会扩大失败后的费用与证据面；两项缺口都必须在创建下一 identity 前由确定性测试锁定。
+- **当前还缺的关键闭环**：JS bug-fix 根因与回归、launcher 三类 fail-fast 合同、focused/邻接/Agent 全包/build/benchmark verifier、新 checkpoint，以及新 identity 下重新预冻结的 `144/144/144` 完整候选链。
+
+#### P2-C 产品失败修复实现结论：Express direct-valid completion 与 launcher fail-fast（2026-09-04）
+
+##### 已完成内容
+
+1. **`react-workspace-mutation-js-bug-fix.ts` 扩展**：
+   - 新增 direct-valid completion recovery，只接受冻结 task、唯一 required path、唯一精确一行成功 patch 与唯一完整正确 getter；
+   - broken return、错误/额外 patch、task/path/source 漂移及更新的 truncated evidence 全部失败关闭；
+   - 输出只陈述已证明的 offset 修复，不声称未执行的测试结果。
+
+2. **`tool-agent.ts` 接入**：
+   - 仅在 post-write objective output repair 第二次仍无效时尝试 exact recovery；
+   - recovery JSON 必须再次通过原 structured-output validator，Schema 拒绝时保持原错误终态；
+   - 通用 malformed-output 与其他 workspace mutation 不进入该专用分支。
+
+3. **测试扩展**：
+   - frozen recovery 高层回归复现“正确 patch、完整读回、两次 malformed summary”，并验证恢复成功；
+   - 新增 validator 拒绝、task/path/patch 数量/source/truncated evidence 漂移负例；
+   - 原始 Red 从逐字相同的 formal 错误转为合法非空 summary。
+
+4. **identity 专用 launcher 控制修复**：
+   - 新增共享 terminal stop owner，product failure、infrastructure failure、no-report 与未知终态均在下一 plan slot 前停止；
+   - report/usage 已存在时仍先原子写入双层 ledger，no-report 仍先登记 reserved unknown cost；
+   - 两槽零费用 self-test 证明失败只启动第一槽，passed 才继续第二槽。
+
+5. **源码 checkpoint**：
+   - 产品修复与回归已提交为 `576a7dc452885c7e7a595567c4d57af4ed8749c7`（`fix(agent): recover completed express mutation output`）；
+   - 提交只含 `4` 个 Agent 源码/测试文件，计划文档继续在根工作树增量回写；
+   - `tmp-codeintel-summary.json` 未被跟踪、暂存或提交。
+
+6. **效果**：
+   - `real-js.bug-fix` 的真实失败模式由确定性回归锁定并最小修复；
+   - 候选失败不会再因 launcher 漏检而继续扩大 Provider 调用或证据面；
+   - `3f66b71` 历史 partial evidence 保持冻结，新行为只进入后续新 identity。
+
+##### 验证结果
+
+- TypeScript 编译无错误：完整 `corepack pnpm build` 通过，workspace package entrypoints 全部存在；
+- Agent 全包 `928/928` tests passed（`75` files passed、`1` file/`1` test skipped），相邻 mutation 集此前 `202/202` 通过；
+- benchmark verifier 返回 v1/v2/v3 manifests、Schemas、docs 与 platform gates aligned；launcher PowerShell syntax 与 terminal policy self-test=`4/4` 通过；
+- 本修复与全部回归未启动 Gateway 或 Provider，calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：以 `576a7dc` 创建全新的 Windows/WSL2 clean detached staging，逐端完成 offline install、完整 build、benchmark verifier 与生产四字段 identity；随后生成全新 repository inputs 和不可覆盖 expected-report plan。
+- **为什么先做它**：稳定源码提交已经形成，下一步必须证明两平台从该提交得到相同、可构建且 clean 的 content identity，才能冻结新的候选分母；旧 `3f66b71` 的 plan/report/ledger 不得复用。
+- **当前还缺的关键闭环**：双平台 staging/build/identity、全新 inputs、在任何新运行前预冻结并独立验证的 `144/144/144` plan，以及新 identity 的完整候选链。
+
+#### P2-C 新候选执行准备阶段结论：`576a7dc` 双平台 clean staging（2026-09-04）
+
+##### 已完成内容
+
+1. **Windows detached staging 创建与核验**：
+   - 目标 `E:\project\star-sanctuary\.tmp\p2c-candidate-576a7dc-harness` 创建前不存在；
+   - 以独立 clone checkout 到 `576a7dc452885c7e7a595567c4d57af4ed8749c7`；
+   - status 仅为 `## HEAD (no branch)`，`symbolic-ref -q HEAD` 以预期 exit code=`1` 确认 detached。
+
+2. **WSL2 ext4 detached staging 创建与核验**：
+   - 目标 `/var/tmp/star-sanctuary-p2c-candidate-576a7dc` 创建前不存在；
+   - 使用 `--no-local --no-checkout` 从已提交对象创建独立 clone，并 checkout 同一 full commit；
+   - status/detached 与 Windows 一致，filesystem type=`ext2/ext3`，未落到 `/mnt/e` DrvFS。
+
+3. **效果**：
+   - 新候选两端只含已提交源码，不包含根工作树计划文档增量或 `tmp-codeintel-summary.json`；
+   - `3f66b71` 的 staging、inputs、plan、reports 与 ledgers 均未复用或覆盖；
+   - 本环节未启动 Gateway、runner 或 Provider，calls/cost=`0/$0`。
+
+##### 验证结果
+
+- TypeScript 编译状态：新 staging 尚未 install/build，`576a7dc` 提交前根工作树完整 build 已通过；
+- 两端 HEAD、clean status 与 detached state 逐字一致，WSL2 ext4 语义检查通过；
+- 两个新目标均通过创建前 absent Gate，旧候选 evidence 未变化。
+
+##### 后续计划
+
+- **下一步准备做什么**：逐端执行 offline frozen install、完整 build 和 benchmark verifier，处理并复验可能的 file-mode-only 漂移；随后调用 frozen source 内生产 identity owner 复算四字段。
+- **为什么先做它**：inputs 与 expected-report plan 必须绑定可构建、合同通过且双平台内容一致的 source/harness，不能只依赖 commit 字符串。
+- **当前还缺的关键闭环**：双平台 install/build/verifier/四字段 identity、全新 repository inputs、不可覆盖 expected-report plan、付费前 Gate 与完整候选链。
+
+#### P2-C 新候选执行准备阶段结论：`576a7dc` 双平台工程 Gate 与四字段 identity（2026-09-04）
+
+##### 已完成内容
+
+1. **Windows frozen staging 工程 Gate**：
+   - offline install 完成，packages/reused/downloaded=`493/492/0`；
+   - `corepack pnpm build` 与 `corepack pnpm verify:coding-benchmark` 均 exit code=`0`；
+   - build/verifier 后保持 clean detached。
+
+2. **WSL2 frozen staging 工程 Gate**：
+   - offline install 完成，packages/reused/downloaded=`494/493/0`；
+   - install 造成的 `relay.mjs` file-mode-only 漂移已按相同 blob 证据恢复为 `644`；
+   - `corepack pnpm build` 与 `corepack pnpm verify:coding-benchmark` 均 exit code=`0`，写后仍 clean detached。
+
+3. **生产 repository identity 复算**：
+   - Windows/WSL2 均从各自 frozen source 调用 `resolveBenchmarkRepositoryIdentity()`；
+   - commit=`576a7dc452885c7e7a595567c4d57af4ed8749c7`、workspaceDirty=`false`；
+   - canonical lockfile SHA-256=`844c0021f1c9135214c913636fd6ed6f9232593883bd5b6289f7ade51d2b7d2b`、canonical worktree SHA-256=`f5832989dc1ff1349be771e0b2b028344ace4d99125760a1ace69475464413e6`，四字段逐字一致。
+
+4. **效果**：
+   - 新 candidate identity 已绑定同一可构建、合同通过且双平台内容一致的 source/harness；
+   - Windows raw CRLF 与 WSL raw LF 差异没有被误判为 lockfile 漂移；
+   - 旧 `3f66b71` inputs/plan/report/ledger 未被复用，Gateway、runner 与 Provider 均未启动。
+
+##### 验证结果
+
+- TypeScript 编译无错误：Windows/WSL2 两次完整 build 均通过；
+- source checkpoint 的 Agent 全包 `928/928` tests passed（另 `1` skipped）；本 staging 环节未新增测试；
+- 双平台 benchmark verifier 均返回 v1/v2/v3 manifests、Schemas、docs 与 platform gates aligned；两端 identity 四字段逐字一致；
+- 当前新 identity Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：从上一版已验真的 inputs producer/verifier 迁移 `576a7dc` 专用脚本，先做语法、旧 identity 零命中和新四字段精确计数审计，再生成双平台全新 repository inputs 并独立验真。
+- **为什么先做它**：expected-report plan 和 launcher 必须绑定平台各自 ready repository receipt/preflight；仅有 source identity 还不能安全冻结正式执行分母。
+- **当前还缺的关键闭环**：双平台 inputs=`4/4/8`、任何 Gateway/runner/Provider 前不可覆盖的 expected-report plan=`144/144/144`、launcher 零费用 Gate 与完整候选链。
+
+#### P2-C 新候选执行准备阶段结论：`576a7dc` 双平台 repository inputs（2026-09-04）
+
+##### 已完成内容
+
+1. **Windows repository inputs 生成与验真**：
+   - `tmp/prepare-p2c-candidate-inputs-576a7dc.mjs` 在全新输出根原子生成四仓 inputs；
+   - 独立 verifier 从 frozen manifest/source/cache 重算 repositories/receipts/preflights=`4/4/8`；
+   - `repository-inputs.json` SHA-256=`db504fd041defd6dc8c4d441fc5aae4f7a0796e181bc827b61143b5b889269d2`。
+
+2. **WSL2 repository inputs 生成与修复**：
+   - production Linux producer 首轮因 npm cache 缺少 lockfile 所需的 `isexe` SHA-512 content alias，保留为 `partial ready=2, blocked=2`；
+   - 从已验真的同一 tarball 字节建立候选专用 repaired cache，未修改共享 cache；
+   - 重跑返回 `ready=4, blocked=0`，独立 verifier 重算 repositories/receipts/preflights=`4/4/8`，config SHA-256=`ffaa88c3f3de2fe5948cd352ce89537a5eca37e114df484b9c78309ec31666c4`。
+
+3. **identity 与失败证据边界**：
+   - 两端 verifier 内再次调用 production identity owner，均得到 `576a7dc…/workspaceDirty=false/844c0021…/f5832989…`；
+   - 首轮 partial 根按报告 SHA 固定并原子改名保留，没有覆盖或删除；
+   - 旧 `3f66b71` inputs 未复用，Gateway、runner、模型和 Provider 均未启动。
+
+4. **效果**：
+   - 两平台四个真实仓与八个 B 层 task 均具备可复算的 source/cache receipt 和通过的 preflight；
+   - npm cache 问题通过候选专用材料隔离，不污染共享材料或 source identity；
+   - expected-report plan 现在可以绑定完整且已验证的双平台 inputs。
+
+##### 验证结果
+
+- TypeScript 编译无错误：双平台 staging 完整 build 均已通过；本 inputs 环节未修改 TypeScript；
+- source checkpoint 的 Agent 全包 `928/928` tests passed（另 `1` skipped）；inputs verifier 双端均为 `4/4/8`；
+- 两端 config SHA、全部 receipt/preflight 深比较与生产四字段 identity 校验通过；
+- 当前新 identity Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：先确认 `artifacts/p2c-576a7dc`、candidate root、formal root 与 plan path 四层均不存在，再由 frozen production producer首次写入 expected-report plan；随后独立重建 `24 × 2 × 3` 并验证 reports/IDs/paths=`144/144/144`、全部目标不存在和 `EEXIST` 不可覆盖负例。
+- **为什么先做它**：用户明确要求在检验完整 `144/144` 前先做好 plan；该 provenance 只能在首个 Gateway/runner/Provider 副作用之前建立，不能事后补造。
+- **当前还缺的关键闭环**：不可覆盖 plan 与 plan SHA、launcher syntax/self-test/cost/process/port/OCI Gate，以及完整候选链。
+
+#### P2-C 新候选执行准备阶段结论：`576a7dc/candidate-1` expected-report plan 预冻结（2026-09-04）
+
+##### 已完成内容
+
+1. **production expected-report plan 首次写入**：
+   - 在 artifact/candidate/formal/plan 四层均不存在且 Gateway/runner/Provider 调用为零时执行；
+   - frozen producer 原子写入 `artifacts/p2c-576a7dc/candidate-1/expected-report-plan.json`；
+   - source/harness 均绑定 clean `576a7dc…/844c0021…/f5832989…` identity。
+
+2. **独立完整矩阵验真**：
+   - verifier 从 frozen v3 manifest 重建 `24 × 2 × 3` 集合；
+   - reports/unique IDs/unique paths=`144/144/144`，formal root 与全部 report 目标不存在；
+   - manifest SHA-256=`dfaf7ebecaa3f6109e3427670b53b23606fae19535e00abf64212c6090daa1ba`，plan SHA-256=`6b51bbb531003f1d3c312119dafeb341f15e9a8ccc443ef0b05423c11d67d862`。
+
+3. **不可覆盖负例**：
+   - 相同参数第二次运行 producer 以 `EEXIST`、exit code=`1` 失败；
+   - plan SHA 前后不变，负例后独立 verifier 再次 `144/144/144` 全绿。
+
+4. **效果**：
+   - 本候选完整分母在首个运行前已预冻结并可独立重建，不能事后补造或静默覆盖；
+   - launcher、resume verifier 与正式 report 现在有唯一 plan SHA/identity/path owner；
+   - 旧 candidate plan/report/ledger 未复用，当前新 identity Provider calls/cost=`0/$0`。
+
+##### 验证结果
+
+- TypeScript 编译无错误：双平台 staging 完整 build 均已通过；本 plan 环节未修改 TypeScript；
+- source checkpoint 的 Agent 全包 `928/928` tests passed（另 `1` skipped）；plan producer/独立 verifier/不可覆盖负例均按预期返回；
+- `144` 个 logical report slot、ID、path、manifest/identity 绑定与目标不存在合同全部通过；
+- 用户要求的“检验 `144/144` 前做好 expected-report plan”已按真实执行顺序满足。
+
+##### 后续计划
+
+- **下一步准备做什么**：launcher/resume/slot/quiescence helpers 已完成新 identity 迁移并通过 syntax、旧值零命中、四终态 fail-fast self-test 与 launch-slot Gate；当前先以直接 argv 和明确 native socket/client 路径收敛 WSL2 Docker wrapper/interop 故障，恢复后再执行双端 cost-only、进程、端口与 OCI 静默检查。
+- **为什么先做它**：Windows Docker daemon 正常，但 WSL2 wrapper 会吞掉首个 Docker CLI 参数，且 native client/socket 挂载缺失；继续启动 canary 会把已知基础设施故障带入正式槽位并污染费用与 report 证据。
+- **当前还缺的关键闭环**：WSL2 Docker/OCI Green、双端 cost/process/port Gate、首个 canary 与分批完整 `144/144` 运行、每批 report/ledger/env/resource 验真，以及最终 aggregate/qualification/七维证据；若恢复必须重启 WSL 或注册 binfmt，须先进入 HITL，不自行改变系统状态。
+
+#### P2-C Fix 实现结论：headless PTY DSR 应答与双平台 OCI 回归（2026-09-04）
+
+##### 已完成内容
+
+1. **`command-job-pty-terminal.ts` 新建**：
+   - 只消费完整 ANSI cursor-position query `ESC[6n`，并为每个 query生成标准 `ESC[1;1R`应答；
+   - 支持 query跨任意 data chunk边界，以最长前缀保留可能的未完成序列；
+   - 相似控制序列和 exit前不完整残片原样转发，`flush()`保持幂等。
+
+2. **`command-job-pty-host.ts` 接入**：
+   - node-pty data路径先写回 terminal response，再向 job owner转发过滤后的真实命令输出；
+   - response写入失败沿既有 host failure路径终止，不静默吞错；
+   - exit事件先 flush尾部残片，再发送终态，公开 Tool/API、sandbox policy与资源上限不变。
+
+3. **`command-job-pty-terminal.test.ts` 新建**：
+   - 覆盖单/多 query、全部三个 chunk切分边界；
+   - 覆盖相似 `ESC[5n`、普通输出、不完整 query与双重 flush；
+   - 最小 node-pty/Docker复现由仅收到 `ESC[6n` 超时转为三次 tick并正常 exit。
+
+4. **双平台 production OCI 回归**：
+   - Windows原生 fixture验证四项同步隔离、pipe/PTY输出、resize/cancel及lease回收；
+   - WSL2从新 `3d91376` ext4 clean detached staging完成offline install、完整build与benchmark verifier；
+   - identity专用wrapper只桥接Windows Docker CLI路径语义，WSL完整fixture同样覆盖隔离、pipe/PTY与回收，结束后容器、lease及候选进程均为零。
+
+5. **效果**：
+   - headless PTY host现在具备Docker CLI TTY attach所需的最小cursor-position应答能力；
+   - `576a7dc/candidate-1` 发现的Linux PTY阻塞已在新产品identity上真实消失；
+   - 旧候选仍永久冻结于 `0/144`，没有因修复成功而重解释历史终态或复用旧plan。
+
+##### 验证结果
+
+- TypeScript编译无错误：`@belldandy/skills` build、Windows根build与`3d91376` WSL2 clean staging根build均通过；
+- 新增测试 `3/3`、相邻五文件 `22/22`、Skills全包 `940 passed + 2 skipped`；
+- Windows与WSL2 production `verify:command-sandbox-oci` 均输出 `all OCI isolation and command job fixtures passed`，两端回收后相关容器/lease/进程=`0`；
+- 产品修复提交为 `3d913765f549abe5d9417b05c002cf46ede3b95b`，本阶段Gateway/runner/Provider calls/cost=`0/$0`。
+
+##### 后续计划
+
+- **下一步准备做什么**：从 `3d91376` 建立全新 Windows clean detached staging，双端复算四字段identity；随后生成全新 repository inputs，并在任何候选运行前首次写入和独立验真新 expected-report plan=`144/144/144`。
+- **为什么先做它**：产品缺陷已闭合，但旧 `576a7dc` 的inputs、plan、launcher和ledger全部绑定旧content identity，不能成为修复后候选的执行依据。
+- **当前还缺的关键闭环**：新 identity双平台inputs/plan及不可覆盖证明、launcher/resume/helper SHA、cost/process/port/OCI Gate、`MaxNewRuns=1` canary、完整 `144/144`终态、aggregate/qualification与七维评分。
+
 #### 后续工作量估算
 
 **本次复估（2026-09-02）**：估算只覆盖当前核心链路“真实产品能力 → current-candidate 原生证据 → 验真/资格 → 七维评分 → 两个连续候选”，不把已完成的实现重新计量，也不为保留既有 P2-C 改动而扩大边界。当前 `context_retrieval` 的六合同 resolver、四态主链、最小外键攻击矩阵和唯一 producer/仓库接线已完成；CLI/TUI 双平台首帧与退出收敛也已修复并通过真实 PTY 验证；`headless_ecosystem` 的本地 consumer、workflow producer、仓库 Gate 和联合链已完成，剩余是一份绑定未来 current-candidate 的真实 CI receipt。因此旧的 `7–12 人日` 已高估当前剩余工程量。
@@ -13321,7 +13906,7 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 | P1-C：TaskProjection 与 Capability Closure | P1 | **已完成** | 广泛回归 `312/312`、最终切片 `58/58`、Core build/diff check 通过 | - | authoritative owner 缺失项继续 defer |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | **已完成** | Windows/WSL2 合计 `720/720` lane，fault matrix 和零残留通过 | - | 不自动 merge/release/deploy |
 | P2-B：生态与运行前置 | P2 | **已完成** | 外部 consumer、failure conformance、Doctor、Puppeteer、portable、Settings、Quality run 通过 | - | Docker 历史未验证项保持 record-only |
-| P2-C：9.5 稳定化与最终复核 | P2 | **`bf1a481` 冻结为 `12 passed + 1 product failure`；TS migration unsafe-correction 修复的提交前验证已全绿** | supplied test/evaluator 全绿；专项/邻接=`17/17 + 23/23 + 104/104 + 7/7 + 2/2`；Agent=`919 passed + 1 skipped`；增量编译、benchmark verifier 与静态审计均通过 | `1.75–3.5 人日既有基线 + 新候选重建/运行窗口` | 精确提交 implementation/document checkpoint；随后冻结全新 clean identity、双平台 inputs，并在任何新 run 前预冻结和独立验真 `144/144/144` plan |
+| P2-C：9.5 稳定化与最终复核 | P2 | **`576a7dc/candidate-1` 零调用冻结，`3d91376` 新候选准备中** | 旧 coverage=`0/144`、Provider calls/cost=`0/$0`；PTY修复 `3/3`、Skills `940+2`，Windows/WSL2 production OCI双绿且零残留 | `1.75–3.5 人日既有基线 + 新候选运行窗口` | 从 `3d91376` 重新完成双平台identity/inputs，并在任何运行前预冻结新plan=`144/144/144`；旧 candidate不得运行 |
 
 
 #### 重要问题说明
@@ -13468,3 +14053,134 @@ SS 已经具备“做事前会检查、做完后会验证、出错会停下、�
 140、相邻回归命令列出五个测试路径，但 Vitest 汇总只执行 `3` 个文件；进一步拆分时发现 TS cross-package 路径误写为不存在的 `tool-agent-workspace-mutation-ts-cross-package.test.ts`，实际文件是 `react-workspace-mutation-ts-cross-package.test.ts`。Vitest v3.2.7 对该显式不存在路径没有失败，而是静默执行其余匹配文件，因此不能用命令参数数目代替实际 `Test Files`。处理方案=`fix_now`：JS helper 已单独得到 `7/7 passed`，TS cross-package 改用实际路径单独运行；后续每个多文件验证都核对请求文件与 Vitest `Test Files` 数量，不把未出现在汇总中的文件宣称为已验证。本问题只影响验证记录，无产品代码、Gateway、runner、Provider 或费用副作用。
 141、unsafe-correction 修复的扩展回归与编译已全部通过：frozen recovery/formal 邻接=`23/23`，workspace-mutation、structured-output 与 exhausted-correction 高风险链=`104/104`，Express helper=`7/7`，补齐的 TS cross-package=`2/2`；`corepack pnpm build:incremental` exit code=`0`。Agent 全包最终为 `75 files passed + 1 skipped`、`919 passed + 1 skipped`，无失败；相较上一 implementation checkpoint 的 `917`，新增的 pure stale multi-file 与 ToolEnabledAgent frozen correction 两条回归均已计入。既有 skip 未改变，本轮所有修复验证 Provider calls/cost=`0/$0`。后续运行 `corepack pnpm verify:coding-benchmark`、diff/debug/旧符号审计并形成结构化实现结论；全绿后精确提交产品、测试和文档，不包含 `tmp-codeintel-summary.json`，再冻结新 identity。
 142、unsafe-correction 产品修复的提交前最终 Gate 已闭合：专项两文件复跑实际汇总=`2 files / 17 tests passed`，`corepack pnpm verify:coding-benchmark` exit code=`0` 并返回 v1/v2/v3 manifests、schemas、docs 与 platform gates aligned；旧 `isRegressiveTraceValueImportCorrection` 和 `[DEBUG-*]` 标记均零命中，`git diff --check` 无 whitespace error。verifier 输出的 AJV `date-time` unknown-format warning 与问题 84 相同，未形成合同失败，技术债继续裁决=`record_only`。处理方案是只精确暂存五个产品/测试文件和本计划文档，先核对 staged 清单与 diff，再提交 `fix(agent): reject stale completed migration corrections`；`tmp-codeintel-summary.json` 必须继续保持未跟踪且不读取、不修改、不暂存。提交后旧 `bf1a481` plan/report 仅作历史证据，任何新 Gateway、runner 或 Provider 调用前必须为新 identity 重新生成并独立验证 `144/144/144` expected-report plan。
+143、unsafe-correction 产品修复与文档已提交为全新 checkpoint=`3f66b710cffbcd38f0649ab6029a3df20eab7a50`，commit subject=`fix(agent): reject stale completed migration corrections`，精确包含五个产品/测试文件与本计划文档，共 `6 files changed`；提交后 `main` 仅剩明确排除的未跟踪 `tmp-codeintel-summary.json`，没有其他 source/document 漂移。处理方案是把 `3f66b71` 作为下一 candidate 唯一 source/harness commit，从全新 Windows 与 WSL2 路径创建 clean detached staging；旧 `bf1a481` 的 staging、repository inputs、expected-report plan、formal reports 与 ledgers 全部只读保留，既不复用也不覆盖。Provider calls/cost 增量=`0/$0`；下一关键闭环是双平台完整 offline install/build/verifier、四字段 identity、全新 inputs，以及任何新 Gateway/runner/Provider 调用前独立冻结的 `144/144/144` plan。
+144、`3f66b71` 的 Windows 与 WSL2 clean detached staging 已在两条全新路径成功创建：Windows=`E:\project\star-sanctuary\.tmp\p2c-candidate-3f66b71-harness`，WSL2=`/var/tmp/star-sanctuary-p2c-candidate-3f66b71`；两端 HEAD 均为 `3f66b710cffbcd38f0649ab6029a3df20eab7a50`，status 仅 `## HEAD (no branch)`，`symbolic-ref -q HEAD` 均 exit code=`1`，WSL2 filesystem=`ext2/ext3`。未出现 clone/checkout 失败，因此无需清理或覆盖任何目标；旧 `bf1a481` staging 保持原样。处理方案是把双平台完整 offline install/build/benchmark verifier 和生产四字段 identity 作为下一数据 Gate，未通过前不生成 repository inputs，更不创建或运行 candidate。Provider calls/cost=`0/$0`。
+145、WSL2 offline install 后的 mode-only 漂移核验首次在最终断言处失败：实际 Git porcelain status=` M packages/belldandy-browser/bin/relay.mjs`，检查脚本却把预期值误写成缺少 index/worktree 状态列前导空格的 `M packages/...`。失败发生在 `chmod` 之前；同次证据已确认唯一路径、summary=`100644 => 100755`、numstat=`0/0`、worktree blob 与 HEAD blob 均为 `005b1aa8f11898284ea7a64de813190f21cc3c1d`、当前 mode=`755`，因此不是 source 内容漂移。处理方案=`fix_now`：把精确 porcelain 预期修正为 ` M <path>`，保留其余五项 fail-closed 断言，复跑后才允许对唯一目标执行 `chmod 0644`，并要求 status 恢复为唯一 `## HEAD (no branch)`；Green 前不执行双平台 build、identity、inputs 或任何 Gateway/runner/Provider 调用。本次失败无 Provider 费用与正式证据副作用。
+146、问题 145 已按同一证据集修正并闭合：核验器用精确 porcelain=` M packages/belldandy-browser/bin/relay.mjs` 复跑，唯一路径、mode summary、`0/0` numstat、相同 blob 与 mode=`755` 六项断言全部通过；随后只对该文件执行 `chmod 0644`，WSL2 status 恢复为唯一 `## HEAD (no branch)`。Windows offline frozen install 完成 `493` packages、reused=`492`、downloaded=`0`；WSL2 完成 `494` packages、reused=`493`、downloaded=`0`，两端 exit code=`0`。处理方案生效且没有内容回滚、宽范围 reset 或旧 staging 覆盖；技术债裁决=`fix_now completed`。后续并行执行两端完整 build，再逐端运行 benchmark verifier 与生产 identity，Provider calls/cost 仍=`0/$0`。
+147、`3f66b71` 双平台 frozen staging 的完整 build 已同步通过：Windows 与 WSL2 均依次完成 version metadata、`48` 项 Web asset manifest、`tsc -b`、`verify:build` workspace entrypoint 检查和 postbuild template copy，两个 `corepack pnpm build` 均 exit code=`0`；写后 status 仍分别只有 `## HEAD (no branch)`。本环节没有测试、源码、正式 report 或 Provider 副作用。处理方案是继续把 `corepack pnpm verify:coding-benchmark` 作为独立合同 Gate；两端 verifier 都通过后才调用生产 `resolveBenchmarkRepositoryIdentity()`，任一端失败则先记录并诊断，不允许凭 commit 或手工 hash 继续生成 inputs。Provider calls/cost=`0/$0`。
+148、`3f66b71` 双平台 `corepack pnpm verify:coding-benchmark` 均以 exit code=`0` 返回 `[verify:coding-benchmark] v1/v2/v3 manifests, schemas, docs, and platform gates are aligned`，写后两个 staging 继续 clean detached。Windows/WSL2 的 AJV `date-time` unknown-format warning 与问题 84 相同，WSL2 的 `[DEP0040] punycode` warning 与问题 31/104 相同，均未形成 schema、manifest、docs 或 platform Gate 失败；技术债继续裁决=`record_only`，本轮不扩大为依赖升级或校验器插件变更。处理方案是保留原始 warning 结论并继续调用 frozen source 内生产 `resolveBenchmarkRepositoryIdentity()`；必须得到两端 commit、workspaceDirty、lockfile SHA-256 与 canonical worktree SHA-256 四字段逐字一致，才允许生成新 repository inputs。Provider calls/cost=`0/$0`。
+149、`3f66b71` 双平台生产 repository identity 已逐端复算并逐字一致：commit=`3f66b710cffbcd38f0649ab6029a3df20eab7a50`、workspaceDirty=`false`、lockfile SHA-256=`844c0021f1c9135214c913636fd6ed6f9232593883bd5b6289f7ade51d2b7d2b`、canonical worktree content SHA-256=`1dc3387e8fc1bb86c785998e9dea28945179e61ecb12868ca189a23113ed3ee7`；identity 计算后两端 status 仍仅为 `## HEAD (no branch)`。这证明本次产品修复使 worktree hash 从旧 identity 的 `eb10e333…` 合法变化，而 lockfile 未漂移。处理方案是将这四字段作为新 Windows/WSL2 inputs producer、独立 verifier、expected-report plan 与 launcher 的共同硬绑定；任何字段不符均失败关闭，旧 `bf1a481…/eb10e333…` 不得进入新配置或正式 report。Provider calls/cost=`0/$0`。
+150、定位 WSL2 frozen repository materials 时，一条只读 `bash -lc` 循环因命令字符串中的 `$p` 被外层 PowerShell 提前展开，传入 WSL 的脚本残缺并以 syntax error 失败。前两条直接 argv 的旧 `linux-snapshot-preparation.json` 与 `repository-inputs.json` 读取均成功；失败探针未创建、修改或删除文件，也未启动 Gateway、runner 或 Provider。处理方案=`fix_now`：后续不再用包含 shell 变量的 PowerShell→`bash -lc` 嵌套字符串，改为从已知计划文档提取精确材料路径，再用 `wsl.exe -- test/stat` 逐路径直接传参验证；只有 source/npm cache/dependency seed/Go module cache 全部存在且新 output root 不存在时才运行 producer。Provider calls/cost=`0/$0`。
+151、新建 `3f66b71` inputs producer/verifier 后的首条验证命令在 PowerShell 解析阶段报 `An empty pipe element is not allowed`，原因是再次把 `foreach { ... }` 语句块直接连接 `| Format-Table`，与已记录问题 37 同类；因此该次 `node --check` 和替换计数均未实际执行，不能作为验证证据。两份新脚本已经通过 `apply_patch` 创建，但解析失败命令未读取敏感内容、未改写脚本、未生成 inputs，也未启动 Gateway、runner 或 Provider。处理方案=`fix_now`：先用 `$rows = @(foreach (...) { ... })` 完整执行语法、旧 identity 零命中、哈希与新字段计数断言，再单独 `$rows | Format-Table`；后续 PowerShell 多项审计一律先物化集合，不再把语句块直接接管道。Green 前不执行 producer。
+152、问题 151 的脚本验证已按“先物化 `$rows`、再格式化”复跑并转 Green：`prepare-p2c-candidate-inputs-3f66b71.mjs` 与 `verify-p2c-candidate-inputs-3f66b71.mjs` 均通过 `node --check`，旧 `bf1a481`/`eb10e333` 零命中，新 commit=`3f66b710…` 与 worktree hash=`1dc3387e…` 在每文件各精确出现一次；脚本 SHA-256 分别为 `5dfc30649ac9e94e5b4191e6c8039470529e4effda81e61799d10498fd2a0f29`、`a16854c9e7fb2359708df3269c0dc3a6216878d2b0c0f727ad06f8931bd75285`。技术债裁决=`fix_now completed`。后续只允许 producer 写入已确认不存在的 `tmp/p2c-candidate-3f66b71-inputs/windows-native` 与 `/var/tmp/star-sanctuary-p2c-candidate-3f66b71-inputs`，再由 verifier 不信任 producer 自报地复算全部 receipt/preflight/identity。
+153、定位 Express dependency seed 的一组只读检查中，第一条命令再次把 `foreach { ... }` 直接接到 `| Out-String`，在 PowerShell 解析阶段触发与问题 37/151 相同的 `An empty pipe element is not allowed`；同组两个独立 `find` 命令正常返回，但失败命令自身未执行任何路径检查。根因是临时命令仍保留了已证明不可靠的语句块布局，单靠文档提醒没有消除重复风险。处理方案=`fix_now`：当前候选余下命令完全停用临时 `foreach`，对少量已知路径逐条直接调用；确需集合时只允许先物化变量、结束语句后再单独输出。该失败无文件、inputs、Gateway、runner、Provider 或费用副作用。
+154、`3f66b71` WSL2 repository inputs 首次 production preparation 终态为 `partial ready=3, blocked=1`，producer exit code=`1`；唯一 blocked 仓为 Express，code=`pinned_dependency_lock_unavailable`、detail=`package-lock.json and exact seed lock are unavailable`，Preact、spf13/cobra 与 vscode-languageserver-node 均 ready。根因是调用者把 `/var/tmp/star-sanctuary-coding-agent-v3/p0.15-linux-prepared/caches` 误当作 `--dependency-seed-root`：生产 owner 会拼接 `<repositoryId>-<commit>/node_modules/.package-lock.json`，而该 parent 下是无 commit 后缀的 ready cache；正确 parent 是 `/mnt/e/project/star-sanctuary/tmp/coding-agent-v3-caches`，其 Express exact seed lock SHA-256=`c3b144624b089aad60b3651e0fe326ac4f5271f5d64c611cf2f7290616638a82`，与上一成功 WSL2 preparation 记录的 `dependencySeedSha256` 精确一致。两次直接检查 root-level `package-lock.json` 得到 ENOENT，是因为合同文件位于 `node_modules/.package-lock.json`，生产源码核对后已纠正。处理方案=`fix_now`：先校验 canonical partial root 与带 `-rejected-express-seed` 的目标均位于 `/var/tmp`、目标不存在，再原子重命名完整保留失败报告/logs/sources；随后以正确 seed parent 对重新空出的 canonical root运行一次 producer，并要求 `ready=4, blocked=0`。Windows `4/4/8` 成功 inputs 不覆盖；修正 WSL Green 前不创建 expected-report plan。Provider calls/cost=`0/$0`。
+155、问题 154 已按修正材料闭合：首次 partial output 经规范路径、非 symlink directory 与目标不存在校验后，原子重命名为 `/var/tmp/star-sanctuary-p2c-candidate-3f66b71-inputs-rejected-express-seed`，其 preparation report 前后 SHA-256 均为 `c3efe99244a4a093663999456f5cb0904020c44eb34820df70989dfdeecda219`；没有删除或覆盖失败 evidence。随后以 `/mnt/e/project/star-sanctuary/tmp/coding-agent-v3-caches` 为正确 dependency seed parent，在重新空出的 canonical root 运行 production producer，终态=`ready ready=4 blocked=0`、exit code=`0`。Windows producer 此前也已返回 repositories=`4`、preflights=`8`，未被重跑。技术债裁决=`fix_now completed`；后续由双平台独立 verifier 重算 receipts/preflights/config/identity，全部 Green 前仍不创建 expected-report plan。Provider calls/cost=`0/$0`。
+156、`3f66b71` 双平台 repository inputs 已通过独立 verifier：Windows 与 WSL2 均为 repositories/receipts/preflights=`4/4/8`，每份 stored receipt 和 preflight 均由 frozen manifest、source 与 cache 重新计算并深比较；Windows config SHA-256=`7dd96eae192f07bb4124b32df504b711dde72f4054ff090e8fb690e732b4a6ae`，WSL2 config SHA-256=`ffaa88c3f3de2fe5948cd352ce89537a5eca37e114df484b9c78309ec31666c4`。两端 verifier 内再次调用生产 identity，仍得到 `3f66b710…/workspaceDirty=false/844c0021…/1dc3387e…`。处理方案是立即进入 expected-report plan Gate：必须先确认新 artifact root、candidate root、formal root 与 plan path 四层不存在，再以 production producer 首次写入，独立重建 `144` 槽位并做不可覆盖负例；在此之前 Gateway/runner/Provider calls/cost 保持 `0/$0`。
+157、`3f66b71/candidate-1` expected-report plan 已在任何新 Gateway、runner 或 Provider 调用前由 frozen production producer 首次写入，producer 自报 `144` report slots、exit code=`0`；写入前 `artifacts/p2c-3f66b71`、candidate root、formal root 与 plan path 四层均确认不存在，独立 verifier 脚本 SHA-256=`7be1e629b780a5a49b9281f61778ff04c8bc3f9607e5327e66d3d7978d8d250c` 且旧 identity 零命中。当前仅能确认原子写入成功，尚不能把 producer 自报等同于 plan 合同通过。处理方案是立即运行独立 verifier，从 frozen manifest 重建完整 `24 × 2 × 3` 集合，逐项验证 IDs/paths/metadata/identity 与所有 report 目标不存在；通过前不运行不可覆盖负例之外的后续脚本，更不启动 candidate。Provider calls/cost=`0/$0`。
+158、`3f66b71/candidate-1` expected-report plan 已通过独立验真和不可覆盖负例：reports/unique IDs/unique paths=`144/144/144`，manifest SHA-256=`dfaf7ebecaa3f6109e3427670b53b23606fae19535e00abf64212c6090daa1ba`，plan SHA-256=`153fb4eb445eaca3518b0652aad310d1588add544c6d52ba8248102b2be91d18`，candidate source/harness 四字段逐字匹配 clean `3f66b71`，formal root 与全部计划 report 目标不存在。相同参数复跑 producer 按 `wx` 合同以 exit code=`1`、`EEXIST` 失败，plan SHA 前后不变；随后独立 verifier 再次全绿。处理方案是把该 plan hash 写死到全新 launcher/resume verifier，并先做零费用 syntax/slot/cost-only Gate；任何 launcher 参数、artifact path、identity 或 config hash 不匹配都必须在 Gateway 前失败关闭。至此用户强调的“检验完整 `144/144` 前先做好 expected-report plan”已满足，Provider calls/cost=`0/$0`。
+159、`3f66b71` 新 launcher、launch-slot/resume verifier 与 Windows process/port Gate helper 已创建并通过语法及旧值零命中审计；launcher 关键常量精确为 commit=`3f66b710…`、content=`1dc3387e…`、plan=`153fb4eb…`、Windows config=`7dd96eae…`、WSL2 config=`ffaa88c3…`、global observed baseline=`$2.39714364`、reserved=`$2.04221000`、candidate observed=`$0`。production launch-slot verifier 随后对 Windows/WSL2 canary 分别返回 `tests.failed-diagnosis.<platform>.a1` 的唯一 plan path，两个 source/harness identity 均逐字正确，exit code=`0`。处理方案是下一步只运行两端 `-CostGuardCheckOnly`；必须证明没有新增 report/run 且下一 run 最坏费用仍低于 `80 RMB`，再进入 process/port/OCI 静默 Gate。Provider calls/cost=`0/$0`。
+160、双平台 `-CostGuardCheckOnly` 均成功返回 plan=`153fb4eb…`、processed=`0`、observed/reserved=`$2.39714364/$2.04221000`、single-run max=`$0.10`、next worst=`36.31482912 RMB < 80 RMB`；Windows 外层 `$LASTEXITCODE` 对 PowerShell script invocation 为空属于宿主语义，WSL2 调用已改用异常/`$?` 判定并明确 `passed`。随后过早运行 resume verifier，因 `cost-ledger-global.json` 为 ENOENT 而 exit code=`1`。生产 launcher 源码确认 cost-only 分支在 `Write-P2CLedgers` 之前只读返回，所以三个 ledger 均不存在是正确的零运行状态，失败根因是把“至少一份正式 report 后的恢复 verifier”误用于 `processed=0`，不是 plan/identity/费用漂移。处理方案=`fix_now`：不伪造空 ledger；零运行阶段以独立 plan verifier、launch-slot verifier、cost-only 输出和 formal root 不存在为权威证据，首份 report/ledger 原子落盘后再启用 resume verifier。后续进入进程/端口/OCI 静默 Gate，Provider calls/cost 仍=`0/$0`。
+161、`3f66b71` 正式前静默 Gate 已串行通过：Windows candidate/benchmark/workspace-scanner 匹配进程=`0`；WSL2 同类进程=`0`，`ps` 仅输出问题 42 已记录的 PTY screen-size warning；Windows/WSL2 `28891/28892` listener=`0/0`。Docker server=`29.1.3`，pinned image `node:22-bullseye@sha256:62f550497561d6285e10abd952730db89c905be990237eaf8744137929c72844` 的 image ID 与 RepoDigest 均精确匹配，活动容器=`0`；没有停止任何归属不明进程。处理方案是紧邻 canary 再执行一次 plan-aware Windows cost-only 复算，然后只允许 `MaxNewRuns=1` 的唯一预冻结槽位；失败即停，不扩大批次。当前 Gateway/runner/Provider calls/cost=`0/$0`。
+162、`3f66b71/candidate-1` 的唯一 Windows `tests.failed-diagnosis` attempt 1 canary 已在即时 cost Gate 再次确认 next worst=`36.31482912 RMB < 80 RMB` 后正式执行；launcher 只写入一个预冻结槽位并自报 status=`passed`、usage=`provider_reported`、infrastructureRetries=`0`，本次 Provider cost=`$0.00094657`。candidate/global observed 更新为 `$0.00094657/$2.39809021`，reserved 保持 `$2.04221000`，coverage=`1/144`；launcher 正常完成且 `MaxNewRuns=1` 阻止第二槽。该结论只代表 formal report 与 ledger 已由 launcher 原子落盘，尚待独立 resume-state、artifact、env 与资源静默验真。处理方案是先运行新 resume verifier；全部合同 Green 后才枚举并安全回收本 canary runtime env，完成 post-run Gate 前不启动任何后续任务。
+163、canary 已由 `verify-p2c-resume-state-3f66b71.mjs` 独立验真：plan reports/unique IDs/unique paths=`144/144/144`、processed/remaining=`1/143`，唯一 source report 与 plan/task/platform/attempt、source/harness 四字段、infrastructureRetries、report SHA、platform/global ledger 全部一致；declared artifacts=`7/7` 且均由 verifier 检查。candidate/global observed 精确重算为 `$0.00094657/$2.39809021`，reserved=`$2.04221000`，plan SHA 仍为 `153fb4eb…`。处理方案是保持正式 report/ledger 不动，只对本 canary runtime 枚举 `.env/.env.local` 并执行安全回收；清理和 post-run quiescence 全绿前不启动 batch 01。Provider 增量 calls/cost=`0/$0`。
+164、canary runtime env 已完成安全回收：只枚举 `tmp/p2c-3f66b71/r/w/a1/t04` 的 `.env/.env.local`，不读取正文；两目标均为 regular/non-reparse，length=`208/16034`、SHA-256=`d54c06a1…/292c3ebd…`，与脚本预期逐字一致后送 Windows 回收站。cleanup script SHA-256=`846ec451f987ae0b974e3a802d7f88a1b8f1eaca435a9607e80e3e3d84415a58`，remaining=`0`；独立解析 cleanup log 确认 targets=`2`、disposition=`windows-recycle-bin`、remaining=false，log SHA-256=`13bcb50ddc387d018ff7a01121fea3434722f34327128e8f11fff377fcef021f`。处理方案是继续执行 post-run process/port/OCI Gate；全绿前不启动 batch 01。正式 report/artifacts/ledger 未删除或覆盖，Provider 增量 calls/cost=`0/$0`。
+165、canary post-run quiescence 已串行通过：Windows candidate/benchmark/workspace-scanner 匹配进程=`0`；WSL2 同类进程=`0`，仅有问题 42 的 PTY warning；Windows/WSL2 `28891/28892` listener=`0/0`，pinned OCI image 活动容器=`0`，没有停止任何归属不明进程。结合问题 162-164，canary 的正式 report、plan/identity、artifacts、platform/global ledger、usage/cost、env 回收与资源收敛全部闭环，可信 coverage=`1/144 passed`。处理方案是每个后续小批都先复算 resume/inputs/identity/cost/process/port/OCI Gate，再运行、验真、清理和静默；任一 product/infrastructure/no-report 终态立即停止扩大。Provider 增量 calls/cost=`0/$0`。
+166、Windows attempt 1 batch 01 前置 Gate 已全部复算通过：resume-state 仍为 plan/IDs/paths=`144/144/144`、processed/remaining=`1/143`、artifacts=`7/7`；Windows/WSL2 inputs 分别保持 `4 receipts + 8/8 preflights`，config SHA 与生产四字段 identity 均未漂移。两端 cost-only 都返回 observed/reserved=`$2.39809021/$2.04221000`、下一 run 最坏=`36.32240168 RMB < 80 RMB`；随后串行确认 Windows/WSL2 候选进程=`0/0`、`28891/28892` listener=`0/0`、pinned image ID/RepoDigest 精确匹配且活动容器=`0`。处理方案是只允许 launcher 以 `MaxNewRuns=4` 执行 attempt 1 中 canary 后的下一组未处理 plan 槽位；任一 product/infrastructure/no-report 立即停止。Provider 增量 calls/cost=`0/$0`。
+167、Windows attempt 1 batch 01 已由 plan-aware launcher 新增四个预冻结槽位：`rules.nested-precedence`、`feature.cross-file`、`bug.reproducible-fix`、`navigation.large-repository` 均自报 `passed + provider_reported + infrastructureRetries=0`；各 run 后费用守卫与 ledger 均继续生效。累计 processed/coverage=`5/144`，candidate/global observed=`$0.00240685/$2.39955049`，reserved=`$2.04221000`，launcher 正常完成且没有 product/infrastructure/no-report 停止信号。该结论只表示四份新 report 已原子落盘，尚待累计 resume-state、artifacts、ledger、env 与 quiescence 独立验真。处理方案是先运行 verifier；全部 Green 前不清理正式证据，也不启动 batch 02。
+168、batch 01 已通过独立 resume-state 验真：expected reports/unique IDs/unique paths=`144/144/144`，processed/remaining=`5/139`，declared artifacts=`35/35`；五份累计 report 的 source/harness identity、task/platform/attempt、infrastructureRetries、report SHA 与 global/platform ledger 均一致。candidate/global observed 精确重算为 `$0.00240685/$2.39955049`，reserved=`$2.04221000`，plan SHA=`153fb4eb…`。处理方案是只枚举本批新增 `t01/t02/t03/t05` runtime 下的 `.env/.env.local`，逐文件固定 containment、regular/non-reparse、length 与 SHA 后送回收站；完成 post-batch 静默 Gate 前不启动 batch 02。Provider 增量 calls/cost=`0/$0`。
+169、batch 01 runtime env 已完成安全回收：identity 专用 cleanup script SHA-256=`1ad83f21222e5ea5438c2e80e48fc0409403be83b831eda6ce74a014e29d99b9`；清理前目标集合精确为 `t01/t02/t03/t05` 下 `8` 个 `.env/.env.local`，reparse directories=`0`，每文件均记录 length 与 SHA-256且未读取正文。全部目标送 Windows 回收站后 remaining=`0`；独立解析 cleanup log 确认 targets/expectedCount=`8/8`、disposition 与 remaining 状态正确，log SHA-256=`3267b20ef097b1307866a4ff9dbf0041f35a600218fa193d25d7e6f67f5663cc`。处理方案是继续完成 post-batch process/port/OCI Gate；全绿前不启动 batch 02。正式 report/artifacts/ledger 未触碰，Provider 增量 calls/cost=`0/$0`。
+170、batch 01 post-run quiescence 已串行通过：Windows/WSL2 candidate、benchmark、workspace scanner 匹配进程=`0/0`，Windows/WSL2 `28891/28892` listener=`0/0`，pinned OCI image 活动容器=`0`；WSL `ps` 仍只有问题 42 的既有 PTY warning，没有停止任何归属不明进程。结合问题 167-169，四份新增 report、累计 artifacts=`35/35`、双层 ledger、usage/cost、env 回收与运行资源全部闭环，可信 coverage=`5/144 passed`。处理方案是下一批重新执行全部只读与收费 Gate，不沿用本批瞬时静默状态；任一失败先回写、诊断再决定是否继续。Provider 增量 calls/cost=`0/$0`。
+171、Windows attempt 1 batch 02 前置 Gate 已全部通过：resume-state=`processed 5/remaining 139`、declared artifacts=`35/35`、plan/IDs/paths=`144/144/144`；Windows/WSL2 inputs 保持 receipts/preflights=`4/4/8`，config SHA 与四字段 identity 无漂移。两端 cost-only observed/reserved=`$2.39955049/$2.04221000`，下一 run 最坏=`36.33408392 RMB < 80 RMB`；Windows/WSL2 候选进程=`0/0`、listener=`0/0`、pinned OCI image ID/RepoDigest 精确匹配、活动容器=`0`。处理方案是只允许 `MaxNewRuns=4` 执行下一四个未处理 plan 槽位，失败即停。Provider 增量 calls/cost=`0/$0`。
+172、Windows attempt 1 batch 02 已新增四个预冻结槽位：`command.interactive-control`、`safety.boundary-enforcement`、`gateway.disconnect-recovery`、`gateway.client-cancel` 均自报 `passed + infrastructureRetries=0`。前三项 usage=`provider_reported`，本批新增 Provider cost=`$0.00103830`；`gateway.client-cancel` 按 local-fixture 合同 usage=`not_reached`、费用增量=`$0`。累计 processed/coverage=`9/144`、candidate/global observed=`$0.00344515/$2.40058879`，reserved=`$2.04221000`；launcher 正常完成且没有 product/infrastructure/no-report 停止。处理方案是先由 resume verifier 区分合法 local-fixture usage 与缺失 Provider usage，并核对累计 artifacts/ledger；闭环前不清理或启动 batch 03。
+173、batch 02 已通过独立 resume-state 验真：plan/IDs/paths=`144/144/144`、processed/remaining=`9/135`、declared artifacts=`69/69`；九份累计 report 的 identity、逻辑外键、infrastructureRetries、report SHA 与 global/platform ledger 全部一致。candidate/global observed 精确重算为 `$0.00344515/$2.40058879`，reserved=`$2.04221000`；`gateway.client-cancel` 的 local-fixture `not_reached` 未被误判为 missing usage。处理方案是只枚举本批 `t06-t09` runtime env，安全回收后再执行 post-batch 静默 Gate；完成前不启动 batch 03。Provider 增量 calls/cost=`0/$0`。
+174、batch 02 runtime env 已安全回收：清理前目标集合精确为 `t06/t07/t08/t09` 下 `8` 个 `.env/.env.local`，每项经 identity 专用 cleanup owner 验证 containment、regular/non-reparse、length 并记录 SHA-256，正文未读取；全部送 Windows 回收站后 remaining=`0`。cleanup log 独立解析通过，SHA-256=`6d9cd7943fe26cc028021a065b9f90e2d50839942b520546d9416826495e2e2f`。处理方案是继续执行 post-batch process/port/OCI Gate；全绿前不启动 batch 03。正式 report/artifacts/ledger 未触碰，Provider 增量 calls/cost=`0/$0`。
+175、batch 02 post-run quiescence 已串行通过：Windows/WSL2 candidate、benchmark、workspace scanner 匹配进程=`0/0`，Windows/WSL2 `28891/28892` listener=`0/0`，pinned OCI image 活动容器=`0`；WSL 仅保留问题 42 的 PTY warning，没有停止任何归属不明进程。结合问题 172-174，四份新增 report、累计 artifacts=`69/69`、双层 ledger、usage/cost、env 回收与资源收敛全部闭环，可信 coverage=`9/144 passed`。处理方案是下一批重新执行所有 Gate，并把 `real-ts.api-migration.windows-native.a1` 作为本轮产品修复的真实验收点；若仍失败立即冻结，不运行后续槽位。Provider 增量 calls/cost=`0/$0`。
+176、Windows attempt 1 batch 03 前置 Gate 已全部通过：resume-state=`processed 9/remaining 135`、declared artifacts=`69/69`、plan/IDs/paths=`144/144/144`；Windows/WSL2 inputs 均为 receipts/preflights=`4/4/8`，config SHA 与 `3f66b71…/dirty=false/844c0021…/1dc3387e…` identity 无漂移。两端 cost-only observed/reserved=`$2.40058879/$2.04221000`，下一 run 最坏=`36.34239032 RMB < 80 RMB`；候选进程、listener、pinned OCI identity 与活动容器全部 Green。处理方案是只运行下一四个槽位，其中 `real-ts.api-migration.windows-native.a1` 是本轮修复的真实验收点；任一失败立即停止，不扩大到后续批次。Provider 增量 calls/cost=`0/$0`。
+177、Windows attempt 1 batch 03 已新增四个预冻结槽位：`gateway.process-restart` 以 local-fixture `not_reached` 通过，`git.dirty-worktree`、`git.delivery-guard` 与关键 `real-ts.api-migration` 均自报 `passed + provider_reported + infrastructureRetries=0`。旧 `bf1a481` 在同 task/platform/attempt 的 `product_workflow` 失败未被重解释；新 identity 当前只形成独立 passed report。累计 processed/coverage=`13/144`，candidate/global observed=`$0.00611345/$2.40325709`，reserved=`$2.04221000`。处理方案是先由 resume verifier 验真累计 report/artifact/ledger，再读取新 TS migration events 判断本次是否实际命中 unsafe-correction guard，或只是未产生 stale correction；没有该区分前不把单次 passed 夸大为 guard 分支已被动态覆盖，也不启动下一批。
+178、batch 03 resume-state 已独立验真为 plan/IDs/paths=`144/144/144`、processed/remaining=`13/131`、declared artifacts=`100/100`，candidate/global observed=`$0.00611345/$2.40325709`、reserved=`$2.04221000`，identity/report SHA/双层 ledger 全部一致。随后首条 TS migration report 摘要命令误按旧单-run shape 读取 `$report.run.*`，因此输出空 runId/usage；实际 v3 source report 顶层是 `status=partial + runs[]`，这不是 report 异常。处理方案=`fix_now`：按实际 keys 改读 `runs[0]` 后确认 run=`real-ts-api-migration-windows-a1-1788460481743`、status=`passed`、usage=`provider_reported`、九类 artifacts，且 diagnostics length=`0`；后续对明确 `events.jsonl` 做结构化筛选，区分 guard 实际命中与模型未产生 stale correction，不再沿用旧 schema 假设。Provider 增量 calls/cost=`0/$0`。
+179、`real-ts.api-migration.windows-native.a1` 已形成 completed-state guard 的真实动态闭环，而不只是一次偶然 passed：events=`44`，tool started/completed=`9/9`，唯一实际执行的 `apply_patch` 为 seq `13/14` 且成功，随后三份完整 current-source read 均成功；post-write model call 仍返回一个 `apply_patch` tool call，但 Gateway 在执行前记录 `rejected a correction after the TraceValues API migration was already complete; retaining current source for tool-free review`，并以 tools=`0` 进入 bounded review，因此 events 中没有第二 patch、input_error 或 tool failure。机器 evaluator 为 `taskCompleted/testsPassed/patchAccepted=true`、regression=`0`、manualIntervention=`0`。最终自由文本 summary 仍误称 migration 未完成，说明无工具 review 的自然语言表述存在残余不准确；该文本没有改变代码、机器 evaluator 或 formal passed 合同，本轮技术债裁决=`record_only`，原因是立即改 prompt 会制造新 identity 并重启已通过候选，而单次自由文本误述尚未形成正式失败。处理方案是保留该证据并观察 attempts 2/3；若重复或导致可观察合同失败，再拆分最小产品修复。当前先完成 batch 03 env 与 quiescence 闭环。
+180、batch 03 runtime env 已安全回收：清理前目标集合精确为 `t10/t11/t12/t13` 下 `8` 个 `.env/.env.local`，每项通过 identity 专用 owner 的 containment、regular/non-reparse、length 与 SHA-256 记录，正文未读取；全部送 Windows 回收站后 remaining=`0`。cleanup log 独立解析通过，SHA-256=`1c1134ed2d69c10f21cc64e998cb7fbbb7ac6bf11d71aaf60f0eb7a72da71695`。处理方案是继续执行 post-batch process/port/OCI Gate；全绿前不启动 batch 04。正式 report/artifacts/ledger 未触碰，Provider 增量 calls/cost=`0/$0`。
+181、batch 03 post-run quiescence 已串行通过：Windows/WSL2 candidate、benchmark、workspace scanner 匹配进程=`0/0`，Windows/WSL2 `28891/28892` listener=`0/0`，pinned OCI image 活动容器=`0`；没有停止任何归属不明进程。结合问题 177-180，四份新增 report、累计 artifacts=`100/100`、双层 ledger、TS migration 动态 guard、machine evaluator、env 回收与资源收敛均已闭环，可信 coverage=`13/144 passed`。处理方案是继续按四槽小批推进；自由文本 summary 残余风险在后续同任务 attempts 观察，只有重复或形成正式合同失败时才升级。Provider 增量 calls/cost=`0/$0`。
+182、Windows attempt 1 batch 04 前置 Gate 已全部通过：resume-state=`processed 13/remaining 131`、declared artifacts=`100/100`，双平台 inputs=`4/4/8` 且 plan/config/identity 无漂移；两端 cost-only observed/reserved=`$2.40325709/$2.04221000`、下一 run 最坏=`36.36373672 RMB < 80 RMB`，进程/端口/pinned OCI identity/活动容器均 Green。manifest 精确确认下一四槽为 `real-ts.cross-package-refactor`、`real-js.bug-fix`、`real-js.failed-test-fix`、`real-go.public-api-migration`。处理方案是只运行这四槽，任一 product/infrastructure/no-report 立即停止；Provider 增量 calls/cost=`0/$0`。
+183、Windows attempt 1 batch 04 在第二个新槽位命中 `real-js.bug-fix.windows-native.a1 = failed/product_workflow + provider_reported`，但当前 plan-aware launcher 没有按预期 fail-fast，随后又完成第三槽 `real-js.failed-test-fix.windows-native.a1 = passed + provider_reported`；说明“失败即停”此前只是人工运行边界，没有被 launcher 对 product failure 强制执行。发现继续后已立即向本任务 launcher session 发送 Ctrl-C，session exit code=`1`；此刻第四槽是否在中断前启动或产生未报告 Provider usage 尚不确定，不能假设为零。处理方案=`fix_now`：立即冻结新 candidate 的所有后续运行，先独立核对 processed report/ledger、第四槽 report/runtime、相关进程/端口/容器与可能的 no-report usage；如有残留只处理来源可绑定本 session 的进程。随后安全回收已生成 env，并从 `real-js.bug-fix` 冻结 events/evaluator/workspace 建立 Red 反馈环；同时为 launcher 增加 product/infrastructure/no-report 任一终态后的硬停止回归。未完成这些闭环前不得续跑 `3f66b71`。
+184、主动中断后的第一轮审计确认正式 evidence 完整到 processed/remaining=`16/128`、declared artifacts=`127/127`，candidate/global observed=`$0.01000643/$2.40715007`、reserved=`$2.04221000`，plan/identity/report SHA/双层 ledger 均通过 resume verifier；第四槽 `real-go.public-api-migration` 没有 formal report 或 ledger entry，但 `t17` runtime 已创建并含 `2` 个 env、Gateway log 与 SQLite journal，证明中断发生在该槽启动早期，是否到达 Provider 仍待日志判断。并行执行 Windows quiescence checker 时，它把同组另一个只读 PowerShell 诊断命令识别为 candidate-bound process，因为该命令行包含 `p2c-3f66b71`；该 sibling command 已随工具调用结束，属于并发审计假阳性，不能据此误杀 PID。处理方案=`fix_now`：后续 quiescence 一律与其他含 identity 字符串的诊断串行运行；先读取 t17 非敏感 Gateway 日志确认 run/model/usage边界，再串行检查进程、端口和容器。第四槽 env 在费用状态判明前不清理，candidate 继续冻结。
+185、第四槽中断边界与资源状态已收敛：`t17/gateway.stdout.log` 仅包含 Gateway 配置/工具/agent 初始化，未出现 listen、conversation `run.started`、model dispatch、usage 或 fixture root；对应 formal report、ledger entry 与 fixture root 均不存在，因此该槽未到达 Provider，费用增量=`$0`，plan slot 继续未处理。随后串行 Windows checker 返回 matches=`0`，证明问题 184 的 blocked 是同批诊断命令造成的假阳性；WSL2 candidate process=`0`、双端 listener=`0`、pinned-image 活动容器=`0`。处理方案=`fix_now completed`：不新增 unreported infrastructure ledger，也不伪造第四槽终态；只回收 `t14-t17` 已生成的 env，保留 t17 日志作为中断证据。`3f66b71` candidate 仍因 `real-js.bug-fix` 产品失败冻结，不能续跑。
+186、batch 04 与中断槽位的 env/资源收口已完成：只处理 `t14-t17` 下经候选专用 owner 枚举的 `8` 个 `.env/.env.local`，逐项验证绝对路径 containment、regular/non-reparse、length 与 SHA-256，未读取正文；全部送 Windows 回收站后 remaining=`0`，cleanup log=`artifacts/cleanup/p2c-3f66b71-windows-a1-batch-04-env-2026-09-04.json`、SHA-256=`9da27a88a3cc7e1bb2d567bfcf050995087a9dcf9a72d86859110acf1cf74cca`。清理后串行 Gate 确认 Windows/WSL2 candidate/benchmark/scanner process=`0/0`、`28891/28892` listener=`0/0`、pinned OCI 活动容器=`0`；WSL `ps` 仍只有问题 42 已记录的 PTY warning。处理方案=`fix_now completed`：正式 report/artifacts/ledger 与 t17 中断日志保持冻结，不再运行 `3f66b71`；下一步先对 `real-js.bug-fix` 建立 Red 回归，并给 launcher 补 product/infrastructure/no-report 硬 fail-fast，全部 Green 后才提交新 checkpoint 和创建新 identity。
+187、`real-js.bug-fix.windows-native.a1` 已建立与 formal 症状同构的确定性 Red：原 run 的唯一一行 patch `subdomains.slice(offset + 1) → subdomains.slice(offset)`、完整 read-after-write、testsPassed=`true`、patchAccepted=`true` 均成立，但两次 post-write objective 响应分别为 `1196/1491` 字符且未满足非空 summary Schema，最终 `result.json=null` 并以同一错误文本进入 `product_workflow`。新增高层回归完整模拟“正确一行 patch → 完整读回 → 两次 malformed summary”，定向结果=`1 failed + 3 passed`，失败断言逐字命中 formal 错误。根因排序已收敛：现有 Express owner 只修复“错误多行初始 patch → destructive correction”分支，没有在“direct-valid exact patch 已完成但 output repair 仍无效”时基于严格 task/path/patch/current-source 证据收敛最终 JSON；evaluator 误判已由 tests/patch 双绿和任务明确要求非空 summary 排除。处理方案=`fix_now`：在相邻 Express owner 增加只接受冻结 task、唯一 required path、唯一精确一行成功 patch、最新完整 source 中唯一正确 getter 的 completion recovery，生成后仍必须通过调用方 `validateOutput` 才可接受；任一 identity/source/patch/schema 漂移继续失败关闭。先让该 Red 转 Green，再复跑既有 malformed-output 失败关闭测试，确保通用任务不会被放宽。
+188、`real-js.bug-fix` exact completion recovery 已实现并把原始 Red 转 Green：`react-workspace-mutation-js-bug-fix.ts` 仅在冻结 task 文本、唯一 `lib/request.js`、唯一成功 patch 精确为 `slice(offset + 1) → slice(offset)`、最新完整 source 含唯一正确 getter 且不再含旧返回行时生成 `{"summary":"restored the documented req.subdomains offset behavior"}`；`tool-agent.ts` 只在第二次 objective output repair 仍无效时调用，并要求原 structured-output validator 再次接受后才结束。helper 与高层回归合计 `18/18` 通过，其中 task/path/patch 数量/source/truncated evidence 六类漂移均返回 undefined。技术债裁决=`fix_now in_progress`：该结果证明精确产品症状已修复，但尚需复跑既有通用 malformed objective-output 失败关闭测试、Agent 全包、build 与 benchmark verifier；这些 Gate 全绿前不提交 checkpoint，也不创建新 candidate identity。
+189、identity 专用 plan-aware launcher 的硬 fail-fast 缺口已修复并完成零费用回归：新增同一 `Get-P2CRunTerminalStopReason` owner，把 planned report 不存在、`infrastructure_error`、`failed/product_workflow`、unexpected terminal 与 passed-but-nonzero runner 分别收敛为停止原因；主循环仍先原子写入 no-report reserve 或已形成 report 的 platform/global ledger，再在 `$newRuns`/下一槽位判断前抛出。内置两槽 self-test 与主循环共用该 owner，PowerShell AST syntax=`passed`，结果=`4/4`：product/infrastructure/no-report 均只启动第一槽，passed 才启动第二槽。没有改变单任务 report-only runner 的退出码，因为产品失败仍须保留可聚合 report；当前 `3f66b71` candidate 继续冻结，不用修后 launcher 续跑。技术债裁决=`fix_now completed for launcher control`；新 identity launcher 必须从本修正版迁移并先复跑同一 self-test。
+190、launcher owner 定位时两条只读 `rg` 诊断命令因 shell 参数写法失败：Windows PowerShell 未把传给 native `rg` 的 `*.ps1` / `scripts/*.test.mjs` 展开为文件集合，返回路径语法错误；另一条把包含 `"failed"` 的 regex 放在 PowerShell 双引号中，转义后形成未闭合分组；此外首次假定 v3 Schema 名为 `run.schema.json/report.schema.json`，实际为 `benchmark-run.schema.json/benchmark-report.schema.json`。这些均未修改文件、未启动 Gateway/Provider，也不是产品失败。处理方案=`fix_now completed`：后续 `rg` 直接传明确目录/文件并用 PowerShell 单引号保护 regex，Schema 先枚举实际文件名再读取；修正后的 runner/launcher/schema 检索均 exit code=`0`。
+191、JS completion recovery 的相邻回归 Gate 已通过：`react-workspace-mutation-js-bug-fix.test.ts`、frozen recoveries、workspace mutation structured-output、workspace mutation 主测试与 `react-workspace-mutation.test.ts` 共 `5` files、`202/202` tests passed。既有 destructive Express correction、通用 malformed objective-output fail-closed、structured-output correction、read-after-write 与预算分支均未回归。处理方案是继续跑 `packages/belldandy-agent` 全包；全包 Green 前不把相邻结果外推为 Agent package 完成，也不提交新 checkpoint。
+192、`packages/belldandy-agent` 全包回归已通过：Vitest 共 `76` files（`75 passed + 1 skipped`），实际执行 `927/927` tests passed、另 `1 skipped`；新 exact completion recovery 未破坏 Agent 的工具循环、structured output、mutation correction、budget、conversation 与相邻运行能力。处理方案是继续执行完整 workspace build 与 benchmark verifier；两项均通过并完成 diff/边界复核前，技术债仍保持 `fix_now in_progress`，不提交 checkpoint、不创建新 identity。
+193、完整 workspace build 已通过：`corepack pnpm build` 的 version generation、Web assets（`48` manifest entries）、`tsc -b`、`verify-workspace-build` 与 postbuild 均 exit code=`0`，TypeScript 编译无错误且全部 package entrypoint 存在。处理方案是继续独立执行 `corepack pnpm verify:coding-benchmark`；benchmark manifests/Schemas/docs/platform wiring 全绿前不宣称本轮修复可提交。
+194、benchmark verifier 已通过：`corepack pnpm verify:coding-benchmark` exit code=`0`，明确返回 `v1/v2/v3 manifests, schemas, docs, and platform gates are aligned`。输出中的 `unknown format "date-time" ignored` 为现有 Ajv format 未注册 warning，没有改变退出码或 Gate 结论。轻量对抗检查同时发现一条应补的安全边界：即使冻结 task/path/patch/current-source 全匹配，只要调用方 structured-output validator 不接受本地 recovery JSON，就必须保持原错误终态；处理方案=`fix_now`，补 exact-state/schema-rejection 高层负例后复跑 focused 与 Agent 全包增量，再做最终 diff 审计。
+195、exact-state/schema-rejection 对抗负例已通过：高层场景保持冻结 task、唯一 path、精确 direct patch 与完整正确 source，但把 validator 可接受值改为另一份 contract-specific JSON；本地 recovery 候选未被接受，终态仍逐字返回原 workspace-mutation error，证明调用方 Schema 仍是最终权威。更新后 frozen recoveries=`5/5`、Agent 全包=`928/928` tests passed（另 `1 skipped`）。技术债裁决=`fix_now completed`：本轮没有发现新的接口破坏或更简单的通用修复；下一步只做 diff/工作树审计与 checkpoint 提交，之后必须创建新 identity，禁止用旧 candidate 重跑验收。
+196、产品修复源码 checkpoint 已创建为 `576a7dc452885c7e7a595567c4d57af4ed8749c7`（`fix(agent): recover completed express mutation output`），提交精确包含 `react-workspace-mutation-js-bug-fix.ts`、其单元测试、`tool-agent.ts` 与 frozen high-level recovery 测试四个文件，共 `187 insertions/10 deletions`；提交后根工作树只剩计划文档增量和明确排除的未跟踪 `tmp-codeintel-summary.json`。处理方案是把 `576a7dc` 作为下一 source/harness frozen commit，计划文档继续在根工作树回写而不进入候选 content identity；下一步创建目标不存在的双平台 detached staging，旧 `3f66b71` staging/inputs/plan/report/ledger 一律不复用或覆盖。
+197、staging 前的只读根状态核对有一条 PowerShell command string 使用分号顺序执行 `git status` 与 `git rev-parse`；两项均 exit code=`0`、只读且输出可区分，没有状态副作用，但不符合本轮要求的独立命令调用节奏。处理方案=`fix_now completed`：后续所有 Git/staging/identity Gate 均以独立 tool call 运行，多项只读检查只通过 orchestration 并发，不再在同一 shell 字符串用分号拼接；本条不影响 target absent 或 commit 证据。
+198、`576a7dc` 双平台 clean staging Gate 已通过：Windows 目标 `E:\project\star-sanctuary\.tmp\p2c-candidate-576a7dc-harness` 与 WSL2 目标 `/var/tmp/star-sanctuary-p2c-candidate-576a7dc` 均在创建前确认不存在，随后独立 clone 并 checkout；两端 HEAD=`576a7dc452885c7e7a595567c4d57af4ed8749c7`、status=`## HEAD (no branch)`、`symbolic-ref -q HEAD` exit code=`1`，WSL filesystem=`ext2/ext3`。处理方案是保持两 staging 不写文档，只执行 offline install/build/verifier 和必要的 file-mode 恢复；双平台生产 identity 四字段一致前不生成 repository inputs，更不创建 expected-report plan 或启动 Provider。
+199、`576a7dc` 双平台 offline install 已完成：Windows=`493 packages/reused 492/downloaded 0`，WSL2=`494 packages/reused 493/downloaded 0`；Windows 安装后 clean detached，WSL2 仅出现 `packages/belldandy-browser/bin/relay.mjs` 的 `100644 → 100755` mode 漂移。原因证据已收敛为该文件是 `packages/belldandy-browser/package.json` 声明的 `bin` 入口，install 只补执行位：`git diff --numstat=0/0`，index/worktree blob 均为 `005b1aa8f11898284ea7a64de813190f21cc3c1d`，不存在内容变化。处理方案=`fix_now completed`：精确执行 `chmod 644` 后 mode=`644`、diff 为空且 WSL2 恢复 `## HEAD (no branch)`；不把 Windows raw CRLF lockfile hash 与 WSL raw hash直接当作 canonical identity。后续先在两端分别执行完整 build，再执行 benchmark verifier；写后重新核验 mode 与 clean detached，只有生产四字段 identity 逐字一致才进入全新 repository inputs。Provider calls/cost=`0/$0`。
+200、`576a7dc` Windows frozen staging 的 `corepack pnpm build` 已 exit code=`0`：version metadata、`48` 项 Web asset manifest、`tsc -b`、`verify:build` workspace entrypoint 与 postbuild template copy 全部完成，TypeScript 编译无错误；写后状态仍只有 `## HEAD (no branch)`。本结论仅覆盖 Windows，不外推 WSL2。处理方案是下一步在 ext4 staging 独立运行 WSL2 完整 build，并在结束后再次核验 `relay.mjs` mode 与 clean detached；两平台 build 都闭环后才运行 benchmark verifier。Provider calls/cost=`0/$0`。
+201、`576a7dc` WSL2 frozen staging 的 `corepack pnpm build` 已 exit code=`0`，同样完成 version metadata、`48` 项 Web asset manifest、`tsc -b`、workspace entrypoint 校验与 postbuild；写后 HEAD=`576a7dc452885c7e7a595567c4d57af4ed8749c7`、`symbolic-ref -q HEAD` exit code=`1`、status=`## HEAD (no branch)`，`relay.mjs` 保持 mode=`644` 且无 diff。至此双平台完整 build 均通过且 clean detached。处理方案是分别运行 `corepack pnpm verify:coding-benchmark`，保留已知 Ajv/punycode warning 但不把 warning 当作成功；只有两个 verifier 均 exit code=`0` 且写后仍 clean，才调用 frozen source 的生产 repository identity owner。Provider calls/cost=`0/$0`。
+202、`576a7dc` Windows frozen staging 的 `corepack pnpm verify:coding-benchmark` 已 exit code=`0`，明确返回 `[verify:coding-benchmark] v1/v2/v3 manifests, schemas, docs, and platform gates are aligned`；写后仍为 clean detached。输出中的 Ajv `unknown format "date-time" ignored` 与既有问题相同，未形成 Schema、manifest、docs 或 platform Gate 失败，技术债裁决=`record_only`，本轮不扩大为依赖或 format 插件调整。本结论仅覆盖 Windows；处理方案是继续运行 WSL2 verifier，双端均 Green 后再复算生产四字段 identity。Provider calls/cost=`0/$0`。
+203、`576a7dc` WSL2 frozen staging 的 `corepack pnpm verify:coding-benchmark` 已 exit code=`0`，同样返回 v1/v2/v3 manifests、Schemas、docs 与 platform Gates 对齐；写后 status=`## HEAD (no branch)`、`relay.mjs` mode=`644` 且无 diff。WSL2 的 `[DEP0040] punycode` 与 Ajv `date-time` warning 均与历史已知 warning 一致，技术债裁决=`record_only`，没有把 warning 当作合同通过依据。至此双平台 build 与 verifier 均全绿且 clean detached。处理方案是从各自 frozen source 直接调用生产 `resolveBenchmarkRepositoryIdentity()`，要求 commit、workspaceDirty、canonical lockfile SHA-256、canonical worktree SHA-256 四字段逐字一致；任一失败或漂移先诊断并回写，不生成 repository inputs。Provider calls/cost=`0/$0`。
+204、`576a7dc` Windows frozen staging 已通过生产 `resolveBenchmarkRepositoryIdentity()` 复算：commit=`576a7dc452885c7e7a595567c4d57af4ed8749c7`、workspaceDirty=`false`、canonical lockfile SHA-256=`844c0021f1c9135214c913636fd6ed6f9232593883bd5b6289f7ade51d2b7d2b`、canonical worktree content SHA-256=`f5832989dc1ff1349be771e0b2b028344ace4d99125760a1ace69475464413e6`；计算后仍 clean detached。处理方案是让 WSL2 staging 独立调用同一 frozen production owner，必须四字段逐字一致；通过前不把 Windows 单端结果用作双平台 identity，也不生成 inputs。Provider calls/cost=`0/$0`。
+205、`576a7dc` WSL2 frozen staging 的生产 repository identity 已复算并与 Windows 四字段逐字一致：commit=`576a7dc452885c7e7a595567c4d57af4ed8749c7`、workspaceDirty=`false`、canonical lockfile SHA-256=`844c0021f1c9135214c913636fd6ed6f9232593883bd5b6289f7ade51d2b7d2b`、canonical worktree content SHA-256=`f5832989dc1ff1349be771e0b2b028344ace4d99125760a1ace69475464413e6`；计算后 WSL2 仍 clean detached 且 `relay.mjs=644`。这证明 Windows raw lockfile SHA 的 CRLF 差异不是 identity 漂移，也证明产品修复使 worktree hash 从旧 `3f66b71` 的 `1dc3387e…` 合法变化。处理方案是把本四字段作为 `576a7dc` inputs producer/verifier、expected-report plan、launcher 与后续 formal reports 的共同硬绑定；任一字段不符均失败关闭，旧 candidate 输出一律不复用。Provider calls/cost=`0/$0`。
+206、`576a7dc` 专用 repository inputs producer/verifier 已从冻结的 `3f66b71` 版本最小迁移并通过写前 Gate：两份脚本 `node --check` 均 exit code=`0`，旧 commit/worktree/candidate 值零命中，新 commit 与 worktree hash 在每文件各精确出现一次；与上一版的有效 diff 仅为 identity 和 Windows harness/output root，另有无语义的 EOF 空行差异。producer SHA-256=`c4e54fbc5eae605194882adab0e6743fb44b9fd8212ccad83cf3141b903f7961`，verifier SHA-256=`ba4d192b5e85e7f2318936e7c3859fe79a25c6e2b56dc52840f15de55bc24b3b`；Windows `tmp/p2c-candidate-576a7dc-inputs` 与 WSL2 `/var/tmp/star-sanctuary-p2c-candidate-576a7dc-inputs` 均确认不存在。处理方案是先允许 Windows producer 首次原子发布，再运行 WSL2 production preparation；两端输出必须由独立 verifier 重算，任何 partial/blocked 或 identity 漂移均先冻结诊断。Provider calls/cost=`0/$0`。
+207、`576a7dc` Windows repository inputs producer 已在先前不存在的 `tmp/p2c-candidate-576a7dc-inputs/windows-native` 首次原子发布，exit code=`0`，自报 repositories/preflights=`4/8`；旧 `3f66b71` Windows inputs 未读取为输入、未覆盖。当前只确认 producer 完成，尚未把自报等同于合同通过。处理方案是先完成 WSL2 production preparation，再由独立 verifier 逐份重算两端 receipt/preflight、配置 SHA 与生产 identity；全部 Green 前不创建 expected-report plan。Provider calls/cost=`0/$0`。
+208、`576a7dc` WSL2 inputs 材料 Gate 的首次 Go module cache 检查错误假定目录名为 `p0.15-materials/gomodcache`，`stat` 以 ENOENT 失败；producer 尚未启动，因此没有 partial output 或其他文件副作用。根因是把 production output 内部子目录名 `gomodcache` 与共享输入材料目录 `go-module-cache` 混淆。处理方案=`fix_now completed`：从生产源码与既有冻结记录确认输入路径为 `/var/tmp/star-sanctuary-coding-agent-v3/p0.15-materials/go-module-cache`，该目录存在且将由 production owner 自行计算 portable seed SHA；不复制内部命名假设。Provider calls/cost=`0/$0`。
+209、修正材料路径后的首轮只读并发探针在编排层把任务数组定义为 `tasks` 却引用 `specs`，在任何子命令发出前以 `ReferenceError: specs is not defined` 失败。该错误没有读取或修改 candidate artifact，也没有启动 producer/Gateway/runner/Provider。处理方案=`fix_now completed`：统一数组变量名后原样重跑；后续并发只读 Gate 在执行前保持单一变量名，并以每项独立 exit code 判断，不把编排异常误报为材料失败。
+210、尝试提前复算 Go module cache SHA 时，错误从 `coding-agent-benchmark-contract.mjs` 导入未导出的 `hashDirectoryPortable`，Node 在模块实例化阶段以 `SyntaxError` 失败；生产源码确认该 helper 是 Linux preparation owner 的私有函数。处理方案=`fix_now completed`：不复制或绕过私有算法，改由 production producer 记录 dependency seed SHA，再由独立 verifier 重算 receipt/preflight 形成真实验收；该失败无文件或费用副作用。
+211、两个 npm cache 时间探针把含 `|` 的 `stat --printf` 格式串跨 PowerShell/WSL 直接传递，格式串被 shell 拆成管道并以 `stat: missing operand` 失败；只读探针没有改变材料。处理方案=`fix_now completed`：改用不含 shell 元字符的独立 `stat -c %y` 与 `du -sh` argv，后续跨 shell Gate 禁止在格式参数中嵌入管道字符；纠正后两个目录均可读，本候选采用既有 production 示例绑定的 `npm-cache`。
+212、`576a7dc` WSL2 production preparation 材料 Gate 已通过：`/var/tmp` filesystem=`ext2/ext3`，新 output root 不存在；source parent、offline npm cache、commit-suffixed dependency seed parent 与 Go module cache 均为目录，Express exact seed lock SHA-256=`c3b144624b089aad60b3651e0fe326ac4f5271f5d64c611cf2f7290616638a82`；显式 PATH 下 Node/npm/Go=`v22.22.2/10.9.7/go1.24.2 linux/amd64`。处理方案是以 `GOPROXY=off`、`GOSUMDB=off` 和这些精确路径直接 argv 启动 frozen production Linux producer；只接受 `ready=4, blocked=0`，否则冻结并保留 partial evidence。Provider calls/cost=`0/$0`。
+213、`576a7dc` WSL2 repository inputs 首次 production preparation 已按失败关闭合同终止为 `partial ready=2, blocked=2`、exit code=`1`；Preact 与 spf13/cobra ready，Express 与 vscode-languageserver-node 均为 `offline_dependency_cache_incomplete`。两份明确命令日志都以 `ENOTCACHED` 缺少同一 `isexe-2.0.0.tgz` 失败，而旧 `3f66b71` 对应安装日志均为 status=`0`；manifest、四仓 commit、Go 1.24.2 与 Cobra module seed SHA=`6c5f9693…` 均正常。根因假设按概率为：本次选到旧 `npm-cache` 而旧成功使用另一冻结 cache；cache index/content 自旧成功后漂移；源码依赖变化（因 preparation 脚本与 manifest/四仓 commit 均未变化而概率最低）。处理方案=`fix_now in_progress`：完整保留 canonical partial root，不覆盖、不删除；先核对两个 cache 中该 URL 的 index/content 与旧成功材料 provenance，确认唯一可用材料后把 partial root原子改名为 rejected evidence，再在重新空出的 canonical root只重跑一次。expected-report plan 继续禁止创建，Provider calls/cost=`0/$0`。
+214、诊断 npm cache 时误把 `npm cache verify` 当作只读命令并同时对两个共享 cache 执行：旧 `npm-cache` 返回 content/index=`881/881`、未报告 garbage collection；`npm-cache-v2` 返回同样 `881/881`，但回收了 `1` 个未索引 content object（`3756` bytes），因此 v2 材料已经被诊断命令改变，不能再宣称其原始 identity 未变。处理方案=`fix_now in_progress`：冻结第二次 producer，不将 v2 直接作为替代输入；先证明被回收对象与缺失 URL/所需 integrity 无关或重新建立可信材料 identity，否则必须从保留的成功 candidate cache/独立冻结材料恢复到新目标而不覆盖共享 cache。后续 cache 诊断只用 `npm cache ls`、明确 index/content 读取等只读方式，禁止再次运行 verify/clean/add。
+215、随后审计 production npm 传参的并发只读组里又误包含了一次针对旧 `npm-cache` 的 `npm cache verify`；该次仍报告 content/index=`881/881` 且无垃圾回收，但命令性质仍不符合只读诊断约束。根因是复用探针列表时未移除已判定有副作用的命令。处理方案=`fix_now completed for execution discipline`：当前及后续脚本明确禁用 `npm cache verify/clean/add`，只保留 production source inspection、`npm cache ls` 与文件级只读证据；旧 cache 是否可用不再由重复 verify 推断。本次未启动 Gateway/runner/Provider，费用增量=`$0`。
+216、npm cache 对比的两条诊断命令均未形成有效根因证据：WSL2 未安装 `rg`，两个精确 index 搜索以 `rg: command not found` 失败；替代的 `diff -qr` 对两个 `_cacache` 整树产生约 `882` 条 index 时间元数据差异和截断输出，范围过宽且不能判断 tarball 可用性。命令均只读、已结束，但违反了本轮“局部证据优先”的执行节奏。处理方案=`fix_now completed`：按 cacache key SHA-256 计算唯一 index 路径，之后只读取目标 index 与 integrity 对应 content 文件；WSL 缺少 `rg` 时对明确单文件使用 `grep`，不再递归比较 cache。
+217、首次检查 `isexe` SHA-512 content alias 时，手工抄录 digest 把 `...638155564e...` 写成 `...638155654e...`，因此两条 absent 检查命中了错误路径，结论作废。处理方案=`fix_now completed`：以实际 `sha512sum` 输出和 lockfile base64 解码结果交叉比对后，用正确完整路径重跑；两份共享 cache 的正确 SHA-512 alias 当前都确实不存在。错误探针只读且没有文件或费用副作用。
+218、WSL2 `partial 2/4` 的 npm 根因已确定：Express 与 vscode lockfile 都要求 `isexe-2.0.0.tgz` integrity=`sha512-RHxM...`；两份 cache 的 URL index 只引用 size=`3756` 的 SHA-1 content，现存对象 SHA-1=`e8fbf374dc556ff8947a10dcb0572d633f2cfa10`，其实际 SHA-512=`447c4c2e9f659ca1c61d19e0f5016144231b600715a67ebdb2648672addfdfac638155564e18f8aaa2db4cb96aed2b23f01f9f210d44b8210623694ab3241e23` 与 lockfile 精确一致。`npm-cache-v2` 被问题 214 回收的唯一对象同为 `3756` bytes，结合旧候选安装成功，证明它正是未被 index 引用但 npm 按 lock integrity 直接寻址的 SHA-512 alias。处理方案=`fix_now in_progress`：不修改两份共享 cache；在创建前 absent 的 `/var/tmp/star-sanctuary-p2c-candidate-576a7dc-npm-cache-repaired` 复制旧 cache，并只把同一已验真字节对象写到规范 SHA-512 content path，记录源/目标 hash。修复 cache 仅用于一次新 preparation，最终仍以 production install、receipt/preflight 深比较为准，不伪造 ready。Provider calls/cost=`0/$0`。
+219、候选专用 repaired npm cache 已按问题 218 的最小方案创建并验真：以旧 `npm-cache` 为只读来源复制到此前不存在的 `/var/tmp/star-sanctuary-p2c-candidate-576a7dc-npm-cache-repaired`，仅新增规范 SHA-512 content alias；源/目标 size 均为 `3756`，SHA-1 均为 `e8fbf374dc556ff8947a10dcb0572d633f2cfa10`，SHA-512 均为 `447c4c2e9f659ca1c61d19e0f5016144231b600715a67ebdb2648672addfdfac638155564e18f8aaa2db4cb96aed2b23f01f9f210d44b8210623694ab3241e23`。两份共享 cache 的正确 SHA-512 path 仍不存在，未被回写。处理方案=`fix_now in_progress`：先把 canonical `partial 2/4` 根经 containment/non-symlink/report-hash Gate 原子改名保留，再让 production producer仅以 repaired cache 对空出的 canonical root重跑；只有 `ready=4, blocked=0` 与独立 verifier 全绿才关闭本问题。Provider calls/cost=`0/$0`。
+220、`partial 2/4` WSL2 preparation evidence 已完整保留：canonical root 与目标均经 `realpath` 确认位于 `/var/tmp`，source 为非 symlink directory、目标创建前不存在；`linux-snapshot-preparation.json` 在原子改名前后 SHA-256 均为 `8ca4b9a97d53a4f8b99b47860436d55a9095acd0f4985a71520bf2cce85f13de`。失败根现位于 `/var/tmp/star-sanctuary-p2c-candidate-576a7dc-inputs-rejected-npm-sha512-alias`，未删除或覆盖，canonical root 已重新不存在。处理方案是只以 repaired npm cache 重跑一次同参数 production preparation；若仍 blocked，保留第二份 evidence 并根据新 blocker 停止，不继续盲试。Provider calls/cost=`0/$0`。
+221、问题 213/218 的 WSL2 production preparation 已用候选专用 repaired npm cache 转 Green：同一 frozen production owner exit code=`0`，终态=`ready ready=4 blocked=0`；source、dependency seed、Go module cache、Go 1.24.2 与 output root 参数均未改变。该结果与唯一补入 SHA-512 alias 的预测一致，排除了源码依赖或 Go 材料漂移；共享 npm cache 未被回写，失败 evidence 保持冻结。当前仍只确认 producer 自报。处理方案=`fix_now pending independent verification`：分别用 `576a7dc` 专用 verifier重算 Windows/WSL2 的 repositories/receipts/preflights、config SHA 与生产 identity；全部 Green 前不创建 expected-report plan。Provider calls/cost=`0/$0`。
+222、`576a7dc` Windows repository inputs 已通过独立 verifier：repositories/receipts/preflights=`4/4/8`，每份 stored receipt 与 preflight 均由 frozen manifest、source 和 dependency cache 重新计算并深比较，config SHA-256=`db504fd041defd6dc8c4d441fc5aae4f7a0796e181bc827b61143b5b889269d2`；verifier 内生产 identity 仍为 `576a7dc452885c7e7a595567c4d57af4ed8749c7/workspaceDirty=false/844c0021…/f5832989…`。本结论仅覆盖 Windows。处理方案是继续运行 WSL2 独立 verifier；双端全绿前 expected-report plan 仍不得创建。Provider calls/cost=`0/$0`。
+223、`576a7dc` WSL2 repository inputs 已通过独立 verifier：repositories/receipts/preflights=`4/4/8`，config SHA-256=`ffaa88c3f3de2fe5948cd352ce89537a5eca37e114df484b9c78309ec31666c4`；所有 stored receipt/preflight 均从 frozen manifest、ext4 source 与新 cache 重算并深比较，production identity 再次等于 `576a7dc…/workspaceDirty=false/844c0021…/f5832989…`。结合 Windows config=`db504fd0…`，双平台 inputs 合同现已闭合，问题 213/218 技术债裁决=`fix_now completed`。处理方案是立即进入 expected-report plan Gate：在四层目标不存在的证据后首次写入并独立验真 `144/144/144`，完成前禁止任何 Gateway、runner 或 Provider 调用。Provider calls/cost=`0/$0`。
+224、`576a7dc/candidate-1` expected-report plan 写前 Gate 已通过：独立 verifier `node --check` exit code=`0`、旧 `3f66b71/1dc3387e/bf1a481/eb10e333/c02eef7` 零命中，与旧版有效 diff 仅为新 identity/harness/artifact root；脚本 SHA-256=`f1149aee2540a000b1c06b626a7a797b8aab015dff5958296dee5ad647a423e7`。`artifacts/p2c-576a7dc`、`candidate-1`、`formal` 与 `expected-report-plan.json` 四层均明确不存在。处理方案是现在才允许 frozen production producer 首次原子写入 plan；producer 自报后仍须独立验证 reports/IDs/paths=`144/144/144`、全部 report 目标不存在和两份四字段 identity，随后做 `EEXIST`/hash 不变负例。当前 Gateway/runner/Provider calls/cost=`0/$0`。
+225、`576a7dc/candidate-1` expected-report plan 已由 frozen production producer 在任何新 Gateway、runner 或 Provider 调用前首次写入，producer exit code=`0`、自报 report slots=`144`，输出为 `artifacts/p2c-576a7dc/candidate-1/expected-report-plan.json`；formal root 尚未创建。当前仅确认不可覆盖 writer 首次成功，不把 producer 自报等同于 `144/144/144` 合同通过。处理方案是立即运行 SHA 已冻结的独立 verifier，从 manifest 重建完整矩阵并逐项验证 ID/path/metadata/identity/目标不存在；通过前不运行任何 launcher 或 candidate。Provider calls/cost=`0/$0`。
+226、`576a7dc/candidate-1` expected-report plan 已通过独立验真：reports/unique report IDs/unique report paths=`144/144/144`，manifest SHA-256=`dfaf7ebecaa3f6109e3427670b53b23606fae19535e00abf64212c6090daa1ba`，plan SHA-256=`6b51bbb531003f1d3c312119dafeb341f15e9a8ccc443ef0b05423c11d67d862`；source/harness 四字段逐字匹配 clean `576a7dc`，formal root 与全部 planned report 目标均不存在，production loader/run validator 对所有槽位通过。处理方案是继续做同参数 producer 的 `EEXIST` 失败与 plan hash 不变负例，负例后再跑一次独立 verifier；这三项全绿前不进入 launcher。Provider calls/cost=`0/$0`。
+227、`576a7dc/candidate-1` expected-report plan 的不可覆盖负例已通过：同参数复跑 production producer 精确以 `EEXIST`、exit code=`1` 失败；plan SHA-256 前后均为 `6b51bbb531003f1d3c312119dafeb341f15e9a8ccc443ef0b05423c11d67d862`，负例后独立 verifier 再次返回 reports/IDs/paths=`144/144/144`、formal root不存在、identity/manifest 全部一致。至此 plan provenance 与不可变性合同完整闭合，且全过程发生在首个新 Gateway/runner/Provider 调用前。处理方案是把该 plan SHA 写死到新 launcher、launch-slot verifier 与 resume verifier；下一步只执行零费用控制链 Gate，未全绿前不启动 canary。Provider calls/cost=`0/$0`。
+228、`576a7dc` launcher/resume/slot/quiescence helpers 已从修正后的 `3f66b71` 版本最小迁移：PowerShell AST 与 Node syntax 全部通过，旧 identity/plan/config/baseline 零命中；launcher 有效 diff 仅为新路径、commit/worktree、plan/config SHA 与 global observed baseline=`$2.40715007`，fail-fast owner/主循环未改。terminal policy self-test=`4/4`，product/infrastructure/no-report 均 stop、passed 才 continue；production launch-slot verifier 又确认 Windows/WSL2 首槽分别为 `tests.failed-diagnosis.windows-native.a1` 与 `tests.failed-diagnosis.wsl2-linux.a1`，plan path 和 source/harness identity 全部匹配。处理方案是创建全新 WSL toolchain symlink root并逐目标核验，然后运行双端 cost-only；任何控制链失败均在 Gateway 前停止。Provider calls/cost=`0/$0`。
+229、`576a7dc` 新 WSL toolchain 中的 Docker 目标已核实为 symlink `/var/tmp/star-sanctuary-p2c-576a7dc-toolchain/docker -> /mnt/e/project/star-sanctuary/tmp/p2c-e05ddc4/wsl-toolchain/docker`，目标脚本 SHA-256=`f73fb09f1a97e74e99b257f3e0d2d0998c3030d28dbd9b53ea85fb2cdd6189bb`，内容为 `exec /init "/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe" "$@"`。直接 argv 复现稳定显示：传入 `version` 时 Docker 只输出顶层 help 且 exit code=`0`，传入 `context show` 时实际报 `docker: unknown command: docker show` 且 exit code=`1`，证明 `/init` 调用链吞掉第一个 Docker CLI 参数；Windows 原生 `docker version` 同时正常返回 client/server=`29.1.3`、context=`desktop-linux`，故 daemon 本身不是当前首因。根因假设按概率为：wrapper 缺少 `/init` 所需的占位 argv；Ubuntu 的 WSL interop/binfmt 状态异常使旧 workaround 成为唯一执行链；Docker Desktop integration 挂载整体失效。处理方案=`fix_now in_progress`：用无 shell 变量的直接 argv 探针一次只改变占位参数，若能恢复 `version/context`，仅新建候选专用 wrapper并跑 OCI fixture 回归，不修改旧 wrapper或系统配置；若不能，再转向明确 native socket/client 路径。Provider calls/cost=`0/$0`。
+230、同一 WSL2 Docker Gate 的只读证据确认 integration 状态不完整：`WSL_INTEROP=/run/WSL/341_interop` 环境值存在，但 `/proc/sys/fs/binfmt_misc/WSLInterop` 不存在；`/usr/bin/docker` 是指向 `/mnt/wsl/docker-desktop/cli-tools/usr/bin/docker` 的 broken symlink，目标文件不存在；`/var/run/docker.sock`、`/mnt/wsl/docker-desktop/shared-sockets/host-services/docker.proxy.sock`、`/run/guest-services/docker.sock` 与 `/var/run/docker-host.sock` 均不存在。`Ubuntu-22.04` 和 `docker-desktop` 两个 distro 都仍为 Running，Ubuntu 内还存在非本任务的 dsh-doctor supervisor 与登录 shell，因此不得把 `wsl --shutdown`、terminate distro 或 binfmt 注册当作自动修复。处理方案=`fix_now in_progress`：只检查 `/mnt/wsl/docker-desktop` 和 `docker-desktop` distro 内的少量明确路径；若唯一恢复方式是系统级注册或重启，按 HITL 说明影响、回滚与中断范围后等待用户确认。正式 Gateway/runner/canary 继续禁止启动。
+231、此前为核对临时目录而误发的 `Get-ChildItem -Recurse tmp` 留下本任务归属明确的 PowerShell PID `1804`；已按 PID、命令行、父进程与来源四项绑定后精确停止，并复核同类残留=`0`，未停止归属不明或非本任务进程。根因是诊断命令范围过宽，违反 formal 前禁止对 `tmp/` 做无排除全量递归检索的硬边界。处理方案=`fix_now completed`：后续只允许 `Get-Item`、明确文件列表和有范围的 `rg`，进程清理继续要求四项归属证据；本问题没有启动 Gateway/runner/Provider，也没有删除文件。
+232、本轮首次尝试批量复现 wrapper 时，在 PowerShell 到 `wsl.exe ... bash -lc` 的嵌套命令串中使用了未被宿主可靠保留的 shell 变量，实际传入 Bash 的 `$p/$arg/$rc` 等已被提前展开为空；探针因此出现 `CASE=`、空命令和无效临时重定向，未执行目标 wrapper，该输出已明确作废，不能用于 Docker 归因。处理方案=`fix_now completed for probe`：反馈回路改为 `wsl.exe -- <absolute executable> <literal argv...>` 的直接 argv，每个命令独立读取 exit code；需要 shell 时显式转义且先以无副作用 echo 断言 argv。纠正后的直接探针才形成问题 229 的有效复现，本次无 artifact、Gateway、runner 或 Provider 副作用。
+233、问题 229 的最高概率假设已由单变量直接 argv 探针确认：`/init <windows-exe> <argv0> <args...>` 需要显式 argv0，旧 wrapper 把首个真实 CLI 参数放在该位置，因而稳定被消费；插入 sentinel 后 `docker version` 返回完整 client/server=`29.1.3` JSON、`docker context show` 返回 `desktop-linux`，改用语义正确的 argv0=`docker.exe` 后，`version --format` 与带全局 `--context desktop-linux` 的 `context show` 也均 exit code=`0`。这排除了 daemon、Docker CLI 二进制和 CLI 参数自身故障，问题 230 的 integration 挂载异常仍存在但不再阻断本候选。处理方案=`fix_now in_progress`：新建候选专用 `tmp/docker-p2c-576a7dc-wrapper.sh`，只补 `docker.exe` argv0，不覆盖旧 wrapper；先核验脚本 hash/内容/可执行性并原子改指 candidate toolchain symlink，再以原参数执行 version/context/image inspect 和 production OCI fixture。任一失败仍冻结在零 Provider 调用状态。
+234、候选专用 Docker wrapper 已完成写入与最小接线：`tmp/docker-p2c-576a7dc-wrapper.sh` 在 Windows/WSL2 两侧 SHA-256 均为 `4f4a631a5e4a3d49c37ed128732c6b6bb574fa92b55c28d187f12f1da9cbc1bc`，`sh -n` exit code=`0`；确认 candidate toolchain 的 `docker` 原本为 symlink 后，仅将该链接改指新 wrapper，未覆盖旧脚本。改指后通过 toolchain 路径运行 Docker version/context 均 exit code=`0`，client/server=`29.1.3/29.1.3`、context=`desktop-linux`；相邻 `go`/`gopls` 链接目标保持不变，实测版本仍为 `go1.24.2 linux/amd64` 与 `v0.21.0`。问题 229 根因及 wrapper 修复现为 `fix_now completed`，问题 230 的缺失 native integration 路径裁决=`record_only`，当前 workaround 不依赖那些路径。处理方案是继续执行 digest-pinned image inspect 与仓库既有 production OCI fixture；只有真实容器执行、隔离和回收合同全绿，才关闭 OCI Gate并进入 cost/process/port Gate。Provider calls/cost=`0/$0`。
+235、问题 234 的 digest-pinned image Gate 已通过：经 candidate toolchain wrapper 执行 `docker image inspect`，结构化结果中的 image ID 与 RepoDigest 均精确为 `sha256:62f550497561d6285e10abd952730db89c905be990237eaf8744137929c72844`，检查前活动容器=`0`。随后在 clean detached WSL staging 以固定 OCI env 运行仓库 production `verify:command-sandbox-oci`，真实 fixture 在首个 container lease 创建阶段按失败关闭，错误为容器 ID 需匹配 `^[a-f0-9]{12,64}$`、实际 stdout=`''`，命令 exit code=`1`；未启动 Gateway/runner/Provider。根因假设按概率为：Windows Docker CLI 经 `/init` 执行 `create` 时 stdout 没有回传给 Linux parent；wrapper 的 argv0 修复仍不足以覆盖 create 参数；Windows CLI 对 WSL `/tmp` bind source 失败但 lease owner 没保留 stderr/exit 作为首层错误。处理方案=`fix_now in_progress`：从 exact regex 调用点提取 production create argv，以最小临时目录逐层执行并分别记录 exit/stdout/stderr；先确认是否产生了容器，若有则只按本次唯一 label/ID精确回收，禁止留下孤儿；任一真实 OCI 失败继续阻断 canary，Provider calls/cost 保持 `0/$0`。
+236、对问题 235 的 exact regex 调用点复核后，原“create stdout 为空”的初步解释作废：`verify-command-sandbox-oci-fixture.mjs:235` 实际断言的是 `lease.release().containerId`，该值只从 Linux `os.tmpdir()` 下的 `--cidfile` 读取；紧邻的 `release.status="removed"` 已先通过，且失败后 Windows/WSL 两侧 `com.star-sanctuary.command-sandbox.lease` label 容器扫描均为 `0`。因此真实容器曾启动并由生成 name 成功回收，只是 cidfile 未出现在 Linux 进程期望的位置；这同时排除了 argv 未透传和容器未创建两项假设。最高概率根因变为 Windows `docker.exe` 将 POSIX `--cidfile` 按 Windows 路径语义解析，production fixture 的 `finally` 断言又覆盖了原始 invocation 结果，使首层错误不够可诊断。处理方案=`fix_now in_progress`：用唯一 name/label、无 bind mount 的最小 run 分别验证原 POSIX cidfile 与 `wslpath -w` 产生的 UNC cidfile；每次均先确认 name absent、结束后按唯一 name 精确扫描/回收。确认后只在候选 wrapper 做窄参数转换，不修改 frozen production source或候选 identity。
+237、最小 cidfile 差分的两步结果已取得：使用原 POSIX `/var/tmp/.../posix.cid` 时，Windows Docker CLI 在创建容器前以 exit code=`125` 明确报 `failed to create the container ID file ... The system cannot find the path specified`，name 前后均 absent；仅把 cidfile 参数替换为 `wslpath -w` 产生的 `\\wsl.localhost\Ubuntu-22.04\var\tmp\...\unc.cid` 后，同一镜像/命令成功输出 `cid-probe`、exit code=`0`，停止态容器可由唯一 name 找到并精确 `rm --force`，回收后 remaining=`0`，但命令结束时 Linux/UNC 两侧仍看不到 cidfile。说明路径转换足以恢复 run，却不足以满足 lease 在进程结束后读取 container ID 的合同。处理方案=`fix_now in_progress`：用 Windows 原生 CLI 与原生 Windows cidfile 路径执行同形差分，判断文件消失是 Docker CLI 的通用 run 生命周期还是 `/init` bridge 特有；再检查长运行 job 在 CLI 存活期 cidfile 是否可见。没有证据前不扩大 wrapper 转换逻辑，也不修改 production lease owner。
+238、问题 237 的 Windows 原生差分证明 Docker CLI/UNC 本身正常：以 Windows `docker.exe` 直接传入 `\\wsl.localhost\Ubuntu-22.04\var\tmp\...\windows-native-unc.cid`，同形容器 exit code=`0`，Windows 与 WSL 两侧均立即看到同一 `64` 字节 container ID，按唯一 name 精确回收后 cidfile仍保留、container remaining=`0`。进一步用 Python argv 回放发现，把该 UNC 先从 PowerShell 传给 `wsl.exe` 时，WSL 进程实际收到的是反斜杠已剥离的 `\wsl.localhostUbuntu-22.04vartmp...`；因此问题 237 的第二步并未真正把合法 UNC 交给 `/init`，其“UNC 后仍无 cidfile”结论对 wrapper 内部转换无效。根因现收敛为跨 host 探针的 argv 损坏，而非 Docker cidfile 生命周期。处理方案=`fix_now in_progress`：所有 POSIX→Windows 路径转换必须在已经进入 WSL 的 candidate wrapper 内执行，再由同一进程直接调用 `/init`；先只转换 `--cidfile` 并复跑最小 harness，成功后再独立验证 `--mount src` 与 `--env-file`，不从 PowerShell 回传含反斜杠参数。
+239、候选 wrapper 的窄 `--cidfile` 转换已实现并通过最小回归：脚本改用 Bash argv array，仅对 `--cidfile /absolute/posix` 与 `--cidfile=/absolute/posix` 在 WSL 内调用 `/usr/bin/wslpath -w`，其余参数逐项原样保留，最终继续 `exec /init ... docker.exe`；Windows/WSL SHA-256 均为 `9c3fc97267dc96328d16c89e413082aa8efc048f2207a9a4d72393d29f262960`，`bash -n` exit code=`0`。以原 POSIX cidfile 调用修正后的 toolchain wrapper，容器成功输出 `wrapper-cid`、exit code=`0`，Linux 侧读得 `64` 字节 ID，并与 `docker ps --no-trunc` 的唯一 container ID 逐字一致；随后按唯一 name 精确回收，remaining=`0`。问题 235/236 的 cidfile blocker 现为 `fix_now completed`。处理方案是原参数重跑 production command-sandbox OCI fixture；若失败，只按新暴露的 mount/env/隔离证据继续收缩，不预先增加 wrapper 转换范围，不启动候选 Provider。
+240、使用 SHA=`9c3fc972…` 修正 wrapper 原参数重跑 clean WSL staging 的 production `verify:command-sandbox-oci`，仍在同一 release container ID 断言得到实际空值并以 exit code=`1` 失败；该结果推翻了“wrapper 最小 cidfile 回归等价于 production spawn 环境”的假设，OCI Gate继续 Red，Gateway/runner/Provider仍为零。新根因假设按概率为：`buildSandboxRuntimeEnvironment()` 过滤或重排 PATH，真实 child 未命中 candidate wrapper；production 实际 lease cid/path 参数形状没有进入 wrapper 的两个转换分支；真实 `docker run` 在 cidfile 前后的其他 argv 上失败，但 fixture 的 `finally` release 断言覆盖了原 invocation stderr。处理方案=`fix_now in_progress`：建立一次性同 seam harness，输出非敏感的 PATH、resolved Docker executable、lease binding、invocation argv 路径字段、原始 exit/stdout/stderr 与 release 状态；所有调试输出使用唯一 `[DEBUG-P2C-OCI]` 前缀，结论取得后删除 harness/调试接线，并再次复核 label 容器为零。
+241、一次性同 seam harness 已取得未被 `finally` 覆盖的真实信号：Linux process PATH 首项与 `which docker` 均精确指向 `/var/tmp/star-sanctuary-p2c-576a7dc-toolchain/docker`，排除 production child 命中错误 runtime 的假设；lease cidfile=`/tmp/belldandy-command-sandbox-lease-*/container.cid`，workspace mount source=`/tmp/p2c-576a7dc-oci-diagnostic-*/workspace`。修正 wrapper后的真实 invocation exit code=`125`、cidfile=`ENOENT`，stderr 明确为 `invalid mount config for type "bind": bind source path does not exist`；release 仍按生成 name 返回 `removed`。根因由此收敛为 Windows Docker CLI 将未转换的 WSL bind source 原样交给 daemon，daemon namespace 中不存在该 Ubuntu `/tmp` 路径；原 fixture 的 final assertion 确实覆盖了更可诊断的 invocation stderr，技术债裁决=`record_only`，本候选不改 frozen source。处理方案=`fix_now in_progress`：先用 Windows原生 Docker + 同一 Ubuntu 目录的 UNC 做只读 bind 差分；通过后候选 wrapper 仅转换每个 `--mount` spec 中的绝对 POSIX `src`，再复跑 harness，`--env-file` 保持下一独立变量。
+242、Windows 原生 Docker 对 Ubuntu ext4 UNC bind 的差分没有通过：同一已存在且含 marker 的 `\\wsl.localhost\Ubuntu-22.04\var\tmp\...\mount-workspace` 作为 `--mount src` 时，daemon 以 `accessing specified distro mount service: stat /run/guest-services/distro-services/ubuntu-22-04.sock: no such file or directory`、exit code=`127` 失败，容器 remaining=`0`。该证据与问题 230 的 broken client symlink、缺失 proxy/socket 相互印证，说明 Docker Desktop 的 Ubuntu distro mount service 确实未接入；问题 230 从 `record_only` 恢复为 `fix_now in_progress`，单纯把 ext4 path 转成 UNC 无法绕过。处理方案分两路且先走无系统副作用路径：核对正式 WSL launcher 的 fixture/workspace 是否已位于 `/mnt/e`，若是，则候选 wrapper 把 `--mount src`/`--env-file` 转为对应 Windows drive path，并把 Linux `TMPDIR` 固定到 candidate 专用 `/mnt/e` 根，使 cidfile/lease 同样可桥接；只有该路径无法覆盖真实 runner合同，才认定必须恢复 Docker Desktop WSL integration，并按 HITL 申请重启/系统修复。正式 canary继续禁止启动。
+243、无需系统重启的 drive-bind 路径已通过可行性验证：Windows 原生 Docker 把 `E:\project\star-sanctuary\tmp` 只读 bind 到 `/workspace` 后，容器成功读取候选 wrapper并输出 `drive-mount-ok`，exit code=`0`、自动回收后 remaining=`0`。同时 production `run-coding-agent-benchmark-wsl.mjs` 明确要求 host `fixtureRoot` 为本地 Windows drive path，并把它转换成 `/mnt/e/...` 传给 Linux runner；当前 matrix launcher 的 WSL fixture/state/artifact root 也均来自仓库 `tmp/artifacts` 下的 Windows路径。因此正式候选 workspace 可由 wrapper 转成 `E:\...` 供 daemon bind，不依赖缺失的 Ubuntu distro mount service；ext4 repository inputs 仍由 runner在容器外用于准备 drive-backed fixture，不直接作为 command sandbox mount。处理方案=`fix_now in_progress`：wrapper 仅解析每个 `--mount` 的逗号分段，把 `src=/absolute/posix` 在 WSL 内转换为 Windows路径，其他 mount字段/argv保持原样；先在 drive-backed `TMPDIR` 下重跑同 seam harness，再验证 production fixture，最后单独处理真实 state `.env` 所需的 `--env-file`。
+244、候选 wrapper 的 `--mount` 窄转换已接入并通过同 seam Green：Bash 只按逗号拆分 mount spec，将唯一 `src=/absolute/posix` 通过 WSL 内部 `wslpath -w` 转换，`dst=/workspace`、`readonly` 与全部其他 Docker argv不变；脚本 Windows/WSL SHA-256 均为 `936e1a291c540f632850b034047f01c693e019b996e8f146e9c2fea8e87df74e`，`bash -n` exit code=`0`。将 harness `TMPDIR` 固定到 candidate 专用 `/mnt/e/project/star-sanctuary/tmp/p2c-576a7dc/oci-tmp` 后，frozen production builder生成的真实 invocation exit code=`0`、stdout=`diagnostic-ok`、stderr为空，cidfile 存在且 `64` 字节 ID 与 release.containerId 逐字一致，release.status=`removed`。这证明 drive-backed lease/workspace 的 run/mount/cid/cleanup链可用，且没有依赖缺失的 distro mount service。处理方案是独立验证 production 可能使用的 `--env-file /mnt/e/...`：先以受控非敏感 env fixture跑负/正差分，再只增加对应窄转换；完成后运行完整 command-sandbox OCI fixture与容器零残留 Gate。
+245、`--env-file` 未转换负例已按预测复现：候选 wrapper收到 drive-backed POSIX `/mnt/e/project/star-sanctuary/tmp/p2c-576a7dc/oci-tmp/probe.env` 时，Windows Docker CLI 以 exit code=`125` 明确报 `open /mnt/e/.../probe.env: The system cannot find the path specified`，container remaining=`0`；fixture 仅含非敏感 `P2C_PROBE=env-visible`，没有读取或输出正式 provider env。根因与 cidfile/mount 相同，是 Windows CLI 无法直接解释 POSIX host-file参数。处理方案=`fix_now in_progress`：wrapper 仅对 `--env-file /absolute/posix` 与 `--env-file=/absolute/posix` 在 WSL 内执行 `wslpath -w`，相对/Windows路径与其他 argv原样保留；同一命令必须输出 `env-visible`、cid匹配且零容器残留，之后才运行完整 fixture。
+246、首次把问题 245 的 wrapper 修改与文档回写组合为一个 `apply_patch` 时，遗漏第二个 `*** Update File` header，导致 patch engine把文档上下文错误地在 wrapper 文件中查找并以 `verification failed` 整体拒绝；校验发生在写入前，两个文件均无部分修改。根因是手工组合多文件 patch 的分段错误。处理方案=`fix_now completed for edit`：补齐两个明确 file block 后重新应用同一最小 diff，并继续以文件 hash、Bash syntax 和受控 env正例验证，不能把 patch 工具失败误记为实现完成。
+247、candidate wrapper 的 `--env-file` 窄转换已通过正例：脚本 Windows/WSL SHA-256 均为 `bbdb1f02c5620a98fc2fc82ae998e0e9ca61596144fb1a0b18bcb6e79135940f`，`bash -n` exit code=`0`；同一 drive-backed POSIX env-file 命令现成功输出 `env-visible`、exit code=`0`，Linux cidfile 为 `64` 字节并与唯一容器 ID 精确一致，按 name 回收后 remaining=`0`。转换仅覆盖 `--env-file /absolute/posix` 与等号形式，未读取、缓存或输出正式 provider env正文。问题 245 现为 `fix_now completed`。处理方案是先把一次性 harness 调整为 production 同形混合布局：workspace 位于 `/mnt/e` drive-backed fixture，lease cidfile仍由默认 `/tmp` 生成；该组合通过后再以 drive-backed `TMPDIR` 运行完整 command-sandbox OCI fixture，覆盖四项隔离与 pipe/PTY job，不把简化探针替代 production验证。
+248、production 同形混合布局已通过一次性 harness：显式 `TMPDIR=/tmp` 使 lease cidfile 保持 `/tmp/belldandy-command-sandbox-lease-*/container.cid`，`P2C_DIAGNOSTIC_WORKSPACE_BASE` 仅把 workspace放到正式 fixture 同类 `/mnt/e/project/star-sanctuary/tmp/p2c-576a7dc/oci-tmp`；真实 production builder invocation exit code=`0`、stdout=`diagnostic-ok`、stderr为空，Linux 侧 cidfile存在且 release 返回同一 `64` 字节 ID、status=`removed`。这同时验证了 wrapper 的 ext4 cidfile→UNC、drive workspace→`E:\...` mount 与精确容器回收，正式路径无需 `wsl --shutdown`、binfmt注册或 Docker Desktop integration重启。处理方案=`fix_now pending production fixture`：先按 debug cleanup合同将唯一 `[DEBUG-P2C-OCI]` harness送回收站，再以 drive-backed `TMPDIR` 原样执行完整 `verify:command-sandbox-oci`；四项隔离、pipe/PTY job及最终 label容器均通过后才关闭 OCI Gate。
+249、一次性 `[DEBUG-P2C-OCI]` harness 已完成清理：目标精确为 `E:\project\star-sanctuary\tmp\diagnose-p2c-576a7dc-oci.mjs`，删除前通过 workspace `tmp` containment、regular file、non-reparse检查，length=`2845`、SHA-256=`ca5060beab397c68470d0d7bc1b538c293f9f87151285fbe54999cb9c8951702`；随后送入 Windows 回收站，remaining=`false`、recoverable=`true`。未删除 production source、candidate artifact或其他临时内容，实际 wrapper不含 debug logging。处理方案是现在以 frozen WSL staging、candidate toolchain、固定 digest和 drive-backed `TMPDIR` 运行完整 production OCI fixture；完成前仍不执行 cost-only 后的正式 canary。
+250、drive-backed `TMPDIR` 下的完整 production `verify:command-sandbox-oci` 已执行到 job PTY 阶段后失败关闭：四个同步隔离 plan（rootfs readonly、workspace readonly/readwrite、network none）与此前的 `pipe` job 已先通过，唯一终态错误为 `job did not produce pty-tick within 15000ms`，pnpm exit code=`1`；这证明 cidfile、drive mount、env、普通 `run`、pipe output和前序 lease回收已可用，但不能把部分通过表述为 OCI Gate Green。根因假设按概率为：Windows `docker.exe` 经 `/init` 时不能在 Linux node-pty通道完成 `--interactive --tty` attach；TTY child 已退出/报错但 command-job状态未及时传播；wrapper虽然保留 `-it` argv，但 Windows console detection与 WSL PTY不兼容。处理方案=`fix_now in_progress`：先串行复核 command-sandbox label容器、lease目录和候选相关进程为零；再用同一 image/drive mount分别执行 `-i` 与 `-it` 最小差分并记录 stdout/stderr/退出收敛，必要时从 command-job snapshot提取状态。不能通过移除 PTY fixture或放宽断言关闭，正式 canary继续冻结，Provider calls/cost=`0/$0`。
+251、问题 250 后的资源复核确认 command-sandbox label容器、pinned-image全部容器、drive-backed 与 `/tmp` lease目录均为 `0`；随后在真实交互终端中通过 candidate wrapper执行有限 `docker run --interactive --tty`，容器成功输出 `pty-direct` 并 exit code=`0`、`--rm` 后无残留。该差分排除了 daemon、镜像、通用 `--tty` argv和 wrapper exec链本身失败，根因进一步限定在 Linux `node-pty` host与 `/init`/Windows console attach的组合，或 command-job output lifecycle。处理方案=`fix_now in_progress`：使用一次性 node-pty harness直接启动同一 wrapper和有限输出容器，记录 data/exit/timeout；若复现，再比较不带 `--tty` 的同一 node-pty child，避免在完整 fixture上盲试。
+252、问题 250 后曾把通用 Windows `Get-Process` 枚举与 WSL lease目录查询放进同一个并行批次；虽然没有停止进程，容器/lease结果也由独立命令取得，但该枚举会看到当前探针自身的 `pwsh/wsl/node`，且不包含 candidate命令行归属，不能作为正式 quiescence证据。根因是恢复诊断时没有把“资源查看”和“含运行进程的静默性检查”完全分开。处理方案=`fix_now completed for evidence discipline`：本批输出作废，不据此清理或宣称 Gate；正式 process scan 只在所有其他探针退出后，使用候选专用 helper作为独立 exec 串行运行。
+253、一次性 frozen `node-pty@1.1.0` harness 已在不含 mount/env/cid 的最小链复现问题 250：node-pty直接 spawn candidate Docker wrapper，有限容器计划应每 `100ms` 输出一次 `node-pty-tick` 并在三次后退出；实际 `10s` 内没有 tick/exit，唯一 data精确为 `\u001b[6n`，即 ANSI Device Status Report 的 cursor-position query。超时后 probe name/label容器=`0`，无需清理。结合真实交互终端同一 `-it` 已通过，根因最高概率为 Windows Docker CLI attach在 pseudo terminal启动时询问 cursor position，而 headless PTY host只转发字节、不充当终端 emulator，因此没有写回 `ESC[row;colR` 并形成握手等待；并非容器命令、镜像或 Docker TTY普遍失败。处理方案=`fix_now in_progress`：先以 `TERM=dumb` 同形重跑，验证能否通过纯环境规避；若仍出现同一 query，则为 production PTY host能力缺口，应先在 `command-job-pty-host` seam写 DSR分块输入 Red，再做最小自动应答/过滤修复并重跑完整回归，之后冻结全新 candidate identity，当前 `576a7dc` 永久停止、不得继续付费运行。
+254、`TERM=dumb` 环境差分未改变问题 253：同一 node-pty harness 再次在 `10s` 超时，data仍只有精确 `\u001b[6n`，exit code=`1`，probe容器由 `--rm` 收敛。由此排除 TERM能力协商为主要根因，继续尝试 `CI/NO_COLOR` 等无关环境变量没有证据价值。处理方案=`fix_now in_progress`：在一次性 harness中只增加收到完整 `ESC[6n` 时写回标准 cursor report `ESC[1;1R`，不改 wrapper/daemon；若同一三 tick计划转 Green，即确认 headless terminal response是充分条件，并据此设计 production纯函数分块 parser与 host接线回归。
+255、问题 253 的单变量应答实验已转 Green：一次性 harness仅在收到完整 `ESC[6n` 时向同一 PTY写回标准 `ESC[1;1R`，随后立即收到三次 `node-pty-tick\r\n`，child exit code=`0`、signal=`0`，没有超时或容器残留。该结果证明 headless DSR cursor response既是缺失条件也是当前充分条件；不能继续把它归为 Docker infrastructure-only。技术债裁决=`fix_now`：`command-job-pty-host` 应消费并回应完整 DSR query，且正确处理跨 data chunk分割，不把 query泄漏为用户命令输出；普通数据、相似但非完整序列与 exit前残片不能丢失。`576a7dc/candidate-1` 因 production OCI Gate Red 永久冻结于 coverage=`0/144`、Provider calls/cost=`0/$0`，其 plan保留但不启动任何槽位。处理方案是先写纯 parser 与 host接线失败测试，再做最小实现、跑 PTY/command-job/OCI相关回归和双平台 build；提交全新 source identity后必须重新 staging、inputs与 expected-report plan，绝不沿用 `6b51bbb5…` plan。
+256、问题 253/255 的一次性 PTY harness 已按 debug cleanup合同回收：精确目标 `E:\project\star-sanctuary\tmp\diagnose-p2c-576a7dc-pty.mjs` 在删除前通过 workspace `tmp` containment、regular file与 non-reparse检查，length=`1837`、SHA-256=`d150278b0d1c048e522f27feaab0533aab4e53934ca3819e95bdabcffc746bae`；随后送入 Windows 回收站，remaining=`false`、recoverable=`true`。两个诊断 harness均已退出工作树，candidate wrapper没有 debug日志；后续产品实现只保留正式测试和必要代码。
+257、PTY DSR产品修复的测试先行 Red 已建立：新增 `command-job-pty-terminal.test.ts` 后，定向 Vitest 只以 `ERR_MODULE_NOT_FOUND: ./command-job-pty-terminal.js` 失败，test files=`1 failed`、tests=`0`，与尚未实现纯 parser 的预期精确一致；没有修改 host行为或误触 Provider。冻结验收覆盖：完整/多个 `ESC[6n` 被消费并产生等量 `ESC[1;1R`、query在每个 chunk边界均可识别、相似控制序列保留、exit时不完整残片原样 flush。处理方案=`fix_now in_progress`：新增无副作用内部 filter模块，接入 `command-job-pty-host.ts` 的 data/exit路径；先让新增 `3/3` Green，再跑相邻 runtime/job测试和真实 OCI fixture。
+258、PTY terminal response纯逻辑已完成 Red→Green：新增 `command-job-pty-terminal.ts` 只识别精确 `ESC[6n`，为每个完整 query返回标准 `ESC[1;1R`，以最长 query前缀跨 chunk缓冲，并提供 exit flush；`command-job-pty-host.ts` 在 node-pty data路径写响应、仅转发过滤后输出，在 exit事件前转发不完整残片。定向 Vitest现为 test files=`1 passed`、tests=`3/3 passed`，覆盖双 query、全部三个切分边界、相似 `ESC[5n` 保留与双重 flush幂等。当前仅完成局部逻辑验证，处理方案=`fix_now pending adjacent/integration`：继续跑 PTY host runtime、command-job runtime与 builtin command-job相邻回归及 skills build；然后以新构建源码重跑真实 WSL OCI PTY fixture，不能用纯函数 Green替代端到端证据。
+259、PTY/command-job相邻回归已全绿：定向 Vitest包含 `command-job-pty-terminal`、`command-job-pty-host-runtime`、`command-job-runtime`、`command-job` 与 builtin `system/command-job` 五个文件，test files=`5/5 passed`、tests=`22/22 passed`；覆盖 host startup/IPC/early output/resize/cancel、UTF-8跨 chunk、manager timeout/recovery及新 DSR完整/分块行为。未修改公开 Tool schema、sandbox policy、lease、资源上限或 benchmark合同。处理方案=`fix_now pending build/integration`：运行 `@belldandy/skills` TypeScript build并核对 dist；随后需从当前工作树构建可执行 WSL staging或最小同步所需 dist，真实 OCI fixture必须使用包含本修复的 host产物，不能继续调用冻结 `576a7dc` dist冒充验证。
+260、当前工作树的 `corepack pnpm --filter @belldandy/skills build` 已 exit code=`0`，`tsc -b` 无错误；新 terminal filter与 PTY host接线均已生成可执行 dist。该结果只证明 Windows工作树编译，不作为 Linux native node-pty或 OCI证据。处理方案=`fix_now pending package/regression`：先运行 Skills全包 Vitest，再执行根 build与 diff检查；全部 Green后提交单一产品修复 checkpoint，再从该 commit创建全新 clean WSL staging并运行 Linux build和完整 OCI fixture，冻结的 `576a7dc` staging保持只读 clean。
+261、Skills全包测试的首个 `exec_command` 在约 `30s` 返回 running session 后，错误把其 session ID=`13118` 交给只接受 exec cell ID的 `wait`，工具立即返回 `exec cell 13118 not found`；原 Vitest进程仍正常运行，没有终止、重复启动或影响测试数据。根因是混淆两层异步接口标识。处理方案=`fix_now completed for orchestration`：对 nested `exec_command` session只使用 `write_stdin` 续取，随后已取得同一进程的正式终态；后续不再把 session ID交给 cell-level wait。
+262、问题 261 纠正后，`corepack pnpm --filter @belldandy/skills test` 正式完成为 test files=`111 passed + 1 skipped`、tests=`940 passed + 2 skipped`、exit code=`0`；两个 skip均为既有 `command-job-process-recovery` 平台条件项，新增 DSR测试包含在 `940` 个通过项内。结合问题 259/260，局部、相邻、Skills全包与 TypeScript package build均 Green。处理方案=`fix_now pending root/integration`：继续执行根 `corepack pnpm build`、最小 diff/边界 review；通过后提交新 identity并在 clean WSL staging跑完整 OCI fixture及 Linux build。
+263、当前工作树根 `corepack pnpm build` 已 exit code=`0`：version metadata保持 `0.5.4` unchanged、Web assets生成 `48` 个 manifest entries、`tsc -b`、workspace package entrypoint verifier与 postbuild均通过；没有产生新的 tracked drift。该结果证明跨 package编译/打包边界未破坏，但仍不是 OCI runtime证据。处理方案=`fix_now pending OCI`：先在 Windows当前构建上运行完整 production command-sandbox OCI fixture，覆盖同步隔离和 pipe/PTY job；通过后再做 commit前 diff/暂存清单保护并提交产品修复 checkpoint。
+264、当前工作树的 Windows 原生 production `verify:command-sandbox-oci` 已完整 Green，明确输出 `all OCI isolation and command job fixtures passed`、exit code=`0`；rootfs/workspace read-only、workspace readwrite、network none、pipe job、PTY output/resize/cancel与 lease cleanup均由既有 fixture断言通过。随后串行扫描 command-sandbox lease label与 pinned image全部容器，count=`0/0`。这证明 DSR修复在 Windows原生 node-pty/ConPTY链无回归，问题 253的跨平台端点已有一端真实闭环。处理方案=`fix_now pending Linux clean staging`：执行 commit前 diff与 staged唯一清单保护，提交产品修复 checkpoint；再从新 commit创建独立 WSL clean staging、Linux build并使用候选 path wrapper跑完整 OCI fixture，禁止修改冻结 `576a7dc` staging。
+265、PTY DSR产品修复 checkpoint 已提交为 `3d913765f549abe5d9417b05c002cf46ede3b95b`（`fix(skills): answer headless PTY cursor queries`）：提交精确包含 `command-job-pty-terminal.ts`、对应测试与 `command-job-pty-host.ts` 三个文件，共 `113 insertions/3 deletions`；提交后的 tracked 工作树只剩本计划文档增量，明确排除的 `tmp-codeintel-summary.json` 仍未跟踪且未被读取、修改、暂存或提交。该 checkpoint 保留问题 257–264 的 `3/3`、`22/22`、Skills `940 passed + 2 skipped`、package/root build及 Windows OCI Green证据，不把 Windows结果外推为 Linux Green。处理方案=`fix_now pending Linux integration`：为 `3d91376` 创建此前不存在的独立 WSL ext4 clean detached staging，执行 offline install、完整 build和 benchmark verifier，再使用全新候选 wrapper及 drive-backed `TMPDIR` 运行完整 production OCI fixture；只有 Linux隔离、pipe/PTY、lease/container/process残留全部闭合后，才写结构化实现结论并把 `3d91376` 用作新候选 source/harness identity。
+266、`3d91376` 独立 WSL2 staging 已通过创建与身份 Gate：目标 `/var/tmp/star-sanctuary-p2c-candidate-3d91376` 创建前不存在，以 `--no-local --no-checkout` clone 后 detached checkout 到 `3d913765f549abe5d9417b05c002cf46ede3b95b`；`git status --short --branch` 仅为 `## HEAD (no branch)`，`symbolic-ref -q HEAD` 按预期 exit code=`1`，filesystem type=`ext2/ext3`。旧 `/var/tmp/star-sanctuary-p2c-candidate-576a7dc` staging未被修改，新 staging不包含根工作树计划文档增量或未跟踪文件。处理方案=`fix_now pending Linux engineering Gate`：在该 clean detached staging执行 frozen offline install；若仅出现已知 `relay.mjs` file-mode漂移，则先验证 blob不变再恢复为 `644`，随后运行完整 build与 benchmark verifier并复核 clean；任一内容漂移或依赖下载需求都先失败关闭，不进入 OCI或候选运行。Provider calls/cost=`0/$0`。
+267、`3d91376` WSL2 staging 的 frozen offline install 已完成：`corepack pnpm install --offline --frozen-lockfile` 使用 pnpm=`10.23.0`，packages/resolved/reused/downloaded=`494/494/493/0`，exit code=`0`。写后唯一漂移为 `packages/belldandy-browser/bin/relay.mjs` 的 `100644 → 100755`，`git diff --numstat=0/0`，worktree/HEAD blob均为 `005b1aa8f11898284ea7a64de813190f21cc3c1d`，确认没有内容变化；精确恢复 mode=`644` 后，status重新只有 `## HEAD (no branch)` 且 `git diff --check`通过。根因仍是 package `bin` 安装补执行位，与旧 staging一致，技术债裁决=`fix_now completed for staging cleanliness`。处理方案=`fix_now pending Linux build/verifier`：在当前 clean detached staging运行完整 `corepack pnpm build`，写后复核 HEAD/status/mode；Green后再运行 `verify:coding-benchmark`，不得把 offline install成功替代编译或合同验证。Provider calls/cost=`0/$0`。
+268、`3d91376` WSL2 staging 的完整 workspace build 已 Green：`corepack pnpm build` exit code=`0`，完成 version metadata `0.5.4`、Web asset manifest `48` 项、`tsc -b`、`verify:build` 全 workspace package entrypoint检查与 postbuild template copy。写后 HEAD仍精确为 `3d913765f549abe5d9417b05c002cf46ede3b95b`，status只有 `## HEAD (no branch)`、`symbolic-ref -q HEAD` exit code=`1`、`relay.mjs=644`。该证据证明 Linux编译/打包边界无回归，但尚不等于 benchmark合同或 OCI runtime Green。处理方案=`fix_now pending verifier/OCI`：先运行同 staging 的 `corepack pnpm verify:coding-benchmark`并再次核对 clean；通过后才创建新 identity专用 Docker wrapper/toolchain并验证 pinned image与完整 production OCI fixture。Provider calls/cost=`0/$0`。
+269、`3d91376` WSL2 staging 的 benchmark repository verifier 已 Green：`corepack pnpm verify:coding-benchmark` exit code=`0`，明确返回 `[verify:coding-benchmark] v1/v2/v3 manifests, schemas, docs, and platform gates are aligned`；写后 status仍只有 `## HEAD (no branch)`、HEAD=`3d913765f549abe5d9417b05c002cf46ede3b95b`、`relay.mjs=644`。输出中的 Node `punycode` deprecation与 Ajv `date-time` ignored warning与既有候选一致，没有形成 manifest/Schema/docs/platform Gate失败，技术债裁决=`record_only`，本轮不扩大为依赖升级或 format plugin改造。处理方案=`fix_now pending Linux OCI`：新建 identity专用 host wrapper与 WSL toolchain root，冻结脚本 hash并验证 Docker version/context/pinned image；随后以 drive-backed candidate `TMPDIR` 在本 staging运行完整 production `verify:command-sandbox-oci`，任何同步隔离、pipe/PTY或回收失败都先冻结诊断。Provider calls/cost=`0/$0`。
+270、`3d91376` 候选专用 WSL Docker bridge与 toolchain 已通过写前/接线 Gate：新增 `tmp/docker-p2c-3d91376-wrapper.sh`，仅在 `/init` 前补语义 argv0并转换绝对 POSIX `--cidfile`、`--env-file` 与 `--mount src`，脚本包含新 source identity 注释且 Windows/WSL SHA-256均为 `b3f78b05c937bfe83fa5ddde366bbd90f4b6d3594ecc1bbf673d807844bacd6b`，`bash -n` exit code=`0`。此前不存在的 `/var/tmp/star-sanctuary-p2c-3d91376-toolchain` 现只含三个显式 symlink：Docker指向新 wrapper，Go/gopls仍指向冻结 binary；版本探针为 Go=`1.24.2 linux/amd64`、gopls=`v0.21.0`、Docker client/server=`29.1.3/29.1.3`、context=`desktop-linux`。运行前活动容器=`0`，pinned image的 image ID与RepoDigest均精确匹配 `sha256:62f550497561d6285e10abd952730db89c905be990237eaf8744137929c72844`，platform=`linux/amd64`。处理方案=`fix_now pending production fixture`：创建此前不存在的 drive-backed candidate OCI临时根，以该 toolchain置顶 PATH并注入固定 backend/runtime/image，运行 staging内完整 `verify:command-sandbox-oci`；不得复用旧 wrapper路径或把 image inspect替代真实隔离/job验证。Provider calls/cost=`0/$0`。
+271、检索 OCI固定环境时，一次 `rg` 调用把 `-g` 排除选项错误放在 `--` 路径终止符之后，导致 `-g` 与 glob被当作文件路径并输出 `系统找不到指定的文件/路径`；命令仍命中明确源码，但该混合输出不作为完整检索证据。根因是参数顺序错误，不是文件缺失或仓库异常。处理方案=`fix_now completed for retrieval`：后续所有 `rg` 的 `-g` 选项放在 `--` 之前，并继续显式排除 `tmp/**`、`artifacts/**`、`node_modules/**` 与 `tmp-codeintel-summary.json`；本错误没有写文件、启动进程或触发 Provider。
+272、`3d91376` 的 WSL2 production command-sandbox OCI Gate 已完整 Green：在新 ext4 clean detached staging、SHA=`b3f78b05…`的identity专用wrapper、固定 `node:22-bullseye@sha256:62f55049…` 与 drive-backed `TMPDIR=/mnt/e/project/star-sanctuary/tmp/p2c-3d91376/oci-tmp` 下，`corepack pnpm verify:command-sandbox-oci` exit code=`0`并明确输出 `all OCI isolation and command job fixtures passed`；这覆盖rootfs/workspace read-only、workspace readwrite、network none、pipe job、PTY output/resize/cancel与lease cleanup，证明问题253/255的真实Linux端点已由产品修复关闭。收尾按独立串行证据确认：command-sandbox lease-label容器=`0`、pinned-image全部容器=`0`、drive-backed与WSL `/tmp` lease目录=`0/0`、四组WSL候选/OCI/benchmark进程匹配=`0`；新 Windows quiescence helper AST通过、旧identity零命中、SHA-256=`23d1a191c0b3d782bfb11a1217682fec48818cf7632fd40f5b1be9ecac96a5b5`，最终返回 `passed/count=0`。staging写后仍为同一 `3d91376…` clean detached，Provider calls/cost=`0/$0`。处理方案=`fix_now completed for PTY product failure`：旧 `576a7dc/candidate-1` 继续永久冻结；下一步创建全新 Windows staging并与本WSL staging复算四字段identity，所有repository inputs、expected-report plan、launcher/resume/helper与ledger均从新identity重建，任何候选运行前必须重新验真 `144/144/144`。
+273、计划文档单独提交的首次 staged唯一清单保护错误地使用了默认 `git diff --cached --name-only` 输出，并把Git对中文路径的八进制quoted形式与未转义的预期路径直接比较，因此保护逻辑主动停止在commit之前；实际index经 `git -c core.quotepath=false diff --cached --name-only` 复核只含 `docs/计划中/SS开发能力精进分析与计划.md`，没有误暂存 `tmp-codeintel-summary.json`或其他文件。根因是验证命令的path-display配置，不是index污染。处理方案=`fix_now completed for commit guard`：所有含非ASCII路径的staged清单比较显式使用 `core.quotepath=false`，本次追加说明后重新`git add --`同一精确文档并再次验真唯一清单，只有通过才执行docs checkpoint commit。
