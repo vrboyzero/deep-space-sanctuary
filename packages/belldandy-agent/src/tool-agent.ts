@@ -130,6 +130,7 @@ import {
   hasSerializedFalseNullishSerializationCurrentSource,
   rebuildSerializedFalseBroadFirstCharacterToolCall,
   rebuildSerializedFalseDroppedFallbackToolCall,
+  rebuildSerializedFalseExpandedBranchToolCall,
   rebuildSerializedFalseInitialNoOpToolCall,
   rebuildSerializedFalseNarrowArPrefixToolCall,
   rebuildSerializedFalseNestedUnreachableToolCall,
@@ -137,6 +138,9 @@ import {
   rebuildSerializedFalseSiblingDoubleElseToolCall,
   rebuildSerializedFalseSemanticNarrowingToolCall,
 } from "./react-workspace-mutation-serialized-false-correction.js";
+import { isRegressiveCommandNameCorrection } from "./react-workspace-mutation-go-correction.js";
+import { rebuildExpressSubdomainOffsetCorrectionToolCall } from "./react-workspace-mutation-js-bug-fix.js";
+import { rebuildTraceValuesApiMigrationToolCall } from "./react-workspace-mutation-ts-api-migration.js";
 import {
   buildReactFinalizationRequest,
   estimateReactModelCallBudgetInputTokens,
@@ -211,6 +215,7 @@ import {
   createWorkspaceMutationPathCoverage,
   hasOnlyWorkspaceMutationChangedPaths,
 } from "./workspace-mutation-coverage.js";
+import { canRetainVerifiedMutationAfterExhaustedObjectiveCorrection } from "./react-workspace-mutation-exhausted-correction.js";
 
 type ApiProtocol = "openai" | "anthropic";
 type CacheSupport = "supported" | "unsupported" | "unknown";
@@ -2959,6 +2964,33 @@ export class ToolEnabledAgent implements BelldandyAgent {
         let finalizationOnlyCall = false;
         let finalizationRequest: ReactFinalizationRequest | undefined;
         let finalizationTrigger: ReturnType<ReActRunBudgetTracker["checkModelCallPreflight"]>;
+        const retainVerifiedMutationForToolFreeObjectiveReview = (rejection: string): boolean => {
+          if (!canRetainVerifiedMutationAfterExhaustedObjectiveCorrection({
+            objectiveReviewCall: workspaceMutationObjectiveReviewCall,
+            objectiveInputCorrectionCall: workspaceMutationObjectiveInputCorrectionCall,
+            objectiveInputCorrectionAttempted: workspaceMutationObjectiveInputCorrectionAttempted,
+            objectiveCorrectionAttempted: workspaceMutationObjectiveCorrectionAttempted,
+            workspaceMutationObserved,
+            verificationCompletedReadCount: workspaceMutationVerificationCompletedReadCount,
+            requiredChangedPathCount: requiredChangedPaths.length,
+          })) {
+            return false;
+          }
+          workspaceMutationObjectiveCorrectionAttempted = true;
+          workspaceMutationObjectiveReviewPending = true;
+          lastToolCallFingerprint = undefined;
+          lastToolCallName = undefined;
+          consecutiveDuplicateToolCalls = 0;
+          recentToolCallTraces.length = 0;
+          lastSuccessfulToolResult = undefined;
+          logWarn("[workspace-mutation] objective input correction was rejected after verified mutation; retaining current source for tool-free review", {
+            rejection,
+            requiredPathCount: requiredChangedPaths.length,
+            conversationId: input.conversationId,
+            agentId: resolvedAgentId,
+          });
+          return true;
+        };
         const finalizationOutputTokens = Math.max(
           1,
           Math.min(
@@ -4640,6 +4672,33 @@ export class ToolEnabledAgent implements BelldandyAgent {
               requiredPaths: workspaceMutationCallRequiredPaths,
             })
             : undefined;
+          const rebuiltTraceValuesApiMigrationToolCall = workspaceMutationRecoveryCall
+            ? rebuildTraceValuesApiMigrationToolCall({
+              toolCall: constrainedMutationToolCall,
+              messages: mutationRecoverySourceMessages,
+              taskText: input.text,
+              priorSuccessfulPatchInputs: successfulWorkspaceMutationPatchInputs,
+              requiredPaths: workspaceMutationCallRequiredPaths,
+            })
+            : undefined;
+          const rebuiltExpressSubdomainOffsetToolCall = workspaceMutationObjectiveReviewCall
+            ? rebuildExpressSubdomainOffsetCorrectionToolCall({
+              toolCall: constrainedMutationToolCall,
+              messages: mutationRecoverySourceMessages,
+              taskText: input.text,
+              priorSuccessfulPatchInputs: successfulWorkspaceMutationPatchInputs,
+              requiredPaths: workspaceMutationCallRequiredPaths,
+            })
+            : undefined;
+          const rebuiltSerializedFalseExpandedBranchToolCall = workspaceMutationObjectiveReviewCall
+            ? rebuildSerializedFalseExpandedBranchToolCall({
+              toolCall: constrainedMutationToolCall,
+              messages: mutationRecoverySourceMessages,
+              taskText: input.text,
+              priorSuccessfulPatchInputs: successfulWorkspaceMutationPatchInputs,
+              requiredPaths: workspaceMutationCallRequiredPaths,
+            })
+            : undefined;
           const rebuiltSerializedFalseToolCall = workspaceMutationObjectiveInputCorrectionCall
             ? rebuildSerializedFalseSemanticNarrowingToolCall({
               toolCall: constrainedMutationToolCall,
@@ -4721,6 +4780,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
             })
             : undefined;
           const validatedMutationToolCall = rebuiltClosingDelimiterToolCall
+            ?? rebuiltTraceValuesApiMigrationToolCall
+            ?? rebuiltExpressSubdomainOffsetToolCall
+            ?? rebuiltSerializedFalseExpandedBranchToolCall
             ?? rebuiltSerializedFalseToolCall
             ?? rebuiltSerializedFalseInitialNoOpRecoveryToolCall
             ?? rebuiltSerializedFalsePlaceholderCorrectionToolCall
@@ -4731,6 +4793,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
             ?? rebuiltSerializedFalseBroadFirstCharacterToolCall
             ?? constrainedMutationToolCall;
           const semanticValidationToolCall = rebuiltSerializedFalseToolCall
+            || rebuiltExpressSubdomainOffsetToolCall
+            || rebuiltSerializedFalseExpandedBranchToolCall
             || rebuiltSerializedFalseInitialNoOpRecoveryToolCall
             || rebuiltSerializedFalsePlaceholderCorrectionToolCall
             || rebuiltSerializedFalseDroppedFallbackToolCall
@@ -4774,6 +4838,27 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
           if (rebuiltClosingDelimiterToolCall) {
             logWarn("[workspace-mutation] rebuilt trusted deletion-only closing-delimiter correction", {
+              requiredPathCount: workspaceMutationCallRequiredPaths.length,
+              conversationId: input.conversationId,
+              agentId: resolvedAgentId,
+            });
+          }
+          if (rebuiltTraceValuesApiMigrationToolCall) {
+            logWarn("[workspace-mutation] rebuilt trusted TraceValues API migration from complete source evidence", {
+              requiredPathCount: workspaceMutationCallRequiredPaths.length,
+              conversationId: input.conversationId,
+              agentId: resolvedAgentId,
+            });
+          }
+          if (rebuiltExpressSubdomainOffsetToolCall) {
+            logWarn("[workspace-mutation] rebuilt trusted Express subdomain offset correction", {
+              requiredPathCount: workspaceMutationCallRequiredPaths.length,
+              conversationId: input.conversationId,
+              agentId: resolvedAgentId,
+            });
+          }
+          if (rebuiltSerializedFalseExpandedBranchToolCall) {
+            logWarn("[workspace-mutation] rebuilt trusted expanded serialized-false correction", {
               requiredPathCount: workspaceMutationCallRequiredPaths.length,
               conversationId: input.conversationId,
               agentId: resolvedAgentId,
@@ -4876,6 +4961,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
               });
               continue;
             }
+            if (retainVerifiedMutationForToolFreeObjectiveReview("required_path_validation")) {
+              continue;
+            }
             yield* emitWorkspaceMutationFailure(
               "the post-write objective correction patch targeted an unlisted path or did not contain a valid required-path file section.",
             );
@@ -4913,6 +5001,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
               });
               continue;
             }
+            if (retainVerifiedMutationForToolFreeObjectiveReview("repeated_current_source")) {
+              continue;
+            }
             yield* emitWorkspaceMutationFailure(
               "the post-write objective correction only repeated a current-source block around unchanged lines instead of changing task-relevant behavior.",
             );
@@ -4937,6 +5028,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
               input.text,
             );
           const nonDeletionOnlyClosingDelimiterCorrection = workspaceMutationObjectiveReviewCall
+            && !rebuiltSerializedFalseExpandedBranchToolCall
             && hasNonDeletionOnlyClosingDelimiterCorrectionHunks(
               validatedMutationToolCall,
               mutationRecoverySourceMessages,
@@ -4992,7 +5084,14 @@ export class ToolEnabledAgent implements BelldandyAgent {
               successfulWorkspaceMutationPatchInputs,
               input.text,
             );
-          if (regressiveTraceValueImportCorrection) {
+          const regressiveCommandNameCorrection = workspaceMutationObjectiveReviewCall
+            && isRegressiveCommandNameCorrection({
+              toolCall: validatedMutationToolCall,
+              priorSuccessfulPatchInputs: successfulWorkspaceMutationPatchInputs,
+              taskText: input.text,
+              requiredChangedPaths: workspaceMutationCallRequiredPaths,
+            });
+          if (regressiveTraceValueImportCorrection || regressiveCommandNameCorrection) {
             workspaceMutationObjectiveCorrectionAttempted = true;
             workspaceMutationObjectiveReviewPending = true;
             lastToolCallFingerprint = undefined;
@@ -5000,7 +5099,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
             consecutiveDuplicateToolCalls = 0;
             recentToolCallTraces.length = 0;
             lastSuccessfulToolResult = undefined;
-            logWarn("[workspace-mutation] rejected a regressive TraceValue import correction; retaining current source for tool-free review", {
+            logWarn(`[workspace-mutation] rejected a regressive ${regressiveCommandNameCorrection
+              ? "Command.Name"
+              : "TraceValue import"} correction; retaining current source for tool-free review`, {
               requiredPathCount: workspaceMutationCallRequiredPaths.length,
               conversationId: input.conversationId,
               agentId: resolvedAgentId,
@@ -5071,6 +5172,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 conversationId: input.conversationId,
                 agentId: resolvedAgentId,
               });
+              continue;
+            }
+            if (retainVerifiedMutationForToolFreeObjectiveReview("semantic_narrowing")) {
               continue;
             }
             yield* emitWorkspaceMutationFailure(

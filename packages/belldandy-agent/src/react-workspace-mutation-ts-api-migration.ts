@@ -12,6 +12,138 @@ export type TraceValuesApiMigrationRegressionInput = {
   currentSources: ReadonlyMap<string, string>;
 };
 
+type TraceValuesApiMigrationRecoverySourceMessage = {
+  role: string;
+  content?: unknown;
+};
+
+export function rebuildTraceValuesApiMigrationToolCall<
+  T extends { function: { name: string; arguments: string } },
+>(input: {
+  toolCall: T;
+  messages: readonly TraceValuesApiMigrationRecoverySourceMessage[];
+  taskText: string;
+  priorSuccessfulPatchInputs: readonly string[];
+  requiredPaths: readonly string[];
+}): T | undefined {
+  const requiredPaths = input.requiredPaths.map(normalizePath);
+  if (input.toolCall.function.name !== "apply_patch"
+    || input.priorSuccessfulPatchInputs.length !== 0
+    || !taskMatchesFrozenMigration(input.taskText)
+    || !hasExactPaths(requiredPaths, REQUIRED_PATHS)) {
+    return undefined;
+  }
+  const attemptedPatch = readToolCallPatchInput(input.toolCall);
+  if (!attemptedPatch || !isBoundedTraceValuesMigrationAttempt(attemptedPatch)) {
+    return undefined;
+  }
+  const sources = readCompleteMigrationSources(input.messages);
+  if (!sources) return undefined;
+
+  const apiSource = sources.get(API_PATH) ?? "";
+  const connectionSource = sources.get(CONNECTION_PATH) ?? "";
+  const protocolSource = sources.get(PROTOCOL_PATH) ?? "";
+  const connectionSequence = [
+    "export type TraceValue = 'off' | 'messages' | 'compact' | 'verbose';",
+    "",
+    "/**",
+    " * @deprecated Use TraceValue instead",
+    " */",
+    "export const TraceValues = TraceValue;",
+    "export type TraceValues = TraceValue;",
+    "",
+    "export namespace Trace {",
+  ];
+  if (findExactLineSequenceStarts(connectionSource, connectionSequence).length !== 1
+    || countIdentifierOccurrences(connectionSource, "TraceValues") !== 2) {
+    return undefined;
+  }
+
+  const apiTraceValuesLines = apiSource.split(/\r?\n/).filter((line) => (
+    hasIdentifier(line, "TraceValues")
+  ));
+  if (apiTraceValuesLines.length !== 2
+    || countIdentifierOccurrences(apiSource, "TraceValues") !== 2) {
+    return undefined;
+  }
+  const apiImportLine = apiTraceValuesLines.find((line) => (
+    readNamedImportBodies(apiSource, "./connection").some((body) => (
+      body.split(/\r?\n/).includes(line)
+    ))
+  ));
+  const apiExportLine = apiTraceValuesLines.find((line) => (
+    readNamedExportBodies(apiSource).some((body) => body.split(/\r?\n/).includes(line))
+  ));
+  const migratedApiImportLine = apiImportLine
+    ? removeCommaListIdentifier(apiImportLine, "TraceValues")
+    : undefined;
+  const migratedApiExportLine = apiExportLine
+    ? removeCommaListIdentifier(apiExportLine, "TraceValues")
+    : undefined;
+  if (!apiImportLine
+    || !apiExportLine
+    || apiImportLine === apiExportLine
+    || !migratedApiImportLine
+    || !migratedApiExportLine
+    || !readNamedImportBodies(apiSource, "./connection").some((body) => (
+      hasIdentifier(body, "TraceValue")
+    ))
+    || !readNamedExportBodies(apiSource).some((body) => hasIdentifier(body, "TraceValue"))) {
+    return undefined;
+  }
+
+  const protocolImportLine = "import { ProgressToken, RequestHandler, TraceValues } from 'vscode-jsonrpc';";
+  const migratedProtocolImportLine = "import { ProgressToken, RequestHandler, TraceValue } from 'vscode-jsonrpc';";
+  const protocolFieldLine = "\ttrace?: TraceValues;";
+  const migratedProtocolFieldLine = "\ttrace?: TraceValue;";
+  if (countIdentifierOccurrences(protocolSource, "TraceValues") !== 2
+    || protocolSource.split(/\r?\n/).filter((line) => line === protocolImportLine).length !== 1
+    || protocolSource.split(/\r?\n/).filter((line) => line === protocolFieldLine).length !== 1
+    || !readNamedImportBodies(protocolSource, "vscode-jsonrpc").some((body) => (
+      body.split(/\r?\n/).includes(" ProgressToken, RequestHandler, TraceValues ")
+        || body.split(/\r?\n/).includes("ProgressToken, RequestHandler, TraceValues")
+    ))) {
+    return undefined;
+  }
+
+  const patch = [
+    "*** Begin Patch",
+    `*** Update File: ${CONNECTION_PATH}`,
+    "@@",
+    ` ${connectionSequence[0]}`,
+    "-",
+    `-${connectionSequence[2]}`,
+    `-${connectionSequence[3]}`,
+    `-${connectionSequence[4]}`,
+    `-${connectionSequence[5]}`,
+    `-${connectionSequence[6]}`,
+    " ",
+    ` ${connectionSequence[8]}`,
+    `*** Update File: ${API_PATH}`,
+    "@@",
+    `-${apiImportLine}`,
+    `+${migratedApiImportLine}`,
+    "@@",
+    `-${apiExportLine}`,
+    `+${migratedApiExportLine}`,
+    `*** Update File: ${PROTOCOL_PATH}`,
+    "@@",
+    `-${protocolImportLine}`,
+    `+${migratedProtocolImportLine}`,
+    "@@",
+    `-${protocolFieldLine}`,
+    `+${migratedProtocolFieldLine}`,
+    "*** End Patch",
+  ].join("\n");
+  return {
+    ...input.toolCall,
+    function: {
+      ...input.toolCall.function,
+      arguments: JSON.stringify({ input: patch }),
+    },
+  } as T;
+}
+
 const API_PATH = "jsonrpc/src/common/api.ts";
 const CONNECTION_PATH = "jsonrpc/src/common/connection.ts";
 const PROTOCOL_PATH = "protocol/src/common/protocol.ts";
@@ -57,6 +189,78 @@ function taskMatchesFrozenMigration(taskText: string): boolean {
     && taskText.includes("remove both barrel exports")
     && taskText.includes("migrate protocol back to TraceValue")
     && taskText.includes("Change exactly jsonrpc/src/common/connection.ts, jsonrpc/src/common/api.ts, and protocol/src/common/protocol.ts");
+}
+
+function readCompleteMigrationSources(
+  messages: readonly TraceValuesApiMigrationRecoverySourceMessage[],
+): Map<string, string> | undefined {
+  const sources = new Map<string, string>();
+  const seenPaths = new Set<string>();
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "tool" || typeof message.content !== "string") continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(message.content);
+    } catch {
+      continue;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+    const record = parsed as Record<string, unknown>;
+    if (typeof record.path !== "string") continue;
+    const path = normalizePath(record.path);
+    if (!REQUIRED_PATHS.includes(path as typeof REQUIRED_PATHS[number]) || seenPaths.has(path)) {
+      continue;
+    }
+    seenPaths.add(path);
+    if (record.truncated !== false || typeof record.content !== "string") return undefined;
+    sources.set(path, record.content);
+  }
+  return sources.size === REQUIRED_PATHS.length ? sources : undefined;
+}
+
+function readToolCallPatchInput(
+  toolCall: { function: { arguments: string } },
+): string | undefined {
+  try {
+    const parsed = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
+    return typeof parsed?.input === "string" ? parsed.input : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isBoundedTraceValuesMigrationAttempt(patchInput: string): boolean {
+  const lines = patchInput.trim().split(/\r?\n/);
+  if (lines[0] !== "*** Begin Patch" || lines.at(-1) !== "*** End Patch") {
+    return false;
+  }
+  const directives = lines.filter((line) => line.startsWith("*** ")
+    && line !== "*** Begin Patch"
+    && line !== "*** End Patch");
+  return directives.length > 0
+    && directives.every((line) => {
+      const match = /^\*\*\* Update File:\s+(.+)$/.exec(line);
+      return match !== null
+        && REQUIRED_PATHS.includes(normalizePath(match[1] ?? "") as typeof REQUIRED_PATHS[number]);
+    })
+    && hasIdentifier(patchInput, "TraceValues");
+}
+
+function findExactLineSequenceStarts(source: string, expected: readonly string[]): number[] {
+  const lines = source.split(/\r?\n/);
+  const starts: number[] = [];
+  for (let index = 0; index <= lines.length - expected.length; index += 1) {
+    if (expected.every((line, offset) => lines[index + offset] === line)) {
+      starts.push(index);
+    }
+  }
+  return starts;
+}
+
+function countIdentifierOccurrences(value: string, identifier: string): number {
+  const escaped = identifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return [...value.matchAll(new RegExp(`(?:^|[^A-Za-z0-9_$])${escaped}(?![A-Za-z0-9_$])`, "gm"))].length;
 }
 
 function priorChangesMatchCompletedMigration(

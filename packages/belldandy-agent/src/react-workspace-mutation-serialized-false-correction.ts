@@ -53,6 +53,31 @@ const DROPPED_FALLBACK_NULLISH_CONDITION_SUFFIX = "if (value == NULL) {";
 const DROPPED_FALLBACK_NARROW_PREFIX_PREDICATE = "name[0] == 'a' && name[1] == 'r' || name[0] == 'd' && name[1] == 'a'";
 const DROPPED_FALLBACK_NARROW_PREFIX_STUB_SUFFIX = `} else if (${DROPPED_FALLBACK_NARROW_PREFIX_PREDICATE}) {`;
 const DROPPED_FALLBACK_NARROW_FALSE_REMOVAL_SUFFIX = `} else if (value === false && !(${DROPPED_FALLBACK_NARROW_PREFIX_PREDICATE})) {`;
+const FROZEN_SERIALIZED_FALSE_PATH = "src/diff/props.js";
+const EXPANDED_SERIALIZED_FALSE_COMMENT_LINES = [
+  "// Serialize `false` for aria-* and data-* attributes (the string",
+  "// \"false\"), since for them a false value differs from absence and",
+  "// other frameworks generally stringify it. Ordinary attributes with a",
+  "// `false` value are removed, as are null/undefined values which remove",
+  "// every attribute.",
+] as const;
+const EXPANDED_SERIALIZED_FALSE_BRANCH_SUFFIXES = [
+  ...EXPANDED_SERIALIZED_FALSE_COMMENT_LINES,
+  "",
+  FUNCTION_ATTRIBUTE_GUARD_SUFFIX,
+  FUNCTION_ATTRIBUTE_COMMENT,
+  "} else if (value == NULL) {",
+  EXISTING_REMOVAL_STATEMENT,
+  "} else if (value === false) {",
+  "if (name.length > 5 && (name.slice(0, 5) == 'aria-' || name.slice(0, 5) == 'data-')) {",
+  "dom.setAttribute(name, name == 'popover' && value == true ? '' : 'false');",
+  "} else {",
+  EXISTING_REMOVAL_STATEMENT,
+  "}",
+  "} else {",
+  EXISTING_ATTRIBUTE_STATEMENT,
+  "}",
+] as const;
 
 type NullishSerializationBranch = {
   condition: string;
@@ -134,6 +159,87 @@ type PostWriteSiblingSerializedFalseBranch = {
   fallbackStatement: string;
   conditionIndent: string;
 };
+
+export function rebuildSerializedFalseExpandedBranchToolCall<
+  T extends { function: { name: string; arguments: string } },
+>(input: {
+  toolCall: T;
+  messages: readonly SourceMessage[];
+  taskText: string;
+  priorSuccessfulPatchInputs: readonly string[];
+  requiredPaths: readonly string[];
+}): T | undefined {
+  if (input.toolCall.function.name !== "apply_patch"
+    || input.requiredPaths.length !== 1
+    || normalizePath(input.requiredPaths[0] ?? "") !== FROZEN_SERIALIZED_FALSE_PATH
+    || input.priorSuccessfulPatchInputs.length !== 1
+    || !requiresSerializedFalseTruthSet(input.taskText)
+    || !toolCallHasSingleRequiredPathUpdateDirective(
+      input.toolCall,
+      FROZEN_SERIALIZED_FALSE_PATH,
+    )) {
+    return undefined;
+  }
+  const priorChange = readSingleRequiredPathPatchChange({
+    function: {
+      arguments: JSON.stringify({ input: input.priorSuccessfulPatchInputs[0] }),
+    },
+  }, FROZEN_SERIALIZED_FALSE_PATH);
+  const expectedPriorRemoved = [
+    ...SERIALIZED_FALSE_COMMENT_LINES,
+    "",
+    FUNCTION_ATTRIBUTE_GUARD_SUFFIX,
+    FUNCTION_ATTRIBUTE_COMMENT,
+    PREVIOUS_SERIALIZED_FALSE_CONDITION_SUFFIX,
+    EXISTING_ATTRIBUTE_STATEMENT,
+    "} else {",
+    EXISTING_REMOVAL_STATEMENT,
+  ];
+  if (!priorChange
+    || !hasExactOrderedLines(
+      priorChange.removed.map((line) => line.trimStart()),
+      expectedPriorRemoved,
+    )
+    || !hasExactOrderedLines(
+      priorChange.added.map((line) => line.trimStart()),
+      EXPANDED_SERIALIZED_FALSE_BRANCH_SUFFIXES,
+    )) {
+    return undefined;
+  }
+
+  const source = readCompleteSource(input.messages, FROZEN_SERIALIZED_FALSE_PATH);
+  if (!source) return undefined;
+  const expandedBranch = collectExpandedSerializedFalseBranches(source);
+  if (expandedBranch.length !== 1) return undefined;
+  const branch = expandedBranch[0]!;
+  const lineEnding = source.includes("\r\n") ? "\r\n" : "\n";
+  const replacementLines = [
+    ...SERIALIZED_FALSE_COMMENT_LINES.map((line) => `${branch.conditionIndent}${line}`),
+    "",
+    `${branch.conditionIndent}${FUNCTION_ATTRIBUTE_GUARD_SUFFIX}`,
+    `${branch.statementIndent}${FUNCTION_ATTRIBUTE_COMMENT}`,
+    `${branch.conditionIndent}${BASELINE_SERIALIZED_FALSE_CONDITION_SUFFIX}`,
+    `${branch.statementIndent}${EXISTING_ATTRIBUTE_STATEMENT}`,
+    `${branch.conditionIndent}} else {`,
+    `${branch.statementIndent}${EXISTING_REMOVAL_STATEMENT}`,
+  ];
+  const patch = [
+    "*** Begin Patch",
+    `*** Update File: ${input.requiredPaths[0]}`,
+    "@@",
+    ...branch.lines.map((line) => `-${line}`),
+    ...replacementLines.map((line) => `+${line}`),
+    ` ${branch.conditionIndent}}`,
+    "*** End Patch",
+  ].join(lineEnding);
+  return {
+    ...input.toolCall,
+    function: {
+      ...input.toolCall.function,
+      arguments: JSON.stringify({ input: patch }),
+    },
+  } as T;
+}
 
 export function rebuildSerializedFalseInitialNoOpToolCall<
   T extends { function: { name: string; arguments: string } },
@@ -1263,6 +1369,53 @@ function collectInitialSerializedFalseBranches(source: string): InitialSerialize
       conditionIndent,
     }];
   });
+}
+
+function collectExpandedSerializedFalseBranches(source: string): Array<{
+  lines: string[];
+  conditionIndent: string;
+  statementIndent: string;
+}> {
+  const lines = source.split(/\r?\n/);
+  return lines.flatMap((firstComment, index) => {
+    if (firstComment.trimStart() !== EXPANDED_SERIALIZED_FALSE_COMMENT_LINES[0]) return [];
+    const conditionIndent = firstComment.slice(
+      0,
+      firstComment.length - firstComment.trimStart().length,
+    );
+    const statementIndent = `${conditionIndent}\t`;
+    const nestedStatementIndent = `${statementIndent}\t`;
+    const expectedLines = [
+      ...EXPANDED_SERIALIZED_FALSE_COMMENT_LINES.map((line) => `${conditionIndent}${line}`),
+      "",
+      `${conditionIndent}${FUNCTION_ATTRIBUTE_GUARD_SUFFIX}`,
+      `${statementIndent}${FUNCTION_ATTRIBUTE_COMMENT}`,
+      `${conditionIndent}} else if (value == NULL) {`,
+      `${statementIndent}${EXISTING_REMOVAL_STATEMENT}`,
+      `${conditionIndent}} else if (value === false) {`,
+      `${statementIndent}if (name.length > 5 && (name.slice(0, 5) == 'aria-' || name.slice(0, 5) == 'data-')) {`,
+      `${nestedStatementIndent}dom.setAttribute(name, name == 'popover' && value == true ? '' : 'false');`,
+      `${statementIndent}} else {`,
+      `${nestedStatementIndent}${EXISTING_REMOVAL_STATEMENT}`,
+      `${statementIndent}}`,
+      `${conditionIndent}} else {`,
+      `${statementIndent}${EXISTING_ATTRIBUTE_STATEMENT}`,
+      `${conditionIndent}}`,
+    ];
+    if (!expectedLines.every((line, offset) => lines[index + offset] === line)
+      || lines[index + expectedLines.length] !== `${conditionIndent}}`) {
+      return [];
+    }
+    return [{ lines: expectedLines, conditionIndent, statementIndent }];
+  });
+}
+
+function hasExactOrderedLines(
+  actual: readonly string[],
+  expected: readonly string[],
+): boolean {
+  return actual.length === expected.length
+    && actual.every((line, index) => line === expected[index]);
 }
 
 function collectPostWriteSiblingSerializedFalseBranches(

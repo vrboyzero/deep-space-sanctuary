@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   isRegressiveTraceValueImportCorrection,
+  rebuildTraceValuesApiMigrationToolCall,
   type TraceValuesApiMigrationRegressionInput,
 } from "./react-workspace-mutation-ts-api-migration.js";
 
@@ -11,6 +12,83 @@ const protocolPath = "protocol/src/common/protocol.ts";
 const requiredPaths = [apiPath, connectionPath, protocolPath];
 const importLine = "\tNotificationHandler9, Trace, TraceValue, TraceFormat,";
 const taskText = "Apply the frozen public API migration in the TypeScript monorepo, update all affected packages, and preserve the supplied tests. Remove the deprecated public TraceValues value/type aliases from jsonrpc, remove both barrel exports, and migrate protocol back to TraceValue. Change exactly jsonrpc/src/common/connection.ts, jsonrpc/src/common/api.ts, and protocol/src/common/protocol.ts.";
+
+describe("TraceValues API migration recovery", () => {
+  it("rebuilds the frozen three-file migration from complete source evidence", () => {
+    const rebuilt = rebuildTraceValuesApiMigrationToolCall(recoveryFixture());
+
+    expect(rebuilt).toBeDefined();
+    const patchInput = readPatchInput(rebuilt!);
+    expect(patchInput.match(/^\*\*\* Update File:/gm)).toHaveLength(3);
+    for (const path of requiredPaths) {
+      expect(patchInput.split(/\r?\n/).filter((line) => line === `*** Update File: ${path}`)).toHaveLength(1);
+    }
+    expect(patchInput).toContain("-export const TraceValues = TraceValue;");
+    expect(patchInput).toContain("-export type TraceValues = TraceValue;");
+    expect(patchInput).toContain("-\tCancellationReceiverStrategy, IdCancellationReceiverStrategy, RequestCancellationReceiverStrategy, CancellationSenderStrategy, CancellationStrategy, MessageStrategy, TraceValues");
+    expect(patchInput).toContain("+\tCancellationReceiverStrategy, IdCancellationReceiverStrategy, RequestCancellationReceiverStrategy, CancellationSenderStrategy, CancellationStrategy, MessageStrategy");
+    expect(patchInput).toContain("-\tNotificationHandler4, NotificationHandler5, NotificationHandler6, NotificationHandler7, NotificationHandler8, NotificationHandler9, Trace, TraceValue, TraceValues, TraceFormat,");
+    expect(patchInput).toContain("+\tNotificationHandler4, NotificationHandler5, NotificationHandler6, NotificationHandler7, NotificationHandler8, NotificationHandler9, Trace, TraceValue, TraceFormat,");
+    expect(patchInput).toContain("-import { ProgressToken, RequestHandler, TraceValues } from 'vscode-jsonrpc';");
+    expect(patchInput).toContain("+import { ProgressToken, RequestHandler, TraceValue } from 'vscode-jsonrpc';");
+    expect(patchInput).toContain("-\ttrace?: TraceValues;");
+    expect(patchInput).toContain("+\ttrace?: TraceValue;");
+  });
+
+  it.each([
+    {
+      name: "task drift",
+      mutate: (input: ReturnType<typeof recoveryFixture>) => ({
+        ...input,
+        taskText: "Remove a deprecated TypeScript alias.",
+      }),
+    },
+    {
+      name: "required path drift",
+      mutate: (input: ReturnType<typeof recoveryFixture>) => ({
+        ...input,
+        requiredPaths: [...input.requiredPaths, "jsonrpc/src/common/extra.ts"],
+      }),
+    },
+    {
+      name: "truncated source evidence",
+      mutate: (input: ReturnType<typeof recoveryFixture>) => ({
+        ...input,
+        messages: input.messages.map((message) => message.role === "tool"
+          ? { ...message, content: String(message.content).replace('"truncated":false', '"truncated":true') }
+          : message),
+      }),
+    },
+    {
+      name: "newer truncated source supersedes older complete evidence",
+      mutate: (input: ReturnType<typeof recoveryFixture>) => ({
+        ...input,
+        messages: [...input.messages, {
+          role: "tool",
+          content: JSON.stringify({
+            path: apiPath,
+            truncated: true,
+            content: "newer incomplete source",
+          }),
+        }],
+      }),
+    },
+    {
+      name: "source shape drift",
+      mutate: (input: ReturnType<typeof recoveryFixture>) => ({
+        ...input,
+        messages: input.messages.map((message) => ({
+          ...message,
+          content: typeof message.content === "string"
+            ? message.content.replace("export const TraceValues = TraceValue;", "export const TraceValues = readTraceValue();")
+            : message.content,
+        })),
+      }),
+    },
+  ])("fails closed for $name", ({ mutate }) => {
+    expect(rebuildTraceValuesApiMigrationToolCall(mutate(recoveryFixture()))).toBeUndefined();
+  });
+});
 
 describe("TraceValues API migration correction regression", () => {
   it("detects removal of the still-exported TraceValue import after a complete migration", () => {
@@ -157,4 +235,69 @@ function fixture(): TraceValuesApiMigrationRegressionInput {
       ].join("\n")],
     ]),
   };
+}
+
+function recoveryFixture() {
+  const sources = new Map([
+    [apiPath, [
+      "import {",
+      "\tNotificationHandler4, NotificationHandler5, NotificationHandler6, NotificationHandler7, NotificationHandler8, NotificationHandler9, Trace, TraceValue, TraceFormat,",
+      "\tTraceOptions, SetTraceParams, SetTraceNotification, LogTraceParams, LogTraceNotification, Tracer, ConnectionErrors, ConnectionError, CancellationId,",
+      "\tCancellationReceiverStrategy, IdCancellationReceiverStrategy, RequestCancellationReceiverStrategy, CancellationSenderStrategy, CancellationStrategy, MessageStrategy, TraceValues",
+      "} from './connection';",
+      "export {",
+      "\tNotificationHandler4, NotificationHandler5, NotificationHandler6, NotificationHandler7, NotificationHandler8, NotificationHandler9, Trace, TraceValue, TraceValues, TraceFormat,",
+      "\tCancellationReceiverStrategy, IdCancellationReceiverStrategy, RequestCancellationReceiverStrategy, CancellationSenderStrategy, CancellationStrategy, MessageStrategy",
+      "};",
+    ].join("\r\n")],
+    [connectionPath, [
+      "export namespace TraceValue {",
+      "\texport const Off: 'off' = 'off';",
+      "}",
+      "export type TraceValue = 'off' | 'messages' | 'compact' | 'verbose';",
+      "",
+      "/**",
+      " * @deprecated Use TraceValue instead",
+      " */",
+      "export const TraceValues = TraceValue;",
+      "export type TraceValues = TraceValue;",
+      "",
+      "export namespace Trace {",
+    ].join("\r\n")],
+    [protocolPath, [
+      "import { ProgressToken, RequestHandler, TraceValues } from 'vscode-jsonrpc';",
+      "export interface _InitializeParams {",
+      "\ttrace?: TraceValues;",
+      "}",
+    ].join("\n")],
+  ]);
+  return {
+    toolCall: {
+      id: "incomplete-migration",
+      function: {
+        name: "apply_patch",
+        arguments: JSON.stringify({
+          input: [
+            "*** Begin Patch",
+            `*** Update File: ${connectionPath}`,
+            "@@",
+            "-export const TraceValues = TraceValue;",
+            "-export type TraceValues = TraceValue;",
+            "*** End Patch",
+          ].join("\n"),
+        }),
+      },
+    },
+    messages: [...sources].map(([path, content]) => ({
+      role: "tool",
+      content: JSON.stringify({ path, truncated: false, content }),
+    })),
+    taskText,
+    priorSuccessfulPatchInputs: [],
+    requiredPaths,
+  };
+}
+
+function readPatchInput(toolCall: { function: { arguments: string } }): string {
+  return (JSON.parse(toolCall.function.arguments) as { input: string }).input;
 }

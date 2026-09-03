@@ -1693,14 +1693,15 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       },
     }));
 
-    expect(requests).toHaveLength(4);
+    expect(requests).toHaveLength(5);
     expect(requests[3]?.messages[0]?.content).toContain(
       "Post-mutation objective correction input retry phase",
     );
+    expect(requests[4]).not.toHaveProperty("tools");
     expect(executedPatches).toEqual([initialPatch]);
     expect(items).toContainEqual(expect.objectContaining({
       type: "final",
-      text: expect.stringContaining("did not narrowly refine"),
+      text: expect.stringContaining("objective review may request at most one allowed workspace mutation tool"),
     }));
     expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
   });
@@ -1870,7 +1871,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       } : {}),
       durationMs: 1,
     }));
-    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 1 });
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 12 });
 
     const items = await collect(agent.run({
       conversationId: "conv-required-mutation-post-write-outside-path",
@@ -1880,22 +1881,23 @@ describe("ToolEnabledAgent required workspace mutation", () => {
         _agentLaunchSpec: {
           workspaceMutationRequirement: "required",
           requiredChangedPaths,
-          toolLoopIterationBudget: 1,
+          toolLoopIterationBudget: 12,
         },
       },
     }));
 
-    expect(requests).toHaveLength(4);
+    expect(requests).toHaveLength(5);
     expect(requests[3]?.messages[0]?.content).toContain(
       "Post-mutation objective correction input retry phase",
     );
+    expect(requests[4]).not.toHaveProperty("tools");
     expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
       "apply_patch",
       "file_read",
     ]);
     expect(items).toContainEqual(expect.objectContaining({
       type: "final",
-      text: expect.stringContaining("unlisted path"),
+      text: expect.stringContaining("objective review may request at most one allowed workspace mutation tool"),
     }));
     expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
   });
@@ -2754,10 +2756,11 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       },
     }));
 
-    expect(requests).toHaveLength(4);
+    expect(requests).toHaveLength(5);
     expect(requests[3]?.messages[0]?.content).toContain(
       "Post-mutation objective correction input retry phase",
     );
+    expect(requests[4]).not.toHaveProperty("tools");
     expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
       "apply_patch",
       "file_read",
@@ -2765,7 +2768,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(mutationCount).toBe(1);
     expect(items).toContainEqual(expect.objectContaining({
       type: "final",
-      text: expect.stringContaining("only repeated a current-source block"),
+      text: expect.stringContaining("objective review may request at most one allowed workspace mutation tool"),
     }));
     expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
   });
@@ -3251,7 +3254,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     const agent = createAgent({
       execute,
       maxTotalTokens: 24_000,
-      toolLoopIterationBudget: 1,
+      toolLoopIterationBudget: 12,
       thinking: { type: "enabled" },
     });
 
@@ -3263,24 +3266,23 @@ describe("ToolEnabledAgent required workspace mutation", () => {
         _agentLaunchSpec: {
           workspaceMutationRequirement: "required",
           requiredChangedPaths,
-          toolLoopIterationBudget: 1,
+          toolLoopIterationBudget: 12,
         },
       },
     }));
 
-    expect(requests).toHaveLength(4);
+    expect(requests).toHaveLength(5);
     expect(requests[3]?.messages[0]?.content).toContain(
       "Post-mutation objective correction input retry phase",
     );
+    expect(requests[4]).not.toHaveProperty("tools");
     expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
       "apply_patch",
       "file_read",
     ]);
     expect(items).toContainEqual(expect.objectContaining({
       type: "final",
-      text: expect.stringContaining(
-        "post-write objective correction patch targeted an unlisted path",
-      ),
+      text: expect.stringContaining("objective review may request at most one allowed workspace mutation tool"),
     }));
     expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
   });

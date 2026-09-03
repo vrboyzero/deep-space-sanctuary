@@ -195,7 +195,7 @@ describe("ToolEnabledAgent whole-branch post-write correction", () => {
     expect(postWriteSource).toContain("value === false ? 'false'");
     expect(postWriteSource).toContain("\t\t} else if (value === false) {");
     expect(postWriteSource).toContain("\t\t}\n\t\t}\n\t}\n}");
-    expect(requests).toHaveLength(4);
+    expect(requests).toHaveLength(5);
     expect(requests[3]?.messages[0]?.content).toContain(
       "Remove only the extra delimiter with a deletion-only hunk",
     );
@@ -204,6 +204,10 @@ describe("ToolEnabledAgent whole-branch post-write correction", () => {
     );
     expect(requests[3]?.messages[0]?.content).not.toContain(
       "The rebuilt correction must change task-relevant behavior",
+    );
+    expect(requests[4]).not.toHaveProperty("tools");
+    expect(requests[4]?.messages[0]?.content).toContain(
+      "Post-mutation final objective review phase",
     );
     const correctionEvidence = String(requests[3]?.messages[1]?.content ?? "");
     if (unrelatedSourcePrefix) {
@@ -216,7 +220,9 @@ describe("ToolEnabledAgent whole-branch post-write correction", () => {
     expect(executedPatches).toEqual([initialPatch]);
     expect(items.at(-2)).toEqual({
       type: "final",
-      text: "required workspace mutation was not completed: the post-write objective correction did not narrowly refine the prior mutation despite the smallest-change requirement.",
+      text: expect.stringContaining(
+        "objective review may request at most one allowed workspace mutation tool",
+      ),
     });
     expect(items.at(-1)).toEqual({ type: "status", status: "error" });
   });

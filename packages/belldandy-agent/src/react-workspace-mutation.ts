@@ -24,6 +24,7 @@ export const WORKSPACE_MUTATION_RECOVERY_MIN_OUTPUT_TOKEN_RESERVE = 1_024;
 export const WORKSPACE_MUTATION_NAVIGATION_INPUT_TOKEN_LIMIT = 2_048;
 export const WORKSPACE_MUTATION_NAVIGATION_OUTPUT_TOKEN_RESERVE = 1_024;
 export const WORKSPACE_MUTATION_NAVIGATION_MAX_FILE_READ_CALLS = 3;
+export const WORKSPACE_MUTATION_REQUIRED_NAVIGATION_MAX_FILE_READ_CALLS = 8;
 export const WORKSPACE_MUTATION_NAVIGATION_REQUIRED_FILE_READ_LIMIT = 1_048_576;
 
 export type WorkspaceMutationToolDefinition = {
@@ -2441,7 +2442,7 @@ function readSmallestChangeCorrectionPatchInput(
   priorSuccessfulPatchInputs: readonly string[],
   taskText: string,
 ): string | undefined {
-  if (!/(?:\bsmallest\b|\bminimal\b).{0,32}\b(?:change|patch|diff|edit|modification)s?\b/i.test(taskText)
+  if (!/(?:\bsmallest\b|\bminimal\b).{0,32}\b(?:change|patch|diff|edit|modification|correction)s?\b/i.test(taskText)
     || toolCall.function.name !== "apply_patch"
     || priorSuccessfulPatchInputs.length === 0) {
     return undefined;
@@ -2850,7 +2851,7 @@ export function buildWorkspaceMutationNavigationRequest(input: {
   tokenEstimateContext?: TokenEstimateOptions;
 }): WorkspaceMutationNavigationRequest | undefined {
   const maxFileReadCalls = Math.min(
-    WORKSPACE_MUTATION_NAVIGATION_MAX_FILE_READ_CALLS,
+    WORKSPACE_MUTATION_REQUIRED_NAVIGATION_MAX_FILE_READ_CALLS,
     Math.max(2, input.missingRequiredChangedPaths?.length ?? 0),
   );
   const fileReadLimit = maxFileReadCalls === 2 ? "two" : String(maxFileReadCalls);

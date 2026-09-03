@@ -586,11 +586,12 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
       },
     } as any));
 
-    expect(requests).toHaveLength(4);
+    expect(requests).toHaveLength(5);
+    expect(requests[4]?.tools ?? []).toHaveLength(0);
     expect(executedPatches).toEqual([initialPatch]);
     expect(items.at(-2)).toEqual({
       type: "final",
-      text: "required workspace mutation was not completed: the post-write no-op removal correction changed lines outside its atomic condition-and-removeAttribute repair.",
+      text: "required workspace mutation was not completed: the post-write objective review accepted source that leaves the required serialized-false behavior unreachable or the sibling control flow invalid.",
     });
     expect(items.at(-1)).toEqual({ type: "status", status: "error" });
   });
