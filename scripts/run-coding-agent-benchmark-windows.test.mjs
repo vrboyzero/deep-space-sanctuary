@@ -50,6 +50,72 @@ describe("coding agent benchmark Windows launcher", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
+  it("rejects candidate state outside the controlled system temp before Provider loading or Gateway spawn", async () => {
+    const validateCandidateExpectedReportLaunch = vi.fn(async () => {});
+    const loadProviderEnvironment = vi.fn(async () => {
+      throw new Error("Provider environment loaded before candidate state validation.");
+    });
+    const spawn = vi.fn();
+
+    await expect(runWindowsBenchmark({
+      workspaceRoot,
+      fixtureRoot: "E:/project/star-sanctuary/tmp/fixtures",
+      artifactRoot: "E:/project/star-sanctuary/artifacts/windows-formal",
+      stateRoot: "E:/project/star-sanctuary/tmp/runtime",
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      credentialsConfigured: false,
+      attempt: 1,
+      taskId: "rules.nested-precedence",
+      manifestRevision: "v3",
+      candidateId: "candidate-a",
+      expectedReportPlanPath: "E:/candidate/expected-report-plan.json",
+      providerEnvFile: "E:/candidate/.env.local",
+    }, {
+      platform: "win32",
+      systemTempRoot: "C:/Users/test/AppData/Local/Temp",
+      resolvePath: (value) => path.win32.resolve(value),
+      validateCandidateExpectedReportLaunch,
+      loadProviderEnvironment,
+      spawn,
+    })).rejects.toThrow(/candidate state root.*system temp/i);
+
+    expect(validateCandidateExpectedReportLaunch).toHaveBeenCalledOnce();
+    expect(loadProviderEnvironment).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("allows a candidate to continue from a dedicated system temp state root", async () => {
+    const nextBoundary = new Error("Provider environment boundary reached.");
+    const loadProviderEnvironment = vi.fn(async () => {
+      throw nextBoundary;
+    });
+    const spawn = vi.fn();
+
+    await expect(runWindowsBenchmark({
+      workspaceRoot,
+      fixtureRoot: "E:/project/star-sanctuary/tmp/fixtures",
+      artifactRoot: "E:/project/star-sanctuary/artifacts/windows-formal",
+      stateRoot: "C:/Users/test/AppData/Local/Temp/star-sanctuary-candidate-a/t01",
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      credentialsConfigured: false,
+      candidateId: "candidate-a",
+      expectedReportPlanPath: "E:/candidate/expected-report-plan.json",
+      providerEnvFile: "E:/candidate/.env.local",
+    }, {
+      platform: "win32",
+      systemTempRoot: "C:/Users/test/AppData/Local/Temp",
+      resolvePath: (value) => path.win32.resolve(value),
+      validateCandidateExpectedReportLaunch: vi.fn(async () => {}),
+      loadProviderEnvironment,
+      spawn,
+    })).rejects.toBe(nextBoundary);
+
+    expect(loadProviderEnvironment).toHaveBeenCalledOnce();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
   it("classifies readiness failures without retaining error content", () => {
     expect(classifyGatewayReadinessFailure(new Error("Windows benchmark Gateway readiness timed out.")))
       .toBe("gateway_readiness_timeout");

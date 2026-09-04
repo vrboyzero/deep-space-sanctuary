@@ -8,7 +8,10 @@ import {
   resolveBenchmarkMaximumCostUsd,
   resolvePriorObservedCostUsd,
 } from "./run-coding-agent-benchmark.mjs";
-import { runWindowsBenchmark as runWindowsBenchmarkGateway } from "./run-coding-agent-benchmark-windows.mjs";
+import {
+  assertWindowsCandidateStateRootInSystemTemp,
+  runWindowsBenchmark as runWindowsBenchmarkGateway,
+} from "./run-coding-agent-benchmark-windows.mjs";
 import {
   validateCodingAgentBenchmarkCandidateExpectedReportLaunch,
 } from "./run-coding-agent-benchmark-expected-report-plan.mjs";
@@ -264,6 +267,7 @@ export async function runWslBenchmark(input, dependencies = {}) {
     platform: "wsl2-linux",
     manifestRevision: input.manifestRevision ?? "v1",
   }, dependencies);
+  assertWindowsCandidateStateRootInSystemTemp(input, dependencies);
   const host = input.host ?? resolveWslGatewayHost(distribution, dependencies);
   const port = input.port ?? "28889";
   const gatewayWorkspaceRoot = input.gatewayWorkspaceRoot ?? input.workspaceRoot ?? defaultWorkspaceRoot;

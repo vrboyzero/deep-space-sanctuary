@@ -372,6 +372,12 @@ Windows launcher 的 child env 只转交 Windows 宿主运行键、显式 pricin
 Gateway/benchmark 子进程。可选的 `--provider-env-file` 也只解析上述三个 OpenAI 键，不从文件读取
 pricing；launcher 同时固定 Provider retry=`0` 并关闭非计费边界内后台能力，因此不需要用 PowerShell
 全量导入 `.env.local` 后再把其他键改成空变量。
+
+P2-C candidate 模式（`--candidate-id` 与 `--expected-report-plan` 成对提供）还要求 `--state-root`
+指向 Windows 系统临时目录的专属子目录，不能直接使用系统临时目录本身，也不能落在 workspace、fixture
+或 artifact 数据盘路径。Windows 与 WSL launcher 都会在 Provider 环境读取、WSL host 解析、端口探测和
+Gateway spawn 前失败关闭。Gateway 与 Coding CI 继续共享该 state root 以维持 pairing；fixture、report
+和 artifact 仍写入冻结 plan 声明的原路径，不随 runtime state 迁移。
 repository config 不保存 receipt 内容或任何凭据；receipt 由独立文件提供并在运行前复核。B/C 专属 JSON
 artifact 均限制为 1 MiB，并拒绝常见 credential 字段。命令行会为 v3 装配 native system harness；browser
 behavior、parallel read isolation、parallel write fan-in 与 restart delivery reconciliation 均按本机生产
@@ -396,7 +402,7 @@ corepack pnpm aggregate:coding-agent:baseline --verify --output-root <v3-baselin
 
 Windows host launcher 通过 `--manifest-revision v3` 选择 v3，并用目标发行版的 `wslpath` 转换 workspace、fixture、artifact、state 和 `--v3-repository-config` 文件路径；它继续使用 `wsl.exe --exec` 参数数组，不经过 PowerShell/Bash 命令拼接。config 内容不会被 launcher 读取或改写，其中的 repository/cache/receipt 相对路径仍由 Linux runner 相对 config 所在目录解析。向 v1/v2 传入 v3 config、未知 revision 或缺少 v2 source root 都会在启动 WSL 子进程前失败关闭。
 
-v3 与 corrected v2 runner 都会收到 `BELLDANDY_TOOL_RESULT_EVENT_OUTPUT_CHAR_LIMIT=2048`，以便 interactive preflight 核对本地进程环境；目标 Gateway 仍必须以相同值启动，launcher 不把客户端环境视为远端配置证明。真实 Provider preflight 所需的 `BELLDANDY_MODEL_INPUT_USD_PER_1M`、`BELLDANDY_MODEL_OUTPUT_USD_PER_1M` 与 `BELLDANDY_MODEL_CACHE_READ_USD_PER_1M` 会作为非敏感 `env` 参数显式转交 WSL runner，缺失或非法值仍由 preflight 失败关闭；token auth 继续只通过 child env 与 `WSLENV` 传入，不出现在参数或 artifact。Linux repository/cache 必须已经按目标发行版和架构准备，尤其不能把 Windows `node_modules` 或原生二进制缓存当作 WSL 可执行输入；launcher 不执行 clone/install/restore 或跨平台 cache 修复。
+v3 与 corrected v2 runner 都会收到 `BELLDANDY_TOOL_RESULT_EVENT_OUTPUT_CHAR_LIMIT=2048`，以便 interactive preflight 核对本地进程环境；目标 Gateway 仍必须以相同值启动，launcher 不把客户端环境视为远端配置证明。真实 Provider preflight 所需的 `BELLDANDY_MODEL_INPUT_USD_PER_1M`、`BELLDANDY_MODEL_OUTPUT_USD_PER_1M` 与 `BELLDANDY_MODEL_CACHE_READ_USD_PER_1M` 会作为非敏感 `env` 参数显式转交 WSL runner，缺失或非法值仍由 preflight 失败关闭；token auth 继续只通过 child env 与 `WSLENV` 传入，不出现在参数或 artifact。candidate 的 `--state-root` 仍以 Windows 宿主路径传入并受上述系统临时目录 Gate 约束，再由 launcher 转换为 WSL 可见路径；Linux repository/cache 必须已经按目标发行版和架构准备，尤其不能把 Windows `node_modules` 或原生二进制缓存当作 WSL 可执行输入；launcher 不执行 clone/install/restore 或跨平台 cache 修复。
 
 显式启动已准备的 v3 B 层 WSL2 任务：
 

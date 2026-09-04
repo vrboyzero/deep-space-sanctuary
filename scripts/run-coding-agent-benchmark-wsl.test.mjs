@@ -47,6 +47,65 @@ describe("coding agent benchmark WSL launcher", () => {
     expect(runWindowsBenchmark).not.toHaveBeenCalled();
   });
 
+  it("rejects candidate state outside the controlled system temp before starting the Windows Gateway", async () => {
+    const validateCandidateExpectedReportLaunch = vi.fn(async () => {});
+    const runWindowsBenchmark = vi.fn(async () => 0);
+
+    await expect(runWslBenchmark({
+      distribution: "Ubuntu-22.04",
+      workspaceRoot: "E:/project/star-sanctuary",
+      fixtureRoot: "E:/project/star-sanctuary/.tmp/coding-agent-fixtures-wsl",
+      artifactRoot: "E:/project/star-sanctuary/artifacts/coding-agent-wsl",
+      stateRoot: "E:/project/star-sanctuary/tmp/coding-agent-state-wsl",
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      credentialsConfigured: false,
+      attempt: 1,
+      taskId: "rules.nested-precedence",
+      manifestRevision: "v3",
+      candidateId: "candidate-a",
+      expectedReportPlanPath: "E:/candidate/expected-report-plan.json",
+      host: "172.27.128.1",
+    }, {
+      systemTempRoot: "C:/Users/test/AppData/Local/Temp",
+      resolvePath: (value) => path.win32.resolve(value),
+      validateCandidateExpectedReportLaunch,
+      runWindowsBenchmark,
+    })).rejects.toThrow(/candidate state root.*system temp/i);
+
+    expect(validateCandidateExpectedReportLaunch).toHaveBeenCalledOnce();
+    expect(runWindowsBenchmark).not.toHaveBeenCalled();
+  });
+
+  it("starts the Windows Gateway for a candidate with a dedicated system temp state root", async () => {
+    const runWindowsBenchmark = vi.fn(async () => 0);
+    const stateRoot = "C:/Users/test/AppData/Local/Temp/star-sanctuary-candidate-a/t01";
+
+    await expect(runWslBenchmark({
+      distribution: "Ubuntu-22.04",
+      workspaceRoot: "E:/project/star-sanctuary",
+      fixtureRoot: "E:/project/star-sanctuary/.tmp/coding-agent-fixtures-wsl",
+      artifactRoot: "E:/project/star-sanctuary/artifacts/coding-agent-wsl",
+      stateRoot,
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      credentialsConfigured: false,
+      candidateId: "candidate-a",
+      expectedReportPlanPath: "E:/candidate/expected-report-plan.json",
+      host: "172.27.128.1",
+    }, {
+      systemTempRoot: "C:/Users/test/AppData/Local/Temp",
+      resolvePath: (value) => path.win32.resolve(value),
+      validateCandidateExpectedReportLaunch: vi.fn(async () => {}),
+      runWindowsBenchmark,
+    })).resolves.toBe(0);
+
+    expect(runWindowsBenchmark).toHaveBeenCalledWith(
+      expect.objectContaining({ stateRoot, gatewayStateRoot: stateRoot }),
+      expect.objectContaining({ runBenchmark: expect.any(Function) }),
+    );
+  });
+
   it("resolves the Windows host from the target WSL2 default route", () => {
     const run = vi.fn(() => ({
       status: 0,

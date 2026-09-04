@@ -199,8 +199,8 @@ Go canary 的正式边界是：goCanaryEligible=true、productionEligible=false�
 - 冻结工具链为 Node 22.22.2、npm 10.9.7、Go 1.24.2 linux/amd64；WSL 使用 GOPROXY=off、GOSUMDB=off 和独立 module cache。
 - Windows repository inputs 已独立验证 repositories/receipts/preflights=4/4/8，config SHA-256=251895ff6b6ffc88e0b0e575f8a3bcd2686af3fc7875ef2b0e7c53f3ccea60c8。
 - WSL2 repository inputs 已由 production owner 唯一发布并独立验证 4/4/8，config SHA-256=ffaa88c3f3de2fe5948cd352ce89537a5eca37e114df484b9c78309ec31666c4；平台路径不同导致 config hash 不同是预期，四字段 identity 仍须相同。
-- 最新第 819 条记录已修复 WSL verifier 的 shell 引号问题；已发布 output 保持只读，本轮未启动 Gateway、runner、formal 或 Provider。
-- 当前 candidate 已首次生成并冻结 expected-report plan，operators、双平台 OCI 与最终资源/费用 Gate 已通过；尚未启动首槽，144 个终态、aggregate/qualification/score 仍未完成，旧 candidate 的 plan、ledger 和 report 不得复用。
+- 第 819 条记录修复了 WSL verifier 的 shell 引号问题；已发布 output 保持只读。随后启动的唯一 Windows canary 在 Provider 前发生 Gateway readiness 60 秒超时，未生成 benchmark report、fixture 或 Provider usage；该 candidate 已按 infrastructure failure 永久冻结，未启动 WSL 槽。
+- 失败 readiness artifact SHA-256=`2A643859F967CC56F68EDD62BE1C5067B172E41FEF2F39E829588EC194A007B3`。ledger 保留 `processed=0`、`unreportedInfrastructure=1`、candidate Provider cost=`0` 和新增未知费用预留 `0.10 USD`；144 个终态、aggregate/qualification/score 均未形成，旧 candidate 的 plan、ledger 和 report 不得复用。
 
 ## 5. 历史失败与问题压缩摘要
 
@@ -214,7 +214,7 @@ Go canary 的正式边界是：goCanaryEligible=true、productionEligible=false�
 | output/length/stop/预算 | structured schema 独立保留、JSON mode、DeepSeek thinking-disable、普通 preflight 保守计算、stop-empty finalization | 本地根因路径已闭合，历史终态不重解释为通过 |
 | accepted regression / TraceValue | verified-mutation marker、current-source 保留和执行前 regression guard | 本地回归已闭合；旧候选仍失败冻结 |
 | 候选 df54f67 | 形成可复算 144/144 aggregate，并把产品失败与 infrastructure usage 分离；qualification 正确拒绝（usage hard Gate 与缺失运行前 plan） | 97 passed + 47 failed/product_workflow 只作历史诊断，不授分；后续已补 local-fixture usage 和 expected-report producer |
-| infrastructure outlier | formal 前进程 sweep、严格串行资源探针、短 collection root、路径/引号纠偏 | 已知宿主争用和探针自污染已收口；不提高 timeout/retry |
+| infrastructure outlier | formal 前进程 sweep、严格串行资源探针、短 collection root、路径/引号纠偏；对 0e35c8b readiness 建立零 Provider 分段诊断 | 首槽 60 秒超时已冻结；冷 SQLite schema 在 E 盘约 12.4–13.8 秒、系统临时盘约 0.187 秒，完整 launcher 的系统临时盘对照在 2.14 秒 ready；当前按宿主 E 盘 I/O 离群放大处理，不提高 timeout/retry |
 | 证据/资格缺口 | expected-report producer、local fixture usage、candidate-global receipt、evidence-gated evaluator/qualification v2 已实现 | 评分工具链完成，当前缺真实 current-candidate receipts |
 
 ## 6. 验证、证据、费用与禁止范围
@@ -256,7 +256,7 @@ Go canary 的正式边界是：goCanaryEligible=true、productionEligible=false�
 
 ### 6.5 冻结与禁止范围
 
-- 所有已执行 formal（包括 2977780、e1f8aaa 及历史 identity）永久冻结，不重跑、不为失败 identity 启动 WSL2。
+- 所有已执行 formal（包括 2977780、e1f8aaa、0e35c8b 及历史 identity）永久冻结，不重跑、不为失败 identity 启动 WSL2。
 - 不增加 turn/token、Provider retry 或单 run 费用，不使用旧调价口径。
 - candidate qualification/七维证据和零模型 readiness 未闭合前，不启动完整付费矩阵。
 - 不 push 到 origin，不公开发布，不执行生产操作，不自动 merge/release/deploy。
@@ -269,6 +269,7 @@ Go canary 的正式边界是：goCanaryEligible=true、productionEligible=false�
 | correction 扩大行为或破坏已验证 mutation | fix_now（本地已完成） | current-source、effective-delta、exact/broadened/unreachable guard 和 verified-mutation marker；外部 uplift 待新候选 |
 | failure analysis 漏分或抢占分类 | fix_now（已完成） | v1 先分类、v2 只处理 unknown，Schema/version 和 verify 重建 |
 | Windows/WSL 依赖、路径和资源不对称 | fix_now | 原生 staging、独立 cache、host-side path comparison、严格串行 sweep、OCI/relay Gate |
+| E 盘冷 SQLite 初始化放大 Gateway readiness | fix_now | 系统临时盘零 Provider launcher 对照已通过；测试先行约束临时 runtime state-root，report/artifact 路径和冻结 evidence 不迁移 |
 | usage、CI 或人工 responder 缺 authoritative owner | defer / record_only | 返回 incomplete + missingMetrics，不以 workflow 文本、fixture 或历史 run 替代 |
 | Go production、C# 接入 | defer | Go 仅 canary；C# 等真实需求、许可和生命周期 Spike |
 | Provider 外部账单、偶发 warning | record_only | 保留原始证据；影响候选 Gate 时再拆任务 |
@@ -277,10 +278,11 @@ Go canary 的正式边界是：goCanaryEligible=true、productionEligible=false�
 
 ### 8.1 估算结论
 
-最新维护估算为 **1.75–3.5 人日工程量 + 两个候选/CI 观察窗口**。已完成的 evaluator、local collector、Linux staging、CLI/TUI/Git delivery 合同不再重复计量。
+最新维护估算为 **2–4.25 人日工程量 + 两个候选/CI 观察窗口**。相较 canary 前估算，新增 Windows readiness state-root 修复与复验；已完成的 evaluator、local collector、Linux staging、CLI/TUI/Git delivery 合同不再重复计量。
 
 | 剩余工作包 | 完成边界 | 估算 |
 | --- | --- | ---: |
+| Windows readiness state-root | 系统临时盘零 Provider 对照、测试先行的最小 launcher/operator 修复、定向/全量回归与零残留 | 0.25–0.75 人日 |
 | 真实 CI receipt | 绑定稳定 current-candidate，采集 GitHub run/API/ZIP，复核 identity/外键/终态 | 0.5–1.25 人日 |
 | CLI/TUI artifact | 双平台 accessibility/lifecycle current-candidate receipt | 0.25–0.5 人日 |
 | Git delivery artifact | worktree/review/remote-authority/recovery 四类真实 receipt | 0.5–0.75 人日 |
@@ -290,9 +292,9 @@ Go canary 的正式边界是：goCanaryEligible=true、productionEligible=false�
 
 ### 8.2 可行性、风险与前置依赖
 
-- **风险等级**：中高。主要失败模式是新候选再次暴露 product workflow 缺陷、双平台路径/依赖漂移、真实 CI artifact 不完整、usage/cost 不可复算或资源未收敛。
-- **可行性**：本地合同、双平台 staging、repository inputs 和评分 owner 已有可重复证据，继续推进可行。
-- **关键前置**：0e35c8b frozen staging/inputs 保持只读且 identity 不漂移；operators 与 expected-report plan 在任何 formal 前完成；OCI、端口、进程、lease、敏感值和费用 Gate 全绿。
+- **风险等级**：中高。主要失败模式是 E 盘 runtime state 冷初始化再次放大 readiness、新候选再次暴露 product workflow 缺陷、双平台路径/依赖漂移、真实 CI artifact 不完整、usage/cost 不可复算或资源未收敛。
+- **可行性**：本地合同、双平台 staging、repository inputs 和评分 owner 已有可重复证据；同一完整 MemoryStore 在系统临时盘约 0.187 秒完成冷启动，完整 launcher 在 2.14 秒 auth-ready，受控 state-root 路径已由零 Provider 对照证实。
+- **关键前置**：0e35c8b 全部 frozen evidence 保持只读且不重跑；先完成最小 state-root 修复与回归。新 commit identity 必须重新建立双平台 staging、inputs、plan、operators、OCI、端口、进程、lease、敏感值和费用 Gate。
 - **预期效果**：把“产品能力已修复”的本地判断转化为 current-candidate 原生证据，再由 qualification 和 score owner 给出不可人工补写的结论。
 
 ### 8.3 完成边界
@@ -305,7 +307,7 @@ Go canary 的正式边界是：goCanaryEligible=true、productionEligible=false�
 
 SS 已经能够在做事前检查、做事后验证、发生错误时停止、程序中断后恢复，并通过多入口共享同一安全边界。当前评分约 9.1，复杂真实任务的完成率仍不足以支持 9.5。
 
-当前工作的准确位置不是继续堆功能，而是把真实产品能力绑定到一个干净、可复算的 candidate：新 identity 0e35c8b 的双平台工程、repository inputs、不可覆盖 expected-report plan、operators、OCI 和最终资源/费用 Gate 已通过；下一步只运行一个 Windows canary，终态验真后才决定是否扩展矩阵。旧候选结果、历史 formal 和跨 revision projection 均不能替代这条链。
+当前工作的准确位置不是继续堆功能。identity 0e35c8b 的运行前 Gate 虽已通过，但唯一 Windows canary 在调用模型前因 Gateway readiness 超时失败，候选已永久冻结且没有启动 WSL。当前先修复临时 Gateway state 位于 E 盘时的冷 SQLite 初始化风险；修复形成新 commit 后，必须从双平台 staging 和全部 Gate 重建新 candidate，旧结果、历史 formal 和跨 revision projection 均不能替代这条链。
 
 ## 10. 近期实现结论摘要
 
@@ -429,7 +431,45 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 ##### 后续计划
 
-运行唯一 Windows canary；形成 terminal 后立即执行 report/ledger/resume 验真、敏感 env 合规回收与资源清理。只有 passed 且 usage 完整才准备下一小批。
+该步骤已执行：唯一 Windows canary 在 Provider 前形成 infrastructure/no-report 终态，已按冻结规则停止，结果见下一条实现结论和文末进度表。
+
+#### P2-C 首槽终态与阶段诊断实现结论：0e35c8b Windows canary 冻结（2026-09-05）
+
+##### 已完成内容
+
+1. **唯一 Windows canary 执行并冻结**：`rules.nested-precedence/windows-native/attempt-1` 的 Gateway readiness 在 60,107ms 超时，child 于 60,184ms 完成停止；stdout/stderr 均为 0 bytes，未进入 auth、benchmark runner 或 Provider，未生成 report/fixture，且未启动 WSL 槽。
+2. **tmp/verify-p2c-resume-state-0e35c8b.mjs 修改**：支持 `processed=0 + unreportedInfrastructure=1` 的合法恢复态，复核冻结 plan 与剩余 144 槽，不把无报告基础设施失败伪装成已处理任务。
+3. **费用、敏感文件与资源闭环**：双层 ledger 记录 candidate Provider cost=`0`、新增未知费用预留 `0.10 USD`；env cleanup operator 改为 `.env`/`.env.local` 可选存在且每个 task 至少命中一个，正式槽 `.env` 经 containment、普通文件、非 reparse point 和 SHA-256 校验后送入 Windows 回收站。
+4. **零 Provider readiness 诊断**：build guard 与静态依赖求值正常；主要耗时定位到 E 盘完整 MemoryStore 的冷 SQLite schema 初始化。单事务 schema loader 实验没有改善，因此不采纳该改造。
+5. **效果**：候选失败被完整保留在费用和恢复账本中，没有扩大付费矩阵或污染 WSL；当前修复对象收敛为 benchmark 临时 Gateway state-root，而不是放宽 timeout/retry 或重跑冻结 identity。
+
+##### 验证结果
+
+- 前置双平台 TypeScript 完整编译无错误；本诊断环节未修改产品源码，新增产品测试=`0`。
+- resume verifier：plan/unique IDs/unique paths=`144/144/144`、remaining=`144`、unreported infrastructure=`1`、candidate Provider cost=`0`。
+- 失败 readiness artifact SHA-256=`2A643859F967CC56F68EDD62BE1C5067B172E41FEF2F39E829588EC194A007B3`；cleanup log SHA-256=`2C45DC4B82D78E525EAEDAEAD56901AD97E5725B1CD2E04C4EDC0E09596AAF2D`；Windows/WSL 进程、端口、container 和三处 lease 均为 `0`，双平台 staging clean detached。
+- E 盘完整 MemoryStore 冷启动约 `12.4–13.8s`，系统临时盘约 `187ms`；未插桩 E 盘 Gateway 在 `13,926ms` ready，系统临时盘完整 launcher 在 `2,140ms` auth-ready、`2,162ms` 完成。对照 readiness SHA-256=`3D04DD6402CE7EFFE8495892E1EF9E874C1CEBAA94EEFFBF4FF0001670EFF715`。
+- 系统临时盘探针生成的 `.env/.env.local` 均经 containment、普通文件、非 reparse point 与 SHA-256 复核后送入 Windows 回收站，cleanup log SHA-256=`280518501C63944FDE9960857689549DBCD828E1A91908AC95F3FC594CA94366`；env、端口和探针进程残留均为 `0`。当前结论是 E 盘 I/O 争用放大的基础设施离群，仍需受测产品修复才能闭环。
+
+#### P2-C readiness 修复实现结论：candidate state-root fail-closed Gate（2026-09-05）
+
+##### 已完成内容
+
+1. **scripts/run-coding-agent-benchmark-windows.mjs 修改**：新增 candidate state-root Gate；expected-report plan 验真后、Provider env 读取和 Gateway 启动前，要求 Gateway/Coding 共享 state root 位于 Windows 系统临时目录的专属子目录。
+2. **scripts/run-coding-agent-benchmark-wsl.mjs 修改**：复用相同 Gate，在解析 WSL host 和启动 Windows Gateway 前阻断不合规 candidate；非 candidate benchmark、fixture、report 与 artifact 路径保持不变。
+3. **Windows/WSL launcher 测试与文档同步**：新增两端系统临时目录正例和 E 盘负例；README 与 project map 明确 candidate runtime state 约束及 pairing 合同。
+4. **效果**：新 candidate 不再把冷 SQLite runtime state 放在易受 I/O 争用放大的 E 盘；错误路径在 Provider 凭据和进程副作用前失败，冻结 candidate 的 evidence 不迁移、不重跑。
+
+##### 验证结果
+
+- TypeScript 完整编译无错误；Windows/WSL launcher `node --check` 通过，benchmark verifier 通过。
+- 定向测试 `37/37` 通过（含 `4` 个新增 state-root 正负合同测试）；全仓 `998` 个测试文件、`6554` 个已执行测试全部通过，另有 `2` 个测试文件、`3` 个测试按既有条件跳过。
+- 当前产品 launcher 的非 formal candidate 模式零 Provider 探针在 `3,356ms` auth-ready，Provider env 读取=`0`、benchmark boundary=`1`、Gateway 正常停止；readiness SHA-256=`89CE01E1043A8313A7F0CCAEFEECF7464D3DE2337CB32FE358954DB979619312`。
+- 探针 `.env/.env.local` 已逐文件完成 containment、普通文件、非 reparse point 与 SHA-256 校验并送入 Windows 回收站；cleanup log SHA-256=`59A4EB0C34664B8E1B2ACA21B0A08EDB71D51A80438B00E4D07FC02163AEEE2B`，env、端口和 Gateway 进程残留均为 `0`。
+
+##### 后续计划
+
+以本修复的新 commit identity 从双平台 staging 与全部运行前 Gate 重建 candidate；旧 `0e35c8b` 保持永久冻结。
 
 ## 实施计划进度表
 
@@ -447,16 +487,17 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-A Supervisor/并行 worktree | P2 | **完成** | 双平台 lane=720/720、零残留 | 不自动 merge/release/deploy |
 | P2-B 生态与运行前置 | P2 | **完成** | 外部 consumer=7/7、Quality run 通过；Docker 历史项 record_only | 真实 CI receipt 需绑定新 candidate |
 | P2-C 证据/资格工具链 | P2 | **本地合同完成** | evaluator/qualification v2、dimension evidence、local collector、CLI/TUI/Git delivery contract 已通过 | 只接受 current-candidate 原生 receipt |
-| P2-C 0e35c8b/candidate-1 | P2 | **readiness Green，待单槽 canary** | 工程/identity、inputs、plan、operators、双平台 OCI、资源/目标/费用 Gate 全部通过；next worst=`36.60019944 RMB` | 仅运行 Windows attempt-1 首槽，终态后立即验真与清理 |
+| P2-C 0e35c8b/candidate-1 | P2 | **首槽基础设施失败，永久冻结** | Windows attempt-1 readiness 60 秒超时；report/fixture/Provider usage 均未生成；ledger=`processed 0 / unreportedInfrastructure 1 / candidate cost 0 / reserve +0.10 USD`；敏感 env 与资源清理完成 | 禁止重跑，不启动 WSL 槽；只保留冻结 evidence 供恢复与归因复算 |
+| P2-C Windows readiness state-root | P2 | **完成** | candidate fail-closed Gate、正负合同=`37/37`、benchmark verifier、build、全仓 `6554/6554` 已执行测试与零 Provider readiness 全部通过；敏感 env、端口和进程残留=`0` | 以新 commit identity 重建 candidate；旧 identity 保持冻结 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 ### 后续计划
 
-1. 仅运行一个 Windows 单槽 canary；形成 terminal 后立即验真 report/ledger、合规回收敏感 env 并复核资源归零。
-2. 只有 canary passed 且 usage 完整才准备下一小批；任一 product/infrastructure/no-report 终态立即冻结候选并进入诊断。
-3. 完成矩阵、aggregate、dimension evidence、qualification、七维 score 后，再组织第二个连续候选。
+1. 提交已闭环的 candidate state-root 修复并只推送 `private/main`，随后以新 commit identity 从双平台 staging、inputs、plan、operators、OCI 和费用/资源 Gate 重建 candidate；不得续跑 0e35c8b。
+2. 新 candidate 先执行一个 Windows canary；只有 passed 且 usage 完整才扩展小批，完成矩阵、aggregate、dimension evidence、qualification 和七维 score 后再组织第二个连续候选。
+3. candidate 资格通过后获取真实 CI/CLI/TUI/Git delivery receipt；两个连续候选均满足七维下限、raw weighted `>=9.500` 和全部 hard Gate 才完成 P2-C。
 
-先做 operators 和 plan，是因为它们决定候选分母、身份和恢复边界；当前仍缺的关键闭环是新 candidate 的完整 report/ledger、真实 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选。
+现在先重建新 candidate，是因为 state-root 修复已经完成测试、真实 readiness 和零残留闭环，只有新 commit identity 才能提供可采信的外部效果证据。当前仍缺的关键闭环是新 candidate 的完整 report/ledger、真实 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选。
 
 ### 重要问题说明
 
@@ -466,3 +507,6 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - expected-report 四层不存在探针首次因 PowerShell 空管道语法未执行；改为先构造结果数组后复核四层均不存在。该问题只影响只读探针编排，没有创建、覆盖或修改 candidate 输出，处理决策为 `fix_now completed`。
 - OCI 前置检查发现 Docker Desktop daemon 未运行，原生与 WSL wrapper 均只能读取 client 版本。已启动本机 Docker Desktop 并在 30 秒守卫内恢复 client/server=`29.1.3/29.1.3`；未修改 Docker 配置、镜像或旧候选，随后双平台 OCI 与零残留 Gate 均通过，处理决策为 `fix_now completed`。
 - 最终刷新首次调用 inputs verifier 时遗漏必需的 `platform/harness/input-root` 三个位置参数，两端均在参数断言处退出且未读取或修改 inputs。按 helper 实际 CLI 契约补齐参数后，Windows/WSL 分别重新通过 `4/4/8` 与四字段 identity；处理决策为 `fix_now completed`。
+- 0e35c8b Windows canary 的 Gateway readiness 在 60 秒守卫内没有开放端口，stdout/stderr 均为空；launcher 因此没有进入 Provider，ledger 以 `unreportedInfrastructure=1` 预留最坏 `0.10 USD`，candidate 永久冻结且未启动 WSL。后续禁止通过提高 timeout、retry 或重跑来改写终态；state-root 基础设施修复已闭环，旧终态保持不变，处理决策为 `fix_now completed`。
+- 原 env cleanup operator 错误要求 `.env` 与 `.env.local` 同时存在；本次正式槽只有 `.env`，导致首次清理验证失败。已改为两者可选但每个 task 至少命中一个，再按 containment、普通文件、非 reparse point 和 SHA-256 合规送回收站；处理决策为 `fix_now completed`。
+- 零 Provider 分段诊断显示主要瓶颈不是 FTS 单点死锁：完整 MemoryStore 在 E 盘约 12.4–13.8 秒，系统临时盘约 187ms，单事务 schema 实验仍约 12.7 秒且不采用；系统临时盘产品 launcher 已再次在 3.356 秒 auth-ready，并通过全仓回归和敏感 env/资源清理。当前判断为 E 盘冷 SQLite 写入易受宿主 I/O 争用放大，处理决策为 `fix_now completed`。

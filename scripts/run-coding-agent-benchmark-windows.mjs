@@ -189,6 +189,22 @@ export async function resolveWindowsBenchmarkSourceEnvironment(input, dependenci
   return { ...baseEnv, ...providerFileEnv };
 }
 
+export function assertWindowsCandidateStateRootInSystemTemp(input, dependencies = {}) {
+  if (input.candidateId === undefined && input.expectedReportPlanPath === undefined) return;
+
+  const resolvePath = dependencies.resolvePath ?? path.resolve;
+  const stateRoot = resolvePath(requireInput(input, "stateRoot"));
+  const systemTempRoot = resolvePath(dependencies.systemTempRoot ?? os.tmpdir());
+  const relative = path.win32.relative(systemTempRoot, stateRoot);
+  const isNested = relative !== ""
+    && relative !== ".."
+    && !relative.startsWith(`..${path.win32.sep}`)
+    && !path.win32.isAbsolute(relative);
+  if (!isNested) {
+    throw new Error("Windows benchmark candidate state root must be a child of the system temp directory.");
+  }
+}
+
 export function buildWindowsBenchmarkInvocation(input, dependencies = {}) {
   const resolvePath = dependencies.resolvePath ?? path.resolve;
   const workspaceRoot = resolvePath(requireInput(input, "workspaceRoot"));
@@ -464,6 +480,7 @@ export async function runWindowsBenchmark(input, dependencies = {}) {
     platform: "windows-native",
     manifestRevision: input.manifestRevision ?? "v1",
   }, dependencies);
+  assertWindowsCandidateStateRootInSystemTemp(input, dependencies);
   const baseEnv = await resolveWindowsBenchmarkSourceEnvironment(input, dependencies);
   const invocation = buildWindowsBenchmarkInvocation(input, {
     ...dependencies,
