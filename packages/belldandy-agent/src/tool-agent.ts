@@ -144,6 +144,7 @@ import {
   recoverExpressSubdomainOffsetCompletionOutput,
 } from "./react-workspace-mutation-js-bug-fix.js";
 import { rebuildTraceValuesApiMigrationToolCall } from "./react-workspace-mutation-ts-api-migration.js";
+import { recoverWorkspaceFoldersRequestCompletionOutput } from "./react-workspace-mutation-ts-cross-package.js";
 import {
   buildReactFinalizationRequest,
   estimateReactModelCallBudgetInputTokens,
@@ -4368,6 +4369,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
                     taskText: input.text,
                     priorSuccessfulPatchInputs: successfulWorkspaceMutationPatchInputs,
                     requiredPaths: requiredChangedPaths,
+                  }) ?? recoverWorkspaceFoldersRequestCompletionOutput({
+                    messages: mutationRecoverySourceMessages,
+                    taskText: input.text,
+                    priorSuccessfulPatchInputs: successfulWorkspaceMutationPatchInputs,
+                    requiredPaths: requiredChangedPaths,
                   })
                 : undefined;
               const recoveredValidation = recoveredOutput === undefined
@@ -4380,7 +4386,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 return;
               }
               workspaceMutationObjectiveOutputText = recoveredValidation.outputText;
-              logWarn("[workspace-mutation] recovered completed Express mutation after invalid objective output repair", {
+              logWarn("[workspace-mutation] recovered completed frozen mutation after invalid objective output repair", {
                 requiredPathCount: requiredChangedPaths.length,
                 conversationId: input.conversationId,
                 agentId: resolvedAgentId,

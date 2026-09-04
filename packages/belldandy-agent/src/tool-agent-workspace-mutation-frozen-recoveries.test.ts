@@ -29,6 +29,36 @@ describe("ToolEnabledAgent frozen product-failure recoveries", () => {
     expect(result.items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("finishes the exact WorkspaceFoldersRequest fix when both objective summaries remain malformed", async () => {
+    const scenario = workspaceFoldersRequestDirectFixMalformedSummaryScenario();
+    const result = await runScenario(scenario);
+
+    expect(result.executedPatches).toEqual([scenario.initialPatch]);
+    expect(result.finalSources[scenario.requiredPaths[0]!]).toContain(
+      "ProtocolRequestType0<WorkspaceFolder[] | null, never, void, void>",
+    );
+    expect(result.finalSources[scenario.requiredPaths[0]!]).not.toContain(
+      "ProtocolRequestType0<WorkspaceFolder[] | null | undefined, never, void, void>",
+    );
+    expect(result.items.at(-2)).toEqual({ type: "final", text: scenario.successJson });
+    expect(result.items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("keeps the exact WorkspaceFoldersRequest fix failed when its recovered summary is rejected", async () => {
+    const scenario = {
+      ...workspaceFoldersRequestDirectFixMalformedSummaryScenario(),
+      successJson: '{"summary":"a different contract-specific value"}',
+    };
+    const result = await runScenario(scenario);
+
+    expect(result.executedPatches).toEqual([scenario.initialPatch]);
+    expect(result.items.at(-2)).toEqual({
+      type: "final",
+      text: "required workspace mutation was not completed: the post-write objective review returned neither valid final JSON nor an allowed correction after its one phase-aware output repair.",
+    });
+    expect(result.items.at(-1)).toEqual({ type: "status", status: "error" });
+  });
+
   it("replaces the destructive Express objective correction with the frozen offset repair", async () => {
     const scenario = expressScenario();
     const result = await runScenario(scenario);
@@ -323,6 +353,51 @@ function traceValuesScenario(): Scenario {
       [protocolPath]: protocolSource.replaceAll("TraceValues", "TraceValue"),
     },
     mode: "recovery",
+  };
+}
+
+function workspaceFoldersRequestDirectFixMalformedSummaryScenario(): Scenario {
+  const requiredPath = "protocol/src/common/protocol.workspaceFolder.ts";
+  const baselineType = "\texport const type = new ProtocolRequestType0<WorkspaceFolder[] | null | undefined, never, void, void>(method);";
+  const completedType = "\texport const type = new ProtocolRequestType0<WorkspaceFolder[] | null, never, void, void>(method);";
+  const baseline = [
+    "import { WorkspaceFolder } from 'vscode-languageserver-types';",
+    "import { RequestHandler0, NotificationHandler, HandlerResult, CancellationToken } from 'vscode-jsonrpc';",
+    "import { MessageDirection, ProtocolRequestType0, ProtocolNotificationType, CM } from './messages';",
+    "",
+    "export namespace WorkspaceFoldersRequest {",
+    "\texport const method: 'workspace/workspaceFolders' = 'workspace/workspaceFolders';",
+    "\texport const messageDirection: MessageDirection = MessageDirection.serverToClient;",
+    baselineType,
+    "\texport type HandlerSignature = RequestHandler0<WorkspaceFolder[] | null, void>;",
+    "\texport type MiddlewareSignature = (token: CancellationToken, next: HandlerSignature) => HandlerResult<WorkspaceFolder[] | null, void>;",
+    "\texport const capabilities = CM.create('workspace.workspaceFolders', 'workspace.workspaceFolders');",
+    "}",
+    "",
+    "export namespace DidChangeWorkspaceFoldersNotification {",
+    "\texport const capabilities = CM.create(undefined, 'workspace.workspaceFolders.changeNotifications');",
+    "}",
+  ].join("\r\n");
+  const corrected = baseline.replace(baselineType, completedType);
+  const directPatch = [
+    "*** Begin Patch",
+    `*** Update File: ${requiredPath}`,
+    "@@",
+    `-${baselineType}`,
+    `+${completedType}`,
+    "*** End Patch",
+  ].join("\n");
+  return {
+    conversationId: "conv-frozen-ts-cross-package-direct-fix-malformed-summary",
+    taskText: "Reproduce the frozen cross-package regression, make the smallest source correction, and leave the repository's regression check passing. The frozen failure is verified by test/benchmark-v3/real-ts-cross-package-refactor.mjs. Restore the nullable WorkspaceFoldersRequest result contract without allowing undefined. Change only protocol/src/common/protocol.workspaceFolder.ts and do not modify tests or dependency metadata. Return exactly one JSON object with a non-empty summary.",
+    requiredPaths: [requiredPath],
+    successJson: '{"summary":"restored the nullable WorkspaceFoldersRequest result contract"}',
+    initialPatch: directPatch,
+    modelCorrectionPatch: directPatch,
+    baselineSources: { [requiredPath]: baseline },
+    postInitialSources: { [requiredPath]: corrected },
+    correctedSources: { [requiredPath]: corrected },
+    mode: "objective-output-repair",
   };
 }
 

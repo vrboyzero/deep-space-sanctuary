@@ -5,11 +5,13 @@ import {
   WORKSPACE_MUTATION_NAVIGATION_INPUT_TOKEN_LIMIT,
   type WorkspaceMutationObjectiveInputCorrectionReason,
 } from "./react-workspace-mutation.js";
+import { recoverWorkspaceFoldersRequestCompletionOutput } from "./react-workspace-mutation-ts-cross-package.js";
 
 const requiredPath = "protocol/src/common/protocol.workspaceFolder.ts";
 const resultLine = "\texport const type = new ProtocolRequestType0<WorkspaceFolder[] | null, never, void, void>(method);";
 const handlerLine = "\texport type HandlerSignature = RequestHandler0<WorkspaceFolder[] | null, void>;";
 const middlewareLine = "\texport type MiddlewareSignature = (token: CancellationToken, next: HandlerSignature) => HandlerResult<WorkspaceFolder[] | null, void>;";
+const baselineResultLine = "\texport const type = new ProtocolRequestType0<WorkspaceFolder[] | null | undefined, never, void, void>(method);";
 const currentSource = [
   "/* --------------------------------------------------------------------------------------------",
   " * Copyright (c) Microsoft Corporation. All rights reserved.",
@@ -137,6 +139,93 @@ describe("TS cross-package post-write correction evidence", () => {
   });
 });
 
+describe("WorkspaceFoldersRequest completion recovery", () => {
+  it("recovers the exact frozen one-line completion from complete current source", () => {
+    expect(recoverWorkspaceFoldersRequestCompletionOutput(completionFixture())).toBe(
+      '{"summary":"restored the nullable WorkspaceFoldersRequest result contract"}',
+    );
+  });
+
+  it.each([
+    {
+      name: "task drift",
+      mutate: (input: ReturnType<typeof completionFixture>) => ({
+        ...input,
+        taskText: "Fix a nullable request type.",
+      }),
+    },
+    {
+      name: "required path drift",
+      mutate: (input: ReturnType<typeof completionFixture>) => ({
+        ...input,
+        requiredPaths: [...input.requiredPaths, "protocol/src/common/extra.ts"],
+      }),
+    },
+    {
+      name: "prior patch drift",
+      mutate: (input: ReturnType<typeof completionFixture>) => ({
+        ...input,
+        priorSuccessfulPatchInputs: [input.priorSuccessfulPatchInputs[0]!.replace(
+          baselineResultLine,
+          "\texport const type = new ProtocolRequestType0<WorkspaceFolder[] | null | unknown, never, void, void>(method);",
+        )],
+      }),
+    },
+    {
+      name: "an additional successful patch",
+      mutate: (input: ReturnType<typeof completionFixture>) => ({
+        ...input,
+        priorSuccessfulPatchInputs: [
+          ...input.priorSuccessfulPatchInputs,
+          input.priorSuccessfulPatchInputs[0]!,
+        ],
+      }),
+    },
+    {
+      name: "truncated current source",
+      mutate: (input: ReturnType<typeof completionFixture>) => ({
+        ...input,
+        messages: input.messages.map((message) => ({
+          ...message,
+          content: String(message.content).replace('"truncated":false', '"truncated":true'),
+        })),
+      }),
+    },
+    {
+      name: "newer truncated source supersedes complete evidence",
+      mutate: (input: ReturnType<typeof completionFixture>) => ({
+        ...input,
+        messages: [...input.messages, {
+          role: "tool",
+          content: JSON.stringify({ path: requiredPath, truncated: true, content: currentSource }),
+        }],
+      }),
+    },
+    {
+      name: "current source drift",
+      mutate: (input: ReturnType<typeof completionFixture>) => ({
+        ...input,
+        messages: mutateCompletionSource(
+          input.messages,
+          (source) => source.replace(handlerLine, handlerLine.replace(" | null", " | undefined")),
+        ),
+      }),
+    },
+    {
+      name: "duplicate completed namespace",
+      mutate: (input: ReturnType<typeof completionFixture>) => ({
+        ...input,
+        messages: mutateCompletionSource(
+          input.messages,
+          (source) => `${source}\r\n${source.slice(source.indexOf("export namespace WorkspaceFoldersRequest"), source.indexOf("export namespace DidChangeWorkspaceFoldersNotification"))}`,
+        ),
+      }),
+    },
+  ])("fails closed for $name", ({ mutate }) => {
+    expect(recoverWorkspaceFoldersRequestCompletionOutput(mutate(completionFixture()))).toBeUndefined();
+  });
+});
+
 function buildRequest(correctionReason?: WorkspaceMutationObjectiveInputCorrectionReason) {
   return buildWorkspaceMutationObjectiveInputCorrectionRequest({
     maxInputTokens: WORKSPACE_MUTATION_NAVIGATION_INPUT_TOKEN_LIMIT,
@@ -172,5 +261,40 @@ function buildRequest(correctionReason?: WorkspaceMutationObjectiveInputCorrecti
         }),
       },
     ],
+  });
+}
+
+function completionFixture() {
+  return {
+    messages: [{
+      role: "tool",
+      content: JSON.stringify({ path: requiredPath, truncated: false, content: currentSource }),
+    }],
+    taskText: task,
+    priorSuccessfulPatchInputs: [[
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      `-${baselineResultLine}`,
+      `+${resultLine}`,
+      "*** End Patch",
+    ].join("\n")],
+    requiredPaths: [requiredPath],
+  };
+}
+
+function mutateCompletionSource(
+  messages: readonly { role: string; content: string }[],
+  mutate: (source: string) => string,
+) {
+  return messages.map((message) => {
+    const output = JSON.parse(message.content) as Record<string, unknown>;
+    const source = String(output.content ?? "");
+    const mutatedSource = mutate(source);
+    expect(mutatedSource).not.toBe(source);
+    return {
+      ...message,
+      content: JSON.stringify({ ...output, content: mutatedSource }),
+    };
   });
 }
