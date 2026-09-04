@@ -11,6 +11,7 @@
 5. 本轮仅完成诊断。按当前开发安排，暂不删除目录、不清理缓存、不关闭 WSL、不压缩 VHDX，待本阶段开发完成后再统一处理。
 6. 2026-08-13 复核显示，VHDX 已增长到约 `30.05 GiB`，Ubuntu-22.04 根文件系统实际使用约 `28 GiB`，D 盘仅剩约 `14.53 GiB`。本次复核把旧临时目录、历史 evidence、共享缓存和仍有未提交改动的 WSL 项目副本分开，形成了下方的候选清单；清单本身不等于删除授权。
 7. 2026-08-16 在 VHDX 增长到 `36.712 GiB`、D 盘仅剩 `7.878 GiB` 后完成 A1 精确清理与停机压缩：53 个 P0.31-P0.35/required-mutation 顶层目录经双重备份、54 个 Git 仓库 clean、零进程和零 worktree 引用核对后移除，ext4 实际释放 `8.310 GiB`；最终 VHDX 为 `29.088 GiB`，D 盘可用回升到 `15.502 GiB`。
+8. 2026-09-04 最新复盘显示容量问题已经再次显著扩大：C/D/E 分别已用 `406.52 / 298.74 / 469.54 GiB`；D 盘 VHDX 已重新增至 `53.011 GiB`，Ubuntu 实际已用约 `50.79 GiB`；E 盘仓库 `tmp/.tmp/artifacts` 已增至 `154.29 GiB`，连同 WSL 回滚资产、`.tmp-codex`、当前依赖/工具链和共享 pnpm store，已确认路径可解释约 `205.2 GiB`。本轮只做三盘逐路径盘点并保留证据，不执行清理，最新分类见第 8 节。
 
 技术债处理决策：`split_task`。容量根因和候选清单已闭合；实际处理拆为“低风险缓存”“历史 staging/evidence”“worktree/runtime”“VHDX 停机压缩”四个独立批次。原因是部分 WSL 目录仍承载 benchmark 证据、测试工作区、离线工具链或 Git worktree，不能用一次批量删除替代逐批授权和验证。
 
@@ -28,7 +29,7 @@
 | D 盘已使用 | `335,903,342,592 bytes` | `327,717,113,856 bytes` |
 | D 盘剩余 | `8,458,563,584 bytes`（`7.878 GiB`） | `16,644,792,320 bytes`（`15.502 GiB`） |
 
-本批已解除当前容量告急，但仍应避免无必要地重复运行全量 WSL benchmark。备份同步排除策略和一次受控 WSL 测试增量验证尚未闭合，继续重型测试前仍需确认剩余容量。
+上表只记录 2026-08-16 当批曾解除容量告急的历史结果；2026-09-04 容量已经再次增长，当前状态以第 8 节为准。仍应避免无必要地重复运行全量 WSL benchmark；备份同步排除策略和一次受控 WSL 测试增量验证尚未闭合，继续重型测试前仍需确认剩余容量。
 
 ### 2.2 项目相关主要占用（2026-08-13）
 
@@ -458,6 +459,148 @@ B0 删除前目录合计 `1,535,888 KiB`（约 `1.465 GiB`）；删除后 ext4 �
 - 测试数量为 `0`：未运行项目测试，未启动 formal、WSL2 或模型调用。
 - 已完成三目录字节、文件/目录数量、顶层条目和 Git worktree 数量核对；未执行任何清理或删除。
 
+## 8. 2026-09-04 C/D/E 三盘容量复盘（只读盘点完成）
+
+> 本节记录截至 2026-09-04 已经完成的只读盘点结论。当前没有执行清理、删除、移动、压缩、`git worktree prune` 或共享缓存回收；E 盘 `tmp`、`.tmp` 与 `artifacts` 的本轮全量扫描均已完成，因此以下数据用于冻结占用基线和保留边界，不代表这些空间都可释放。
+
+### 8.1 三盘容量基线
+
+| 盘符 | 总容量 | 已使用 | 剩余 | 当前判断 |
+| --- | ---: | ---: | ---: | --- |
+| C | `558.60 GiB` | `406.52 GiB` | `152.08 GiB` | SS 开发相关增量主要来自 Codex 会话、npm/pnpm/Docker 缓存；另有 `6.907 GiB` 远程桌面诊断 trace，但不能全部归因于 SS |
+| D | `320.71 GiB` | `298.74 GiB` | `21.97 GiB` | Ubuntu WSL VHDX 已从 2026-08-16 的 `29.088 GiB` 增至 `53.011 GiB`，是本轮最明确的 SS 相关增长点 |
+| E | `1000 GiB` | `469.54 GiB` | `530.46 GiB` | 仓库 `tmp/.tmp/artifacts` 当前合计 `154.29 GiB`；连同 WSL 回滚资产、`.tmp-codex`、当前依赖/工具链和共享 pnpm store，已确认路径约 `205.2 GiB`，但其中包含必须保留和非独占 SS 的共享数据 |
+
+说明：目录数据以逻辑大小为主。hardlink（硬链接）、共享缓存、回收站和动态 VHDX 会使“目录大小”“删除后 Linux 内可用空间”“最终返还 Windows 的空间”不同，以下数字不能直接相加当成可释放量。
+
+### 8.2 C 盘已确认路径
+
+| 路径 | 当前大小 | 分类 | 结论与处理边界 |
+| --- | ---: | --- | --- |
+| `C:\Users\admin\AppData\Local\Temp` | `11.43 GiB` | 混合占用 | 不能整目录清理；需按子目录、进程和写入状态拆分 |
+| `C:\Users\admin\AppData\Local\Temp\DiagOutputDir\RdClientAutoTrace` | 从 `6.760 GiB / 549 files` 增至 `6.907 GiB / 553 files` | 占用进程退出后可清理 | Ubuntu 停止后 `logman` 已无匹配采集会话，连续约 80 秒总字节稳定；但 `msrdc.exe` 仍持续触碰 3 个 `MSRDCEventProcessor_*.etl` 小文件，当前仍禁止直接删除 |
+| `C:\Users\admin\AppData\Local\Temp\cny1jl2q` | `2.03 GiB` | 可清理候选，需人工确认 | Visual Studio Installer 临时树，不是 SS 直接产物；确认无安装/更新进程后再处理 |
+| `C:\Users\admin\AppData\Local\Temp\m5uprlba` | `1.59 GiB` | 可清理候选，需人工确认 | 同上 |
+| `C:\Users\admin\AppData\Local\npm-cache` | `11.11 GiB` | 共享缓存，部分可清理 | `_cacache=8.64 GiB`、`_npx=2.48 GiB`；其中 `10.34 GiB` 早于 2026-08-20，9 月以来仅约 `0.18 GiB`，不能全部归因于本轮；当前 3 个 `_npx` 目录被 MCP Node 进程使用，禁止整棵处理 |
+| `C:\Users\admin\.codex` | `9.44 GiB` | 当前必须保留/用户决策 | `sessions=6.46 GiB`、`thread_history_1.sqlite=1.38 GiB`、`logs_2.sqlite=0.71 GiB`，9 月以来约 `2.72 GiB`；当前数据库和会话必须保留，历史会话是否归档由用户决定 |
+| Docker 的 `docker_data.vhdx` | `6.80 GiB`（Docker 目录共 `6.93 GiB`） | 当前部分保留 | 当前候选依赖 pinned Node OCI image，必须保留；约 `3.306 GB` build cache 可在候选闭环后由 Docker 自身清理，禁止直接删除 VHDX |
+| `C:\Users\admin\AppData\Local\pnpm` | `2.34 GiB` | 共享缓存，需工具化 review | 当前开发仍可能复用，只能使用 pnpm 支持的 prune/review 流程 |
+| C 盘回收站 | 约 `145 MiB` | 非关键 | 体量较小，不是本轮主要增长点 |
+
+### 8.3 D 盘 / Ubuntu WSL 已确认路径
+
+| 路径 | 当前大小 | 分类 | 结论与处理边界 |
+| --- | ---: | --- | --- |
+| `D:\WSL\Ubuntu-22.04\ext4.vhdx` | `56,919,851,008 bytes`（`53.011 GiB`） | 容器文件，禁止直接删除 | Ubuntu 文件系统实际已用 `54,533,861,376 bytes`（约 `50.79 GiB`）；相比 2026-08-16，VHDX 增长约 `23.923 GiB`，实际已用增长约 `23.97 GiB`，主要是真实文件增长，不只是未压缩空洞；最终采样时 Ubuntu 为 Stopped |
+| `/var/tmp` | `25,404,588,032 bytes`（约 `23.66 GiB`） | 混合占用 | 是 P2C、toolchain 和历史测试 staging 的主要落点，不能按父目录整棵处理 |
+| `/home/vrboyzero` | `25,776,734,208 bytes`（约 `24.01 GiB`） | 混合占用 | 含当前开发 clone、依赖和用户目录，不能整棵处理 |
+| `/var/tmp/star-sanctuary-p2c-*` | 聚合约 `14.17 GiB` | 当前候选与历史副本混合 | 当前保留组与历史候选必须分开处理 |
+| P2C 当前保留组：`0e35c8b`、`4d3b4b2` 的 staging/inputs/repaired cache/toolchain，以及 `/var/tmp/star-sanctuary-p2c-local-evidence-20260902` | 合并目录视角约 `2.756 GiB` | 当前必须保留 | `0e35c8b` 尚未形成正式 artifact；`4d3b4b2` 是计划要求冻结的终态 identity；本地 evidence 和复算前置不可先删 |
+| 其余旧 P2C 顶层目录 | `51` 个，合并目录视角约 `11.773 GiB` | 高优先级清理候选 | 16 份 P2C staging Git 状态已确认 clean；仍需逐目录排除 artifact/计划引用、进程和 hardlink 后再形成 dry-run，逻辑大小不等于实际释放量 |
+| `/var/tmp/star-sanctuary-coding-agent-v3` 与 pinned Go/gopls | 合计约 `3.586 GiB` | 当前必须保留 | 当前测试/复算工具链前置；不得并入旧 staging 清理 |
+| `/var/tmp/star-sanctuary-p0-required-mutation-*` | 约 `1.949 GiB` | 需继续核对 | 属于历史测试材料；尚未完成证据替代、引用与进程闭环，当前不列为可直接清理 |
+| `/home/vrboyzero/projects/star-sanctuary` | 约 `3.85 GiB` | 当前必须保留 | 相对上游 ahead `40`，且有 `1` 个 status entry；是未完全同步的开发 clone，不能删除 |
+| 历史 P0A matrix、P1 runtime 和 clean clone | 见第 6 节既有明细 | `hold/review` | 继续沿用既有保留边界，不因本轮空间压力降低核验门槛 |
+
+### 8.4 E 盘已确认路径
+
+| 路径 | 当前大小 | 分类 | 结论与处理边界 |
+| --- | ---: | --- | --- |
+| `E:\WSL-backups` | `45.457 GiB` | 用户决策/回滚资产 | 含 `ext4.vhdx=36.71 GiB`、`cleanup-r1-candidates.tar=8.75 GiB`；是 2026-08-16 回滚资产，不是当前运行必需，但只有用户明确放弃该恢复点后才能处理 |
+| `E:\project\star-sanctuary\tmp` | `121,525,902,086 bytes`（`121.53 GB / 113.18 GiB`） | 历史测试/工作副本混合 | 共 `8,133,112` 个文件、`1,228,095` 个目录、`1,426` 个顶层条目，扫描错误 `0`；比 2026-08-20 增加 `35,257,013,063 bytes`（约 `32.84 GiB / 40.87%`），不能整棵处理 |
+| `tmp\p0-web-*` | `47,794,586,832 bytes`（`44.51 GiB`，`676` 项） | 需按 revision 分类 | 当前 `tmp` 最大组；大量约 `0.58 GiB` 的 `*-clean` 副本疑似可再生成，但正式 evidence、计划引用与 worktree 关系尚未逐项闭合 |
+| `tmp\p0-required-*` | `31,730,736,475 bytes`（`29.55 GiB`，`333` 项） | 需按 revision 分类 | 历史 required/mutation 测试材料；当前不能把全部 `clean` 命名目录直接视为可删 |
+| `tmp\p0-native-*` | `21,828,807,322 bytes`（`20.33 GiB`，`58` 项） | 需按 fixture/source 分类 | 最大 3 份 fixture 各约 `4.30 GiB`，另有多份约 `2.32 GiB`/`1.55 GiB` fixture；需先确认是否有正式证据或唯一复算输入 |
+| `tmp\p1-*` | `3,834,874,819 bytes`（`3.57 GiB`，`27` 项） | `hold/review` | 主要大项为 P1-A1 code-intel r9-r12，各约 `0.70 GiB`；继续沿用既有 source/runtime/evidence 核验门槛 |
+| `tmp\coding-agent-*` | `2,357,707,372 bytes`（`2.20 GiB`，`7` 项） | 需分类 | `coding-agent-v3-validation` 单项约 `1.58 GiB`；需核对当前测试引用和可再生成性 |
+| `tmp` 其他项 | `2,516,861,823 bytes`（`2.34 GiB`，`290` 项） | 需分类 | 待按路径、计划引用和文件类型继续拆分 |
+| `E:\project\star-sanctuary\tmp\p2c-*` | `10.675 GiB` | 历史工作副本候选 | 主要为 `p2c-df54f67=4.965 GiB`、`p2c-378a70e=2.400 GiB`、`p2c-e05ddc4=0.948 GiB`、`p2c-c02eef7=0.810 GiB`；需先核对 worktree、正式证据和引用 |
+| `E:\project\star-sanctuary\.tmp` | `36,416,054,971 bytes`（`36.42 GB / 33.92 GiB`） | harness/worktree/fixture 混合 | 共 `2,197,859` 个文件、`325,891` 个目录、`218` 个顶层条目，扫描错误 `0`；比 2026-08-20 增加 `9,666,388,066 bytes`（约 `9.00 GiB / 36.14%`），不能整棵处理 |
+| `.tmp\p0-native-*` | `16,225,240,673 bytes`（`15.11 GiB`，`26` 项） | 历史 harness，需逐 identity 核对 | 每份约 `0.58-0.60 GiB`；其中 `edd1c87` 对应最近完整 `144/144` 历史基线，不能在正式 evidence/复算边界闭合前一概删除 |
+| `.tmp\p0a-*` | `5,544,362,067 bytes`（`5.16 GiB`，`66` 项） | `hold/review` | 包含 r5-r13 harness/source/formal/preflight；继续沿用第 6 节已记录的 dirty、WSL-only evidence 和 hardlink 保留边界 |
+| `.tmp\p0-required-*` | `3,178,511,572 bytes`（`2.96 GiB`，`55` 项） | fixture/runtime 混合 | 大部分单项 fixture 约 `0.12 GiB`，runtime 较小；需先证明 fixture 可由固定 source/lock/producer 重建 |
+| `.tmp\p1a-*` | `1,652,378,790 bytes`（`1.54 GiB`，`23` 项） | `hold/review` | 主要是 r12 control/implementation source 各约 `0.64 GiB` 及 r13 source；既有 P1-A1 身份和 evidence 边界未关闭 |
+| `E:\project\star-sanctuary\.tmp` 下 15 份 P2C harness | `9.003 GiB` | 当前 2 份保留，其余候选 | `0e35c8b=0.611 GiB` 与冻结的 `4d3b4b2=0.611 GiB` 必须保留；其余 13 份约 `7.78 GiB`，均为 clean detached，但其中 6 份仍登记为 Git worktree，必须走 Git 支持流程 |
+| `E:\project\star-sanctuary\artifacts` | `7,730,129,568 bytes`（`7.73 GB / 7.20 GiB`） | 正式证据与可再生成输出混合 | 共 `280,976` 个文件、`48,108` 个目录、`507` 个顶层条目，扫描错误 `0`；比 2026-08-20 仅增加 `37.55 MiB` |
+| `artifacts\winget`、`_cache`、`single-exe*`、`portable*`、`start-sh-envdir*` | 合计 `7,277,923,963 bytes`（`6.78 GiB`） | 大型可再生成输出候选 | 分别约 `2.04 / 2.02 / 1.38 / 0.77 / 0.57 GiB`；需确认当前发布/测试无引用并保留生成入口后，才能按独立批次处理 |
+| `E:\project\star-sanctuary\artifacts\p2c-*` | 14 份、`34,907,863 bytes`（`33.29 MiB`） | 必须保留 | 体积小、属于正式证据；工作副本可核验处理，不代表 artifact 可一并删除 |
+| `artifacts` 中其余 coding-agent/P0/P0A/P1 evidence | 五类大型输出之外合计约 `0.42 GiB` | 默认保留，逐项 review | 包含 baseline、formal、manifest、report、trace、receipt 与历史失败诊断；释放收益小，不应为腾空间优先处理 |
+| 当前 `0e35c8b` 材料 | harness=`0.611 GiB`；inputs=`12,271 bytes`；正式 artifact 尚不存在 | 当前必须保留 | 当前候选尚未闭环，任何组成部分都不能先删 |
+| 冻结 `4d3b4b2` 材料 | harness=`0.611 GiB`；tmp=`0.002 GiB`；artifact=`183,133 bytes` | 当前必须保留 | 计划要求永久冻结 `2/144` 终态，当前先整体保留 |
+| `E:\project\star-sanctuary\.tmp-codex` | `1.989 GiB` | 可清理候选 | `external-reviews=1.358 GiB`、`wsl-wave0=0.621 GiB`；未发现计划文档引用，两个 Git repo 均 clean，仍需最终进程/引用检查 |
+| `E:\.pnpm-store` | `2.627 GiB` | 共享缓存，需工具化 review | 不可按目录直接删除，只能用 pnpm 支持流程评估 |
+| 仓库根 `node_modules` | `0.554 GiB` | 当前必须保留 | 当前开发和测试依赖 |
+| `E:\ss-toolchains` | `0.273 GiB` | 当前必须保留 | 当前测试工具链前置 |
+| E 盘回收站 | `7.32 GiB` | 主要为非 SS 占用 | SS 相关仅 `604` 项、`9,452,935 bytes`；其余主要来自 `E:\project\SWB_svn_wc`，不得归因或纳入本项目处理 |
+
+Git worktree 当前共 `117` 个，其中 `tmp` 下 `67` 个、`.tmp` 下 `41` 个，P2C 相关登记项为 `378a70e`、`75502b6`、`bf1a481`、`c02eef7`、`df54f67`、`e05ddc4`。即使对应目录 Git 状态 clean，也不能用文件系统直接删除代替 `git worktree remove/prune` 的受控流程。
+
+按登记项阶段分组，`117` 个 worktree 包括 `p0-web=42`、`p0-native=25`、`p0-required=25`、`p0a=10`、`p2c=6`、其他=`9`；前五组均为 detached，另有 `7` 个其他登记项标记为 prunable。`prunable` 只说明 Git 元数据状态，不证明目录内容已有可恢复替代，仍不能据此直接删除。
+
+`tmp` 当前最大的单目录依次包括：`p2c-df54f67=4.97 GiB`、`p0-native-6801ed7-fixtures=4.30 GiB`、`p0-native-edd1c87-fixtures=4.30 GiB`、`p0-native-1523546-fixtures=4.30 GiB`、`p2c-378a70e=2.40 GiB`、`p0-native-1f7d10b-fixtures=2.32 GiB`、`p0-native-52ffc7b-fixtures=2.31 GiB`、`coding-agent-v3-validation=1.58 GiB`、`p0-native-e4b5b28-fixtures=1.55 GiB`。这些路径用于人工定位，不改变各自的保留/核验等级。
+
+本轮同口径扫描确认 `tmp/.tmp/artifacts` 合计 `165,672,086,625 bytes`（`165.67 GB / 154.29 GiB`）、`10,611,947` 个文件、`1,602,094` 个目录和 `2,151` 个顶层条目，扫描错误均为 `0`。相比 2026-08-20，三目录合计增加 `44,962,775,402 bytes`（约 `41.88 GiB / 37.25%`），其中 `tmp` 增加约 `32.84 GiB`、`.tmp` 增加约 `9.00 GiB`、`artifacts` 只增加约 `37.55 MiB`。
+
+将三目录与 `E:\WSL-backups=45.457 GiB`、`.tmp-codex=1.989 GiB`、`E:\.pnpm-store=2.627 GiB`、根 `node_modules=0.554 GiB`、`E:\ss-toolchains=0.273 GiB` 合并，可解释约 `205.2 GiB` 的 E 盘占用。这个数是已确认路径的占用账单，不是可清理量：其中 WSL backup 取决于用户的回滚选择，pnpm store 是共享缓存，当前依赖/toolchain 与正式 evidence 必须保留。
+
+### 8.5 当前保留与候选边界
+
+**当前必须保留**：正在推进的 `0e35c8b` 候选全部材料、冻结 identity `4d3b4b2` 的完整材料、全部正式 P2C artifact、P2C 本地 evidence、`tmp\coding-agent-v3-sources`/`coding-agent-v3-caches`、pinned Node/Go/gopls 与 `E:\ss-toolchains`、仓库根依赖、当前 Codex 数据、WSL 中 ahead/dirty 的开发 clone，以及第 6 节仍为 `hold/review` 的历史唯一证据。当前计划已明确 `0e35c8b` 双平台 inputs=`4/4/8` 通过，下一步尚需 operators 和首次预冻结 expected-report plan；因此任何 `0e35c8b` 路径都不能先处理。
+
+**优先清理候选，但本轮不执行**：占用进程退出后的 `RdClientAutoTrace` 旧 ETL；确认对应安装器退出后的两个 Visual Studio 临时树；D 盘约 `11.773 GiB` 的 51 个旧 P2C 顶层目录；E 盘约 `10.675 GiB` 的旧 P2C 工作目录、约 `7.78 GiB` 的 13 份旧 harness、约 `6.778 GiB` 的大型可再生成 artifact 和约 `1.989 GiB` 的 `.tmp-codex`。`.tmp-codex` 两个 Git repo 均为 clean，且未发现非 shell 进程引用。上述候选跨三盘逻辑上限约 `49.52 GiB`；受 hardlink、VHDX 和运行占用影响，这不是实际释放承诺。每一批仍需单独输出精确路径、引用/进程/worktree/hardlink 检查和 dry-run。
+
+13 个旧 P2C harness identity 为 `2b1d91a`、`378a70e`、`3bb1901`、`3f66b71`、`526ee78`、`576a7dc`、`75502b6`、`9787b4c`、`bf1a481`、`c02eef7`、`df54f67`、`e05ddc4`、`f01f173`；E 盘均存在同 identity 正式 artifact，harness 均已核对为 clean detached。对应 `tmp\p2c-*`、`tmp\p2c-candidate-*-inputs`、`.tmp\p2c-candidate-*-harness` 和 WSL staging/cache/runtime 应按 identity 成组核对，不能只删其中一个同名父目录。
+
+**深度核验池，当前不算可清理**：E 盘 `tmp/.tmp` 排除 P2C 后约 `127.42 GiB` 的历史 P0/P0A/P1 与 coding-agent 材料。这里包含大量 `*-clean`、fixture、harness、source、runtime 和 preflight，长期看可能有较高可回收比例；但目前仍混有 `edd1c87` 完整基线、WSL-only evidence、dirty 历史 worktree 和共享复算输入，必须逐 identity 完成 artifact 替代与 Git 状态证明。
+
+**需用户决定或工具化处理**：`E:\WSL-backups` 是否继续保留；若用户放弃该 2026-08-16 恢复点，可再增加 `45.457 GiB` 候选，使上述两组合计逻辑上限约 `94.98 GiB`。Codex 历史会话是否归档也由用户决定。C/E 两盘 npm、pnpm 与 Docker build cache 的账面上限约 `19.16 GiB`，但包含当前进程正在使用的 3 个 `_npx` 目录、当前 OCI image 和共享 store，只能由各工具按使用状态回收，不能整棵删除。
+
+**非 SS 或不能归因于本轮**：Visual Studio Installer 临时树、远程桌面 trace、E 盘回收站中绝大部分 `SWB_svn_wc` 内容，以及 npm cache 中 2026-08-20 之前的 `10.34 GiB`。这些可提示用户检查，但不能计入 SS 可释放承诺。
+
+#### 三盘容量复盘实现结论：C/D/E 只读盘点与保留分层（2026-09-04）
+
+##### 已完成内容
+
+1. **`D盘容易增大问题与处理方法.md` 扩展**：
+   - 记录 C/D/E 最终容量基线与主要占用路径，补齐当前大小、归因、保留等级和处理前置。
+   - 对 `tmp/.tmp/artifacts` 完成同口径单次扫描，记录总字节、文件/目录数、阶段聚合和最大单目录。
+   - 将当前 `0e35c8b`、冻结 `4d3b4b2`、正式 evidence、历史 P2C、共享缓存、回滚资产、非 SS 占用和深度核验池分层。
+
+2. **运行状态与边界复核**：
+   - 复核 Ubuntu/VHDX、远程桌面 trace、Visual Studio/Qoder 安装器、npm `_npx`、Git worktree、`.tmp-codex` Git 状态和 P2C 相关进程。
+   - 确认 `117` 个 worktree 的阶段分组、13 个旧 P2C harness 的 clean detached 状态及对应正式 artifact 存在性。
+
+3. **效果**：
+   - C/D/E 的大额占用已从盘符总量收敛到可人工检查的明确路径；E 盘约 `205.2 GiB` 已确认占用得到解释。
+   - 当前必须保留项与逻辑上限约 `49.52 GiB` 的优先候选已分离；另有 `45.457 GiB` 回滚资产由用户决定。
+   - 约 `127.42 GiB` 历史材料被明确隔离为深度核验池，不因空间压力错误标记为可直接清理。
+
+##### 验证结果
+
+- TypeScript 编译不适用：本轮只读盘点并修改 Markdown 文档，未修改源码或接口。
+- 测试数量为 `0`：未运行会重新生成大体量 artifact/cache 的项目测试。
+- `tmp/.tmp/artifacts` 共 `10,611,947` 个文件、`1,602,094` 个目录，三次扫描错误均为 `0`；文档 `git diff --check` 通过。
+- 容量扫描进程均已退出，`.capacity-scan-sink` 不存在；未执行删除、移动、压缩、cache prune 或 `git worktree prune`。
+
+技术债处理决策：`split_task`。约 `127.42 GiB` 的历史 P0/P0A/P1/coding-agent 材料不纳入本轮优先候选，原因是 evidence 替代、dirty worktree、共享输入和 hardlink 实际块尚未逐 identity 闭合；未来应按阶段拆成独立只读 manifest 与清理授权批次。
+
+## 重要问题说明
+
+1. **C 盘远程桌面 trace 曾持续增长，主体当前已停但仍有活动句柄风险**：盘点期间从 `6.760 GiB / 549 files` 增至 `6.907 GiB / 553 files`；Ubuntu 停止后 `logman` 已无匹配 trace session，连续约 80 秒总字节不变，主体 Wpp ETL 最后写入停在 `18:52:41`。但一个 `msrdc.exe` 仍运行，并每隔数秒触碰 3 个总计 `8 KiB` 的 `MSRDCEventProcessor_*.etl`。处理方案是先关闭对应远程桌面/WSLg 占用，再把旧 ETL 列入人工清理；当前仍禁止边用边删。
+2. **D 盘增长主要是真实 WSL 文件，不是单纯 VHDX 空洞**：VHDX 与 Ubuntu 实际已用量相对 2026-08-16 都增长约 `24 GiB`。处理方案是先处理已核验的历史 staging，再执行 Linux 内 `fstrim` 和 WSL 完全停机后的 VHDX 压缩；只删除 Linux 文件不会立即等量返还 D 盘。
+3. **目录逻辑大小存在 hardlink 重复计算**：P2C staging/harness 之间可能共享文件块，多个目录数字相加只能表示审计上限。处理方案是清理前按 inode/link 或 Windows hardlink 关系复算，清理后分别用文件系统已用量和 VHDX 大小验证实际收益。
+4. **Git worktree 不能当普通文件夹处理**：当前登记 `117` 个 worktree，分组为 P0 Web `42`、P0 Native `25`、P0 Required `25`、P0A `10`、P2C `6`、其他 `9`；旧 P2C 候选中仍有 6 份登记项。处理方案是先核对 clean/dirty、HEAD、artifact 替代和当前引用，再使用 Git 支持的 remove/prune 流程；禁止直接递归删除。
+5. **只读扫描本身会放大诊断 trace**：WSL `du` 扫描遇到 `tmp` 下数百个大型顶层目录，预计耗时数小时，并持续触发 C 盘 trace。已停止本任务创建的 WSL 扫描 PID `344`；可选的 Windows `du.exe` 探针确认工具不存在后，不再重试，改用一次遍历的 Windows 原生统计。未停止或修改用户其他进程。
+6. **诊断命令出现四类可重复规避的问题**：PowerShell 的 `foreach { ... } | Format-Table` 产生空管道语法错误，且在 `.tmp-codex` Git 状态探针中复发；固定方案是先赋值 `$rows = foreach (...) { ... }` 再输出。多字段 `Sort-Object PSIsContainer -Descending, Name` 也因参数结构非法而失败，已改为显式 property expression。Robocopy 摘要最初未对行首 `Trim()`，误把 `:` 当数字，已修正解析；WSL 内嵌 shell 的 `\n` 与 `$d` 跨 PowerShell/WSL 边界失真，已改为直接传 argv 并逐路径调用。以上均为只读探针失败，没有删除或改写磁盘内容。
+7. **E 盘约两百 GiB 的来源已经解释，但可释放量尚未闭环**：`tmp/.tmp/artifacts` 同口径总量为 `154.29 GiB`，另有 WSL 回滚资产等已确认路径，合计约 `205.2 GiB`。增长主要发生在 `tmp` 的 P0 多轮副本与 `.tmp` 的 P2C harness，不在正式 `artifacts`；处理方案是按 current/frozen identity、正式 evidence、历史 clean worktree、可再生成 fixture/build output 分层，完成引用与 hardlink 去重后才计算释放区间。
+8. **C 盘 Temp 仍有其他安装器活动，不能整棵处理**：最终进程核对没有发现 Visual Studio Installer 或 `msiexec`，但发现两个 QoderSetup 进程分别位于 `Temp\vscode-stable-user-x64` 与 `Temp\is-B37VC.tmp`，与两个 Visual Studio 临时树不是同一路径。处理方案是只把 `cny1jl2q`、`m5uprlba` 作为精确候选，并在人工处理当时再次检查句柄；禁止把整个 `Temp` 目录作为目标。
+
+## 后续计划（2026-09-04）
+
+`E:\project\star-sanctuary\tmp`、`.tmp` 与 `artifacts` 的单次原生扫描已经完成；current/frozen P2C identity、正式 artifact、历史 P2C 候选和 worktree 登记也已分开。若后续准备实际处理，下一步应先为约 `49.52 GiB` 的优先候选生成精确只读 manifest/dry-run；为什么先做它：这批收益明确、与约 `127.42 GiB` 的深度核验池隔离，最容易在不触碰当前候选和唯一 evidence 的前提下复核。
+
+随后由用户决定是否保留 `E:\WSL-backups`，并另行决定是否对共享缓存和 Codex 历史会话做工具化归档。当前还缺的关键闭环不是占用来源，而是候选之间的 hardlink 实际块去重、处理当时的进程/句柄终检，以及 Linux 删除后通过 `fstrim`/停机压缩实际返还 D 盘的验证；这些属于未来清理批次，不在本轮只读盘点范围。本轮仍不执行任何清理。
+
 ## 实施计划进度表
 
 | 阶段 | 状态 | 结果/下一步 |
@@ -471,4 +614,5 @@ B0 删除前目录合计 `1,535,888 KiB`（约 `1.465 GiB`）；删除后 ext4 �
 | 备份同步策略修正 | 待开始 | 评估排除 `artifacts/`，删除同步能力必须显式且可 dry-run |
 | VHDX 受控压缩 | 已完成 | `fstrim` 与 `Optimize-VHD -Mode Full` 成功；最终 VHDX=`29.088 GiB`、D 盘剩余=`15.502 GiB`，整盘/精确目录两级回滚资产已校验 |
 | 容量与开发环境回归验证 | 进行中 | Ubuntu/ext4、Git、Node、pnpm、Go、gopls 最小 smoke 已通过；仍需观察一次受控 WSL 测试的容量增量后关闭长期治理问题 |
-| `tmp/.tmp/artifacts` 四级保留分层 | 已完成分析，尚未清理 | 三目录合计 `120.71 GB`；C0/C1 继续保留，C2/C3 需逐项 manifest、hash、引用、进程和敏感扫描核对；本轮不删除 |
+| `tmp/.tmp/artifacts` 四级保留分层 | 已完成分析，尚未清理 | 2026-08-20 基线为三目录合计 `120.71 GB`；C0/C1 继续保留，C2/C3 需逐项 manifest、hash、引用、进程和敏感扫描核对；本轮不删除 |
+| 2026-09-04 C/D/E 三盘复盘 | 已完成盘点，未清理 | `tmp/.tmp/artifacts=154.29 GiB` 同口径扫描错误=`0`，E 盘约 `205.2 GiB` 已确认路径可解释；当前必留、优先候选约 `49.52 GiB`、用户决策、共享缓存、非 SS 和约 `127.42 GiB` 深度核验池已分层，实际释放量留待获授权后的独立批次验证 |
