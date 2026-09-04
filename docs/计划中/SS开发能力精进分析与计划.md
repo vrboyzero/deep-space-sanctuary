@@ -746,11 +746,12 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - TDD 红灯已复现原始症状（首次 `fs.rename` `EPERM`）；修复后 `workspace-change-snapshot.test.ts`=`24/24`、`atomic-file-replace.test.ts`=`2/2`。
 - `corepack pnpm build` 与 `corepack pnpm verify:coding-benchmark` 均通过，`git diff --check` 通过；本修复未运行 Provider、未改变旧候选 report/ledger/evidence。
 - 全仓 `corepack pnpm test` 完成：测试文件=`996 passed / 2 failed / 2 skipped`，测试用例=`6554 passed / 2 failed / 3 skipped`。两个失败分别为 dist restart local fixture 状态断言和 browser prompt 长场景 120 秒超时；随后隔离复跑均为 `1/1 passed`，未复现稳定回归。全仓结果不记为全绿，保留为并发资源争用风险。
-- 当前仍待提交与新 candidate 双平台 Gate；在新 identity 完成全部资格闭环前不宣称候选资格恢复。
+- 实现与本阶段进度已提交为 `8f794af`，并从本地 `main` 推送到 `private/main`；`origin/main`、用户现有 `AGENTS.md`/D 盘说明改动和 `tmp-codeintel-summary.json` 均未触碰。
+- 当前仍待 `8f794af` 新 candidate 双平台 Gate；在新 identity 完成全部资格闭环前不宣称候选资格恢复。
 
 ##### 后续计划
 
-提交修复并只推送 `private/main`，以新 commit identity 重建双平台 candidate；重新完成运行前 Gate、Windows canary、渐进矩阵、aggregate、dimension evidence、qualification 与七维 score。全量并发下的两项偶发失败继续保留监测，不扩大为本轮无关测试重构。
+以 `8f794af` 为冻结 source identity 重建双平台 candidate；重新完成运行前 Gate、Windows canary、渐进矩阵、aggregate、dimension evidence、qualification 与七维 score。全量并发下的两项偶发失败继续保留监测，不扩大为本轮无关测试重构。
 
 ## 实施计划进度表
 
@@ -770,12 +771,12 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C 证据/资格工具链 | P2 | **本地合同完成** | evaluator/qualification v2、dimension evidence、local collector、CLI/TUI/Git delivery contract 已通过 | 只接受 current-candidate 原生 receipt |
 | P2-C 0e35c8b/candidate-1 | P2 | **首槽基础设施失败，永久冻结** | Windows attempt-1 readiness 60 秒超时；report/fixture/Provider usage 均未生成；ledger=`processed 0 / unreportedInfrastructure 1 / candidate cost 0 / reserve +0.10 USD`；敏感 env 与资源清理完成 | 禁止重跑，不启动 WSL 槽；只保留冻结 evidence 供恢复与归因复算 |
 | P2-C Windows readiness state-root | P2 | **完成并交付 private/main** | candidate fail-closed Gate、正负合同=`37/37`、benchmark verifier、build、全仓 `6554/6554` 已执行测试与零 Provider readiness 全部通过；commit=`6ec5db3`，敏感 env、端口和进程残留=`0` | 旧 identity 保持冻结；新候选不得回退该修复 |
-| P2-C 6ec5db3/candidate-1 | P2 | **batch 03 已冻结，13/144（3 passed + 1 product_workflow failure）；Fix Mode 修复与回归完成，待提交** | resume=`13/144`、remaining=`131`、unreported infrastructure=`0`；env/资源清理闭合；t13 `EPERM rename` evidence 已冻结；定向回归=`24/24`、workspace build 与 benchmark contract 通过；全仓=`6554 passed / 2 failed / 3 skipped`，两项隔离复跑均通过 | 提交后以新 identity 重建双平台 candidate，旧 identity 不得重跑或启动 WSL |
+| P2-C 6ec5db3/candidate-1 | P2 | **batch 03 已冻结，13/144（3 passed + 1 product_workflow failure）；Fix Mode 修复已交付 private/main** | resume=`13/144`、remaining=`131`、unreported infrastructure=`0`；env/资源清理闭合；t13 `EPERM rename` evidence 已冻结；定向回归=`24/24`、workspace build 与 benchmark contract 通过；全仓=`6554 passed / 2 failed / 3 skipped`，两项隔离复跑均通过；fix commit=`8f794af` | 以 `8f794af` 重建双平台 candidate，旧 identity 不得重跑或启动 WSL |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 ### 后续计划
 
-1. 将修复提交并只推送 `private/main`（不触碰 `origin/main`）；以新 commit identity 重建双平台 staging、inputs、plan、operators、OCI 和费用/资源 Gate。
+1. 以 `8f794af` 重建双平台 staging、inputs、plan、operators、OCI 和费用/资源 Gate；旧 `6ec5db3/candidate-1` 保持冻结。
 2. 新 candidate 先执行 Windows canary，再按失败即冻结策略渐进完成矩阵、aggregate、dimension evidence、qualification、七维 score 及真实 CI/CLI/TUI/Git delivery receipt。
 3. 两个连续候选均须满足七维下限与 raw weighted `>=9.500`；全量并发下两项已隔离通过的偶发失败继续监测，若新 identity 再现则重新进入 Fix Mode。
 
