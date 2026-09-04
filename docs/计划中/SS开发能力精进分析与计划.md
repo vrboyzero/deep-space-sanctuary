@@ -200,7 +200,7 @@ Go canary 的正式边界是：goCanaryEligible=true、productionEligible=false�
 - Windows repository inputs 已独立验证 repositories/receipts/preflights=4/4/8，config SHA-256=251895ff6b6ffc88e0b0e575f8a3bcd2686af3fc7875ef2b0e7c53f3ccea60c8。
 - WSL2 repository inputs 已由 production owner 唯一发布并独立验证 4/4/8，config SHA-256=ffaa88c3f3de2fe5948cd352ce89537a5eca37e114df484b9c78309ec31666c4；平台路径不同导致 config hash 不同是预期，四字段 identity 仍须相同。
 - 最新第 819 条记录已修复 WSL verifier 的 shell 引号问题；已发布 output 保持只读，本轮未启动 Gateway、runner、formal 或 Provider。
-- 当前尚未为该新 candidate 重新生成 expected-report plan、operators、OCI/资源/费用 Gate、144 个终态、aggregate/qualification/score，旧 candidate 的 plan、ledger 和 report 不得复用。
+- 当前 candidate 已首次生成并冻结 expected-report plan，operators 的静态 provenance、首槽映射和 terminal policy 已通过；OCI/资源/费用 Gate、144 个终态、aggregate/qualification/score 尚未完成，旧 candidate 的 plan、ledger 和 report 不得复用。
 
 ## 5. 历史失败与问题压缩摘要
 
@@ -305,7 +305,7 @@ Go canary 的正式边界是：goCanaryEligible=true、productionEligible=false�
 
 SS 已经能够在做事前检查、做事后验证、发生错误时停止、程序中断后恢复，并通过多入口共享同一安全边界。当前评分约 9.1，复杂真实任务的完成率仍不足以支持 9.5。
 
-当前工作的准确位置不是继续堆功能，而是把真实产品能力绑定到一个干净、可复算的 candidate：新 identity 0e35c8b 的双平台工程和 repository inputs 已通过；下一步是 operators 与 expected-report plan，然后才是单槽 canary、完整矩阵、资格和评分。旧候选结果、历史 formal 和跨 revision projection 均不能替代这条链。
+当前工作的准确位置不是继续堆功能，而是把真实产品能力绑定到一个干净、可复算的 candidate：新 identity 0e35c8b 的双平台工程、repository inputs、不可覆盖 expected-report plan 和 operators 前置合同已通过；下一步是 OCI 与运行前 Gate，然后才是单槽 canary、完整矩阵、资格和评分。旧候选结果、历史 formal 和跨 revision projection 均不能替代这条链。
 
 ## 10. 近期实现结论摘要
 
@@ -361,7 +361,41 @@ TypeScript 双平台完整编译无错误；本阶段新增产品测试=0，双�
 
 ##### 后续计划
 
-迁移 operators，先生成并独立验证 expected-report plan，再进入 OCI、资源/费用 Gate 和单槽 canary。
+迁移并验证其余 operators，再进入 OCI、资源/费用 Gate 和单槽 canary。
+
+#### P2-C 新候选计划实现结论：0e35c8b expected-report plan（2026-09-05）
+
+##### 已完成内容
+
+1. **tmp/verify-p2c-expected-report-plan-0e35c8b.mjs 新建**：绑定冻结 commit、lockfile/worktree hash、harness 与 artifact 路径；与上一候选模板相比只包含预期 identity/path 替换。
+2. **production expected-report writer 执行**：在四层目标均不存在时，以六组成对参数首次原子生成 candidate-1 的 144 槽 plan。
+3. **不可覆盖合同验证**：重复 writer 返回 EEXIST，plan 长度与 SHA-256 保持不变；formal root 仍不存在。
+4. **效果**：新 candidate 的 task/platform/attempt/report path 分母已冻结，operators 和后续 formal 只能绑定该 plan。
+
+##### 验证结果
+
+`node --check`通过；reports/unique IDs/unique paths=`144/144/144`；plan=`49164 bytes`、SHA-256=`85bf83d8c588094ccfe907ae55a4a03df8c361dd45ae67711c36a96da652b8a9`；本阶段未启动 Gateway、runner、formal 或 Provider 调用。
+
+##### 后续计划
+
+迁移 launcher/resume/slot/quiescence/ports/Docker wrapper/env cleanup operators，完成语法、旧 identity 零命中、ledger、terminal policy 与费用/资源静态 Gate。
+
+#### P2-C 新候选运行编排实现结论：0e35c8b candidate operators（2026-09-05）
+
+##### 已完成内容
+
+1. **tmp/run-p2c-candidate-matrix-0e35c8b.ps1 新建**：绑定新双平台 harness、inputs、plan SHA、source identity 与全局 observed/reserved 费用基线。
+2. **resume/launch-slot verifier 新建**：绑定新 artifact/ledger 路径；首个 Windows/WSL 槽均由 production validator 对照冻结 plan 验真。
+3. **quiescence/ports/Docker wrapper/env cleanup helper 新建**：只迁移候选 identity 与专属路径；端口 helper 与旧模板字节一致。
+4. **效果**：三类失败或无报告终态会停止后续付费槽位；只有 passed 才继续，旧 candidate 的 report/ledger/path 不能混入。
+
+##### 验证结果
+
+PowerShell AST、`node --check`、`bash -n`全部通过；旧 identity/hash/path 零命中；逐文件 no-index diff 仅含预期绑定变化；terminal policy=`4/4`，双平台首槽 report path 与四字段 identity 一致。resume 双层 ledger 动态对账将在首个真实终态后执行；本阶段未启动 Gateway、runner、formal 或 Provider 调用。
+
+##### 后续计划
+
+建立 candidate WSL toolchain，完成双平台 OCI fixture；随后严格串行执行 plan/inputs 刷新、进程/端口/container/lease/staging/目标不存在和紧邻费用 Gate，再启动一个 Windows canary。
 
 ## 实施计划进度表
 
@@ -379,15 +413,14 @@ TypeScript 双平台完整编译无错误；本阶段新增产品测试=0，双�
 | P2-A Supervisor/并行 worktree | P2 | **完成** | 双平台 lane=720/720、零残留 | 不自动 merge/release/deploy |
 | P2-B 生态与运行前置 | P2 | **完成** | 外部 consumer=7/7、Quality run 通过；Docker 历史项 record_only | 真实 CI receipt 需绑定新 candidate |
 | P2-C 证据/资格工具链 | P2 | **本地合同完成** | evaluator/qualification v2、dimension evidence、local collector、CLI/TUI/Git delivery contract 已通过 | 只接受 current-candidate 原生 receipt |
-| P2-C 0e35c8b/candidate-1 | P2 | **准备中** | 双平台工程/identity Green；inputs=4/4/8；最新第 819 条闭环 | 迁移 operators，生成并冻结 expected-report plan，验证 144/144/144 后再进 OCI/费用 Gate |
+| P2-C 0e35c8b/candidate-1 | P2 | **准备中：operators 已就绪** | 双平台工程/identity Green；inputs=4/4/8；plan 144/144/144、SHA=`85bf83d8…b8a9`；terminal policy=4/4、首槽映射通过 | 完成双平台 OCI 与资源/费用 Gate，再运行单槽 canary |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 ### 后续计划
 
-1. 从上一候选只迁移必要 operators，完成语法、旧 identity 零命中、slot/resume、双层 ledger 和费用/资源静态 Gate。
-2. 在新 identity 下首次生成 expected-report plan，并独立验证唯一 144 槽、report ID/path、不可覆盖和 EEXIST 负例。
-3. 通过双平台 OCI、进程/端口/lease/敏感值/费用 Gate 后，仅运行一个 Windows 单槽 canary；每个 terminal 立即验真、回收和 resume。
-4. 依据 canary 结果决定是否继续剩余矩阵；完成 aggregate、dimension evidence、qualification、七维 score 后，再组织第二个连续候选。
+1. 建立 candidate WSL toolchain并完成双平台 OCI fixture，要求 pinned image、container 与 lease 全部闭合。
+2. 通过进程/端口/lease/staging/目标不存在/敏感值/费用 Gate 后，仅运行一个 Windows 单槽 canary；每个 terminal 立即验真、回收和 resume。
+3. 依据 canary 结果决定是否继续剩余矩阵；完成 aggregate、dimension evidence、qualification、七维 score 后，再组织第二个连续候选。
 
 先做 operators 和 plan，是因为它们决定候选分母、身份和恢复边界；当前仍缺的关键闭环是新 candidate 的完整 report/ledger、真实 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选。
 
@@ -396,3 +429,4 @@ TypeScript 双平台完整编译无错误；本阶段新增产品测试=0，双�
 - 旧汇总行曾停留在“WSL inputs 发布前”，但后续第 816–819 条已完成 WSL 发布和独立 4/4/8 验真；本表以第 819 条为当前恢复点。
 - 历史候选的 product workflow 失败、usage 终态和缺失 plan 已分别保留并冻结；不得用新工具链事后改写旧 aggregate，也不得把历史 partial 结果当作当前分数。
 - 本轮文档压缩会移除逐轮命令和重复问题流水；完整证据仍可从 archive-05 回读，当前文档只保留影响决策的摘要和可验证闭环。
+- expected-report 四层不存在探针首次因 PowerShell 空管道语法未执行；改为先构造结果数组后复核四层均不存在。该问题只影响只读探针编排，没有创建、覆盖或修改 candidate 输出，处理决策为 `fix_now completed`。
