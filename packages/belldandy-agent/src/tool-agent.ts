@@ -5017,6 +5017,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
             )
             : undefined;
           if (patchDiagnostics && patchDiagnostics.unexpectedEndMarkerCount > 0) {
+            if (retainVerifiedMutationForToolFreeObjectiveReview("unexpected_end_marker")) {
+              continue;
+            }
             yield* emitWorkspaceMutationFailure(
               `the mutation-only apply_patch call contained an unexpected End Patch marker before the final marker. ${formatWorkspaceMutationUnexpectedEndMarkerDiagnostics(patchDiagnostics)}`,
             );

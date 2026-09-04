@@ -125,6 +125,153 @@ describe("verified mutation after exhausted objective correction", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("retains a verified cross-file mutation after an unexpected End Patch correction retry", async () => {
+    const requiredChangedPaths = ["src/feature.mjs", "src/index.mjs"];
+    const successfulSummary = '{"summary":"implemented and verified"}';
+    const initialPatch = [
+      "*** Begin Patch",
+      "*** Update File: src/feature.mjs",
+      "@@",
+      " export function normalizeMemberName(name) {",
+      '   return String(name).trim().replace(/\\s+/g, " ");',
+      " }",
+      "+",
+      "+export function createWelcomeMessage(name) {",
+      "+  return `Welcome, ${normalizeMemberName(name)}!`;",
+      "+}",
+      "*** Update File: src/index.mjs",
+      "@@",
+      "-export { normalizeMemberName } from \"./feature.mjs\";",
+      "+export { createWelcomeMessage, normalizeMemberName } from \"./feature.mjs\";",
+      "*** End Patch",
+    ].join("\n");
+    const unlistedCorrection = [
+      "*** Begin Patch",
+      "*** Update File: src/outside.mjs",
+      "@@",
+      "-export const value = 'old';",
+      "+export const value = 'new';",
+      "*** End Patch",
+    ].join("\n");
+    const unexpectedMarkerRetry = [
+      "*** Begin Patch",
+      "*** Update File: src/feature.mjs",
+      "@@",
+      "-export function createWelcomeMessage(name) {",
+      "+export function createWelcomeMessage(name = \"friend\") {",
+      "*** End Patch",
+      "*** End Patch",
+    ].join("\n");
+    const currentSources = new Map([
+      [
+        "src/feature.mjs",
+        [
+          "export function normalizeMemberName(name) {",
+          '  return String(name).trim().replace(/\\s+/g, " ");',
+          "}",
+          "",
+          "export function createWelcomeMessage(name) {",
+          "  return `Welcome, ${normalizeMemberName(name)}!`;",
+          "}",
+        ].join("\n"),
+      ],
+      [
+        "src/index.mjs",
+        "export { createWelcomeMessage, normalizeMemberName } from \"./feature.mjs\";",
+      ],
+    ]);
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return response(modelToolCall("initial-cross-file-patch", "apply_patch", { input: initialPatch }));
+      }
+      if (requests.length === 2) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
+      if (requests.length === 3) {
+        return response(modelToolCall("unlisted-correction", "apply_patch", { input: unlistedCorrection }));
+      }
+      if (requests.length === 4) {
+        return response(modelToolCall("unexpected-marker-retry", "apply_patch", {
+          input: unexpectedMarkerRetry,
+        }));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: successfulSummary } }],
+        usage: { prompt_tokens: 300, completion_tokens: 30 },
+      });
+    });
+    const executedPatches: string[] = [];
+    const completedReadPaths: string[] = [];
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "apply_patch") {
+        executedPatches.push(String(request.arguments?.input ?? ""));
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: "Patch applied successfully",
+          metadata: {
+            workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+          },
+          durationMs: 1,
+        };
+      }
+      const path = String(request.arguments?.path ?? "");
+      completedReadPaths.push(path);
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: JSON.stringify({
+          path,
+          truncated: false,
+          content: currentSources.get(path),
+        }),
+        durationMs: 1,
+      };
+    });
+
+    const items = await collect(createAgent(execute).run({
+      conversationId: "verified-cross-file-unexpected-end-marker-retry",
+      text: "Add createWelcomeMessage in src/feature.mjs and re-export it from src/index.mjs.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 12,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === successfulSummary
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(requests).toHaveLength(5);
+    expect(requests[3]?.messages[0]?.content).toContain(
+      "Post-mutation objective correction input retry phase",
+    );
+    expect(requests[4]).not.toHaveProperty("tools");
+    expect(requests[4]?.messages[0]?.content).toContain(
+      "Post-mutation final objective review phase",
+    );
+    expect(initialPatch.match(/^\*\*\* End Patch$/gm)).toHaveLength(1);
+    expect(completedReadPaths).toEqual(requiredChangedPaths);
+    expect(executedPatches).toEqual([initialPatch]);
+    expect(items).toContainEqual({ type: "final", text: successfulSummary });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it.each([
     {
       name: "unlisted path",
