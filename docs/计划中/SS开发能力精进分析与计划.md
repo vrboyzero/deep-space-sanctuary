@@ -888,6 +888,46 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 从 manifest/ledger 差集机器选择下一组 Windows attempt-1 小批；重新执行 plan/inputs/resume、进程/端口/container/lease/staging/目标不存在与紧邻费用 Gate，全部 Green 后才启动，任一失败立即冻结。
 
+#### P2-C 小批运行前 Gate 实现结论：8f794af Windows batch 01（2026-09-05）
+
+##### 已完成内容
+
+1. **manifest/ledger 差集选择**：机器选择 Windows attempt-1 的 `t02–t05`：`feature.cross-file`、`bug.reproducible-fix`、`tests.failed-diagnosis`、`navigation.large-repository`，不重跑已处理 `t01`。
+2. **证据与资源 Gate 复验**：resume verifier 复算 plan/ledger=`144/144/144，processed 1，remaining 143`；双端 inputs=`4/4/8`；双端进程、端口、containers 与三处 lease 全零，staging 保持 clean detached。
+3. **目标不存在与费用 Gate**：`t02–t05` 各自 system-temp state、E 盘 fixture/artifact 共 `12/12` 不存在；最终静默后 cost-only 重验冻结 plan/config/identity 与当前 ledger。
+4. **效果**：batch 01 最多启动 4 个新槽并逐槽重新执行费用守卫；任一非 passed、usage 异常或无报告终态都会停止剩余槽，不启动 WSL。
+
+##### 验证结果
+
+- resume=`processed 1 / remaining 143 / unreported infrastructure 0`，双端 repository inputs=`4/4/8`，资源残留均为 `0`，目标不存在=`12/12`。
+- cost-only：observed/reserved=`2.43856938/2.14221000 USD`、single-run max=`0.10 USD`、next worst=`37.44623504 RMB < 80`、processed=`1`。
+- 双端 staging clean；本 Gate 新增产品测试=`0`，未启动 Gateway、benchmark runner 或 Provider。
+
+##### 后续计划
+
+运行 Windows batch 01；逐槽保持 `deepseek-v4-flash`、`$0.10`、`12 turns / 24,000 tokens`、Provider retry=`0`，任一失败立即冻结，全部 passed 后再执行 ledger、env 与资源闭环。
+
+#### P2-C 小批实现结论：8f794af Windows batch 01（失败后冻结，2026-09-05）
+
+##### 已完成内容
+
+1. **逐槽执行并按失败即冻结**：`feature.cross-file`（t02）通过；`bug.reproducible-fix`（t03）生成唯一 formal report 后以 `product_workflow` failed 终止。`tests.failed-diagnosis`（t04）与 `navigation.large-repository`（t05）未启动，其 state/fixture/artifact 保持 `6/6 absent`；未启动 WSL 或其他后续槽。
+2. **report/ledger 与费用闭环**：resume verifier 复算冻结 plan 与双层 ledger，得到 `processed=3 / remaining=141 / unreportedInfrastructure=0 / declared artifacts=21`；candidate observed=`0.00149494 USD`、global observed=`2.43983027 USD`、reserved=`2.14221000 USD`。
+3. **失败证据诊断**：t03 的 patch、测试与 evaluator 均通过（`testsPassed=true`、`patchAccepted=true`、`regressionCount=0`），但写入后目标复核在一次 phase-aware output repair 后仍未返回有效最终 JSON 或允许的修正，CLI 以 exit=`4`、terminal=`run.failed` 结束，`taskCompleted=false`、`result.json=null`。
+4. **环境与资源闭环**：t02/t03 共 4 个环境文件完成 containment、普通文件、非 reparse point 与 SHA-256 校验后送入 Windows 回收站；Windows/WSL 进程、端口、双入口 containers 与三处 leases 均为零，双端 staging 保持 clean detached。
+5. **效果**：`8f794af/candidate-1` 永久冻结为 `2 passed + 1 product_workflow failure` 的 `3/144` 审计断点；未用通过的 patch/evaluator 结果覆盖失败终态，也未为追求完整矩阵消耗后续 Provider 槽。
+
+##### 验证结果
+
+- 同一冻结 commit 的 Windows/WSL clean staging build 与 benchmark verifier 已通过；本环节未修改产品源码，新增产品测试=`0`。
+- t02 report=`passed`，tokens=`11905+670`、cost=`0.00051098 USD`；t03 report SHA-256=`69dfe441f702a25dc1d4b7ea32d834f911fcfc90b012cda8718e0018328602ae`，tokens=`12614+1522`、cost=`0.00074991 USD`。
+- t03 events 终态明确为 `run.failed`：workspace change evidence 可用且 patch 修改了唯一目标文件，但目标复核输出合同未完成；上一候选同任务在相同 fixture/预算/平台下返回有效 JSON 并通过，故当前不能归因于测试或 patch 错误。
+- post-run 环境文件、进程、端口、containers 与 leases 残留均为 `0`；未停止归属不明对象，未重跑或 reconcile 任一冻结槽。
+
+##### 后续计划
+
+保持 `8f794af/candidate-1` 永久冻结。先用现有 mock model/fixture 建立零 Provider 回归，复现“首个修复正确、目标复核输出无效、output repair 追加非必要修正、最终输出仍无效”的事件序列；确认失败属于可泛化修复的工作流合同缺口后，再按 TDD 实现最小修复并执行定向测试、build、全仓回归与 benchmark contract 验证。若无法稳定复现或只能依赖特定模型输出，则记录为候选工作流失败，不修改产品逻辑。
+
 ## 实施计划进度表
 
 ### 当前阶段与完成边界（2026-09-05）
@@ -907,16 +947,17 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C 0e35c8b/candidate-1 | P2 | **首槽基础设施失败，永久冻结** | Windows attempt-1 readiness 60 秒超时；report/fixture/Provider usage 均未生成；ledger=`processed 0 / unreportedInfrastructure 1 / candidate cost 0 / reserve +0.10 USD`；敏感 env 与资源清理完成 | 禁止重跑，不启动 WSL 槽；只保留冻结 evidence 供恢复与归因复算 |
 | P2-C Windows readiness state-root | P2 | **完成并交付 private/main** | candidate fail-closed Gate、正负合同=`37/37`、benchmark verifier、build、全仓 `6554/6554` 已执行测试与零 Provider readiness 全部通过；commit=`6ec5db3`，敏感 env、端口和进程残留=`0` | 旧 identity 保持冻结；新候选不得回退该修复 |
 | P2-C 6ec5db3/candidate-1 | P2 | **batch 03 已冻结，13/144（3 passed + 1 product_workflow failure）；Fix Mode 修复已交付 private/main** | resume=`13/144`、remaining=`131`、unreported infrastructure=`0`；env/资源清理闭合；t13 `EPERM rename` evidence 已冻结；定向回归=`24/24`、workspace build 与 benchmark contract 通过；全仓=`6554 passed / 2 failed / 3 skipped`，两项隔离复跑均通过；fix commit=`8f794af` | 以 `8f794af` 重建双平台 candidate，旧 identity 不得重跑或启动 WSL |
-| P2-C 8f794af/candidate-1 | P2 | **Windows canary passed，1/144** | resume=`1/144`、unreported=`0`；usage=`provider_reported`；env/资源清理闭合；candidate observed=`0.00023405 USD` | 重新完整 Gate 后扩展 Windows attempt-1 小批，任一失败立即冻结 |
+| P2-C 8f794af/candidate-1 | P2 | **batch 01 已冻结，3/144（2 passed + 1 product_workflow failure）** | resume=`3/144`、remaining=`141`、unreported infrastructure=`0`；t03 tests/patch 通过但目标复核输出合同失败；env/资源清理闭合 | 禁止重跑/reconcile 或启动 WSL；先以零 Provider 回归判定是否存在可泛化的工作流缺口 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 ### 后续计划
 
-1. 从 `8f794af` manifest/ledger 差集选择下一组 Windows attempt-1 小批，重跑全部资源/目标/紧邻费用 Gate；旧 `6ec5db3/candidate-1` 保持冻结。
-2. 新 candidate 先执行 Windows canary，再按失败即冻结策略渐进完成矩阵、aggregate、dimension evidence、qualification、七维 score 及真实 CI/CLI/TUI/Git delivery receipt。
-3. 两个连续候选均须满足七维下限与 raw weighted `>=9.500`；全量并发下两项已隔离通过的偶发失败继续监测，若新 identity 再现则重新进入 Fix Mode。
+1. 保持 `8f794af/candidate-1` 在 `3/144` 永久冻结；用现有 mock model/fixture 零 Provider 复现 t03 的 post-write objective review/output repair 事件序列，先确认是否为可泛化的产品工作流缺口。
+2. 若回归稳定复现，按 TDD 做最小修复并完成定向测试、build、全仓回归和 benchmark contract；若不能稳定复现，则保留失败证据并把该问题裁决为候选工作流失败，不修改产品逻辑。
+3. 只有修复完成并提交后才创建全新 candidate identity；新候选仍须从双平台 staging/inputs/plan/operators/OCI/Windows canary 重新开始，逐步补齐完整矩阵与真实 CI/CLI/TUI/Git delivery receipt。
+4. 两个连续候选均须满足七维下限与 raw weighted `>=9.500`；任何旧 identity 均禁止重跑、reconcile 或事后改写 aggregate。
 
-batch 03 已完成并因 t13 失败冻结，`fs.rename` 发布故障的回归测试与修复、提交以及新 identity 双平台 staging/inputs/plan/operators/OCI/canary 已闭环；当前仍缺的关键闭环是余下 `143` 槽 report/ledger、真实 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选。
+`8f794af` batch 01 已在 t03 失败后冻结并完成 ledger/env/资源闭环；当前优先缺口是确认目标复核输出失败能否由零 Provider 测试稳定复现并安全修复，其后才是新 identity 的完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选。
 
 ### 重要问题说明
 
@@ -942,3 +983,4 @@ batch 03 已完成并因 t13 失败冻结，`fs.rename` 发布故障的回归测
 - WSL inputs 首次误把旧候选已发布的 `sources/caches` 当作 canonical seed，并误用空的默认 Go module cache，production owner 因此发布 `partial 2/4`：Express=`pinned_dependency_lock_unavailable`、Cobra=`offline_go_module_cache_incomplete`。该 root 经普通目录、目标不存在与报告 SHA-256=`75cc6975ec4dc3b76238432720e0e5f917355c94d0ac23c1d233b8ba09183e51` Gate 后原子改名为 `-rejected-material-roots` 保留；改用 canonical source/cache、Express seed lock `c3b…a82` 与固定 Go cache 后首次生成新的 canonical root并通过 `4/4/8`，处理决策为 `fix_now completed`。
 - expected-report writer 没有 `--help` 分支，首次帮助探针在参数解析处按设计退出且未创建 artifact；改为直接读取当前源码 CLI 合同并提供六组成对参数后唯一写入成功，随后 `EEXIST` 负例和独立 verifier 均通过，处理决策为 `fix_now completed`。
 - canary 的结构化 8 目标不存在探针首次在嵌套 `GetFullPath(Split-Path(...))` 表达式少一个右括号，PowerShell 在读取 plan 前即解析失败，没有创建或修改目标；改为先计算两个 artifact 路径再构造固定 8 项数组后全部 absent，处理决策为 `fix_now completed`。
+- `8f794af` Windows batch 01 的 t03 `bug.reproducible-fix` 在 patch、测试及 evaluator 均通过后仍以 `product_workflow` failed 结束：post-write objective review 未返回有效 JSON，随后一次 phase-aware output repair 又对已正确的数量修复追加 `items == null` 宽化，最终复核仍未完成输出合同。上一候选相同 fixture/平台/预算曾返回有效 JSON 并通过，说明当前失败由模型输出触发，但 fail-closed 分支可由固定响应序列做零 Provider 验证；处理决策为 `split_task`：候选永久冻结，先建立回归并判断是否存在不依赖具体 fixture 的最小修复，未证实前不修改产品逻辑。
