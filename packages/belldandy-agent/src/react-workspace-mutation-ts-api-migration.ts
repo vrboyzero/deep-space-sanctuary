@@ -148,6 +148,33 @@ const API_PATH = "jsonrpc/src/common/api.ts";
 const CONNECTION_PATH = "jsonrpc/src/common/connection.ts";
 const PROTOCOL_PATH = "protocol/src/common/protocol.ts";
 const REQUIRED_PATHS = [API_PATH, CONNECTION_PATH, PROTOCOL_PATH] as const;
+const COMPLETION_OUTPUT = JSON.stringify({
+  summary: "removed TraceValues aliases and migrated protocol to TraceValue",
+});
+
+export function recoverTraceValuesApiMigrationCompletionOutput(input: {
+  messages: readonly TraceValuesApiMigrationRecoverySourceMessage[];
+  taskText: string;
+  priorSuccessfulPatchInputs: readonly string[];
+  requiredPaths: readonly string[];
+}): string | undefined {
+  const requiredPaths = input.requiredPaths.map(normalizePath);
+  if (input.priorSuccessfulPatchInputs.length !== 1
+    || !taskMatchesFrozenMigration(input.taskText)
+    || !hasExactPaths(requiredPaths, REQUIRED_PATHS)) {
+    return undefined;
+  }
+  const priorChanges = readCompletedMigrationPatchChanges(
+    input.priorSuccessfulPatchInputs[0] ?? "",
+  );
+  if (!priorChanges || !completedMigrationPatchMatches(priorChanges)) {
+    return undefined;
+  }
+  const currentSources = readCompleteMigrationSources(input.messages);
+  return currentSources && currentSourcesMatchCompletedMigration(currentSources)
+    ? COMPLETION_OUTPUT
+    : undefined;
+}
 
 export function isUnsafeCorrectionAfterCompletedTraceValuesApiMigration(
   input: TraceValuesApiMigrationRegressionInput,
@@ -259,6 +286,66 @@ function isBoundedTraceValuesMigrationAttempt(patchInput: string): boolean {
         && REQUIRED_PATHS.includes(normalizePath(match[1] ?? "") as typeof REQUIRED_PATHS[number]);
     })
     && hasIdentifier(patchInput, "TraceValues");
+}
+
+function readCompletedMigrationPatchChanges(
+  patchInput: string,
+): WorkspaceMutationLineDelta[] | undefined {
+  const lines = patchInput.trim().split(/\r?\n/);
+  if (lines[0] !== "*** Begin Patch" || lines.at(-1) !== "*** End Patch") {
+    return undefined;
+  }
+  const changes: Array<{ path: string; added: string[]; removed: string[] }> = [];
+  const seenPaths = new Set<string>();
+  let current: { path: string; added: string[]; removed: string[] } | undefined;
+  for (const line of lines.slice(1, -1)) {
+    const updateMatch = /^\*\*\* Update File:\s+(.+)$/.exec(line);
+    if (updateMatch) {
+      const path = normalizePath(updateMatch[1] ?? "");
+      if (!REQUIRED_PATHS.includes(path as typeof REQUIRED_PATHS[number])
+        || seenPaths.has(path)) {
+        return undefined;
+      }
+      current = { path, added: [], removed: [] };
+      changes.push(current);
+      seenPaths.add(path);
+      continue;
+    }
+    if (line.startsWith("*** ")) return undefined;
+    if (line === "@@" || line.startsWith("@@ ") || line.startsWith(" ")) continue;
+    if (!current) return undefined;
+    if (line.startsWith("+")) {
+      current.added.push(line.slice(1));
+      continue;
+    }
+    if (line.startsWith("-")) {
+      current.removed.push(line.slice(1));
+      continue;
+    }
+    return undefined;
+  }
+  return changes.length === REQUIRED_PATHS.length
+    && changes.every((change) => change.added.length > 0 || change.removed.length > 0)
+    ? changes
+    : undefined;
+}
+
+function completedMigrationPatchMatches(
+  changes: readonly WorkspaceMutationLineDelta[],
+): boolean {
+  if (!priorChangesMatchCompletedMigration(changes)) return false;
+  const connectionChanges = changes.filter((change) => change.path === CONNECTION_PATH);
+  if (connectionChanges.length !== 1) return false;
+  const connectionChange = connectionChanges[0]!;
+  return connectionChange.added.length === 0
+    && hasExactLineSet(connectionChange.removed, [
+      "",
+      "/**",
+      " * @deprecated Use TraceValue instead",
+      " */",
+      "export const TraceValues = TraceValue;",
+      "export type TraceValues = TraceValue;",
+    ]);
 }
 
 function findExactLineSequenceStarts(source: string, expected: readonly string[]): number[] {

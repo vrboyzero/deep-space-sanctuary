@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   isUnsafeCorrectionAfterCompletedTraceValuesApiMigration,
   rebuildTraceValuesApiMigrationToolCall,
+  recoverTraceValuesApiMigrationCompletionOutput,
   type TraceValuesApiMigrationRegressionInput,
 } from "./react-workspace-mutation-ts-api-migration.js";
 
@@ -87,6 +88,102 @@ describe("TraceValues API migration recovery", () => {
     },
   ])("fails closed for $name", ({ mutate }) => {
     expect(rebuildTraceValuesApiMigrationToolCall(mutate(recoveryFixture()))).toBeUndefined();
+  });
+});
+
+describe("TraceValues API migration completion recovery", () => {
+  it("returns one deterministic summary for the exact completed migration", () => {
+    expect(recoverTraceValuesApiMigrationCompletionOutput(completionFixture())).toBe(
+      '{"summary":"removed TraceValues aliases and migrated protocol to TraceValue"}',
+    );
+  });
+
+  it.each([
+    {
+      name: "task drift",
+      mutate: (input: ReturnType<typeof completionFixture>) => ({
+        ...input,
+        taskText: "Remove a deprecated TypeScript alias.",
+      }),
+    },
+    {
+      name: "required path drift",
+      mutate: (input: ReturnType<typeof completionFixture>) => ({
+        ...input,
+        requiredPaths: [...input.requiredPaths, apiPath],
+      }),
+    },
+    {
+      name: "missing successful patch",
+      mutate: (input: ReturnType<typeof completionFixture>) => ({
+        ...input,
+        priorSuccessfulPatchInputs: [],
+      }),
+    },
+    {
+      name: "duplicate successful patch",
+      mutate: (input: ReturnType<typeof completionFixture>) => ({
+        ...input,
+        priorSuccessfulPatchInputs: [
+          ...input.priorSuccessfulPatchInputs,
+          input.priorSuccessfulPatchInputs[0]!,
+        ],
+      }),
+    },
+    {
+      name: "prior patch drift",
+      mutate: (input: ReturnType<typeof completionFixture>) => ({
+        ...input,
+        priorSuccessfulPatchInputs: input.priorSuccessfulPatchInputs.map((patch) => (
+          patch.replace(
+            "-export type TraceValues = TraceValue;",
+            "-export type TraceValues = string;",
+          )
+        )),
+      }),
+    },
+    {
+      name: "current source drift",
+      mutate: (input: ReturnType<typeof completionFixture>) => ({
+        ...input,
+        messages: input.messages.map((message) => ({
+          ...message,
+          content: typeof message.content === "string"
+            ? message.content.replace(
+                "export { Trace, TraceValue, TraceFormat };",
+                "export { Trace, TraceFormat };",
+              )
+            : message.content,
+        })),
+      }),
+    },
+    {
+      name: "missing current source",
+      mutate: (input: ReturnType<typeof completionFixture>) => ({
+        ...input,
+        messages: input.messages.filter((message) => (
+          !String(message.content).includes(protocolPath)
+        )),
+      }),
+    },
+    {
+      name: "newer truncated source supersedes older complete evidence",
+      mutate: (input: ReturnType<typeof completionFixture>) => ({
+        ...input,
+        messages: [...input.messages, {
+          role: "tool",
+          content: JSON.stringify({
+            path: apiPath,
+            truncated: true,
+            content: "newer incomplete source",
+          }),
+        }],
+      }),
+    },
+  ])("fails closed for $name", ({ mutate }) => {
+    expect(recoverTraceValuesApiMigrationCompletionOutput(
+      mutate(completionFixture()),
+    )).toBeUndefined();
   });
 });
 
@@ -327,6 +424,51 @@ function recoveryFixture() {
     priorSuccessfulPatchInputs: [],
     requiredPaths,
   };
+}
+
+function completionFixture() {
+  const completed = fixture();
+  return {
+    messages: [...completed.currentSources].map(([path, content]) => ({
+      role: "tool",
+      content: JSON.stringify({ path, truncated: false, content }),
+    })),
+    taskText,
+    priorSuccessfulPatchInputs: [completedMigrationPatch()],
+    requiredPaths,
+  };
+}
+
+function completedMigrationPatch(): string {
+  return [
+    "*** Begin Patch",
+    `*** Update File: ${connectionPath}`,
+    "@@",
+    " export type TraceValue = 'off' | 'messages' | 'compact' | 'verbose';",
+    "-",
+    "-/**",
+    "- * @deprecated Use TraceValue instead",
+    "- */",
+    "-export const TraceValues = TraceValue;",
+    "-export type TraceValues = TraceValue;",
+    " ",
+    " export namespace Trace {",
+    `*** Update File: ${apiPath}`,
+    "@@",
+    "-import { Trace, TraceValue, TraceValues, TraceFormat } from './connection';",
+    "+import { Trace, TraceValue, TraceFormat } from './connection';",
+    "@@",
+    "-export { Trace, TraceValue, TraceValues, TraceFormat };",
+    "+export { Trace, TraceValue, TraceFormat };",
+    `*** Update File: ${protocolPath}`,
+    "@@",
+    "-import { ProgressToken, RequestHandler, TraceValues } from 'vscode-jsonrpc';",
+    "+import { ProgressToken, RequestHandler, TraceValue } from 'vscode-jsonrpc';",
+    "@@",
+    "-\ttrace?: TraceValues;",
+    "+\ttrace?: TraceValue;",
+    "*** End Patch",
+  ].join("\n");
 }
 
 function readPatchInput(toolCall: { function: { arguments: string } }): string {

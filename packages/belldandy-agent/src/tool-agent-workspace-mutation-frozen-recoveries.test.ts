@@ -29,6 +29,42 @@ describe("ToolEnabledAgent frozen product-failure recoveries", () => {
     expect(result.items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("finishes an exact TraceValues migration before a rejected correction retries with an empty patch", async () => {
+    const scenario = traceValuesCompletedMigrationEmptyCorrectionScenario();
+    const result = await runScenario(scenario);
+
+    expect(result.executedPatches).toEqual([scenario.initialPatch]);
+    for (const source of Object.values(result.finalSources)) {
+      expect(source).not.toMatch(/\bTraceValues\b/);
+    }
+    expect(result.items.at(-2)).toEqual({ type: "final", text: scenario.successJson });
+    expect(result.items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("finishes an exact TraceValues migration when both objective summaries remain malformed", async () => {
+    const scenario = traceValuesCompletedMigrationMalformedSummaryScenario();
+    const result = await runScenario(scenario);
+
+    expect(result.executedPatches).toEqual([scenario.initialPatch]);
+    expect(result.items.at(-2)).toEqual({ type: "final", text: scenario.successJson });
+    expect(result.items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("keeps an exact TraceValues migration failed when its recovered summary is rejected", async () => {
+    const scenario = {
+      ...traceValuesCompletedMigrationEmptyCorrectionScenario(),
+      successJson: '{"summary":"a different contract-specific value"}',
+    };
+    const result = await runScenario(scenario);
+
+    expect(result.executedPatches).toEqual([scenario.initialPatch]);
+    expect(result.items.at(-2)).toEqual({
+      type: "final",
+      text: "required workspace mutation was not completed: the completed TraceValues API migration recovery output failed structured-output validation before the requested objective correction could run.",
+    });
+    expect(result.items.at(-1)).toEqual({ type: "status", status: "error" });
+  });
+
   it("finishes the exact WorkspaceFoldersRequest fix when both objective summaries remain malformed", async () => {
     const scenario = workspaceFoldersRequestDirectFixMalformedSummaryScenario();
     const result = await runScenario(scenario);
@@ -180,6 +216,7 @@ type Scenario = {
   modelCorrectionSources?: Record<string, string>;
   mode: "recovery" | "objective" | "objective-output-repair";
   objectiveCorrectionCallCount?: number;
+  objectiveInputCorrectionPatch?: string;
 };
 
 async function runScenario(scenario: Scenario): Promise<{
@@ -203,6 +240,12 @@ async function runScenario(scenario: Scenario): Promise<{
     }
     if (instruction.includes("Post-mutation objective review output repair phase")) {
       return jsonResponse(modelFinal("The source is fixed, but this is still not the required JSON."));
+    }
+    if (instruction.includes("Post-mutation objective correction input retry phase")) {
+      return jsonResponse(modelToolCall(
+        `input-correction-${requestCount}`,
+        scenario.objectiveInputCorrectionPatch ?? scenario.modelCorrectionPatch,
+      ));
     }
     if (instruction.includes("Post-mutation objective review phase")) {
       if (scenario.mode === "recovery") {
@@ -249,6 +292,20 @@ async function runScenario(scenario: Scenario): Promise<{
     }
     const patchInput = String(request.arguments?.input ?? "");
     executedPatches.push(patchInput);
+    if (patchInput === scenario.objectiveInputCorrectionPatch) {
+      return {
+        id: request.id,
+        name: request.name,
+        success: false,
+        output: "",
+        error: "Invalid patch hunk at line 2: Update file hunk for path 'jsonrpc/src/common/api.ts' is empty",
+        failureKind: "input_error" as const,
+        metadata: {
+          repairAction: "apply_patch_input_invalid",
+        },
+        durationMs: 1,
+      };
+    }
     if (scenario.initialPatch && patchInput === scenario.initialPatch) {
       currentSources = scenario.postInitialSources;
     } else if (patchInput === scenario.modelCorrectionPatch && scenario.modelCorrectionSources) {
@@ -353,6 +410,71 @@ function traceValuesScenario(): Scenario {
       [protocolPath]: protocolSource.replaceAll("TraceValues", "TraceValue"),
     },
     mode: "recovery",
+  };
+}
+
+function traceValuesCompletedMigrationEmptyCorrectionScenario(): Scenario {
+  const scenario = traceValuesScenario();
+  const [apiPath, connectionPath, protocolPath] = scenario.requiredPaths as [string, string, string];
+  const initialPatch = [
+    "*** Begin Patch",
+    `*** Update File: ${connectionPath}`,
+    "@@",
+    " export type TraceValue = 'off' | 'messages' | 'compact' | 'verbose';",
+    "-",
+    "-/**",
+    "- * @deprecated Use TraceValue instead",
+    "- */",
+    "-export const TraceValues = TraceValue;",
+    "-export type TraceValues = TraceValue;",
+    " ",
+    " export namespace Trace {",
+    `*** Update File: ${apiPath}`,
+    "@@",
+    "-\tCancellationReceiverStrategy, IdCancellationReceiverStrategy, RequestCancellationReceiverStrategy, CancellationSenderStrategy, CancellationStrategy, MessageStrategy, TraceValues",
+    "+\tCancellationReceiverStrategy, IdCancellationReceiverStrategy, RequestCancellationReceiverStrategy, CancellationSenderStrategy, CancellationStrategy, MessageStrategy",
+    "@@",
+    "-\tNotificationHandler4, NotificationHandler5, NotificationHandler6, NotificationHandler7, NotificationHandler8, NotificationHandler9, Trace, TraceValue, TraceValues, TraceFormat,",
+    "+\tNotificationHandler4, NotificationHandler5, NotificationHandler6, NotificationHandler7, NotificationHandler8, NotificationHandler9, Trace, TraceValue, TraceFormat,",
+    `*** Update File: ${protocolPath}`,
+    "@@",
+    "-import { ProgressToken, RequestHandler, TraceValues } from 'vscode-jsonrpc';",
+    "+import { ProgressToken, RequestHandler, TraceValue } from 'vscode-jsonrpc';",
+    "@@",
+    "-\ttrace?: TraceValues;",
+    "+\ttrace?: TraceValue;",
+    "*** End Patch",
+  ].join("\n");
+  const objectiveInputCorrectionPatch = [
+    "*** Begin Patch",
+    `*** Update File: ${apiPath}`,
+    "*** End Patch",
+  ].join("\n");
+  return {
+    ...scenario,
+    conversationId: "conv-frozen-ts-completed-empty-correction",
+    successJson: '{"summary":"removed TraceValues aliases and migrated protocol to TraceValue"}',
+    initialPatch,
+    modelCorrectionPatch: [
+      "*** Begin Patch",
+      "*** Update File: jsonrpc/src/common/extra.ts",
+      "@@",
+      "-export const stale = true;",
+      "+export const stale = false;",
+      "*** End Patch",
+    ].join("\n"),
+    objectiveInputCorrectionPatch,
+    postInitialSources: scenario.correctedSources,
+    mode: "objective",
+  };
+}
+
+function traceValuesCompletedMigrationMalformedSummaryScenario(): Scenario {
+  return {
+    ...traceValuesCompletedMigrationEmptyCorrectionScenario(),
+    conversationId: "conv-frozen-ts-completed-malformed-summaries",
+    objectiveInputCorrectionPatch: undefined,
+    mode: "objective-output-repair",
   };
 }
 

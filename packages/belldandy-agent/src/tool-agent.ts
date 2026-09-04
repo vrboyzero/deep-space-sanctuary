@@ -143,7 +143,10 @@ import {
   rebuildExpressSubdomainOffsetCorrectionToolCall,
   recoverExpressSubdomainOffsetCompletionOutput,
 } from "./react-workspace-mutation-js-bug-fix.js";
-import { rebuildTraceValuesApiMigrationToolCall } from "./react-workspace-mutation-ts-api-migration.js";
+import {
+  rebuildTraceValuesApiMigrationToolCall,
+  recoverTraceValuesApiMigrationCompletionOutput,
+} from "./react-workspace-mutation-ts-api-migration.js";
 import { recoverWorkspaceFoldersRequestCompletionOutput } from "./react-workspace-mutation-ts-cross-package.js";
 import {
   buildReactFinalizationRequest,
@@ -4374,6 +4377,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
                     taskText: input.text,
                     priorSuccessfulPatchInputs: successfulWorkspaceMutationPatchInputs,
                     requiredPaths: requiredChangedPaths,
+                  }) ?? recoverTraceValuesApiMigrationCompletionOutput({
+                    messages: mutationRecoverySourceMessages,
+                    taskText: input.text,
+                    priorSuccessfulPatchInputs: successfulWorkspaceMutationPatchInputs,
+                    requiredPaths: requiredChangedPaths,
                   })
                 : undefined;
               const recoveredValidation = recoveredOutput === undefined
@@ -4658,23 +4666,38 @@ export class ToolEnabledAgent implements BelldandyAgent {
             return;
           }
           if (workspaceMutationObjectiveReviewCall && input.structuredOutput) {
-            const recoveredCompletedMutationOutput = recoverExpressSubdomainOffsetCompletionOutput({
+            const recoveredExpressCompletionOutput = recoverExpressSubdomainOffsetCompletionOutput({
               messages: mutationRecoverySourceMessages,
               taskText: input.text,
               priorSuccessfulPatchInputs: successfulWorkspaceMutationPatchInputs,
               requiredPaths: requiredChangedPaths,
             });
+            const recoveredTraceValuesCompletionOutput = workspaceMutationObjectiveInputCorrectionCall
+              || workspaceMutationObjectiveOutputRepairCall
+              ? recoverTraceValuesApiMigrationCompletionOutput({
+                  messages: mutationRecoverySourceMessages,
+                  taskText: input.text,
+                  priorSuccessfulPatchInputs: successfulWorkspaceMutationPatchInputs,
+                  requiredPaths: requiredChangedPaths,
+                })
+              : undefined;
+            const recoveredCompletedMutationOutput = recoveredExpressCompletionOutput
+              ?? recoveredTraceValuesCompletionOutput;
             if (recoveredCompletedMutationOutput !== undefined) {
               const recoveredValidation = input.structuredOutput.validateOutput(
                 recoveredCompletedMutationOutput,
               );
               if (!recoveredValidation.ok) {
                 yield* emitWorkspaceMutationFailure(
-                  "the completed Express mutation recovery output failed structured-output validation before the requested objective correction could run.",
+                  recoveredExpressCompletionOutput !== undefined
+                    ? "the completed Express mutation recovery output failed structured-output validation before the requested objective correction could run."
+                    : "the completed TraceValues API migration recovery output failed structured-output validation before the requested objective correction could run.",
                 );
                 return;
               }
-              logWarn("[workspace-mutation] retained exact completed Express mutation before objective correction execution", {
+              logWarn(recoveredExpressCompletionOutput !== undefined
+                ? "[workspace-mutation] retained exact completed Express mutation before objective correction execution"
+                : "[workspace-mutation] retained exact completed TraceValues API migration before objective correction execution", {
                 requiredPathCount: requiredChangedPaths.length,
                 conversationId: input.conversationId,
                 agentId: resolvedAgentId,
