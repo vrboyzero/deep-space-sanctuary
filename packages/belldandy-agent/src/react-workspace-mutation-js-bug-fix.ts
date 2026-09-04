@@ -32,6 +32,25 @@ const COMPLETED_GETTER = [
   "  return subdomains.slice(offset);",
   "});",
 ] as const;
+const BRANCHED_OFFSET_GETTER = [
+  "defineGetter(req, 'subdomains', function subdomains() {",
+  "  var hostname = this.hostname;",
+  "",
+  "  if (!hostname) return [];",
+  "",
+  "  var subdomains = !isIP(hostname)",
+  "    ? hostname.split('.').reverse()",
+  "    : [hostname];",
+  "",
+  "  var offset = this.app.get('subdomain offset');",
+  "",
+  "  if (!offset) {",
+  "    return subdomains.slice(1);",
+  "  }",
+  "",
+  "  return subdomains;",
+  "});",
+] as const;
 const PRIOR_REMOVED_LINES = [
   "  var subdomains = !isIP(hostname)",
   "    ? hostname.split('.').reverse()",
@@ -40,6 +59,11 @@ const PRIOR_REMOVED_LINES = [
   "  return subdomains.slice(offset + 1);",
 ] as const;
 const PRIOR_ADDED_LINES = CURRENT_GETTER.slice(6, 11);
+const BRANCHED_OFFSET_PRIOR_REMOVED_LINES = [
+  "  var offset = this.app.get('subdomain offset');",
+  "  return subdomains.slice(offset + 1);",
+] as const;
+const BRANCHED_OFFSET_PRIOR_ADDED_LINES = BRANCHED_OFFSET_GETTER.slice(9, 16);
 const DIRECT_FIX_REMOVED_LINES = ["  return subdomains.slice(offset + 1);"] as const;
 const DIRECT_FIX_ADDED_LINES = ["  return subdomains.slice(offset);"] as const;
 const COMPLETION_OUTPUT = JSON.stringify({
@@ -98,31 +122,38 @@ export function rebuildExpressSubdomainOffsetCorrectionToolCall<
     input.priorSuccessfulPatchInputs[0] ?? "",
     REQUIRED_PATH,
   );
-  if (!priorChange
-    || !hasExactLines(priorChange.removed, PRIOR_REMOVED_LINES)
-    || !hasExactLines(priorChange.added, PRIOR_ADDED_LINES)) {
+  if (!priorChange) {
     return undefined;
   }
   const source = readCompleteSource(input.messages, REQUIRED_PATH);
-  if (!source
-    || !source.includes("var isIP = require('node:net').isIP;")
-    || findExactLineSequenceStarts(source, CURRENT_GETTER).length !== 1) {
+  if (!source || !source.includes("var isIP = require('node:net').isIP;")) {
     return undefined;
   }
+
+  const correction = hasExactLines(priorChange.removed, PRIOR_REMOVED_LINES)
+    && hasExactLines(priorChange.added, PRIOR_ADDED_LINES)
+    && findExactLineSequenceStarts(source, CURRENT_GETTER).length === 1
+    ? {
+        removed: PRIOR_ADDED_LINES,
+        added: COMPLETED_GETTER.slice(6, 11),
+      }
+    : hasExactLines(priorChange.removed, BRANCHED_OFFSET_PRIOR_REMOVED_LINES)
+      && hasExactLines(priorChange.added, BRANCHED_OFFSET_PRIOR_ADDED_LINES)
+      && findExactLineSequenceStarts(source, BRANCHED_OFFSET_GETTER).length === 1
+      ? {
+          removed: BRANCHED_OFFSET_GETTER.slice(5, 16),
+          added: COMPLETED_GETTER.slice(5, 11),
+        }
+      : undefined;
+  if (!correction) return undefined;
 
   const lineEnding = source.includes("\r\n") ? "\r\n" : "\n";
   const patch = [
     "*** Begin Patch",
     `*** Update File: ${input.requiredPaths[0]}`,
     "@@",
-    ...PRIOR_ADDED_LINES.map((line) => `-${line}`),
-    ...[
-      "  var subdomains = !isIP(hostname)",
-      "    ? hostname.split('.').reverse()",
-      "    : [hostname];",
-      "",
-      "  return subdomains.slice(offset);",
-    ].map((line) => `+${line}`),
+    ...correction.removed.map((line) => `-${line}`),
+    ...correction.added.map((line) => `+${line}`),
     "*** End Patch",
   ].join(lineEnding);
   return {

@@ -60,6 +60,20 @@ describe("ToolEnabledAgent frozen product-failure recoveries", () => {
     expect(result.items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("rebuilds the frozen two-success Express regression before the second incorrect patch executes", async () => {
+    const scenario = expressTwoIncorrectPatchesScenario();
+    const result = await runScenario(scenario);
+
+    expect(result.executedPatches).toHaveLength(2);
+    expect(result.executedPatches[0]).toBe(scenario.initialPatch);
+    expect(result.executedPatches[1]).not.toBe(scenario.modelCorrectionPatch);
+    expect(result.executedPatches[1]).toContain("+  return subdomains.slice(offset);");
+    expect(result.finalSources[scenario.requiredPaths[0]!]).toContain("return subdomains.slice(offset);");
+    expect(result.finalSources[scenario.requiredPaths[0]!]).not.toContain("subdomains.slice(0, -offset)");
+    expect(result.items.at(-2)).toEqual({ type: "final", text: scenario.successJson });
+    expect(result.items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("fails closed before an unsafe Express correction when the recovered summary is rejected", async () => {
     const scenario = {
       ...expressDirectFixUnsafeCorrectionScenario(),
@@ -133,6 +147,7 @@ type Scenario = {
   baselineSources: Record<string, string>;
   postInitialSources: Record<string, string>;
   correctedSources: Record<string, string>;
+  modelCorrectionSources?: Record<string, string>;
   mode: "recovery" | "objective" | "objective-output-repair";
   objectiveCorrectionCallCount?: number;
 };
@@ -140,6 +155,7 @@ type Scenario = {
 async function runScenario(scenario: Scenario): Promise<{
   items: any[];
   executedPatches: string[];
+  finalSources: Record<string, string>;
 }> {
   const executedPatches: string[] = [];
   let currentSources = scenario.baselineSources;
@@ -205,6 +221,8 @@ async function runScenario(scenario: Scenario): Promise<{
     executedPatches.push(patchInput);
     if (scenario.initialPatch && patchInput === scenario.initialPatch) {
       currentSources = scenario.postInitialSources;
+    } else if (patchInput === scenario.modelCorrectionPatch && scenario.modelCorrectionSources) {
+      currentSources = scenario.modelCorrectionSources;
     } else if (isExpectedRecoveryPatch(scenario, patchInput)) {
       currentSources = scenario.correctedSources;
     }
@@ -241,7 +259,7 @@ async function runScenario(scenario: Scenario): Promise<{
         : { ok: false as const, message: "summary is required" },
     },
   } as any));
-  return { items, executedPatches };
+  return { items, executedPatches, finalSources: currentSources };
 }
 
 function traceValuesScenario(): Scenario {
@@ -436,6 +454,102 @@ function expressDirectFixUnsafeCorrectionScenario(): Scenario {
     baselineSources: { [requiredPath]: baseline },
     postInitialSources: { [requiredPath]: corrected },
     correctedSources: { [requiredPath]: unsafeSource },
+    mode: "objective",
+  };
+}
+
+function expressTwoIncorrectPatchesScenario(): Scenario {
+  const requiredPath = "lib/request.js";
+  const baseline = expressGetter("hostname.split('.').reverse()", "subdomains.slice(offset + 1)");
+  const firstIncorrectSource = [
+    "var isIP = require('node:net').isIP;",
+    "",
+    "defineGetter(req, 'subdomains', function subdomains() {",
+    "  var hostname = this.hostname;",
+    "",
+    "  if (!hostname) return [];",
+    "",
+    "  var subdomains = !isIP(hostname)",
+    "    ? hostname.split('.').reverse()",
+    "    : [hostname];",
+    "",
+    "  var offset = this.app.get('subdomain offset');",
+    "",
+    "  if (!offset) {",
+    "    return subdomains.slice(1);",
+    "  }",
+    "",
+    "  return subdomains;",
+    "});",
+  ].join("\r\n");
+  const secondIncorrectSource = firstIncorrectSource.replace(
+    [
+      "  if (!offset) {",
+      "    return subdomains.slice(1);",
+      "  }",
+      "",
+      "  return subdomains;",
+    ].join("\r\n"),
+    [
+      "  return offset",
+      "    ? subdomains.slice(0, -offset)",
+      "    : subdomains.slice(1);",
+    ].join("\r\n"),
+  );
+  const initialPatch = [
+    "*** Begin Patch",
+    `*** Update File: ${requiredPath}`,
+    "@@",
+    "-  var offset = this.app.get('subdomain offset');",
+    "   var subdomains = !isIP(hostname)",
+    "     ? hostname.split('.').reverse()",
+    "     : [hostname];",
+    " ",
+    "-  return subdomains.slice(offset + 1);",
+    "+  var offset = this.app.get('subdomain offset');",
+    "+",
+    "+  if (!offset) {",
+    "+    return subdomains.slice(1);",
+    "+  }",
+    "+",
+    "+  return subdomains;",
+    " });",
+    "*** End Patch",
+  ].join("\n");
+  const secondIncorrectPatch = [
+    "*** Begin Patch",
+    `*** Update File: ${requiredPath}`,
+    "@@",
+    "   var subdomains = !isIP(hostname)",
+    "     ? hostname.split('.').reverse()",
+    "     : [hostname];",
+    " ",
+    "   var offset = this.app.get('subdomain offset');",
+    " ",
+    "-  if (!offset) {",
+    "-    return subdomains.slice(1);",
+    "-  }",
+    "-",
+    "-  return subdomains;",
+    "+  return offset",
+    "+    ? subdomains.slice(0, -offset)",
+    "+    : subdomains.slice(1);",
+    " });",
+    "*** End Patch",
+  ].join("\n");
+  return {
+    conversationId: "conv-frozen-express-two-incorrect-patches",
+    taskText: "Reproduce the frozen JavaScript regression in the real repository, implement the smallest safe fix, and preserve the existing test contract. The frozen regression is covered by test/benchmark-v3/real-js-bug-fix.js. Restore the documented req.subdomains offset behavior with the smallest change in lib/request.js. Do not modify tests, dependencies, package metadata, or any other source file. Return exactly one JSON object with a non-empty summary.",
+    requiredPaths: [requiredPath],
+    successJson: '{"summary":"No further correction required; lib/request.js already implements the smallest fix preserving the documented req.subdomains offset behavior with the original combined null/false guard and exact offset predicate."}',
+    initialPatch,
+    modelCorrectionPatch: secondIncorrectPatch,
+    baselineSources: { [requiredPath]: baseline },
+    postInitialSources: { [requiredPath]: firstIncorrectSource },
+    modelCorrectionSources: { [requiredPath]: secondIncorrectSource },
+    correctedSources: {
+      [requiredPath]: expressGetter("hostname.split('.').reverse()", "subdomains.slice(offset)"),
+    },
     mode: "objective",
   };
 }

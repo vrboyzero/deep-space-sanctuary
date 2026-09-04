@@ -89,6 +89,61 @@ const completedSource = currentSource
     "subdomains.slice(0, subdomains.length - offset - 1).reverse()",
     "subdomains.slice(offset)",
   );
+const branchedOffsetInitialPatch = [
+  "*** Begin Patch",
+  `*** Update File: ${requiredPath}`,
+  "@@",
+  "-  var offset = this.app.get('subdomain offset');",
+  "   var subdomains = !isIP(hostname)",
+  "     ? hostname.split('.').reverse()",
+  "     : [hostname];",
+  " ",
+  "-  return subdomains.slice(offset + 1);",
+  "+  var offset = this.app.get('subdomain offset');",
+  "+",
+  "+  if (!offset) {",
+  "+    return subdomains.slice(1);",
+  "+  }",
+  "+",
+  "+  return subdomains;",
+  " });",
+  "*** End Patch",
+].join("\n");
+const branchedOffsetCurrentSource = [
+  "var isIP = require('node:net').isIP;",
+  "",
+  "defineGetter(req, 'subdomains', function subdomains() {",
+  "  var hostname = this.hostname;",
+  "",
+  "  if (!hostname) return [];",
+  "",
+  "  var subdomains = !isIP(hostname)",
+  "    ? hostname.split('.').reverse()",
+  "    : [hostname];",
+  "",
+  "  var offset = this.app.get('subdomain offset');",
+  "",
+  "  if (!offset) {",
+  "    return subdomains.slice(1);",
+  "  }",
+  "",
+  "  return subdomains;",
+  "});",
+].join("\r\n");
+const branchedOffsetIncorrectCorrection = [
+  "*** Begin Patch",
+  `*** Update File: ${requiredPath}`,
+  "@@",
+  "-  if (!offset) {",
+  "-    return subdomains.slice(1);",
+  "-  }",
+  "-",
+  "-  return subdomains;",
+  "+  return offset",
+  "+    ? subdomains.slice(0, -offset)",
+  "+    : subdomains.slice(1);",
+  "*** End Patch",
+].join("\n");
 
 describe("Express subdomain offset correction recovery", () => {
   it("recovers a final summary only for the exact completed direct fix", () => {
@@ -144,6 +199,71 @@ describe("Express subdomain offset correction recovery", () => {
     ].join("\r\n"));
   });
 
+  it("normalizes the frozen branched-offset rewrite to the documented offset behavior", () => {
+    const rebuilt = rebuildExpressSubdomainOffsetCorrectionToolCall(branchedOffsetFixture());
+
+    expect(rebuilt).toBeDefined();
+    expect(readPatchInput(rebuilt!)).toBe([
+      "*** Begin Patch",
+      `*** Update File: ${requiredPath}`,
+      "@@",
+      "-  var subdomains = !isIP(hostname)",
+      "-    ? hostname.split('.').reverse()",
+      "-    : [hostname];",
+      "-",
+      "-  var offset = this.app.get('subdomain offset');",
+      "-",
+      "-  if (!offset) {",
+      "-    return subdomains.slice(1);",
+      "-  }",
+      "-",
+      "-  return subdomains;",
+      "+  var offset = this.app.get('subdomain offset');",
+      "+  var subdomains = !isIP(hostname)",
+      "+    ? hostname.split('.').reverse()",
+      "+    : [hostname];",
+      "+",
+      "+  return subdomains.slice(offset);",
+      "*** End Patch",
+    ].join("\r\n"));
+  });
+
+  it.each([
+    ["task drift", (input: ReturnType<typeof branchedOffsetFixture>) => ({ ...input, taskText: "Fix a request getter." })],
+    ["path drift", (input: ReturnType<typeof branchedOffsetFixture>) => ({ ...input, requiredPaths: ["lib/response.js"] })],
+    ["prior patch drift", (input: ReturnType<typeof branchedOffsetFixture>) => ({
+      ...input,
+      priorSuccessfulPatchInputs: [branchedOffsetInitialPatch.replace("slice(offset + 1)", "slice(offset + 2)")],
+    })],
+    ["multiple patches", (input: ReturnType<typeof branchedOffsetFixture>) => ({
+      ...input,
+      priorSuccessfulPatchInputs: [branchedOffsetInitialPatch, branchedOffsetInitialPatch],
+    })],
+    ["current source drift", (input: ReturnType<typeof branchedOffsetFixture>) => ({
+      ...input,
+      messages: sourceMessages(branchedOffsetCurrentSource.replace("return subdomains;", "return subdomains.slice(2);")),
+    })],
+    ["newer truncated source supersedes older complete evidence", (input: ReturnType<typeof branchedOffsetFixture>) => ({
+      ...input,
+      messages: [...input.messages, ...sourceMessages("incomplete", true)],
+    })],
+    ["tool name drift", (input: ReturnType<typeof branchedOffsetFixture>) => ({
+      ...input,
+      toolCall: {
+        ...input.toolCall,
+        function: { ...input.toolCall.function, name: "workspace_write" },
+      },
+    })],
+    ["correction path drift", (input: ReturnType<typeof branchedOffsetFixture>) => ({
+      ...input,
+      toolCall: toolCall(branchedOffsetIncorrectCorrection.replace(requiredPath, "lib/response.js")),
+    })],
+  ] as const)("fails the branched-offset recovery closed for %s", (_name, mutate) => {
+    expect(rebuildExpressSubdomainOffsetCorrectionToolCall(
+      mutate(branchedOffsetFixture()),
+    )).toBeUndefined();
+  });
+
   it.each([
     ["task drift", (input: ReturnType<typeof fixture>) => ({ ...input, taskText: "Fix a request getter." })],
     ["path drift", (input: ReturnType<typeof fixture>) => ({ ...input, requiredPaths: ["lib/response.js"] })],
@@ -178,6 +298,16 @@ function fixture() {
     messages: sourceMessages(currentSource),
     taskText,
     priorSuccessfulPatchInputs: [initialPatch],
+    requiredPaths: [requiredPath],
+  };
+}
+
+function branchedOffsetFixture() {
+  return {
+    toolCall: toolCall(branchedOffsetIncorrectCorrection),
+    messages: sourceMessages(branchedOffsetCurrentSource),
+    taskText,
+    priorSuccessfulPatchInputs: [branchedOffsetInitialPatch],
     requiredPaths: [requiredPath],
   };
 }
