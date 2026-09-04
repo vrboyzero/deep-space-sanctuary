@@ -15,6 +15,7 @@ import {
   type WorkspaceChangeRecovery,
   type WorkspaceChangeRecoveryCandidate,
 } from "./workspace-change-recovery.js";
+import { replaceFileWithRetry } from "./atomic-file-replace.js";
 
 const SNAPSHOT_VERSION = 1 as const;
 const DEFAULT_MAX_FILE_BYTES = 4 * 1024 * 1024;
@@ -1063,7 +1064,7 @@ export class WorkspaceChangeSnapshotRuntime {
       };
       await writeJson(path.join(temporaryDirectory, "manifest.json"), manifest);
       await fs.mkdir(path.dirname(baselineDirectory), { recursive: true, mode: 0o700 });
-      await fs.rename(temporaryDirectory, baselineDirectory);
+      await replaceFileWithRetry(temporaryDirectory, baselineDirectory);
       return toBaseline(manifest);
     } catch (error) {
       await fs.rm(temporaryDirectory, { recursive: true, force: true }).catch(() => {});
@@ -1213,7 +1214,7 @@ export class WorkspaceChangeSnapshotRuntime {
       await writeJson(path.join(temporaryDirectory, "hunks.json"), hunks);
       await writeJson(path.join(temporaryDirectory, "summary.json"), summary);
       await fs.mkdir(path.dirname(snapshotDirectory), { recursive: true, mode: 0o700 });
-      await fs.rename(temporaryDirectory, snapshotDirectory);
+      await replaceFileWithRetry(temporaryDirectory, snapshotDirectory);
       return summary;
     } catch (error) {
       await fs.rm(diffDirectory, { recursive: true, force: true }).catch(() => {});

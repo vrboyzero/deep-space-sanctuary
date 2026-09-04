@@ -6,7 +6,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { promisify } from "node:util";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   runWorkspaceSnapshotGitCommand,
@@ -232,6 +232,62 @@ describe("WorkspaceChangeSnapshotRuntime", () => {
     expect(page.hunks[0]?.patch).toContain("+after");
     await expect(fs.readFile(snapshot.artifacts.summaryPath, "utf-8")).resolves.toContain(snapshot.diffHash);
     await expect(fs.readFile(snapshot.artifacts.patchPath, "utf-8")).resolves.toContain("diff --git a/note.txt b/note.txt");
+  });
+
+  it("retries a transient EPERM while publishing baseline and snapshot directories", async () => {
+    const fixture = await createFixture("belldandy-change-snapshot-rename-eperm-");
+    await fs.writeFile(path.join(fixture.workspaceRoot, "note.txt"), "before\n", "utf-8");
+    const rename = vi.spyOn(fs, "rename");
+    const transientError = Object.assign(new Error("rename EPERM"), {
+      code: "EPERM",
+      syscall: "rename",
+    });
+    rename.mockRejectedValueOnce(transientError).mockRejectedValueOnce(transientError);
+
+    try {
+      const runtime = new WorkspaceChangeSnapshotRuntime({ stateDir: fixture.stateDir });
+      const baseline = await runtime.captureBaseline({
+        baselineId: "rename-eperm-1",
+        workspaceRoot: fixture.workspaceRoot,
+        source: "run_start",
+      });
+      await fs.writeFile(path.join(fixture.workspaceRoot, "note.txt"), "after\n", "utf-8");
+      const snapshot = await runtime.createSnapshot({ baselineId: baseline.baselineId });
+
+      expect(rename).toHaveBeenCalledTimes(4);
+      await expect(fs.access(snapshot.artifacts.summaryPath)).resolves.toBeUndefined();
+    } finally {
+      rename.mockRestore();
+    }
+  });
+
+  it("fails closed after bounded directory publish retries", async () => {
+    const fixture = await createFixture("belldandy-change-snapshot-rename-eperm-repeat-");
+    await fs.writeFile(path.join(fixture.workspaceRoot, "note.txt"), "before\n", "utf-8");
+    const rename = vi.spyOn(fs, "rename").mockRejectedValue(
+      Object.assign(new Error("persistent rename EPERM"), {
+        code: "EPERM",
+        syscall: "rename",
+      }),
+    );
+
+    try {
+      const runtime = new WorkspaceChangeSnapshotRuntime({ stateDir: fixture.stateDir });
+      await expect(runtime.captureBaseline({
+        baselineId: "rename-eperm-repeat-1",
+        workspaceRoot: fixture.workspaceRoot,
+        source: "run_start",
+      })).rejects.toMatchObject({ code: "EPERM", syscall: "rename" });
+
+      expect(rename).toHaveBeenCalledTimes(3);
+      await expect(fs.readdir(path.join(
+        fixture.stateDir,
+        "artifacts",
+        "workspace-change-snapshots",
+      ))).resolves.toEqual([]);
+    } finally {
+      rename.mockRestore();
+    }
   });
 
   it.runIf(process.platform === "win32")("keeps the temporary Git diff cwd below the Windows legacy path limit", async () => {
