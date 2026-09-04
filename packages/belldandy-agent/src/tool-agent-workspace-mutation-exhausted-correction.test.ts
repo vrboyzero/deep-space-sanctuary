@@ -141,6 +141,27 @@ describe("verified mutation after exhausted objective correction", () => {
       ].join("\n"),
     },
     {
+      name: "context-only hunk after an unlisted-path retry",
+      taskText: "Replace the frozen value in src/api.ts.",
+      initialPatch: "initial patch",
+      currentSource: "export const value = 'new';",
+      correctionPatch: [
+        "*** Begin Patch",
+        "*** Update File: src/extra.ts",
+        "@@",
+        "-old",
+        "+new",
+        "*** End Patch",
+      ].join("\n"),
+      correctionRetryPatch: [
+        "*** Begin Patch",
+        "*** Update File: src/api.ts",
+        "@@",
+        " export const value = 'new';",
+        "*** End Patch",
+      ].join("\n"),
+    },
+    {
       name: "repeated current source",
       taskText: "Replace the frozen value in src/api.ts.",
       initialPatch: "initial patch",
@@ -197,7 +218,9 @@ describe("verified mutation after exhausted objective correction", () => {
       }
       if (requests.length === 3 || requests.length === 4) {
         return response(modelToolCall(`rejected-correction-${requests.length}`, "apply_patch", {
-          input: fixture.correctionPatch,
+          input: requests.length === 4 && "correctionRetryPatch" in fixture
+            ? fixture.correctionRetryPatch
+            : fixture.correctionPatch,
         }));
       }
       return response({

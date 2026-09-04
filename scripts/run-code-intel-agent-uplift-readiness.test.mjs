@@ -247,14 +247,20 @@ async function createReadinessFixture(platform, options = {}) {
 
 function buildHistoricalTaskManifestText(currentText) {
   const normalized = normalizeTextLineEndings(currentText);
+  const modelExecutionPattern = /^      "modelExecution": "(?:provider|local_fixture)",\n/gmu;
+  const modelExecutionLines = normalized.match(modelExecutionPattern) ?? [];
+  if (modelExecutionLines.length !== 24) {
+    throw new Error("Current v3 task manifest no longer exposes the 24 model execution bindings.");
+  }
+  const historicalBase = normalized.replace(modelExecutionPattern, "");
   const startMarker = '    {\n      "id": "real-web.ui-regression",';
   const endMarker = '    {\n      "id": "real-web.dependency-diagnosis",';
-  const start = normalized.indexOf(startMarker);
-  const end = normalized.indexOf(endMarker, start + startMarker.length);
+  const start = historicalBase.indexOf(startMarker);
+  const end = historicalBase.indexOf(endMarker, start + startMarker.length);
   if (start < 0 || end < 0 || end <= start) {
     throw new Error("Current v3 task manifest no longer exposes the frozen Web task boundary.");
   }
-  const currentBlock = normalized.slice(start, end);
+  const currentBlock = historicalBase.slice(start, end);
   const frozenBlock = currentBlock
     .replace(
       '"real-web-ui-regression-v2"',
@@ -267,7 +273,7 @@ function buildHistoricalTaskManifestText(currentText) {
     )
     .replace('"real-web-ui-regression-v2"', '"real-web-ui-regression-v1"')
     .replace(/      "truthSet": \{\n[\s\S]*?      \},\n/u, "");
-  const result = `${normalized.slice(0, start)}${frozenBlock}${normalized.slice(end)}`;
+  const result = `${historicalBase.slice(0, start)}${frozenBlock}${historicalBase.slice(end)}`;
   const expectedHash = "e3cac7c8b2786408af45dc3bfed718ee1a898388aa0fae4fbd5b1d38ab68bd22";
   if (hashCanonicalText(result) !== expectedHash) {
     throw new Error("Historical v3 task manifest fixture drifted from the frozen uplift input.");

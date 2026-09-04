@@ -26,7 +26,12 @@ const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
   await cleanupGlobalMemoryManagersForTest();
-  await Promise.all(temporaryDirectories.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => fs.rm(directory, {
+    recursive: true,
+    force: true,
+    maxRetries: process.platform === "win32" ? 5 : 0,
+    retryDelay: 200,
+  })));
 });
 
 describe("Coding TUI runtime integration", () => {

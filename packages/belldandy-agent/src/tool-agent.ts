@@ -5321,6 +5321,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
               });
               continue;
             }
+            if (retainVerifiedMutationForToolFreeObjectiveReview("context_only_hunk")) {
+              continue;
+            }
             yield* emitWorkspaceMutationFailure(
               `the mutation-only apply_patch call contained a context-only hunk that could not be preserved safely; use unique safe Update File sections, valid hunk structure, and at least one real added or removed line per file. ${formatWorkspaceMutationPatchHunkDiagnostics(patchDiagnostics, patchPreservationDiagnostics)}`,
             );

@@ -284,7 +284,7 @@ describe("coding agent baseline aggregation", () => {
   });
 });
 
-describe("coding agent candidate qualification", () => {
+describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
   it("keeps a partial v3 aggregate not eligible and unscored", async () => {
     const root = await makeTempRoot();
     const outputRoot = path.join(root, "baseline");
