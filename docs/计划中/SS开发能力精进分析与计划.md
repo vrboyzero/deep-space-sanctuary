@@ -200,7 +200,7 @@ Go canary 的正式边界是：goCanaryEligible=true、productionEligible=false�
 - Windows repository inputs 已独立验证 repositories/receipts/preflights=4/4/8，config SHA-256=251895ff6b6ffc88e0b0e575f8a3bcd2686af3fc7875ef2b0e7c53f3ccea60c8。
 - WSL2 repository inputs 已由 production owner 唯一发布并独立验证 4/4/8，config SHA-256=ffaa88c3f3de2fe5948cd352ce89537a5eca37e114df484b9c78309ec31666c4；平台路径不同导致 config hash 不同是预期，四字段 identity 仍须相同。
 - 最新第 819 条记录已修复 WSL verifier 的 shell 引号问题；已发布 output 保持只读，本轮未启动 Gateway、runner、formal 或 Provider。
-- 当前 candidate 已首次生成并冻结 expected-report plan，operators 的静态 provenance、首槽映射和 terminal policy 已通过；OCI/资源/费用 Gate、144 个终态、aggregate/qualification/score 尚未完成，旧 candidate 的 plan、ledger 和 report 不得复用。
+- 当前 candidate 已首次生成并冻结 expected-report plan，operators 与双平台 OCI Gate 已通过；最终资源/费用 Gate、144 个终态、aggregate/qualification/score 尚未完成，旧 candidate 的 plan、ledger 和 report 不得复用。
 
 ## 5. 历史失败与问题压缩摘要
 
@@ -305,7 +305,7 @@ Go canary 的正式边界是：goCanaryEligible=true、productionEligible=false�
 
 SS 已经能够在做事前检查、做事后验证、发生错误时停止、程序中断后恢复，并通过多入口共享同一安全边界。当前评分约 9.1，复杂真实任务的完成率仍不足以支持 9.5。
 
-当前工作的准确位置不是继续堆功能，而是把真实产品能力绑定到一个干净、可复算的 candidate：新 identity 0e35c8b 的双平台工程、repository inputs、不可覆盖 expected-report plan 和 operators 前置合同已通过；下一步是 OCI 与运行前 Gate，然后才是单槽 canary、完整矩阵、资格和评分。旧候选结果、历史 formal 和跨 revision projection 均不能替代这条链。
+当前工作的准确位置不是继续堆功能，而是把真实产品能力绑定到一个干净、可复算的 candidate：新 identity 0e35c8b 的双平台工程、repository inputs、不可覆盖 expected-report plan、operators 和 OCI 已通过；下一步是紧邻调用的最终资源/费用 Gate，然后才是单槽 canary、完整矩阵、资格和评分。旧候选结果、历史 formal 和跨 revision projection 均不能替代这条链。
 
 ## 10. 近期实现结论摘要
 
@@ -397,6 +397,23 @@ PowerShell AST、`node --check`、`bash -n`全部通过；旧 identity/hash/path
 
 建立 candidate WSL toolchain，完成双平台 OCI fixture；随后严格串行执行 plan/inputs 刷新、进程/端口/container/lease/staging/目标不存在和紧邻费用 Gate，再启动一个 Windows canary。
 
+#### P2-C 新候选运行前置实现结论：0e35c8b 双平台 OCI Gate（2026-09-05）
+
+##### 已完成内容
+
+1. **candidate WSL toolchain 新建**：独立 `755` root 只含 Go 1.24.2、gopls 0.21.0 与新 Docker wrapper 三个显式 symlink。
+2. **Windows production OCI fixture 执行**：固定 backend/runtime/digest，覆盖 workspace 隔离、network none、pipe、PTY resize/cancel 与 lease cleanup。
+3. **WSL2 production OCI fixture 执行**：使用 candidate toolchain 与独立 drive-backed TMPDIR 运行同一合同。
+4. **效果**：固定镜像在双入口均为同一 `linux/amd64` digest；两平台命令沙箱与资源回收路径可用于新 candidate。
+
+##### 验证结果
+
+Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lease/image container=`0/0`，Windows TEMP/drive-backed TMPDIR/WSL `/tmp` lease=`0/0/0`；双端 staging clean detached，WSL relay=`644`。本阶段未启动 Gateway、benchmark runner、formal 或 Provider 调用。
+
+##### 后续计划
+
+刷新 plan、双平台 inputs 和首槽映射，严格串行完成进程/端口/container/lease/staging/目标不存在与紧邻费用 Gate；全部 Green 后只运行一个 Windows canary。
+
 ## 实施计划进度表
 
 ### 当前阶段与完成边界（2026-09-05）
@@ -413,13 +430,13 @@ PowerShell AST、`node --check`、`bash -n`全部通过；旧 identity/hash/path
 | P2-A Supervisor/并行 worktree | P2 | **完成** | 双平台 lane=720/720、零残留 | 不自动 merge/release/deploy |
 | P2-B 生态与运行前置 | P2 | **完成** | 外部 consumer=7/7、Quality run 通过；Docker 历史项 record_only | 真实 CI receipt 需绑定新 candidate |
 | P2-C 证据/资格工具链 | P2 | **本地合同完成** | evaluator/qualification v2、dimension evidence、local collector、CLI/TUI/Git delivery contract 已通过 | 只接受 current-candidate 原生 receipt |
-| P2-C 0e35c8b/candidate-1 | P2 | **准备中：operators 已就绪** | 双平台工程/identity Green；inputs=4/4/8；plan 144/144/144、SHA=`85bf83d8…b8a9`；terminal policy=4/4、首槽映射通过 | 完成双平台 OCI 与资源/费用 Gate，再运行单槽 canary |
+| P2-C 0e35c8b/candidate-1 | P2 | **准备中：双平台 OCI Green** | 工程/identity、inputs、plan、operators 与 Windows/WSL OCI 均通过；container/lease 已归零 | 完成紧邻调用的证据、资源、目标与费用 Gate，再运行单槽 canary |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 ### 后续计划
 
-1. 建立 candidate WSL toolchain并完成双平台 OCI fixture，要求 pinned image、container 与 lease 全部闭合。
-2. 通过进程/端口/lease/staging/目标不存在/敏感值/费用 Gate 后，仅运行一个 Windows 单槽 canary；每个 terminal 立即验真、回收和 resume。
+1. 刷新 plan、双平台 inputs 和首槽映射，完成进程/端口/container/lease/staging/目标不存在/敏感值/费用 Gate。
+2. 全部 Green 后仅运行一个 Windows 单槽 canary；每个 terminal 立即验真、回收和 resume。
 3. 依据 canary 结果决定是否继续剩余矩阵；完成 aggregate、dimension evidence、qualification、七维 score 后，再组织第二个连续候选。
 
 先做 operators 和 plan，是因为它们决定候选分母、身份和恢复边界；当前仍缺的关键闭环是新 candidate 的完整 report/ledger、真实 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选。
@@ -430,3 +447,4 @@ PowerShell AST、`node --check`、`bash -n`全部通过；旧 identity/hash/path
 - 历史候选的 product workflow 失败、usage 终态和缺失 plan 已分别保留并冻结；不得用新工具链事后改写旧 aggregate，也不得把历史 partial 结果当作当前分数。
 - 本轮文档压缩会移除逐轮命令和重复问题流水；完整证据仍可从 archive-05 回读，当前文档只保留影响决策的摘要和可验证闭环。
 - expected-report 四层不存在探针首次因 PowerShell 空管道语法未执行；改为先构造结果数组后复核四层均不存在。该问题只影响只读探针编排，没有创建、覆盖或修改 candidate 输出，处理决策为 `fix_now completed`。
+- OCI 前置检查发现 Docker Desktop daemon 未运行，原生与 WSL wrapper 均只能读取 client 版本。已启动本机 Docker Desktop 并在 30 秒守卫内恢复 client/server=`29.1.3/29.1.3`；未修改 Docker 配置、镜像或旧候选，随后双平台 OCI 与零残留 Gate 均通过，处理决策为 `fix_now completed`。
