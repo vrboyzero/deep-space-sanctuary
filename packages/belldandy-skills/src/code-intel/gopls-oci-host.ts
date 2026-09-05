@@ -403,10 +403,11 @@ function buildContainerEnvironment(profile: LspServerProcessProfile): Record<str
     GOPROXY: "off",
     GOSUMDB: "off",
     GOTOOLCHAIN: "local",
+    // Go 1.24 不按容器 CPU 配额收敛并发；显式约束，避免耗尽固定 PID 限额。
+    GOMAXPROCS: String(GOPLS_OCI_SANDBOX_RESOURCE_LIMITS.cpus),
     GOENV: "off",
     GOTELEMETRY: "off",
     GOFLAGS: "-mod=readonly",
-    GOWORK: "auto",
     CGO_ENABLED: "0",
   };
 }

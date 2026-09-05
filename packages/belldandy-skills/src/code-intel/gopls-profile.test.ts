@@ -132,6 +132,7 @@ describe("createGoplsProcessProfile", () => {
       },
     });
     expect(result.profile.environment).not.toHaveProperty("SS_SECRET");
+    expect(result.profile.environment).not.toHaveProperty("GOWORK");
     expect(result.profile.environment.PATH).toBe(path.dirname(goCommand));
     expect(result.profile.initializationOptions).toEqual({
       settings: { gopls: { buildFlags: ["-tags=integration,linux"] } },

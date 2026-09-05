@@ -86,6 +86,7 @@ describe("createGoplsOciSandboxHost", () => {
           GOPROXY: "off",
           GOSUMDB: "off",
           GOTOOLCHAIN: "local",
+          GOMAXPROCS: "1",
           PATH: `${goArtifactRoot}/bin`,
           GOCACHE: "/tmp/go-build",
           GOMODCACHE: "/tmp/go-mod",
@@ -93,6 +94,7 @@ describe("createGoplsOciSandboxHost", () => {
           GOTMPDIR: "/tmp",
           HOME: "/tmp/home",
         });
+        expect(environment).not.toHaveProperty("GOWORK");
         return {
           path: "/tmp/private-gopls-environment",
           cleanup: async () => {

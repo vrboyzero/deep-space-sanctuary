@@ -508,9 +508,11 @@ function parseInspectEvidence(stdout, input) {
   if (!inspected?.HostConfig || !Array.isArray(inspected.Mounts)) {
     throw new Error("OCI promotion Gate received invalid container inspect output.");
   }
-  const findMount = (source, destination) => inspected.Mounts.find((mount) => (
-    mount.Source === source && mount.Destination === destination
-  ));
+  const findMount = (source, destination) => {
+    const matches = inspected.Mounts.filter((mount) => mount.Destination === destination);
+    return matches.length === 1 && matches[0].Type === "bind"
+      && sameMountSource(matches[0].Source, source) ? matches[0] : undefined;
+  };
   const workspaceMount = findMount(input.workspaceRoot, input.workspaceRoot);
   const goMount = findMount(input.goArtifactRoot, input.goArtifactRoot);
   const goplsMount = findMount(input.goplsArtifactRoot, input.goplsArtifactRoot);
@@ -529,6 +531,16 @@ function parseInspectEvidence(stdout, input) {
     goArtifactReadOnly: goMount?.RW === false,
     goplsArtifactReadOnly: goplsMount?.RW === false,
   };
+}
+
+function sameMountSource(actual, expected) {
+  if (actual === expected) return true;
+  // Docker Desktop 的 Windows CLI 返回盘符源路径；容器目标仍须逐字匹配。
+  const drivePath = /^\/mnt\/([a-z])\/(.+)$/u.exec(expected);
+  if (!drivePath || typeof actual !== "string" || !/^[a-z]:[\\/]/iu.test(actual)) return false;
+  const normalized = actual.replaceAll("\\", "/");
+  return normalized[0].toLowerCase() === drivePath[1]
+    && normalized.slice(2) === `/${drivePath[2]}`;
 }
 
 function parseGoplsRssBytes(stdout, goplsCommand) {

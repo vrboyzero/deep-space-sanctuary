@@ -23,7 +23,7 @@ const comparatorSchemaPath = path.join(
   "benchmarks/code-intel/v1/go-canary-comparator-report.schema.json",
 );
 const MAX_READINESS_DURATION_MS = 30_000;
-const sharedRuntimePaths = Object.freeze([
+export const CODE_INTEL_GO_SHARED_RUNTIME_PATHS = Object.freeze([
   "packages/belldandy-skills/src/code-intel/types.ts",
   "packages/belldandy-skills/src/code-intel/code-intel.ts",
   "packages/belldandy-skills/src/code-intel/lsp-process-host.ts",
@@ -283,7 +283,8 @@ function sameSharedRuntimeIdentity(windows, oci) {
     .map((file) => [file.path, file.sha256]));
   const ociFiles = new Map((oci.sourceIdentity?.files ?? [])
     .map((file) => [file.path, file.sha256]));
-  return sharedRuntimePaths.every((filePath) => windowsFiles.get(filePath) === ociFiles.get(filePath));
+  return CODE_INTEL_GO_SHARED_RUNTIME_PATHS.every((filePath) => windowsFiles.has(filePath)
+    && windowsFiles.get(filePath) === ociFiles.get(filePath));
 }
 
 function countSharedRuntimeFiles(windows, oci) {
@@ -291,7 +292,8 @@ function countSharedRuntimeFiles(windows, oci) {
     .map((file) => [file.path, file.sha256]));
   const ociFiles = new Map((oci.sourceIdentity?.files ?? [])
     .map((file) => [file.path, file.sha256]));
-  return sharedRuntimePaths.filter((filePath) => windowsFiles.get(filePath) === ociFiles.get(filePath)).length;
+  return CODE_INTEL_GO_SHARED_RUNTIME_PATHS.filter((filePath) => windowsFiles.has(filePath)
+    && windowsFiles.get(filePath) === ociFiles.get(filePath)).length;
 }
 
 function ociInspectPassed(report) {

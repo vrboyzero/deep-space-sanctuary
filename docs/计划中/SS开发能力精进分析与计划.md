@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **交付前置发现 CodeIntel 旧清单绑定，修复已通过 Windows 联合回归** | 1fecbdcf 两端 clean inputs 为 `4/4/8`，Quality `33960798149` 六个 job 通过、完整测试运行中；零模型复现 CodeIntel readiness 的清单漂移后，补精确摘要兼容和显式单次费用上限，Windows 联合回归 `39/39`、build、benchmark 合同 verifier 通过；本轮 Provider 调用与正式付费槽均为0 | 补 Linux 验证后统一提交这批交付前置修复；等待对应完整 CI，再绑定新 identity 的 inputs/plan/config。先关闭证据 producer 的实际阻塞，避免正式矩阵结束后才发现交付链不可执行 |
+| P2-C 分层开发与编排复用 | P2 | **CodeIntel 清单修复完整 CI 通过；Go 新缺陷已通过双平台与真实验证，待提交** | 4fcf376 两端 clean inputs=`4/4/8`；Quality `33960798149`、`33961952586` 均七个 job 全通过。新增 Go 修复双平台各 `100/100`、build 与 benchmark verifier 通过；真实 Windows/WSL Go=`10/10`、comparator 通过、资源八项为0；本轮模型调用与正式付费槽均为0 | 提交 Go 环境/挂载/共享清单修复并验证对应完整 CI，再绑定最终 identity 的 inputs/plan/config。当前仅工程与交付前置闭合，不作为完整正式候选资格 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -1839,20 +1839,45 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 - TypeScript/build：`corepack pnpm build` 通过；`verify-coding-agent-benchmark-contract.mjs` 通过。
 - 六个相关文件联合回归 `39/39`，含12个新增用例；本轮最初失败及修复后通过均已实测。真实 Windows readiness 为 `ready_for_authorization`、preparedPairs=4，状态仅表示准备器不读取授权，会话内持续授权仍有效。
-- 本次尚缺 Linux 对应验证和包含修复的新身份完整 CI；没有新增 Provider 调用，费用账本不变。
+- 后续 Linux 六文件验证也为 `39/39`、build 通过；提交 `4fcf376179ca316da06a870cba41ce2bd0dbcea1` 的 Quality `33961952586` 已七个 job 全通过，包含完整工程测试。没有新增模型调用，费用账本不变。
+
+#### P2-C Go 前置实现结论：工作区发现、容器并发与真实证据绑定（2026-09-05）
+
+##### 已完成内容
+
+1. **`gopls-profile.ts` / `gopls-oci-host.ts` 修改**：
+   - 省略 `GOWORK=auto`，使用默认 go.work 发现；pinned gopls 原来把显式 auto 当作文件路径，发出持续的 Error loading workspace 进度。
+   - 容器 GOMAXPROCS 绑定既定 1 CPU 配额，避免 Go 1.24 按宿主 CPU 数建立线程/编译子进程导致 `resource temporarily unavailable`；128 MiB/64 PID/16 MiB tmpfs 和 30 秒截止保持原值。
+2. **`run-code-intel-go-oci-promotion-gate.mjs` 修改**：
+   - 原始 inspect 已证明三项挂载均 `RW=false`；补精确 WSL drive/Windows 源路径映射，保留目标、bind 类型、唯一性与访问模式验证。
+3. **`coding-agent-candidate-code-intel-receipt.mjs` / comparator 修改**：
+   - 两 owner 共用固定九项共享 runtime 逐路径验真；真实 OCI producer 另外记录 owner 文件，完整清单仍按摘要与 source inventory 验真。
+   - 新增真实 producer 清单形状的通过/缺失/改动/重复四例、两端同时缺同一文件反例和六项挂载验证；既有环境用例补默认工作区发现与并发约束断言。
+4. **效果**：
+   - 标准真实 Go 检查两端均 6/6 cases、10/10 positions，comparator 通过；原始失败报告继续保留。
+   - 本轮真实故障均在正式候选前关闭，没有新增模型调用、重跑正式槽或放宽最终资格。
+
+##### 验证结果
+
+- TypeScript/build：主仓与 Linux staging 均 `corepack pnpm build` 通过；benchmark contract verifier 通过。
+- 八文件联合回归 Windows/WSL 各 `100/100`，含11个新增用例与2项既有用例强化；环境与挂载修复前已实测 7 failed，修复后全部通过。
+- 标准 WSL 报告 `tmp/p2c-layered-development/go-oci-fixed-4fcf376/report.json`：readiness=`4139ms`，RSS peak=`33,259,520 bytes`、57 samples，全部 Gate 通过；Windows 报告位于同级 `go-native-fixed-4fcf376/report.json`，比较器位于 OCI 目录 `comparator-report.json` 并通过。临时诊断运行另行保留，不替代标准入口证据。
+- 资源检查八项均为0，lease/container/state/staging 清理全部通过。本批 Go 修改尚待提交与对应完整 CI，不能借用 4fcf376 的 CI 声称新修改已完整验收。
 
 ### 后续计划
 
-1. 收取 `1fecbdcf` 的 Quality `33960798149` 完整工程 CI 终态，同时完成这批 CodeIntel 修复的 Linux 定向验证和新提交；对应新身份完整 CI 通过后，创建并独立验真不可覆盖正式 plan/config。先关闭已经复现的交付前置阻塞，避免消耗不具备交付可能的正式槽。
+1. 提交这批已通过双平台/真实验证的 Go 环境、挂载和 receipt 修复并取得对应完整工程 CI；此前 `1fecbdcf`/`4fcf376` 的 Quality 均已完整通过。新身份完整 CI 通过后，创建并独立验真不可覆盖正式 plan/config，先关闭工程与交付前置再分配正式槽。
 2. 历史 JS/Go 失败及原始 JSON review/repair 证据继续保留供离线诊断；`023af38` 双平台 JS 新探索已通过，不再将历史失败当作当前未执行的修复步骤。后续真实失败须依据各自日志定位，旧日志缺失的终止原因不能回补，也不能只凭 token 上限改变预算、解析器或增加特例。
-3. 当前双平台 staging 与 inputs 为 `1fecbdcf`；CodeIntel 修复提交后须同步新 identity，复用已验真的只读 cache 并重新绑定 receipt。真实 CodeIntel paired-run、CI 采集与各 receipt 的前置检查继续采用公共 producer，付费调用统一受已授权单次和累计守卫约束；仅测试替身/交付准备变化不重复既有 JS 探索。
+3. 当前 inputs 与 Windows staging 为 `4fcf376`；Linux staging 已应用待提交 Go 补丁用于定向与真实验证。新提交后同步双平台最终 identity，复用已验真的只读 cache 并重新绑定 receipt。真实 CodeIntel paired-run、CI 采集与各 receipt 使用公共 producer，付费调用统一受已授权单次和累计守卫约束；本次 Go 环境和证据修改不重复既有双平台 JS 探索。
 4. 后继正式候选仅在合同、工程与资源 Gate 闭合后进入完整 `144` 槽；普通失败只在资格仍可达且证据/资源闭合时续跑，硬门槛失败停止。下一会话继承 `explore-023af38-1/cost-ledger-final.json`（SHA=`c0df071d2ac07f7616c7ebf4a4e5343c8b330d020d1a15915e181c0a418f6ded`）的全部观测费用和预留，所有已冻结 identity 保持只读。
 5. 完整候选后采集当前 identity 的真实 CI/CLI/TUI/Git delivery receipt、aggregate 与七维资格，再执行第二个连续完整候选；两个候选均须满足七维下限、raw weighted `>=9.500` 和全部硬 Gate。
 
-当前正式准入还缺 CodeIntel 交付前置修复的双平台验证与新身份完整工程 CI；023af38 的失败 CI 保留。双平台 JS 探索、依赖审计及新计量的双平台审批已有通过证据，但不外推为正式验收。完整 `144` 槽、当前 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选均未完成。最终验收标准保持不变，审批计量与费用授权均已明确并持续有效。
+当前正式准入还缺本批 Go 修复的新提交完整工程 CI 与最终身份绑定；023af38 的失败 CI 保留。双平台 JS 探索、依赖审计、新计量审批和 Go 前置已有通过证据，但不外推为正式验收。完整 `144` 槽、当前 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选均未完成。最终验收标准保持不变，审批计量与费用授权均已明确并持续有效。
 
 ### 重要问题说明
 
+- Go OCI 映射路径运行原来同时报 truth timeout、workspace/toolchain not readonly；一次性只读诊断证实实际三个挂载均只读，gopls 因显式 `GOWORK=auto` 生成错误路径进度，同时 Go 编译子进程遭遇资源不足。处理为 `fix_now completed / 默认工作区发现 + 固定 CPU 配额内收敛并发 + 精确挂载映射`，标准真实入口和双平台 comparator 已通过；未知路径、可写/重复/非 bind 挂载继续拒绝。最初 Windows `spawn_failed` 的宿主原因仍不确定，后续诊断及标准运行均通过，处理为 `record_only`，不宣称已修复该瞬时失败。
+- candidate Go receipt 误要求 Windows 九项与 OCI 完整 owner 清单等长且相同，真实 producer 因此必然被拒；已由真实清单形状回归证明并修复为共享九项逐路径比对，完整 OCI inventory 仍验真。处理为 `fix_now completed`；另外补齐两端同缺路径时不能以 `undefined===undefined` 视为匹配的反例。
 - CodeIntel 交付前置在 `1fecbdcf` 零模型复现 `task manifest identity drift`：readiness 和实际运行入口仍只接受旧清单，旧测试还把当前清单拒绝作为预期。四个 paired-run 任务及仓库真值未变化，处理为 `fix_now / 精确摘要兼容`，原 Gate 与未知漂移拒绝保留；Windows 真准备及 `39/39` 联合回归已通过，Linux/新 CI 待验证。同时发现 uplift 使用旧默认单次费用入口，补显式 `0.10 USD` 限制并保留超限终态；不通过提高上限绕过问题。
 - b564025 新 CI 唯一失败是 distribution 合同仍要求 fast-uri=`3.1.5`，并非 OSV 或产品失败；检查还发现 qs 正向匹配可误命中旧 override 选择器。处理决策为 `fix_now / 定向闭合`，同步到已安装、已通过审计的 patched snapshot，并加入旧 snapshot 拒绝；不重跑旧 CI、不撤销安全升级。
 - b564025 两槽 JS 均失败。准确回放证明 Windows 未读测试就被有界预算流程提前切入 mutation-only，处理决策为通用读取准入 `fix_now / 本地定向闭合`；WSL 首次修改及复核均有正确输入、断言和错误源码，最终仍把 `slice(3)` 误判为保留两个元素，处理决策为 `record_only / 真实模型推断失败`，不再将它归因于测试证据丢失、JSON 无效或 length。修复后仍需两槽真实反馈，不能无新证据重复调用或直接进入正式候选。

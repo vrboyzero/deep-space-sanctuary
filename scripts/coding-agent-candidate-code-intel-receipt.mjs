@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { compileOutputSchema } from "../packages/belldandy-core/src/cli/shared/output-schema.ts";
 import { hashCanonicalText } from "./coding-agent-benchmark-contract.mjs";
+import { CODE_INTEL_GO_SHARED_RUNTIME_PATHS } from "./run-code-intel-go-canary-comparator.mjs";
 
 const MAX_RECEIPT_BYTES = 4 * 1024 * 1024;
 const MAX_ARTIFACT_BYTES = 16 * 1024 * 1024;
@@ -118,7 +119,7 @@ const EXPECTED_GO_PROVIDER = Object.freeze({
   capability: "semantic-live",
   goVersion: "go1.24.2",
 });
-const EXPECTED_GO_RUNTIME_FILE_COUNT = 9;
+const EXPECTED_GO_RUNTIME_FILE_COUNT = CODE_INTEL_GO_SHARED_RUNTIME_PATHS.length;
 
 /**
  * Resolves the candidate-bound CodeIntel receipt at the public dimension seam.
@@ -423,8 +424,14 @@ function requireGoSharedRuntimeBinding(input) {
     input.oci.sourceIdentity?.files,
     "CodeIntel Go OCI runtime",
   );
-  if (JSON.stringify(nativeRuntime) !== JSON.stringify(ociRuntime)
-    || nativeRuntime.length !== EXPECTED_GO_RUNTIME_FILE_COUNT) {
+  const nativeFiles = new Map(nativeRuntime.map((file) => [file.path, file.sha256]));
+  const ociFiles = new Map(ociRuntime.map((file) => [file.path, file.sha256]));
+  // OCI 还记录容器 owner 等额外文件；共享合同只比较固定九项，完整清单仍单独验真。
+  if (nativeRuntime.length !== EXPECTED_GO_RUNTIME_FILE_COUNT
+    || nativeRuntime.length !== input.native.sourceIdentity.runtimeFiles.length
+    || ociRuntime.length !== input.oci.sourceIdentity.files.length
+    || CODE_INTEL_GO_SHARED_RUNTIME_PATHS.some((filePath) => !nativeFiles.has(filePath)
+      || nativeFiles.get(filePath) !== ociFiles.get(filePath))) {
     throw rejection("CodeIntel Go shared runtime identity drifted");
   }
 }
@@ -826,8 +833,6 @@ function resolveGoCanary(input) {
   const manifestSha256 = hashWorkspaceFileIfPresent(GO_MANIFEST_PATH);
   const nativeSource = requireGoSourceIdentity(native.sourceIdentity, "Go native source");
   const ociSource = requireGoSourceIdentity(oci.sourceIdentity, "Go OCI source");
-  const sharedRuntime = JSON.stringify(native.sourceIdentity.runtimeFiles)
-    === JSON.stringify(oci.sourceIdentity.files);
   const commonTruth = native.truthSet?.id === receipt.selection.goCanary.truthSetId
     && oci.truthSet?.id === receipt.selection.goCanary.truthSetId
     && native.truthSet.manifestSha256 === receipt.selection.goCanary.manifestSha256
@@ -914,7 +919,6 @@ function resolveGoCanary(input) {
     && comparator.toolchain?.ociPlatform === "linux/amd64";
   return nativeSource
     && ociSource
-    && sharedRuntime
     && commonTruth
     && comparatorInputs
     && comparatorIdentity
@@ -1046,7 +1050,7 @@ function requireGoSourceIdentity(identity, label) {
     const runtimeFiles = requireSourceFiles(identity.runtimeFiles, `${label} runtime`);
     return runtimeFiles.length === EXPECTED_GO_RUNTIME_FILE_COUNT;
   }
-  return identity.files.length === EXPECTED_GO_RUNTIME_FILE_COUNT;
+  return identity.files.length >= EXPECTED_GO_RUNTIME_FILE_COUNT;
 }
 
 function requireFileIdentity(value, label) {

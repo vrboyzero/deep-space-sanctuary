@@ -145,6 +145,20 @@ describe("Go CodeIntel canary comparator", () => {
     });
   });
 
+  it("fails closed when both platforms omit the same shared runtime file", async () => {
+    const reports = passingReports();
+    reports.windowsNative.sourceIdentity.runtimeFiles.pop();
+    reports.wsl2Oci.sourceIdentity.files.pop();
+    const report = await buildCodeIntelGoCanaryComparatorReport({
+      windowsNative: source(reports.windowsNative),
+      wsl2Oci: source(reports.wsl2Oci),
+    });
+
+    expect(report.gate.passed).toBe(false);
+    expect(report.gate.failures).toContain("shared_runtime_identity_mismatch");
+    expect(report.identity.matchedSharedRuntimeFileCount).toBe(8);
+  });
+
   it("fails closed when readiness duration exceeds the bounded query window", async () => {
     const reports = passingReports();
     reports.wsl2Oci.truthSet.lifecycle.readinessTimeline.readinessDurationMs = 30_001;

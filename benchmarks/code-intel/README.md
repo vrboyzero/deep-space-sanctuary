@@ -71,6 +71,8 @@ corepack pnpm benchmark:code-intel:go-oci-sandbox-gate --platform windows-native
 
 Host 在首轮 workspace document sync 后发送一个不消费业务结果的有界 `workspace/symbol` readiness 探针；Go canary 使用冻结 fixture 的跨 module 符号 `BuildMessage`，避免不会命中的哨兵查询在 app/lib 索引完成前返回。探针完成后仍等待 profile-governed work-done progress 进入 500 ms 静默窗口，再执行冻结的 6 个业务查询。LSP lifecycle evidence 额外记录最多 128 条使用单调时钟的 redacted timeline，区分 notification started/sent、readiness started/completed/failed、progress create/begin/end、等待完成和每个请求的结果数量；同时投影 didOpen 起止、首个 progress token 创建/闭合、readiness 起止与相对耗时、首次 references 起止、首次 references 时 active token 数、readiness 后 late progress 数量及 references 是否发生在 readiness 完成之后；不保存 URI、token 原值、源码或 symbol 正文。Comparator 要求 didOpen 先于 readiness、progress 在首次 references 前闭合、首次 references 时无 active token，且 readiness duration 不超过 `30,000 ms` 单查询预算。报告通过 `docker inspect/top` 记录真实配置和 gopls RSS 峰值，并在 Provider dispose 后验证 lease、容器、state 与 staging 全部清理。
 
+Go profile 省略 `GOWORK`，使用 Go 的默认工作区发现，避免 pinned gopls 把显式 `auto` 当作文件路径。OCI 环境将 `GOMAXPROCS` 绑定到既定 CPU 配额，防止 Go 1.24 按宿主 CPU 数启动线程/编译子进程并耗尽 64 PID 限额。inspect 校验只允许精确的 WSL `/mnt/<drive>/...` 与 Windows `<drive>:\...` 源路径映射；目标路径、bind 类型、唯一挂载和 `RW=false` 仍分别验证。
+
 该 runner 只能在 native WSL2/Linux 进程中运行，要求 Docker daemon 已运行、digest 镜像和两个 artifact 已存在；不会启动 daemon、拉取镜像、联网下载、安装工具链、访问 Gateway/模型或写真实 workspace：
 
 ```powershell
@@ -98,6 +100,8 @@ wsl.exe --distribution Ubuntu-22.04 --cd /mnt/e/project/star-sanctuary --exec en
 `v1/go-canary-comparator-report.schema.json` 与 `scripts/run-code-intel-go-canary-comparator.mjs` 是只读的双平台闭合 owner：输入 Windows native truth report 与 WSL2 OCI promotion report，先分别校验原报告 Schema，再绑定输入报告 SHA-256、manifest/fixture identity、6 个 case/10 个位置摘要、9 个共享 runtime 文件 hash、Go/gopls 版本和各自平台。Windows 侧独立检查 lifecycle/response/concurrency/state cleanup；OCI 侧独立检查 Provider admission、inspect 资源/隔离、RSS 与 lease/container/state/staging cleanup，并要求新的 readiness timeline 全部时序条件通过。输出只保留安全摘要与输入 hash，不复制命令路径、artifact root、源码、token 或 timeline 正文；任何不一致都失败关闭，`productionEligible=false` 不变。
 
 `go-code-intel-eligibility.ts` 是唯一 `goCanaryEligible` projection owner。Doctor 通过显式 `comparatorReport` 注入读取该投影：缺少 artifact 返回 `comparator_missing`，版本/结构或任一 Gate 不完整均失败关闭；pinned toolchain 的 `canary-ready` 只表示工具链可探测，不等于双平台 canary 已获准。默认 CLI、Gateway 与 Provider 不自动读取 `.tmp-codex` 运行 artifact，不安装、下载、拉取或启用 Go Provider；即使 comparator 通过，`productionEligible=false` 仍固定。
+
+candidate receipt 与 comparator 共用固定九项 runtime 路径，逐项比较两端摘要。OCI producer 的其他 owner 文件保留在完整 source inventory 中单独验真，不要求 OCI 清单总长度与 Windows 相同；缺项、重复或摘要漂移仍拒绝。
 
 ## P1-A1 真实 Agent uplift Gate
 

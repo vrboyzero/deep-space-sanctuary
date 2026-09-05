@@ -63,6 +63,32 @@ describe("Go CodeIntel OCI promotion Gate", () => {
     expect(runtimeCalls).toBe(1);
   });
 
+  it.each(["native", "mapped", "wrong-source", "writable", "duplicate", "wrong-type"])("verifies %s mount evidence without accepting path or access drift", async (mode) => {
+    const roots = { workspaceRoot: "/mnt/e/task/workspace", goArtifactRoot: "/mnt/e/task/go", goplsArtifactRoot: "/mnt/e/task/gopls" };
+    const mounts = Object.values(roots).map((root) => ({
+      Type: "bind", Source: mode === "native" ? root : `E:${root.slice(6).replaceAll("/", "\\")}`,
+      Destination: root, RW: false,
+    }));
+    if (mode === "wrong-source") mounts[0].Source = "E:\\other\\workspace";
+    if (mode === "writable") mounts[0].RW = true;
+    if (mode === "duplicate") mounts.push({ ...mounts[0] });
+    if (mode === "wrong-type") mounts[0].Type = "volume";
+    const monitor = startContainerMonitor({
+      runtime: "docker", containerName: "belldandy-command-mount", ...roots,
+      goplsCommand: `${roots.goplsArtifactRoot}/bin/gopls`,
+      runRuntimeCommand: async (_runtime, args) => ({ exitCode: 0, stderr: "", stdout: args[0] === "inspect" ? JSON.stringify([{
+        HostConfig: { Memory: 134217728, NanoCpus: 1000000000, PidsLimit: 64, NetworkMode: "none",
+          ReadonlyRootfs: true, Tmpfs: { "/tmp": "rw,nosuid,nodev,noexec,size=16m" } },
+        Mounts: mounts,
+      }]) : "PID RSS COMMAND COMMAND\n" }),
+    });
+    const result = await monitor.stop();
+    expect(result.inspect).toMatchObject({
+      observed: true, workspaceReadOnly: mode === "native" || mode === "mapped",
+      goArtifactReadOnly: true, goplsArtifactReadOnly: true,
+    });
+  });
+
   it("settles every owned Host monitor even when one stop fails", async () => {
     const stopped = [];
     await expect(stopContainerMonitors([

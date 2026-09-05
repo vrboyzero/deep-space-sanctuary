@@ -234,8 +234,8 @@ export function createGoplsProcessProfile(
     GOTOOLCHAIN: "local",
     GOENV: "off",
     GOTELEMETRY: "off",
+    // 省略 GOWORK 以自动发现 go.work；固定 gopls 会把显式 auto 当成文件路径。
     GOFLAGS: "-mod=readonly",
-    GOWORK: "auto",
     CGO_ENABLED: "0",
   };
   const goplsSettings = buildTags.length > 0
