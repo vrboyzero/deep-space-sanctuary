@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { assertCandidateOrdinaryPath, assertCandidatePathWithin, candidateSha256, candidateSlotKey, readCandidateFile } from "./coding-agent-candidate-config.mjs";
+import { verifyCandidateResourceRecovery } from "./coding-agent-candidate-resource-recovery.mjs";
 
 const VERSION = "coding-agent-candidate-slot-journal/v1";
 const SINGLE_RUN_USD = 0.1;
@@ -71,11 +72,11 @@ export async function inspectCandidateSlotJournal(context) {
   return { ...state, closure };
 }
 
-export async function claimCandidateSlot(context, slot) {
+export async function claimCandidateSlot(context, slot, dependencies = {}) {
   assertContext(context);
   const paths = slotPaths(context, slot);
   return withCostAuthorityLock(context, async (authorityRoot) => {
-    await bindCostAuthority(context, authorityRoot);
+    await bindCostAuthority(context, authorityRoot, dependencies);
     await assertCandidateOrdinaryPath(context.ledgerRoot, true);
     await fs.mkdir(context.ledgerRoot, { recursive: true });
     // 先独占整个候选的费用检查，再持久化槽位预留；崩溃留下锁或 intent 都会阻止重发。
@@ -158,7 +159,7 @@ async function withCostAuthorityLock(context, operation) {
   finally { await lock.close(); await fs.unlink(lockPath); }
 }
 
-async function bindCostAuthority(context, root) {
+async function bindCostAuthority(context, root, dependencies = {}) {
   const names = (await fs.readdir(root)).filter((name) => name !== "dispatch.lock").sort();
   if (names.some((name, index) => name !== `${String(index + 1).padStart(6, "0")}.json`)) {
     throw new Error("Candidate cost authority sequence is invalid.");
@@ -174,7 +175,17 @@ async function bindCostAuthority(context, root) {
     const finalPath = path.join(latest.ledgerRoot, "cost-ledger-final.json");
     const final = await readOptional(finalPath);
     if (!final) throw new Error("Candidate cost authority has another active session.");
-    if (final.resourceCleanupComplete !== true) throw new Error("Previous candidate resource cleanup is still uncertain.");
+    if (final.resourceCleanupComplete !== true) {
+      try {
+        const recovery = await (dependencies.verifyResourceRecovery ?? verifyCandidateResourceRecovery)({
+          ledgerRoot: latest.ledgerRoot, configSha256: latest.configSha256,
+          ledgerSha256: candidateSha256(await readCandidateFile(finalPath)),
+        });
+        if (recovery.status !== "verified") throw new Error("Unverified recovery.");
+      } catch {
+        throw new Error("Previous candidate resource cleanup is still uncertain.");
+      }
+    }
     if (final.configSha256 !== latest.configSha256 || !["complete", "frozen"].includes(final.lifecycle)
       || context.costBaseline.path !== finalPath
       || context.costBaseline.sha256 !== candidateSha256(await readCandidateFile(finalPath))

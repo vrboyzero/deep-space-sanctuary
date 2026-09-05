@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { candidateRunPaths } from "./coding-agent-candidate-materials.mjs";
-import { executeCandidateRuntime, prepareCandidateRuntime, recycleCandidateRuntimeEnv } from "./coding-agent-candidate-runtime.mjs";
+import { executeCandidateRuntime, prepareCandidateRuntime, recordCandidatePostRunResources, recycleCandidateRuntimeEnv } from "./coding-agent-candidate-runtime.mjs";
 import { collectCodingAgentCandidateSensitiveScan } from "./coding-agent-candidate-evidence.mjs";
 
 const execFile = promisify(execFileCallback);
@@ -45,6 +45,19 @@ async function fixture(platform = "windows-native") {
 }
 
 describe("candidate runtime boundaries", () => {
+  it("retains exact-secret scan evidence even when the resource sweep fails", async () => {
+    const f = await fixture();
+    await fs.mkdir(f.paths.stateRoot, { recursive: true });
+    await fs.writeFile(path.join(f.paths.stateRoot, "output.log"), "safe output");
+    await expect(recordCandidatePostRunResources(f.context, "fixture-config", f.paths, new Set(["private-fixture-value"]), {
+      checkResources: async () => { throw new Error("container remains"); },
+    })).rejects.toThrow();
+    const record = JSON.parse(await fs.readFile(path.join(f.paths.journalRoot, "resources.json"), "utf8"));
+    expect(record).toMatchObject({ status: "failed", failureCode: "resource_check_failed",
+      sensitiveScan: { status: "completed", findingCount: 0, regularFileCount: 1 } });
+    expect(JSON.stringify(record)).not.toContain("private-fixture-value");
+  });
+
   it.each(["windows-native", "wsl2-linux"])("passes the fixed model, cost and platform to %s without a formal plan", async (platform) => {
     const f = await fixture(platform);
     let received;

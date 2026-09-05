@@ -144,8 +144,9 @@ star-sanctuary/
 - `scripts/verify-coding-agent-candidate-inputs.mjs`: 在目标平台独立复算四仓 snapshot/cache receipt 与八项 stored preflight，防止只验证配置 hash 而漏掉可变缓存漂移
 - `scripts/prepare-coding-agent-candidate-inputs.mjs`: 从既有只读 source/cache 指针为新候选生成 receipt/preflight 与 identity/platform preparation 绑定；发布目录必须不存在，失败保留 staging，不重装已有依赖缓存
 - `scripts/coding-agent-candidate-progress.mjs` / `coding-agent-candidate-session.mjs`: 复用 scorecard/mapping 判断剩余资格；持久化执行意图、费用预留与不可覆盖终态，串行维护工作区费用所有权和关闭账本
+- `scripts/coding-agent-candidate-resource-recovery.mjs`: 冻结后资源恢复凭据的 producer/verifier；独立复核原配置/账本/journal、env 清理、实时资源和可重建 Provider 敏感值，只允许后继会话继承完整费用预留，不改写旧终态或补记原敏感值验证
 - `scripts/coding-agent-candidate-contract-preflight.mjs`: 正式候选材料加载时检查 fixture 成功所需指标下限与评分阈值是否矛盾；约束由 fixture owner 按明确计量版本提供，在输入准备和付费调度前拒绝已证明不可达的合同，不改阈值或授予资格
-- `scripts/coding-agent-candidate-runtime.mjs`: Windows/WSL production runner 适配；资源探针由 `check-coding-agent-candidate-resources.ps1` 提供，env 经 `recycle-coding-agent-candidate-env.ps1` 校验后送回 Windows 回收站
+- `scripts/coding-agent-candidate-runtime.mjs`: Windows/WSL production runner 适配；资源探针由 `check-coding-agent-candidate-resources.ps1` 提供，env 经 `recycle-coding-agent-candidate-env.ps1` 校验后送回 Windows 回收站；资源检查失败时仍在临时凭据释放前独立保留敏感值扫描结果
 - `scripts/coding-agent-candidate-score.mjs`: P2-C 七维 mapping/evidence 公共 loader 与资格状态 resolution owner；校验 mapping/scorecard/manifest、aggregate 外键、system/candidate-global evidence，以及 current-harness Supervisor、Verification 与各 candidate receipt，只输出 incomplete/reject/failed/complete，不运行测试或直接授分
 - `scripts/coding-agent-candidate-score-evaluator.mjs`: 七维数值评分 owner；复算 mapping 的 aggregate criteria，仅在 candidate evidence 全部 complete 时按冻结 minimum 授分，以十进制精确乘加生成未展示舍入 raw weighted，并把结果交给 qualification v2
 - `scripts/coding-agent-candidate-qualification.mjs`: P2-C candidate-global receipt producer 与 qualification v2 编排 owner；先闭合 verified aggregate、retained events、C/system/global hard Gate，再消费七维 evidence/evaluator，未闭合时保持 `not_eligible/unscored`，全绿时输出 `eligible/scored`
@@ -216,7 +217,8 @@ star-sanctuary/
 - `packages/belldandy-core/src/bin/gateway.ts`: Gateway 开发态 bootstrap 入口（先做 dev/runtime 旧 `dist` 预检，再加载主装配）
 - `packages/belldandy-core/src/bin/gateway-main.ts`: Gateway 总装配入口；持有后台/外部 runtime handle，创建唯一 shutdown request owner，在 scoped MemoryManager 创建后装配共享 SQLite schema 的 WorkflowRuntime，并注册资源、配置 watcher 与进程信号转发；启动期验证 reconciliation journal readiness，并以 ToolExecutor、OCI control-plane admission、permission、exact worktree、trace、MCP、Plugin、Skill 现有 owner 装配 production task capability closure resolver；SubTask Supervisor 复用全局 wall-time/turn/token/high-risk 上限，并读取独立 verifier 上限与可选费用上限
 - `packages/belldandy-core/src/gateway-shutdown-coordinator.ts`: GW04 显式阶段关闭协调器内核；负责资源注册顺序、单步/整体 deadline、幂等 generation、失败隔离与纯计数诊断，不接管领域内部 lifecycle
-- `packages/belldandy-core/src/gateway-shutdown-request-owner.ts`: GW04 运行态关闭入口 owner；统一 SIGINT/SIGTERM、配置重启、RPC 与 Agent tool 的首请求竞争、倒计时、退出码和单次进程退出
+- `packages/belldandy-core/src/gateway-shutdown-request-owner.ts`: GW04 运行态关闭入口 owner；统一 SIGINT/SIGTERM、父子 IPC 精确关闭帧、配置重启、RPC 与 Agent tool 的首请求竞争、倒计时、退出码和单次进程退出
+- `packages/belldandy-core/src/cli/shared/gateway-rpc.ts`: CLI 单次 Gateway RPC 与配对 owner；配对期间阻止初始发送，保留在途 requestId，只有明确 pairing_required 才允许一次补发，避免权限响应或其他 mutation 重复执行
 - `packages/belldandy-core/src/gateway-shutdown-resources.ts`: GW04 后台/外部资源显式 Adapter；把 request owner、配置 watcher、Cron/Heartbeat/Memory/Dream/BackgroundRunCoordinator、Email、主动通知、Channel、MCP、Browser Relay 与 Agent Bridge 的 stop/drain/close seam 映射到协调器阶段
 - `packages/belldandy-core/src/gateway-server-shutdown.ts`: GW04 Gateway Core shutdown owner；负责 HTTP/WebSocket intake gate、active run abort/drain、Conversation/SubTask flush phase，并在外部 Channel 关闭后、transport 关闭前等待共享 token-usage uploader drain，最后执行 transport 单飞 close 与兼容 `close()` failure 投影
 - `packages/belldandy-core/src/bin/gateway-background-runtime.ts`: Heartbeat/Cron/Browser Relay 启动 Adapter；Relay 启动成功后返回真实可关闭 handle，供 Gateway shutdown owner 持有

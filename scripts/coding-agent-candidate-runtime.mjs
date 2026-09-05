@@ -95,8 +95,10 @@ export async function executeCandidateRuntime(context, slot, paths, costs, sensi
   });
 }
 
-export async function recordCandidatePostRunResources(context, configPath, paths, sensitiveValues) {
-  const resources = await checkCandidateResources(configPath);
+export async function recordCandidatePostRunResources(context, configPath, paths, sensitiveValues, dependencies = {}) {
+  // 资源检查失败也要趁临时凭据仍在内存时完成扫描，保留两个独立失败面的证据。
+  const resources = await (dependencies.checkResources ?? checkCandidateResources)(configPath)
+    .catch(() => ({ status: "failed", failureCode: "resource_check_failed" }));
   const sensitiveRoots = [paths.stateRoot];
   const artifactStats = await fs.lstat(paths.artifactRoot).catch((error) => {
     if (error.code === "ENOENT") return null;
@@ -106,6 +108,7 @@ export async function recordCandidatePostRunResources(context, configPath, paths
   const sensitiveScan = await collectCodingAgentCandidateSensitiveScan({ sensitiveRoots, sensitiveValues: [...sensitiveValues] });
   const record = { ...resources, configSha256: context.configSha256, sensitiveScan };
   await fs.writeFile(path.join(paths.journalRoot, "resources.json"), `${JSON.stringify(record, null, 2)}\n`, { flag: "wx" });
+  if (resources.status !== "passed") throw new Error("Candidate resource sweep requires investigation before another session.");
   if (sensitiveScan.status !== "completed" || sensitiveScan.findingCount !== 0
     || sensitiveScan.unreadableFileCount !== 0 || sensitiveScan.symlinkOrReparsePointCount !== 0) {
     throw new Error("Candidate sensitive scan requires investigation before another session.");

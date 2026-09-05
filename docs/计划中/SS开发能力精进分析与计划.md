@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **首候选 6/144 后冻结；审批计量已授权且本地修复通过** | `e0d181f` 探索 `5 passed / 2 failed`，formal 首 6 槽全 passed、资源与费用闭合；新计量/预检/相邻回归 `115/115`、TypeScript 与 benchmark 合同检查通过；旧六槽报告与账本逐项复核未变，新版本合同预检不再冲突；用户已明确批准逐条验真自动审批豁免 | 同范围不重复确认；下一步验证新身份的双平台运行与 JS/Go 终止原因。历史候选保持冻结、138 槽未执行；完整候选、交付 evidence 与第二候选仍未闭合 |
+| P2-C 分层开发与编排复用 | P2 | **4ae6eb4 探索 5/6 后冻结；进入证据驱动修复** | Windows interactive/safety 与 WSL Go 通过；JS 失败，WSL interactive 失败且资源 Gate 未闭合，记 unreported 并保留 $0.10；新计量在 Windows 原始 5/4 请求上逐条验真为零人工介入。RPC 配对重复发送与 Windows 关闭缺口已本地复现并修复，真实零 Provider OCI 关闭通过 | 历史失败和费用不回写；完成恢复凭据、相邻验证和新探索后再进入正式候选。完整 144、交付证据和第二候选仍未闭合 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -1557,9 +1557,73 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 原 `e0d181f` 六槽全部只读复核，interactive 仍为 `manualInterventionCount=5`，其他原计数和 artifact hash 未变；费用账本 SHA-256 仍为 `69ff21814764890c6a9aa39265f376598dd2ca208b350ffe72089401d210ba47`。旧口径预检仍报告 `30>0`，新明确版本无此冲突。
 - 本环节零付费模型调用；尚未执行新身份双平台真实审批或完整 formal，不将本地通过外推为两个完整候选达标。
 
+#### P2-C 探索前置实现结论：4ae6eb4 双平台材料与六槽清单（2026-09-05）
+
+##### 已完成内容
+
+1. **双平台复用 staging 更新**：
+   - 固定 source/harness=`4ae6eb4d9451c4fa8e7ded72411f0e0ea7b0ec69`，分别原生验证 clean；identity SHA=`e4dfbe6092bb652b49a06963f0df9d175d6c800180ea1172976de0155b9268ee`。复用平台依赖，未重建历史候选。
+2. **`tmp/p2c-layered-development/create-exploration-config.mjs` 与 `approval-diagnostics-selection.json`**：
+   - helper 支持显式清单路径/hash；预选顺序为 Windows JS、interactive、safety，WSL Go、interactive、safety，各 attempt=1，共六槽。清单 SHA=`88bd5861da4dc0be7601183ce8ab76c02f5883cc7c2811b58ae4f2f26b9d7434`。
+   - 新配置 `exploration-config-4ae6eb4.json` 规范化 SHA=`e10289db7402bcfda886d98c7c51ae387190d9e83c88862591ba1b9559991c67`，明确 `formal=false / unscored`，显式绑定 36k/32k 两项已批准例外。
+   - 继承 `formal-e0d181f-1/cost-ledger-final.json`，原 SHA=`69ff21814764890c6a9aa39265f376598dd2ca208b350ffe72089401d210ba47`。到六槽、硬门槛/证据资源异常或费用守卫即停，不重试失败槽；下一调用最坏累计=`38.44577904 RMB`。
+3. **效果**：
+   - 后续少量真实调用可验证审批计量与非空响应终止原因；全部失败保留，结果不进入正式分母。
+
+##### 验证结果
+
+- TypeScript：两端 `corepack pnpm build` 均通过；WSL 四文件定向 `60/60`，本环节未新增产品测试或重复完整工程回归。
+- 两端 inputs 分别由独立原生 verifier 复核为 repositories/receipts/preflights=`4/4/8`，完整 identity 一致。
+- OCI 隔离/command-job 两端通过；零 Provider Gateway readiness=`2138ms`，stop=`2155ms`，凭据加载次数=`0`；最终进程/端口/container/lease 八项计数均为 `0`。
+- 材料复核未退出时提前调用资源 Gate 被正确拦截；等该检查完成后再复核通过，未启动 Provider。后续严格等待依赖完成后再执行资源 Gate。
+
+#### P2-C 真实探索与修复实现结论：4ae6eb4 JS/RPC/关闭路径（2026-09-05）
+
+##### 已完成内容
+
+1. **`explore-4ae6eb4-1` 原始结果冻结**：
+   - 六槽预选实际执行五槽；Windows JS 失败、interactive/safety 通过，WSL Go 通过、interactive 失败。第五槽资源验真失败，ledger 为 processed=5、pending=0、unreported=1，最后 WSL safety 未执行。
+   - 最终账本 SHA=`333adadbb6b19db3aeee35e369e8e9a38dd161b911c053338b09b16f84751446`，observed/reserved=`2.46623340/2.34221000 USD`，已归账新增=`0.00272102 USD`。第五槽报告虽记 `0.00116111 USD`，未独立闭合，仍按整槽 `$0.10` 预留，不减记或重发。
+2. **`react-workspace-mutation.ts` 与 Agent 回归测试**：
+   - 真实 JS 最终响应为有效 JSON、finishReason=`stop`，但错误声称没有发生修改。当前源码和配套示例均在重建请求中；最小修复把可信路径明确标注为“已成功修改”，不扩大输入预算或引入任务答案。
+   - 只读重建工具 `replay-current-js.mjs` 固定原源文件 SHA；旧请求估算=`1945` 与日志一致，新标签=`1946`，三组 getter 反例全部保留，真实模型效果尚待后继探索。
+3. **`cli/shared/gateway-rpc.ts` 与新测试**：
+   - 确定性复现配对完成清除在途 requestId、重复发送权限响应，导致首次接受结果被 `alreadyResolved` 替代。
+   - 配对进行中不发送；完成配对不清除在途请求；只有明确 pairing_required 才允许一次补发。重复配对事件合并，持续拒绝和审批异常失败关闭。
+4. **`gateway-shutdown-request-owner.ts`、`gateway-main.ts` 与 Windows benchmark launcher**：
+   - 只接受父子 IPC 的精确 `gateway.shutdown/v1` 帧，转入现有 shutdown coordinator；Windows launcher 优先通过现有 IPC 关闭，等待退出后再判定是否需要原有有限强制终止。
+   - 本次残留容器 `d48e6dde3d2e` 的 label、lease、只读挂载和退出状态核对后回收；对应 CID 目录核对路径、普通文件和 SHA 后送入回收站。证据在 `tmp/p2c-layered-development/recovery-4ae6eb4-interactive/`。
+5. **效果**：
+   - Windows 成功审批原始请求分别为 5/4，逐条自动验真后 manual=0；失败序列仍不豁免。
+   - 不重复发送已经在执行的 CLI mutation；活跃 command job 可在父进程关闭请求后完成清理。
+
+##### 验证结果
+
+- TypeScript 增量编译 exit=0。RPC/关闭/launcher 六文件定向 `54/54`；Agent 六文件首次 `220 passed / 1 failed`，唯一失败为旧标签断言，更新后受影响文件 `77/77`，其余五文件的通过结果保留。
+- 真实 Windows 子进程与 OCI PTY 集成零 Provider：stopped=1、exitCode=0、container=0，证据 `C:/Users/admin/AppData/Local/Temp/ss-parent-shutdown-4ae6eb4/summary.json`；回收后八项资源计数均为零。
+- 本环节未重复完整工程回归，未创建新正式候选。冻结 ledger 中 resourceCleanupComplete=false 仍保留；恢复只新增资源凭据，不改写失败终态、usage 或资格。
+
+#### P2-C 资源恢复实现结论：不可覆盖补充凭据与敏感值扫描保留（2026-09-05）
+
+##### 已完成内容
+
+1. **`coding-agent-candidate-resource-recovery.mjs` 新建，session 接入**：
+   - 冻结后仅追加 `resource-recovery.json`；绑定原 config/final ledger/journal、逐槽 env 清理记录，重新检查实时资源和可重建的 Provider 凭据。后继 dispatch 独立重建凭据，缺失/漂移/泄漏/资源再现均拒绝。
+   - 不修改原 source/report/status，不降低 unreported 或成本预留；原临时鉴权值不再可重建，凭据显式注明不能恢复原完整敏感值验证，仅用于后继独立运行的资源准入。
+2. **`coding-agent-candidate-runtime.mjs` 修改**：
+   - 资源扫描失败也先保留仍在内存的全量实际凭据扫描结果，再失败关闭，避免下次再次丢失此类不可重建证据。
+3. **效果**：
+   - 真实旧 ledger SHA 保持 `333adad...51446`；恢复凭据 SHA=`a0f4c64a39128fe8b777dc74fa88ae67cdfaf4bdf603960c4ff9550c510bb054`，独立 verifier 通过，下一调用仍按 `39.26754720 RMB` 最坏累计守卫。
+
+##### 验证结果
+
+- TypeScript 增量编译 exit=0；runtime/recovery/session/matrix 四文件 `31/31`，包括追加不可覆盖、漂移/缺失/泄漏失败关闭，以及独立验证后仅后继会话可继承旧账本的行为。
+- 实际恢复 producer 和独立 verifier 均通过，原冻结账本与终态未变；不把恢复记录用于候选评分或原始安全 Gate。
+- 尚未执行后继 Provider 或正式候选；完整工程回归留到当前修复稳定后执行一次。
+
 ### 后续计划
 
-1. 审批计量已完成本地实现和反例验证；先将稳定源码形成新身份并做双平台必要验证，真实运行须同时保留新计量版本、原始请求和逐条证明。该步骤确认真实 Gateway 接受证据与本地测试一致，无需再次申请同项授权。
+1. 冻结后的独立资源恢复凭据已验真，保持第五槽 unreported 和完整预留不变；接下来固定当前修复身份、执行一次完整工程回归并更新双平台材料。用新的预声明小样本验证 JS 与 WSL 审批真实行为，避免局部模拟通过直接进入 formal；同项授权无需重复申请。
 2. 对现有 JS/Go 失败保留离线诊断：JS 新 patch 的零值处理仍有回归；两者 JSON review/repair 均为原始无效响应。非空响应终止原因诊断已补齐并局部验证，但旧日志缺失值不能回补；后续受控探索须采集该字段，不能只凭 token 上限改变预算、解析器或增加特例。
 3. 口径及产品修复稳定后，复用 staging/依赖缓存，重新绑定双平台 identity、inputs、预检和不可覆盖 plan；按固定探索清单验证真正改变的行为，避免无新证据重复同批模型调用。
 4. 后继正式候选仅在合同、工程与资源 Gate 闭合后进入完整 `144` 槽；普通失败只在资格仍可达且证据/资源闭合时续跑，硬门槛失败停止。继承 `formal-e0d181f-1` 权威费用，所有已冻结 identity 保持只读。
@@ -1569,6 +1633,11 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 ### 重要问题说明
 
+- `4ae6eb4` WSL interactive 在错误序列拒绝后仍有活跃 job，Windows launcher 的 SIGTERM 使 Gateway 在约 15ms 内直接退出，留下 exited container 与 CID 目录；IPC 关闭路径已通过真实零 Provider 子进程+OCI 验证，回收后的全局资源为零。冻结账本仍记清理未完成，需追加独立恢复凭据，不能覆盖终态。处理决策为关闭路径 `fix_now / 本地闭合`、恢复协议 `fix_now / 待实现`。
+- 相同 WSL 运行首次 permission response 没有首次接受证明，后续步骤失配；新的 accounting 正确失败关闭，manual 保留5。RPC 的配对事件与握手 timer 竞态已由两条失败测试复现，修复保留首次在途响应；原日志未存原始 RPC 响应，不能断言每条失败都由该竞态造成。模型 write 参数还遗漏末尾换行，属于独立失败，不放宽精确审批策略。
+- JS 新 patch 保留错误的 `offset + 1`，真实 getter 三例只读复现均失败；模型最终 JSON 却声称没有修改。当前请求未明确传递已成功修改状态，已最小修正标签，源码与文档仍完整且只增加1个估算 token；真实效果待验证。旧 non_json/长度根因不能由本轮正常 stop 反推已修复。离线工具首次将 file_read revision 误作内容 SHA 而拒绝，核对其实际为路径+内容绑定后修正工具，原源文件与报告未改。
+- WSL 运行另记录 conversation metadata `EPERM rename`，未影响已保留的原始报告，但宿主占用来源不确定；处理决策为 `record_only`，保留 stderr 供后继同类证据归因，不顺手扩展持久化重构。
+- 本次资源预检曾与尚未结束的只读材料复核重叠，Gate 检出 WSL 验证进程并拒绝通过；等待材料命令 exit=0 后八项资源计数均为零。处理决策为执行顺序 `fix_now completed`，未修改资源门槛或启动付费调用。
 - 首正式候选六槽全部 passed，仍被 `manual_intervention_count` 停止：成功 fixture 强制五次权限请求，旧 evaluator 全部计为人工介入，六个交互槽最低 `30` 而 mapping 最大为 `0`。处理决策：预检/冻结计数与版本化计量 `fix_now / 本地闭合`；用户已于 2026-09-05 明确授权，同范围无需再次确认。新 verifier 必须逐条回放，曾尝试的直接归零方案已全部撤回，相关临时测试不算最终实现证据。
 - Gateway 的权限响应可能返回 `ok=true/accepted=true/alreadyResolved=true`，表示请求已被先前响应者处理；只检查 `ok` 会把人工先行处理误计为自动完成。已用三项失败测试确认并修复：新计量要求 `responseFreshlyAccepted=true`，同时核对 operation/run/worktree 绑定，重复接受或裸传输成功均不豁免；旧版本行为不改。处理决策为 `fix_now completed`。
 - benchmark 合同 verifier 首次直接 `node` 调用因源码 TypeScript 的 `.js` 映射缺少 tsx loader 返回 `ERR_MODULE_NOT_FOUND`；使用 `node --import tsx` 后通过，未修改产品解析规则。现存 date-time format 警告保留为 `record_only`，不扩大本次计量修复范围。
