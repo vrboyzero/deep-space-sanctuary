@@ -2185,11 +2185,34 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 等待用户对 9.5 可达性选项的决策；期间不新增付费槽。若选择继续抽样，按既有分层流程执行并继承 `explore-e0124bd-1/cost-ledger-final.json`。
 
+#### P2-C 合同变更实现结论：读后复核边界 3→8 与复核预算有界缩放（2026-09-06）
+
+##### 已完成内容
+
+1. **用户授权**：2026-09-06 用户选择「继续抽样」并明确授权将「读后复核边界 3→8」作为**有意合同变更**（更新冻结合同测试后生效）；本变更不扩大任务真值、门槛或费用。
+2. **packages/belldandy-agent/src/react-workspace-mutation.ts 修改**：`buildWorkspaceMutationVerificationRequest` 的 required path 上限由 `WORKSPACE_MUTATION_NAVIGATION_MAX_FILE_READ_CALLS`（3）改为 `WORKSPACE_MUTATION_REQUIRED_NAVIGATION_MAX_FILE_READ_CALLS`（8）；9 个及以上路径仍返回 undefined。
+3. **packages/belldandy-agent/src/tool-agent.ts 修改**：
+   - 读后复核 eligibility 同步放宽到 8；
+   - 复核/纠正/修复的输入上限按路径数有界缩放：1–3 路径保持冻结 2048 token 不变，4–6 路径 ×2、7–8 路径 ×3，使扩展后的多文件新鲜证据能进入复核请求。
+4. **冻结合同测试更新（有意变更）**：`react-workspace-mutation-formal-regressions.test.ts` 的 “does not expand the three-path post-write verification boundary” 改为 “expands the post-write verification boundary to the eight-path required-navigation limit”（8 路径 defined、9 路径 undefined）。
+5. **8-path 回归强化**：真实文件规模 + 任务标识符 + 完整链（读取→恢复→读后复核→复核→final）全绿。
+6. **效果**：4–8 个 required path 的任务在补丁后获得新鲜读后证据，复核能发现不完整迁移并有一次纠正机会；1–3 路径行为与预算完全不变。
+
+##### 验证结果
+
+- TypeScript：`tsc -b packages/belldandy-agent` exit=`0`；`git diff --check` 通过。
+- workspace-mutation 家族 25 文件全过（`REG_EXIT=0`）；压缩相关 `95/95`；`verify:coding-benchmark` exit=`0`。
+- 合同测试先红后绿（8 路径在旧上限下 undefined，新上限下 defined）；零 Provider；冻结槽未改写。
+
+##### 后续计划
+
+以本变更的新 identity 重做双平台 Go 两槽探索，验证读后复核与复核纠正对真实模型补丁质量的改善；CI 环境恢复后再评估正式候选准入。
+
 ### 后续计划（当前检查点，2026-09-05）
 
-1. **本环节结果**：`explore-e0124bd-1` 双平台 Go 两槽再验证仍失败（4/4 模型补丁质量失败：不完整迁移×2、context-only hunk、错误 hunk 上下文），产品各阶段在两身份下均按合同运行，无可复现的确定性缺陷；已按模型能力结论记录并完成 9.5 可达性评估（B 层回归/Go 语言门槛要求该任务零回归通过）。
-2. **下一步准备做**：等待用户对可达性选项的决策——① 继续小样本抽样并接受费用；② 记录模型能力上限并调整 9.5 结论；③ 修改任务真值/门槛（与冻结规则冲突，不推荐）。期间不新增付费槽。
-3. **为什么先停在这里**：4/4 真实失败、失败模式分散且全部落在模型补丁生成与复核判断上；继续付费抽样的期望收益需要用户权衡，不能以“试到成功”方式替代模型能力结论。
+1. **本环节结果**：用户已选择①继续抽样，并授权「读后复核边界 3→8」为有意合同变更；变更已实现并通过全量回归（本地提交，待推送）——4–8 路径任务补丁后获得新鲜读后证据，复核能发现不完整迁移并有一次纠正机会；1–3 路径行为与预算不变。
+2. **下一步准备做**：提交推送新 identity；CI 环境恢复后以双平台 Go 两槽清单再执行探索，验证读后复核与复核纠正对真实模型补丁质量的改善；通过则重建候选。
+3. **为什么先做它**：这是唯一还能给模型一次纠正机会的产品杠杆（用户已授权）；若仍 4/4 失败，则以该合同变更后的证据重新评估 9.5 可达性。
 4. **当前还缺的关键闭环**：Go 真实任务稳定通过、完整 144 槽原生矩阵、aggregate、dimension evidence、qualification 与七维 score、第二个连续完整候选；`candidate-57b9cc5-1` 已冻结（17/144）、`e4bd1c3-1`（8/144）与旧 `63e0a41`（14/144）永久只读；CI 环境故障持续（record_only）。
 5. 后继运行继承 `explore-e0124bd-1/cost-ledger-final.json`（SHA=`20207f09…377b`，observed/reserved=`2.50495453/2.34221 USD`，next worst≈`39.9 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效。
 
@@ -2301,3 +2324,4 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - `b8edee6` 双平台探索再次复现 Go 失败后，定位真根因是两层工具输出压缩破坏恢复证据：统一压缩层写入 `[compressed tool output]` 标记、microcompact 写入 `[old tool output cleared]` 摘要，file_read 结构化 JSON 因此不可解析，完整读取被误判缺失并陷入导航死循环。处理决策为 `fix_now completed / 证据压缩保护`：required mutation run 的两层压缩均保留 file_read 原文；普通 run 压缩行为不变。
 - `explore-953ced5-1` 两平台失败均为模型补丁质量：Windows 迁移不完整（bash_completions.go 仍残留 WriteStringAndCheck、go test 失败 regression=1，复核基于写前证据错误接受）；WSL 补丁含 context-only hunk 被校验拒绝并失败关闭。产品确定性缺陷已无（导航死循环闭合），处理决策为 `record_only / 模型能力样本`；8 个 required path 超过冻结 3-path 读后复核边界是既有冻结合同，不扩大。验证上限扩到 8 的中间尝试与冻结合同冲突，已完整回退。
 - `explore-e0124bd-1` 双平台 Go 两槽再次失败，跨两个 identity 共 4/4 真实失败：Windows 补丁不完整（workspace 残留 45 处 WriteStringAndCheck、定义已删除、go test 失败 regression=1，复核基于写前证据错误接受）；WSL hunk 上下文不匹配被校验拒绝。失败模式分散且全部落在模型补丁生成与复核判断上；产品导航/恢复/复核/校验各阶段均按合同运行。处理决策为 `record_only / 模型能力结论`，并完成 9.5 可达性评估：B 层回归与 Go required-language 门槛要求该任务零回归通过，按当前样本候选将大概率再次冻结，等待用户对「继续抽样 / 调整结论 / 改任务真值（不推荐）」的决策；期间不新增付费槽。
+- 用户于 2026-09-06 明确授权「读后复核边界 3→8」为有意合同变更（更新冻结合同测试后生效），作为①继续抽样路径下的唯一产品杠杆；配套将复核/纠正/修复输入上限按路径数有界缩放（1–3 路径 2048 不变、4–6 ×2、7–8 ×3）。处理决策为 `fix_now completed / 用户授权合同变更`；该变更不扩大任务真值、门槛或费用，冻结槽与旧证据不改写。

@@ -33,15 +33,26 @@ describe("formal workspace-mutation regressions", () => {
     expect(request?.messages[0]?.content).toContain("at most 8 file_read calls");
   });
 
-  it("does not expand the three-path post-write verification boundary", () => {
+  it("expands the post-write verification boundary to the eight-path required-navigation limit", () => {
+    const eightPaths = ["one.go", "two.go", "three.go", "four.go", "five.go", "six.go", "seven.go", "eight.go"];
     const request = buildWorkspaceMutationVerificationRequest({
       messages: [{ role: "user", content: "Verify the completed migration." }],
       tools: [toolDefinition("file_read")],
       maxInputTokens: 2_048,
-      requiredChangedPaths: ["one.go", "two.go", "three.go", "four.go"],
+      requiredChangedPaths: eightPaths,
     });
 
-    expect(request).toBeUndefined();
+    expect(request).toBeDefined();
+    expect(request?.maxFileReadCalls).toBe(8);
+    expect(request?.requiredVerificationPaths).toEqual(eightPaths);
+
+    const overLimit = buildWorkspaceMutationVerificationRequest({
+      messages: [{ role: "user", content: "Verify the completed migration." }],
+      tools: [toolDefinition("file_read")],
+      maxInputTokens: 2_048,
+      requiredChangedPaths: [...eightPaths, "nine.go"],
+    });
+    expect(overLimit).toBeUndefined();
   });
 
   it("recognizes the frozen Go whole-method rewrite under smallest-correction wording", () => {

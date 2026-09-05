@@ -208,6 +208,7 @@ import {
   WORKSPACE_MUTATION_NAVIGATION_INPUT_TOKEN_LIMIT,
   WORKSPACE_MUTATION_NAVIGATION_OUTPUT_TOKEN_RESERVE,
   WORKSPACE_MUTATION_NAVIGATION_MAX_FILE_READ_CALLS,
+  WORKSPACE_MUTATION_REQUIRED_NAVIGATION_MAX_FILE_READ_CALLS,
   WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE,
   type WorkspaceMutationNavigationRequest,
   type WorkspaceMutationObjectiveInputCorrectionReason,
@@ -2474,7 +2475,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     const requiredChangedPaths = runtimeContext?.launchSpec?.requiredChangedPaths ?? [];
     const workspaceMutationPathCoverage = createWorkspaceMutationPathCoverage(requiredChangedPaths);
     const workspaceMutationVerificationEligible = requiredChangedPaths.length > 0
-      && requiredChangedPaths.length <= WORKSPACE_MUTATION_NAVIGATION_MAX_FILE_READ_CALLS;
+      && requiredChangedPaths.length <= WORKSPACE_MUTATION_REQUIRED_NAVIGATION_MAX_FILE_READ_CALLS;
     let workspaceMutationObserved = false;
     let workspaceMutationNavigationAttempts = 0;
     const workspaceMutationNavigationAttemptLimit = 1;
@@ -3294,8 +3295,15 @@ export class ToolEnabledAgent implements BelldandyAgent {
             tools,
             (name) => this.opts.toolExecutor.getRegisteredToolContract?.(name),
           ).filter((tool) => tool.function.name === "apply_patch");
+          // 复核/纠正/修复的输入上限按 required path 数量有界缩放：1–3 路径保持冻结的
+          // 2048 token 上限不变；4–6 路径 ×2、7–8 路径 ×3，使读后复核扩展（3→8）后的
+          // 多文件新鲜证据能进入复核请求。
+          const reviewInputTokenLimit = WORKSPACE_MUTATION_NAVIGATION_INPUT_TOKEN_LIMIT * Math.max(
+            1,
+            Math.ceil(requiredChangedPaths.length / WORKSPACE_MUTATION_NAVIGATION_MAX_FILE_READ_CALLS),
+          );
           const remainingReviewInputTokens = Math.min(
-            WORKSPACE_MUTATION_NAVIGATION_INPUT_TOKEN_LIMIT,
+            reviewInputTokenLimit,
             Math.floor(Math.max(
               0,
               runBudget.maxTotalTokens

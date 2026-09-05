@@ -2905,7 +2905,7 @@ export function buildWorkspaceMutationVerificationRequest(input: {
 }): WorkspaceMutationVerificationRequest | undefined {
   const requiredVerificationPaths = [...input.requiredChangedPaths];
   if (requiredVerificationPaths.length === 0
-    || requiredVerificationPaths.length > WORKSPACE_MUTATION_NAVIGATION_MAX_FILE_READ_CALLS
+    || requiredVerificationPaths.length > WORKSPACE_MUTATION_REQUIRED_NAVIGATION_MAX_FILE_READ_CALLS
     || new Set(requiredVerificationPaths.map(normalizeSourcePath)).size !== requiredVerificationPaths.length) {
     return undefined;
   }

@@ -6866,8 +6866,10 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       "zsh_completions.go": 11328,
     };
     const frozenContent = (path: string) => (
-      `package main\n\n// ${path} migrated callers\n` + "func legacy() {\n\tWriteStringAndCheck(buf, \"line\")\n\treturn\n}\n".repeat(
-        Math.floor((frozenSizes[path] ?? 200) / 44),
+      `package main\n\n// ${path} migrated callers\n`
+      + "func legacy() {\n\tWriteStringAndCheck(buf, \"line\")\n\treturn\n}\n".repeat(3)
+      + "// filler line without the migrated identifier\n".repeat(
+        Math.floor((frozenSizes[path] ?? 200) / 48),
       )
     );
     const requests: Array<Record<string, any>> = [];
@@ -6898,6 +6900,9 @@ describe("ToolEnabledAgent required workspace mutation", () => {
             `*** Begin Patch\n*** Update File: ${path}\n@@\n-old\n+new\n*** End Patch`
           )).join("\n"),
         }, 900, 200));
+      }
+      if (requests.length === 3) {
+        return response(modelVerificationReads(requiredChangedPaths));
       }
       return response({
         choices: [{ finish_reason: "stop", message: { content: `{"summary":"migrated"}` } }],
@@ -6983,6 +6988,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
       ...requiredChangedPaths.map(() => "file_read"),
       "apply_patch",
+      ...requiredChangedPaths.map(() => "file_read"),
     ]);
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
