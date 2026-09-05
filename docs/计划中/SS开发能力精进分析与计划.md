@@ -1052,8 +1052,8 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C 8f794af/candidate-1 | P2 | **batch 01 已冻结，3/144（2 passed + 1 product_workflow failure）** | resume=`3/144`、remaining=`141`、unreported infrastructure=`0`；t03 tests/patch 通过但目标复核输出合同失败；env/资源清理闭合 | 禁止重跑/reconcile 或启动 WSL；修复只由新 identity 验证，不改写旧终态 |
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
-| P2-C Gateway 启动阶段诊断 | P2 | **已恢复开发回归；全仓验证未闭合** | 新增有界 IPC 阶段接线，定向=`47/47`（新增 7 项），build/benchmark contract 通过，r5 四阶段完整且 auth-ready=`6375ms`；上次全仓中断前已观察到并行 worktree 清理失败，未取得完整汇总 | 先检查测试残留并隔离验证失败，再完成必要回归；性能根因仍未关闭，不立刻创建新 formal |
-| P2-C 分层开发与编排复用 | P2 | **首轮固定探索完成：6 passed / 1 failed；通用复核说明已局部验证** | `0f85de0` 7 槽全部保留、pending/unreported=`0/0`、费用/资源闭合；Go 新增不存在字段的错误已零 Provider 编译复现；写后复核新增源码/执行证据区分，局部=`415/415`、build 通过 | 复用 staging 及原 7 槽清单验证新说明效果；正式 144 槽预算口径仍待确认，最终分数未授予 |
+| P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
+| P2-C 分层开发与编排复用 | P2 | **工程回归通过；两轮固定探索各 6 passed / 1 failed** | `0f85de0` 与 `9b5e4ba` 各 7 槽原样保留、无 unreported、费用/资源闭合；第二轮 Go 通过，Windows bug 的代码/tests/patch 通过但最终 JSON 合同失败；局部=`415/415`、双平台 build、完整工程回归=`6623/0/8`（passed/failed/skipped） | 暂停新增 Provider；输出协议失败保留待最小响应证据，正式 144 槽的两项预算口径仍待用户裁定 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -1318,19 +1318,38 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 离线 `go test -mod=readonly .` exit=`1`，明确两处 `c.name undefined`；Provider 调用=`0`，错误证据永久保留。
 - 初次把说明加入编辑阶段导致关键源码片段被 token 配额挤出，局部=`413 passed / 2 failed`；收窄到四类写后复核/输出阶段后 `415/415`。上限、证据项数及字符预算不变。
 
+#### P2-C 固定探索实现结论：9b5e4ba 同清单对照与费用继承（2026-09-05）
+
+##### 已完成内容
+
+1. **已有 staging 与输入更新**：
+   - Windows/WSL 均更新至 `9b5e4ba0655bf74f872a69d3ce994e77336a943f`，native identity clean 且一致，worktree SHA=`b188258c…88d1d`；各输入重新复算 `4/4/8`，未重复安装依赖。
+2. **固定七槽对照执行**：
+   - config=`tmp/p2c-layered-development/exploration-config-9b5e4ba.json`，SHA=`b8d1efd5…a6f9f`；session=`explore-9b5e4ba-1`，完整继承上一最终账本，未跳过第一轮通过槽或只挑 Go 重试。
+3. **效果**：
+   - 第二轮=`6 passed / 1 failed`，Go 通过、Windows bug 最终 JSON 合同失败；两轮总通过数相同，不能据此声称总体提升。普通失败后继续剩余槽，历史结果不覆盖，14 个探索槽全部 unscored。
+
+##### 验证结果
+
+- 双平台 TypeScript build 无错误，前述局部 `415/415`；`9b5e4ba` 在原 C 盘 staging 完整工程回归=`6623 passed / 0 failed / 8 skipped`（1011 文件），报告=`tmp/p2c-layered-development/stable-full-regression-9b5e4ba.json`，exit=`0`。前两次失败报告保持原样；8 项跳过条件未修改。
+- 第二轮 7 槽均 reported，pending/unreported=`0/0`、resourceCleanupComplete=`true`；新增 observed=`0.00551136 USD`，两轮合计=`0.01021459 USD`，global observed/reserved=`2.45004486/2.24221000 USD`。
+- 最新权威账本=`tmp/p2c-layered-development/explore-9b5e4ba-1/cost-ledger-final.json`，SHA=`03ee1ca2c9a48475ec1b9f96b10e17cdc48d9355e88b348bb47386d52fb2568f`；next worst=`38.33803888 RMB < 80`。两个旧 candidate 及两轮探索的已有槽均不重跑，后继费用必须从此继续。
+- 两轮共 14 槽的报告/artifact 只读复算通过，trace/usage 均完整、敏感值/孤儿资源均为零，14 份 env cleanup 均为 recycled/remaining=0；完整回归后再查双平台 8 项资源全部零，两平台 staging Git status 均 clean。
+
 ### 后续计划
 
 1. 保持 `8f794af/candidate-1` 与 `6ce85bd/candidate-1` 永久冻结，禁止重跑、reconcile 或为失败 identity 启动 WSL。
-2. worktree 清理用例隔离及相邻三文件回归已通过，原失败暂未复现；保持该项 `record_only / 待完整回归证据`。继续开发共享候选政策和配置，集中完成后再执行完整回归；若再次出现相同失败，保留当次阶段证据再进入 Fix Mode，不用盲目重跑掩盖失败。
+2. worktree 清理隔离/相邻回归、最新完整工程回归及两轮共四个双平台 parallel-write 槽均已通过。宿主偶发占用来源保持 `record_only`；若再现，保留具体路径与阶段证据后做局部复现，不立即重跑完整矩阵。
 3. 用局部反馈回路关闭失败或明确复现边界，再验证启动诊断和必要回归；阶段稳定后才形成新的 source identity，不因每次小修直接重建正式候选。
-4. 首轮探索已完整关闭；将通用写后证据说明绑定新开发 identity，复用 staging 和平台依赖，以原固定 7 槽清单验证效果，费用必须继承 `explore-0f85de0-1/cost-ledger-final.json`。先获取可比较的小样本反馈，再做稳定版完整回归与正式冻结；预算冲突未获确认前不进入正式验收。
+4. 两轮固定探索及 `9b5e4ba` 完整工程回归均已闭合，暂不追加 Provider。先取得 Windows bug 最终输出失败的最小响应证据或建立不含敏感正文的协议分类诊断，再决定是否修改处理逻辑；同时等待正式两项 token 上限裁定。两项条件未收敛前不创建正式候选，避免继续无证据调提示或产生必然被 Gate 阻断的版本。
 5. 固定探索清单并完成少量真实模型验证，集中处理缺陷后再冻结新正式候选；按第 6.6 节执行完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt 和七维资格。普通失败只在资格仍可达且证据/资源闭合时继续未执行槽，硬门槛失败停止。
 6. 两个连续候选均须满足七维下限与 raw weighted `>=9.500`；任何旧 identity 均禁止事后改写 aggregate。
 
-当前关键闭环是并行 worktree 清理失败归因、启动诊断回归、环境启动证据，以及新编排停止/续跑政策的受测接入。完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选均未闭合；后续按开发回归、环境预检、固定探索到正式验收推进。
+当前关键闭环是 Windows 最终输出失败的可诊断证据及两项正式 token 预算冲突的裁定；共享编排、局部回归、环境预检和两轮固定探索已落地。完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选均未闭合，最终验收标准保持不变。
 
 ### 重要问题说明
 
+- 第二轮 Windows `bug.reproducible-fix` 的代码、tests、patch 全通过，但两次 objective review/output repair 均未产生有效 JSON，run 以 error 关闭。日志有 response/display 长度差异但无原始响应正文，无法确认是否为模型输出或文本协议处理；现有确定性测试已覆盖双无效输出失败关闭，暂不推测性修改解析器、放宽 Schema 或追加重试，处理决策为 `record_only / 缺最小原始响应证据`。
 - 首轮 `real-go.bug-fix` 的 patch 满足路径/表面规则，但新增不存在的 `c.name`，真实编译失败，模型 summary 却声称测试通过；离线复制复现已确认两处 undefined。处理决策：源代码错误 `record_only / 保留模型失败样本`，通用复核的执行证据说明 `fix_now / 局部验证完成，真实效果待确认`。不为该字段新增特例规则，不改写原始 failed。
 - 新提示首次覆盖编辑阶段，增加的 system token 挤掉了两个紧预算测试需要的源码片段；已收窄到写后复核/输出，既有 `415/415` 恢复。处理决策为 `fix_now completed`，没有扩大预算或启动额外模型试错来掩盖回归。
 - OCI 预检最初使用 `node -e`，PTY fork 继承了 eval 参数而提前退出；标准脚本入口通过，后续固定使用仓库标准入口。WSL ext4 `/tmp` 首次预检失败，保留诊断 `/tmp/ss-layered-oci-path-y7rR9h/diagnostic.json`，实际错误为 Docker 缺失 distro mount service socket；恢复项目已有独立 drive-backed TMPDIR 后通过，未修改 daemon/镜像配置。两次失败均无 Provider，container/lease 已清零，处理决策为调用/预检配置 `fix_now completed`。
