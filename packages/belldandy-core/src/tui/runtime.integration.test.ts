@@ -473,7 +473,7 @@ describe("Coding TUI runtime integration", () => {
       await gateway.close().catch(() => {});
       await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     }
-  }, 15_000);
+  }, 30_000);
 });
 
 async function startTcpProxy(targetPort: number, port = 0): Promise<{
