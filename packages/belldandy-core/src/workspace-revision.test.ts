@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, type MockInstance } from "vitest";
 
 import {
   normalizeWorkspaceRevisionIdentityPath,
@@ -23,6 +23,50 @@ function target(workspaceRoot: string, relativePath: string) {
 }
 
 describe("WorkspaceRevisionRuntime", () => {
+  it.each(["transient", "persistent", "concurrent_edit"])("handles %s rename contention during restore without overwriting newer content", async (scenario) => {
+    const fixture = await createFixture("belldandy-revision-rename-");
+    const filePath = path.join(fixture.workspaceRoot, "note.txt");
+    const originalRename = fs.rename.bind(fs);
+    let renameSpy: MockInstance<typeof fs.rename> | undefined;
+    try {
+      await fs.writeFile(filePath, "before\n");
+      const runtime = new WorkspaceRevisionRuntime({ stateDir: fixture.stateDir });
+      const targets = [target(fixture.workspaceRoot, "note.txt")];
+      const input = { revisionId: "rename-restore", workspaceRoot: fixture.workspaceRoot, toolName: "file_write", targets };
+      await runtime.prepareMutations(input);
+      await fs.writeFile(filePath, "agent change\n");
+      await runtime.commitMutations(input);
+      let attempts = 0;
+      renameSpy = vi.spyOn(fs, "rename").mockImplementation(async (source, destination) => {
+        if (destination === filePath) {
+          attempts += 1;
+          if (attempts === 1 || scenario === "persistent") {
+            if (scenario === "concurrent_edit") await fs.writeFile(filePath, "new user edit\n");
+            throw Object.assign(new Error("simulated sharing violation"), { code: "EPERM" });
+          }
+        }
+        await originalRename(source, destination);
+      });
+      if (scenario === "persistent") {
+        await expect(runtime.restore({ revisionId: input.revisionId, apply: true })).rejects.toMatchObject({ code: "EPERM" });
+        expect(attempts).toBe(3);
+        expect(await fs.readFile(filePath, "utf8")).toBe("agent change\n");
+      } else if (scenario === "concurrent_edit") {
+        expect(await runtime.restore({ revisionId: input.revisionId, apply: true })).toMatchObject({ applied: false });
+        expect(attempts).toBe(1);
+        expect(await fs.readFile(filePath, "utf8")).toBe("new user edit\n");
+      } else {
+        expect(await runtime.restore({ revisionId: input.revisionId, apply: true })).toMatchObject({ applied: true });
+        expect(attempts).toBe(2);
+        expect(await fs.readFile(filePath, "utf8")).toBe("before\n");
+      }
+      expect(await fs.readdir(fixture.workspaceRoot)).toEqual(["note.txt"]);
+    } finally {
+      renameSpy?.mockRestore();
+      await fs.rm(fixture.rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("normalizes foreign absolute workspace paths independently of the current host", () => {
     expect(normalizeWorkspaceRevisionIdentityPath("E:\\Project\\Fixture\\..\\Fixture"))
       .toBe("e:\\project\\fixture");

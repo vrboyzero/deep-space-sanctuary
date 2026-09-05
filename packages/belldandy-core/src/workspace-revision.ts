@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { promises as fs, createReadStream } from "node:fs";
 import path from "node:path";
+import { replaceFileWithRetry } from "./atomic-file-replace.js";
 
 import type {
   WorkspaceMutationObserver,
@@ -216,7 +217,9 @@ async function calculateDirectoryBytes(directory: string): Promise<number> {
   return total;
 }
 
-async function writeFileAtomic(filePath: string, contents: string | Buffer, mode: number): Promise<void> {
+class RestoreTargetChangedError extends Error {}
+
+async function writeFileAtomic(filePath: string, contents: string | Buffer, mode: number, beforeReplace?: () => Promise<void>): Promise<void> {
   await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
   const temporaryPath = path.join(
     path.dirname(filePath),
@@ -224,7 +227,7 @@ async function writeFileAtomic(filePath: string, contents: string | Buffer, mode
   );
   try {
     await fs.writeFile(temporaryPath, contents, { mode });
-    await fs.rename(temporaryPath, filePath);
+    await replaceFileWithRetry(temporaryPath, filePath, beforeReplace);
   } finally {
     await fs.rm(temporaryPath, { force: true }).catch(() => {});
   }
@@ -717,7 +720,23 @@ export class WorkspaceRevisionRuntime implements WorkspaceMutationObserver {
       const contents = restoreContents.get(entry.relativePath);
       if (!contents) throw new Error(`Workspace revision preimage is unavailable: ${entry.relativePath}`);
       await fs.mkdir(path.dirname(targetPath), { recursive: true, mode: 0o700 });
-      await writeFileAtomic(targetPath, contents, entry.before.mode);
+      try {
+        await writeFileAtomic(targetPath, contents, entry.before.mode, async () => {
+          // rename 等待期间用户可能继续编辑，重试前必须再次确认路径与 after 状态。
+          try {
+            await this.assertTargetPath(loaded.manifest.workspaceRoot, targetPath);
+            if (!entry.after || !isFileStateEqual(await this.readFileState(targetPath), entry.after)) {
+              throw new RestoreTargetChangedError();
+            }
+          } catch { throw new RestoreTargetChangedError(); }
+        });
+      } catch (error) {
+        if (!(error instanceof RestoreTargetChangedError)) throw error;
+        return this.stopRestoreAfterFinalGate({
+          loaded, preview: finalPreview, entry,
+          reason: "target changed or could not be verified before atomic restore replacement",
+        });
+      }
       await fs.chmod(targetPath, entry.before.mode).catch(() => {});
     }
     const receipt = await this.writeRestoreReceipt(loaded);

@@ -4,8 +4,13 @@ const RENAME_RETRIES = 3;
 const RENAME_RETRY_DELAY_MS = 50;
 const RETRYABLE_RENAME_CODES = new Set(["EACCES", "EBUSY", "EPERM"]);
 
-export async function replaceFileWithRetry(sourcePath: string, targetPath: string): Promise<void> {
+export async function replaceFileWithRetry(
+  sourcePath: string,
+  targetPath: string,
+  beforeAttempt?: () => Promise<void>,
+): Promise<void> {
   for (let attempt = 0; ; attempt += 1) {
+    await beforeAttempt?.();
     try {
       await fs.rename(sourcePath, targetPath);
       return;
