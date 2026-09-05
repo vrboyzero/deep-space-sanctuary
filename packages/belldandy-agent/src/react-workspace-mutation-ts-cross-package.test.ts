@@ -146,6 +146,42 @@ describe("WorkspaceFoldersRequest completion recovery", () => {
     );
   });
 
+  it("recovers the frozen completion when the prior patch omits leading indentation", () => {
+    const fixture = completionFixture();
+    expect(recoverWorkspaceFoldersRequestCompletionOutput({
+      ...fixture,
+      priorSuccessfulPatchInputs: [[
+        "*** Begin Patch",
+        `*** Update File: ${requiredPath}`,
+        "@@",
+        `-${baselineResultLine.trim()}`,
+        `+${resultLine.trim()}`,
+        "*** End Patch",
+      ].join("\n")],
+      messages: mutateCompletionSource(
+        fixture.messages,
+        (source) => source.replace(resultLine, resultLine.trim()),
+      ),
+    })).toBe('{"summary":"restored the nullable WorkspaceFoldersRequest result contract"}');
+  });
+
+  it("recovers the frozen completion when both the patch and the post-write source omit leading indentation", () => {
+    const fixture = completionFixture();
+    const deindentedSource = fixture.messages[0]!.content.replace(resultLine, resultLine.trim());
+    expect(recoverWorkspaceFoldersRequestCompletionOutput({
+      ...fixture,
+      priorSuccessfulPatchInputs: [[
+        "*** Begin Patch",
+        `*** Update File: ${requiredPath}`,
+        "@@",
+        `-${baselineResultLine.trim()}`,
+        `+${resultLine.trim()}`,
+        "*** End Patch",
+      ].join("\n")],
+      messages: [{ ...fixture.messages[0]!, content: deindentedSource }],
+    })).toBe('{"summary":"restored the nullable WorkspaceFoldersRequest result contract"}');
+  });
+
   it.each([
     {
       name: "task drift",
@@ -169,6 +205,29 @@ describe("WorkspaceFoldersRequest completion recovery", () => {
           baselineResultLine,
           "\texport const type = new ProtocolRequestType0<WorkspaceFolder[] | null | unknown, never, void, void>(method);",
         )],
+      }),
+    },
+    {
+      name: "semantic drift hidden by missing indentation",
+      mutate: (input: ReturnType<typeof completionFixture>) => ({
+        ...input,
+        priorSuccessfulPatchInputs: [input.priorSuccessfulPatchInputs[0]!.replace(
+          baselineResultLine,
+          baselineResultLine.trim(),
+        ).replace(
+          resultLine,
+          "export const type = new ProtocolRequestType0<WorkspaceFolder[] | null | unknown, never, void, void>(method);",
+        )],
+      }),
+    },
+    {
+      name: "current source keeps the baseline line without indentation",
+      mutate: (input: ReturnType<typeof completionFixture>) => ({
+        ...input,
+        messages: mutateCompletionSource(
+          input.messages,
+          (source) => source.replace(resultLine, baselineResultLine.trim()),
+        ),
       }),
     },
     {

@@ -44,7 +44,7 @@ export function recoverWorkspaceFoldersRequestCompletionOutput(input: {
   }
   const source = readCompleteSource(input.messages, REQUIRED_PATH);
   if (!source
-    || source.includes(BASELINE_TYPE_LINE)
+    || containsLineIndentationInsensitive(source, BASELINE_TYPE_LINE)
     || findExactLineSequenceStarts(source, COMPLETED_NAMESPACE).length !== 1) {
     return undefined;
   }
@@ -103,7 +103,7 @@ function findExactLineSequenceStarts(source: string, expected: readonly string[]
   const lines = source.split(/\r?\n/);
   const starts: number[] = [];
   for (let index = 0; index <= lines.length - expected.length; index += 1) {
-    if (expected.every((line, offset) => lines[index + offset] === line)) {
+    if (expected.every((line, offset) => linesEqualIgnoringIndentation(lines[index + offset], line))) {
       starts.push(index);
     }
   }
@@ -112,7 +112,17 @@ function findExactLineSequenceStarts(source: string, expected: readonly string[]
 
 function hasExactLines(actual: readonly string[], expected: readonly string[]): boolean {
   return actual.length === expected.length
-    && actual.every((line, index) => line === expected[index]);
+    && actual.every((line, index) => linesEqualIgnoringIndentation(line, expected[index]));
+}
+
+function containsLineIndentationInsensitive(source: string, expected: string): boolean {
+  return source.split(/\r?\n/).some((line) => linesEqualIgnoringIndentation(line, expected));
+}
+
+// apply_patch 允许忽略行首空白匹配，模型补丁也常省略行首缩进；
+// 恢复只核对语义内容，行首缩进差异不影响 tsc/测试结果，仍保持整行内容精确。
+function linesEqualIgnoringIndentation(actual: string, expected: string): boolean {
+  return actual.replace(/^[\t ]+/, "") === expected.replace(/^[\t ]+/, "");
 }
 
 function normalizePath(value: string): string {

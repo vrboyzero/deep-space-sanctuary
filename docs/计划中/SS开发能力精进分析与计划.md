@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **TypeScript 复核材料压缩本地修复完成，按用户要求暂停** | 63e0a41 候选仍为 `12 passed / 2 failed / 130 unexecuted`、永久冻结；原 API migration 失败已零模型准确复现并修复，原2048输入上限内请求=`2020`、三文件/六处源码位置验真；25文件 `462/462`（含9新增）与 Agent TypeScript 编译通过 | 恢复后先处理另一项真实模型输出失败，再做双平台及必要真实探索、新身份完整 CI；尚未建立新候选，旧槽永久只读，9.5最终验收未完成 |
+| P2-C 分层开发与编排复用 | P2 | **恢复点第 1 步完成并本地提交；按用户要求暂停** | cross-package review/repair 逐字节回放：请求证据完整（review=`1895`/repair=`1852` tokens、missingPaths=`0`、json_object+thinking 关闭），两次输出 `length/non_json/1024` 判定为模型输出行为失败（record_only）；确定性恢复缩进容错 fix_now：定向 25 文件 `466/466`、tsc 与 benchmark verifier 通过；63e0a41 候选仍为 `12 passed / 2 failed / 130 unexecuted`、永久冻结 | 恢复后先补 WSL 定向复核、双平台 build 与新身份完整 CI，再做最小必要 TypeScript 代表探索、材料与资源 Gate；两个完整 144 槽候选与 9.5 最终验收未完成，旧槽永久只读 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -1929,14 +1929,49 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - `node --import tsx tmp/p2c-layered-development/replay-ts-api-review.mjs fixed`：原上限2048内请求=`2020`、三文件证据无缺失，6处行号对应的原文字节独立比对通过，含 API 两处同文位置和 `trace?: TraceValue;`；Provider calls=`0`。
 - 当前变更 diff 格式检查通过；Windows 本地验证已闭合，新变更尚未做 WSL、完整 CI 或真实模型验证。产品修复与本次文档按用户要求纳入本环节本地提交，尚未推送，双平台 staging/inputs 保持 `63e0a41`。
 
+#### P2-C 恢复点核对实现结论：cross-package review/repair 请求证据与恢复缩进容错（2026-09-05）
+
+##### 已完成内容
+
+1. **tmp/p2c-layered-development/replay-ts-cross-package-review.mjs 新建并执行**：
+   - 从冻结 events、`prompt.md`、Git baseline 与保留 workspace 逐字节重建三次 `file_read` 与一次 `apply_patch` 消息；events 只保留 2049 字符前缀加 `…` 截断标记，读取正文改用保留源码按 metadata 重建。
+   - 三次读取字节与 SHA-256 均与 metadata 一致：pre-mutation=3648B、任务点名测试=796B、post-mutation=3636B。
+   - 用 63e0a41 冻结源码（`tmp/p2c-layered-development/agent-63e0a41/react-workspace-mutation-frozen.ts`，仅重写本地 import 路径）与当前 HEAD 分别重建 review/repair 请求；evidence 输出=`tmp/p2c-layered-development/ts-cross-package-review-63e0a41.json`。
+
+2. **核对结论（信息遗漏 vs 模型输出能力）**：
+   - 63e0a41 原始 review 请求 `built=true`、`1895` tokens、evidenceCount=`1`、missingPaths=`[]`；repair=`1852` tokens；两者均含完整写后源码、任务文本、任务点名测试与最终输出合同，`jsonObjectOutputRequired=true`（json_object + DeepSeek thinking 关闭）。
+   - HEAD（cd0750ee）同输入 review=`2036` tokens、repair=`2039` tokens，同样完整；多文件行投影对单文件场景只收窄元数据。
+   - 模型补丁语义正确（tests/patch 通过），review 与唯一 repair 均 `finishReason=length`、non_json、输出 1024 tokens —— 判定为**模型输出行为失败（record_only）**，不是 review/repair 请求信息遗漏。
+
+3. **packages/belldandy-agent/src/react-workspace-mutation-ts-cross-package.ts 修改**：
+   - 恢复核对改为行首缩进不敏感（`/^[\t ]+/`）的整行内容精确比较：`hasExactLines`、命名空间序列查找与“仍含 baseline 行”检查全部归一化；行尾与语义内容仍逐字节精确。
+   - 根因：模型补丁省略行首 tab，apply_patch 按 Level-3 忽略首尾空白匹配并原样写入，结果文件行丢失缩进；恢复常量却要求带 tab 的精确行，导致确定性恢复失效。
+
+4. **react-workspace-mutation-ts-cross-package.test.ts 扩展**：
+   - 新增 2 项正例（仅补丁缺缩进、补丁与写后源码均缺缩进均可恢复）与 2 项反例（缺缩进但语义漂移、baseline 行无缩进残留仍拒绝）；既有 11 项负例保持失败关闭。
+
+5. **效果**：
+   - 真实冻结证据在修复前返回 undefined（红灯），修复后恢复为固定完成输出 `{"summary":"restored the nullable WorkspaceFoldersRequest result contract"}`（绿灯）。
+   - 若后续候选再出现“补丁正确但最终 JSON 输出失败”的同任务模式，确定性恢复不再因缩进差异失效；语义漂移、残留 baseline、重复命名空间、截断证据等仍拒绝。
+
+##### 验证结果
+
+- TypeScript：`tsc -b packages/belldandy-agent` exit=`0`；`git diff --check` 通过。
+- 定向回归：workspace-mutation 家族 25 文件 `466/466` 通过（含新增 4 项；新用例先红后绿）。
+- `corepack pnpm verify:coding-benchmark` exit=`0`（仅既有 date-time warning）。
+- 回放为只读、零 Provider；未重跑、reconcile 或改写 `63e0a41` 冻结 14 槽终态，未启动 Gateway、runner 或 formal。
+
+##### 后续计划
+
+按用户要求本环节完成后暂停；恢复后先补 WSL 定向复核与本修复的双平台 build，再推进最小必要 TypeScript 代表探索、新身份完整 CI、材料与资源 Gate；费用继续继承 `formal-63e0a41-1/cost-ledger-final.json`。
+
 ### 后续计划（本环节结束后暂停）
 
-1. **已按用户要求暂停**，恢复后先核对 `real-ts.cross-package-refactor` 的原始 review/唯一 repair 请求与实际保留内容。这是剩余已知失败，必须先区分信息遗漏和模型输出能力，再决定是否需要进一步通用修复；不因 `length/non_json` 直接增加预算或重试。
-2. 当前 API migration 本地回放及相邻回归已通过，恢复后补双平台验证和最小必要的 TypeScript 代表探索；JS 单文件投影受影响时由相邻回归与有依据的代表验证覆盖，不无条件重跑旧探索清单。新身份完整 CI、材料与资源 Gate 闭合后才创建新候选。
-3. 后继运行继承 `formal-63e0a41-1/cost-ledger-final.json` 的全部费用和预留；本环节没有新增付费模型调用，observed/reserved 仍为 `2.4815528500000004/2.34221 USD`，下一次最坏仍为 `39.3901028 RMB`。旧14槽及余下130槽永久冻结，普通失败仅在资格仍可达且证据/资源闭合时续跑。
-4. 完整候选后执行当前身份的真实 CodeIntel paired-run，并采集 CI/CLI/TUI/Git delivery receipt、aggregate 与七维资格，再执行第二个连续完整候选；对照调用也须接入权威账本。两个候选均须完整144槽、七维下限、raw weighted `>=9.500` 和全部硬 Gate。
-
-当前关键闭环仍是复杂真实任务的稳定完成、连续两个完整候选及交付证据；本地462项通过不代表9.5已达成。审批计量与费用授权持续有效，恢复时无需再次确认同一范围。
+1. **本环节已完成恢复点第 1 步核对并暂停**：cross-package 失败判定为模型输出行为失败（record_only），review/repair 请求证据完整、不是信息遗漏；同时以 TDD 闭合确定性恢复的行首缩进容错缺口（本地提交 `39987d45`，尚未推送；连同上一环节 `cd0750ee` 待恢复后一起推送 `private/main`）。
+2. **恢复后先做**：本修复的 WSL 定向复核、两端 build 与既有身份 CI 观察；然后按最小必要范围做 TypeScript 代表探索（先验证 cross-package 同任务真实模型路径，再决定是否扩大），全部稳定且新身份完整 CI、材料与资源 Gate 闭合后才创建新候选。
+3. **为什么先做它**：修复只改变确定性恢复的匹配语义，必须先证明不破坏 WSL/跨平台路径与既有回归，才能进入付费探索；不因 `length/non_json` 加预算或重试的原则保持不变。
+4. **当前还缺的关键闭环**：cross-package 的“补丁正确 + JSON 输出失败”在真实模型路径尚无新证据（恢复修复是确定性兜底，不改变模型输出行为）；两个连续完整 144 槽候选、七维资格与 9.5 数值验收仍未完成。
+5. 后继运行继承 `formal-63e0a41-1/cost-ledger-final.json` 的全部费用和预留（observed/reserved=`2.4815528500000004/2.34221 USD`，next worst=`39.3901028 RMB < 80`）；本环节零 Provider，旧 14 槽及余下 130 槽永久冻结。审批计量与费用授权持续有效，恢复时无需再次确认同一范围。
 
 ### 暂停点的剩余工作量估算（2026-09-05）
 
@@ -2025,3 +2060,6 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - WSL npm cache 首次类型探针把含 `|` 的 `stat -c` 格式字符串交给 PowerShell，宿主将其解析为管道并在只读命令中失败；改用逗号分隔格式的直接 argv 后确认 source/target 均为非 symlink `755 directory`，复制后字节与目录内容一致。未影响 cache 或 inputs，处理决策为 `fix_now completed`。
 - WSL material Gate 先由 production resolver 正确返回 `benchmarks/coding-agent/v3/task-manifest.json`，随后人工哈希命令仍误用猜测的 `manifest.json` 而失败；改为读取 resolver 的真实路径，并同时核对 raw/contract SHA 后通过。该只读失败发生在 producer 前，未创建 output，处理决策为 `fix_now completed`。
 - Quality `33959329660` 的完整工程测试发现两项失败：`tool-agent-workspace-mutation-web-boolean-branch.test.ts` 中两个任务明确点名 `test/shared/benchmark-v3-ui-regression.test.js`，新增通用 source-navigation 准入后测试替身仍只返回 `src/diff/props.js`，有界导航因缺少被点名测试证据而失败关闭。未修改产品导航规则；补齐两个替身的测试路径响应与路径绑定后，受影响模块 `127/127` 通过、build 通过。处理决策为 `fix_now completed / 测试合同闭合`；023af38 失败 CI 保留，新身份完整 CI 必须重新验证。
+- 恢复点第 1 步对 `real-ts.cross-package-refactor` 的逐字节回放确认：review/repair 请求证据完整（完整写后源码、任务、任务点名测试、输出合同、json_object+thinking 关闭），模型补丁语义正确且 tests/patch 通过，但两次输出均 `finishReason=length`、non_json、`1024` tokens。结论为模型输出行为失败，处理决策为 `record_only`，不加预算、不增加重试、不覆盖原终态；原 `63e0a41` 冻结 14 槽不改写。
+- 同一 run 的确定性恢复本应命中（补丁与写后源码语义完全正确），但模型补丁省略行首 tab，apply_patch 的 Level-3 忽略首尾空白匹配并原样写入，使文件行丢失缩进；恢复常量却要求带 tab 的精确行，导致恢复失效、run 以 `product_workflow` 失败。处理为 `fix_now completed`：恢复核对改为行首缩进不敏感的整行内容精确比较，语义漂移、baseline 残留、重复命名空间、截断证据仍失败关闭；真实冻结证据红灯→绿灯复现，定向 25 文件 `466/466`、`tsc -b` 与 benchmark verifier 通过，本地提交待推送。apply_patch 的模糊匹配行为本身保持原样（record_only），未修改该工具。
+- 回放工具首次因三类证据细节失败：events 只保留 2049 字符前缀加 `…` 截断标记、`git show` 对无尾换行 blob 追加换行、apply_patch 参数在 events 中为 JSON 字符串包装；已逐项对齐（元数据重建 + CRLF 归一化 + 截断标记剥离 + 参数解包），这些工具调整只服务只读证据重建，不作为产品证据。
