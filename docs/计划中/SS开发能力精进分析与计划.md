@@ -967,6 +967,26 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 为 `6ce85bd/candidate-1` 新建绑定四字段 identity 的 Windows/WSL repository-input producer/verifier；只向此前不存在的 candidate root 唯一发布，并分别独立验真 repositories/receipts/preflights=`4/4/8`，之后才生成 expected-report plan。
 
+#### P2-C 新候选证据输入实现结论：6ce85bd 双平台 repository inputs（2026-09-05）
+
+##### 已完成内容
+
+1. **candidate-specific producer/verifier 新建**：忽略目录 `tmp/` 内的 helper 仅机械迁移已验真合同，绑定 `6ce85bd / false / 844c…b7d2 / 411a…7f36` 与全新路径；旧 identity 零命中，producer/verifier SHA-256 分别为 `16e9e60d…4ea1` / `7122bc8b…1d8e`。
+2. **Windows repository inputs 唯一发布**：向此前不存在的 `tmp/p2c-candidate-6ce85bd-inputs/windows-native` 原子发布，独立 verifier 重建 stored receipts/preflights 后确认 repositories/receipts/preflights=`4/4/8`。
+3. **WSL repository inputs 唯一发布**：从上一候选已验真的 npm cache 复制等字节的候选专属 cache；使用 canonical source/dependency seed、Go `1.24.2` 与固定 module cache，由 production Linux owner 向此前不存在的 ext4 root 首次发布，终态=`ready 4 / blocked 0`。
+4. **效果**：两平台均已有 current-candidate 原生、不可覆盖且可独立复算的 repository inputs；Windows/WSL config SHA 分别冻结为 `272c996b…2892` / `ffaa88c3…c4`，路径布局差异不误判为 identity 漂移。
+
+##### 验证结果
+
+- Windows/WSL verifier 均为 repositories/receipts/preflights=`4/4/8`，stored receipt/preflight 全部重建并 deep-equal；内部 production identity 四字段逐字一致。
+- WSL material Gate：新旧 npm cache 字节数同为 `87069031` 且目录 diff 为空；manifest contract SHA-256=`dfaf7ebe…a1ba`、Express seed lock=`c3b14462…3a82`，四仓 HEAD、Node=`v22.22.2`、npm=`10.9.7`、Go=`1.24.2` 均匹配。
+- 双端 staging 仍为 clean detached，发布 stage 残留=`0`、候选相关进程=`0`；未启动 Gateway、benchmark runner 或 Provider。
+- TypeScript 编译状态沿用本 identity 双平台 build Green；本环节未修改产品源码，新增产品测试=`0`，交付测试仍为 `6558 passed / 3 skipped / 0 failed`。
+
+##### 后续计划
+
+按用户要求暂停在安全写前边界。恢复后先确认 `artifacts/p2c-6ce85bd/candidate-1`、formal root 与 plan 文件均不存在，再首次生成不可覆盖 expected-report plan；独立验真 reports/IDs/paths=`144/144/144` 和 plan SHA 后，才迁移 candidate operators。
+
 ## 实施计划进度表
 
 ### 当前阶段与完成边界（2026-09-05）
@@ -988,17 +1008,17 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C 6ec5db3/candidate-1 | P2 | **batch 03 已冻结，13/144（3 passed + 1 product_workflow failure）；Fix Mode 修复已交付 private/main** | resume=`13/144`、remaining=`131`、unreported infrastructure=`0`；env/资源清理闭合；t13 `EPERM rename` evidence 已冻结；定向回归=`24/24`、workspace build 与 benchmark contract 通过；全仓=`6554 passed / 2 failed / 3 skipped`，两项隔离复跑均通过；fix commit=`8f794af` | 以 `8f794af` 重建双平台 candidate，旧 identity 不得重跑或启动 WSL |
 | P2-C 8f794af/candidate-1 | P2 | **batch 01 已冻结，3/144（2 passed + 1 product_workflow failure）** | resume=`3/144`、remaining=`141`、unreported infrastructure=`0`；t03 tests/patch 通过但目标复核输出合同失败；env/资源清理闭合 | 禁止重跑/reconcile 或启动 WSL；修复只由新 identity 验证，不改写旧终态 |
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
-| P2-C 6ce85bd/candidate-1 | P2 | **双平台 staging/identity 完成** | Windows/WSL clean detached；identity=`6ce85bd / false / 844c…b7d2 / 411a…7f36`；双端 build 与 benchmark contract 通过 | 唯一生成并独立验真双平台 repository inputs=`4/4/8` |
+| P2-C 6ce85bd/candidate-1 | P2 | **双平台 staging/identity 与 repository inputs 完成；按用户要求暂停** | Windows/WSL clean detached；identity=`6ce85bd / false / 844c…b7d2 / 411a…7f36`；双端 build/benchmark contract 与 inputs=`4/4/8` 通过 | 恢复后先生成并独立验真不可覆盖 expected-report plan，再迁移 operators |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 ### 后续计划
 
-1. 保持 `8f794af/candidate-1` 在 `3/144` 永久冻结；为 `6ce85bd/candidate-1` 唯一生成并独立验真双平台 repository inputs=`4/4/8`。
-2. repository inputs 全绿后依次唯一生成 expected-report plan 和 candidate operators，完成 OCI 与资源/费用 Gate 后才启动 Windows canary。
+1. 保持 `8f794af/candidate-1` 在 `3/144` 永久冻结；`6ce85bd/candidate-1` 当前按用户要求暂停，不生成 plan、operators 或 formal 输出。
+2. 恢复后先通过四层目标不存在 Gate，首次生成并独立验真 expected-report plan=`144/144/144`；随后迁移并冻结 candidate operators，完成 OCI 与资源/费用 Gate 后才启动 Windows canary。
 3. canary 通过后按小批次渐进补齐完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt 和七维资格；任一失败立即冻结，不重跑或 reconcile。
 4. 两个连续候选均须满足七维下限与 raw weighted `>=9.500`；任何旧 identity 均禁止事后改写 aggregate。
 
-`8f794af` batch 01 已永久冻结，目标复核工作流缺口已由 `6ce85bd` 的零 Provider 回归、实现和全仓验证闭合；`6ce85bd` 双平台 staging/identity 也已完成。当前优先缺口是双平台 repository inputs、plan/operators、OCI 与 Windows canary，其后才是完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选。
+`8f794af` batch 01 已永久冻结，目标复核工作流缺口已由 `6ce85bd` 的零 Provider 回归、实现和全仓验证闭合；`6ce85bd` 双平台 staging/identity 与 repository inputs 已完成。当前按用户要求暂停；恢复后的优先缺口是 expected-report plan、operators、OCI 与 Windows canary，其后才是完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选。
 
 ### 重要问题说明
 
@@ -1027,3 +1047,5 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - `8f794af` Windows batch 01 的 t03 `bug.reproducible-fix` 在 patch、测试及 evaluator 均通过后仍以 `product_workflow` failed 结束：post-write objective review 未返回有效 JSON，随后 phase-aware output repair 消费唯一代码纠正额度，最终复核仍未完成输出合同。零 Provider 固定响应序列已稳定复现该通用状态机缺口；处理决策由 `split_task` 闭合为 `fix_now completed`：`6ce85bd` 在纠正后只允许一次无工具 JSON repair，持续无效仍失败关闭，旧候选终态保持冻结。
 - `6ce85bd` staging 前的首个 Windows 多目标只读探针再次因 `foreach` 结果直接接管道在 PowerShell 解析期失败，首个 WSL 循环探针也因外层展开导致循环变量为空；后续一次合并的 WSL mode/hash 探针因 `awk` 转义失败。三次均未创建或修改目标；改为先收集数组和逐路径/逐命令字面调用后确认所有目标 absent、blob/mode 可复算，处理决策为 `fix_now completed`。
 - Windows 首次离线安装超过 30 秒观察窗口，原并行调用未保留最终 exit code；确认唯一任务进程 PID、父进程和候选命令行后持续观察至退出，再以相同冻结离线命令幂等确认 `Already up to date`、exit=`0`。未重启并发安装、未进入 Provider，处理决策为 `fix_now completed`。
+- WSL npm cache 首次类型探针把含 `|` 的 `stat -c` 格式字符串交给 PowerShell，宿主将其解析为管道并在只读命令中失败；改用逗号分隔格式的直接 argv 后确认 source/target 均为非 symlink `755 directory`，复制后字节与目录内容一致。未影响 cache 或 inputs，处理决策为 `fix_now completed`。
+- WSL material Gate 先由 production resolver 正确返回 `benchmarks/coding-agent/v3/task-manifest.json`，随后人工哈希命令仍误用猜测的 `manifest.json` 而失败；改为读取 resolver 的真实路径，并同时核对 raw/contract SHA 后通过。该只读失败发生在 producer 前，未创建 output，处理决策为 `fix_now completed`。
