@@ -5361,16 +5361,21 @@ export class ToolEnabledAgent implements BelldandyAgent {
             const canCorrectContinuationInputFailure = workspaceMutationContinuationCall
               && workspaceMutationContinuationAttempted
               && missingPaths.length < requiredChangedPaths.length;
+            // 补丁被整体拒绝且没有任何 actionable section（如 envelope 无效、全部 hunk
+            // 为 context-only）时，工作区未被写入，unlisted-path 风险不存在；仍允许按
+            // validator 诊断做一次有界纠正，而不是直接失败关闭。
+            const patchLeftNoActionableSections = patchPreservationDiagnostics?.actionableSectionCount === 0;
             const canCorrectMutationInputFailure = workspaceMutationRecoveryCall
               && !workspaceMutationInputCorrectionCall
               && !workspaceMutationInputCorrectionAttempted
               && !workspaceMutationObserved
               && workspaceMutationCallRequiredPaths.length > 0
               && missingPaths.length === workspaceMutationCallRequiredPaths.length
-              && hasOnlyWorkspaceMutationPatchPaths(
-                validatedMutationToolCall,
-                workspaceMutationCallRequiredPaths,
-              )
+              && (patchLeftNoActionableSections
+                || hasOnlyWorkspaceMutationPatchPaths(
+                  validatedMutationToolCall,
+                  workspaceMutationCallRequiredPaths,
+                ))
               && (canCorrectRecoveryInputFailure || canCorrectContinuationInputFailure);
             if (canCorrectMutationInputFailure) {
               workspaceMutationContinuationPending = true;

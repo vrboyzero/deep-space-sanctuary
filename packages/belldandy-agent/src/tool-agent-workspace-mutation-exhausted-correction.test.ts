@@ -439,8 +439,99 @@ describe("verified mutation after exhausted objective correction", () => {
     expect(items).toContainEqual({ type: "final", text: successfulSummary });
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
-});
 
+  it("corrects a fully rejected mutation-only patch whose envelope is invalid and whose only hunk is context-only", async () => {
+    const requiredChangedPaths = ["src/api.ts"];
+    const successfulSummary = '{"summary":"verified"}';
+    // 混合换行使 preserve 检查以 invalid_envelope 拒绝（sectionCount=0）；
+    // 宽松的 hunk 检查计 2 个 context-only hunk；extra.ts 不在 required 路径内，
+    // 使 hasOnlyWorkspaceMutationPatchPaths=false——这正是真实 WSL 槽的失败形态。
+    const invalidPatch = "*** Begin Patch\n*** Update File: src/api.ts\n@@\n export const value = 'old';\r\n*** Update File: src/extra.ts\n@@\n another context line\n*** End Patch";
+    const validPatch = [
+      "*** Begin Patch",
+      "*** Update File: src/api.ts",
+      "@@",
+      "-export const value = 'old';",
+      "+export const value = 'new';",
+      "*** End Patch",
+    ].join("\n");
+    const currentSource = "export const value = 'new';";
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return response({
+          choices: [{ finish_reason: "stop", message: { content: "I will inspect the sources first." } }],
+          usage: { prompt_tokens: 300, completion_tokens: 20 },
+        });
+      }
+      if (requests.length === 2) {
+        return response(modelToolCall("invalid-envelope-patch", "apply_patch", { input: invalidPatch }));
+      }
+      if (requests.length === 3) {
+        return response(modelToolCall("corrected-patch", "apply_patch", { input: validPatch }));
+      }
+      if (requests.length === 4) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: successfulSummary } }],
+        usage: { prompt_tokens: 300, completion_tokens: 30 },
+      });
+    });
+    const executedPatches: string[] = [];
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => {
+      if (request.name === "apply_patch") {
+        executedPatches.push(String(request.arguments?.input ?? ""));
+      }
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: request.name === "file_read"
+          ? JSON.stringify({ path: request.arguments?.path, truncated: false, content: currentSource })
+          : "Patch applied successfully",
+        ...(request.name === "apply_patch" ? {
+          metadata: {
+            workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+          },
+        } : {}),
+        durationMs: 1,
+      };
+    });
+
+    const items = await collect(createAgent(execute).run({
+      conversationId: "verified-invalid-envelope-context-only-correction",
+      text: "Replace the frozen value in src/api.ts.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 12,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === successfulSummary
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(executedPatches).toEqual([validPatch]);
+    expect(requests[2]?.messages[0]?.content).toContain(
+      "Atomic input correction phase",
+    );
+    expect(items).toContainEqual({ type: "final", text: successfulSummary });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+});
 function createAgent(execute: ReturnType<typeof vi.fn>) {
   const definitions = [toolDefinition("file_read"), toolDefinition("apply_patch")];
   return new ToolEnabledAgent({
