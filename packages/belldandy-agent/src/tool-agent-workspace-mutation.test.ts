@@ -3353,7 +3353,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(requests[4]).not.toHaveProperty("tools");
     expect(requests[4]?.messages[0]?.content).toContain("Post-mutation final objective review phase");
     expect(requests[4]?.messages[1]?.content).toContain(
-      "Trusted required paths after post-write correction",
+      "Trusted successfully mutated paths after correction",
     );
     expect(requests[4]?.messages[1]?.content).not.toContain("eligible for one post-write correction");
     expect(execute.mock.calls.map(([request]) => request.name)).toEqual([

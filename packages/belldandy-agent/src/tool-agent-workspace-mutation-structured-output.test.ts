@@ -106,6 +106,10 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
     expect(JSON.stringify(diagnostics)).not.toContain("The post-write evidence requires further review.");
     expect(requests[2]?.response_format).toEqual({ type: "json_object" });
     expect(requests[3]?.response_format).toEqual({ type: "json_object" });
+    for (const review of requests.slice(2)) {
+      expect(review.messages[1].content).toContain("Trusted successfully mutated paths");
+      expect(review.messages[1].content).toContain(requiredPath);
+    }
     expect(requests[2]?.messages[0]?.content).toContain(
       "Return exactly one complete raw JSON value",
     );

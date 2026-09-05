@@ -2951,8 +2951,8 @@ export function buildWorkspaceMutationObjectiveReviewRequest(input: {
     instruction,
     missingRequiredChangedPaths: requiredReviewPaths,
     trustedPathsLabel: input.correctionAllowed === false
-      ? "Trusted required paths after post-write correction"
-      : "Trusted required paths eligible for one post-write correction",
+      ? "Trusted successfully mutated paths after correction"
+      : "Trusted successfully mutated paths eligible for one correction",
     allowNoTools: true,
     latestRequiredFileReadEvidenceOnly: true,
     includeLeadingDocumentation: true,
@@ -3024,7 +3024,7 @@ export function buildWorkspaceMutationObjectiveOutputRepairRequest(input: {
     tools: input.correctionAllowed === false ? [] : input.tools,
     instruction: `${instruction}\nFinal-output contract data:\n${finalOutputContract}`,
     missingRequiredChangedPaths: requiredCorrectionPaths,
-    trustedPathsLabel: "Trusted required paths for the bounded objective-review output repair",
+    trustedPathsLabel: "Trusted successfully mutated paths for objective-review output repair",
     allowNoTools: true,
     latestRequiredFileReadEvidenceOnly: true,
     includeLeadingDocumentation: true,
