@@ -6,6 +6,41 @@ import {
 } from "./gateway-readiness-diagnostic.mjs";
 
 describe("Gateway readiness diagnostic", () => {
+  it("retains bootstrap progress on timeout without promoting progress to readiness", () => {
+    const diagnostic = new GatewayReadinessDiagnostic({ host: "127.0.0.1", port: 1, startedAtMs: 1_000 });
+    diagnostic.bootstrapMessage({ type: "gateway.startup/v1", phase: "entry" }, 1_010);
+    diagnostic.bootstrapMessage({ type: "gateway.startup/v1", phase: "build_guard_complete" }, 1_020);
+    diagnostic.fail("gateway_readiness_timeout", 61_000);
+
+    expect(diagnostic.toJSON()).toMatchObject({
+      status: "failed",
+      failureCode: "gateway_readiness_timeout",
+      events: [
+        { phase: "bootstrap_entry", atMs: 10 },
+        { phase: "bootstrap_build_guard_complete", atMs: 20 },
+      ],
+      readiness: { portConnectedAtMs: null, authReadyAtMs: null },
+    });
+  });
+
+  it("rejects malformed, duplicate, out-of-order and late bootstrap frames", () => {
+    const diagnostic = new GatewayReadinessDiagnostic({ host: "127.0.0.1", port: 1, startedAtMs: 0 });
+    for (const message of [null, [], "secret", { type: "other", phase: "entry" },
+      { type: "gateway.startup/v1", phase: "secret" },
+      { type: "gateway.startup/v1", phase: "entry", token: "must-not-retain" },
+      { type: "gateway.startup/v1", phase: "module_body" }]) {
+      diagnostic.bootstrapMessage(message, 10);
+    }
+    diagnostic.bootstrapMessage({ type: "gateway.startup/v1", phase: "entry" }, 20);
+    for (let index = 0; index < 100; index += 1) {
+      diagnostic.bootstrapMessage({ type: "gateway.startup/v1", phase: "entry" }, 30);
+    }
+    diagnostic.ready(40);
+    diagnostic.bootstrapMessage({ type: "gateway.startup/v1", phase: "build_guard_complete" }, 50);
+    expect(diagnostic.toJSON().events).toEqual([{ phase: "bootstrap_entry", atMs: 20 }]);
+    expect(JSON.stringify(diagnostic.toJSON())).not.toMatch(/secret|token|must-not-retain/);
+  });
+
   it("records bounded child, output, readiness, and failure evidence without content", () => {
     const diagnostic = new GatewayReadinessDiagnostic({
       host: "127.0.0.1",

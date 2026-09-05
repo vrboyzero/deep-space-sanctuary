@@ -509,13 +509,14 @@ export async function runWindowsBenchmark(input, dependencies = {}) {
     diagnostic.event("gateway_spawn_requested");
     gateway = spawnProcess(invocation.gateway.command, invocation.gateway.args, {
       cwd: invocation.gateway.cwd,
-      env: invocation.gateway.env,
+      env: { ...invocation.gateway.env, BELLDANDY_GATEWAY_STARTUP_DIAGNOSTIC: "ipc-v1" },
       windowsHide: true,
-      stdio: ["ignore", stdout.fd, stderr.fd],
+      stdio: ["ignore", stdout.fd, stderr.fd, "ipc"],
     });
     gateway.once("spawn", () => diagnostic.childSpawned(gateway.pid));
     gateway.once("error", (error) => diagnostic.childError(error?.code));
     gateway.once("exit", (code, signal) => diagnostic.childExited(code, signal));
+    gateway.on("message", (message) => diagnostic.bootstrapMessage(message));
     diagnostic.event("port_probe_started");
     await waitForGatewayPort(gateway, invocation.endpoint, dependencies.gatewayReadyTimeoutMs, {
       onPoll: () => observeGatewayOutput(diagnostic, stdoutPath, stderrPath),

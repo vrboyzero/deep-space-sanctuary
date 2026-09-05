@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { reportGatewayStartupPhase } from "./gateway-startup-diagnostic.js";
 import { ensureDefaultEnvFiles, resolveEnvFilePaths, resolveGatewayRuntimePaths } from "@star-sanctuary/distribution";
 import { loadProjectEnvFiles } from "../cli/shared/env-loader.js";
 import { buildAutoOpenTargetUrl, resolveLauncherSetupAuth } from "./launcher-auth.js";
@@ -478,6 +479,7 @@ import {
 } from "../task-dedup.js";
 
 // --- Env Loading ---
+reportGatewayStartupPhase("module_body");
 let runtimePaths = resolveGatewayRuntimePaths({
   env: process.env,
   cwd: process.cwd(),
@@ -4640,6 +4642,7 @@ serverOptions.startupObservability = {
   },
 };
 const server = await startGatewayServer(serverOptions);
+reportGatewayStartupPhase("server_listening");
 const shutdownRequestOwner = createGatewayShutdownRequestOwner({
   requestShutdown: (request) => server.requestShutdown(request),
   broadcast: (frame) => server.broadcast(frame),

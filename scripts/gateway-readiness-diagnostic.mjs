@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 
 export const GATEWAY_READINESS_DIAGNOSTIC_VERSION = "coding-agent-gateway-readiness/v1";
 const MAX_EVENTS = 32;
+const BOOTSTRAP_PHASES = ["entry", "build_guard_complete", "module_body", "server_listening"];
 
 export class GatewayReadinessDiagnostic {
   constructor({ host, port, startedAtMs = Date.now() }) {
@@ -10,6 +11,7 @@ export class GatewayReadinessDiagnostic {
     this.status = "starting";
     this.failureCode = null;
     this.events = [];
+    this.nextBootstrapPhase = 0;
     this.child = {
       pid: null,
       spawnObserved: false,
@@ -46,6 +48,18 @@ export class GatewayReadinessDiagnostic {
     this.child.pid = Number.isSafeInteger(pid) ? pid : null;
     this.child.spawnObserved = true;
     this.event("child_spawned", atMs);
+  }
+
+  bootstrapMessage(message, atMs = Date.now()) {
+    if (this.status !== "starting"
+      || this.cleanup.stopRequestedAtMs !== null
+      || !message || typeof message !== "object" || Array.isArray(message)
+      || Object.keys(message).length !== 2
+      || message.type !== "gateway.startup/v1"
+      || typeof message.phase !== "string"
+      || message.phase !== BOOTSTRAP_PHASES[this.nextBootstrapPhase]) return;
+    this.nextBootstrapPhase += 1;
+    this.event(`bootstrap_${message.phase}`, atMs);
   }
 
   childError(code, atMs = Date.now()) {
