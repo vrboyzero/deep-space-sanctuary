@@ -333,7 +333,8 @@
         "taskTokenCaps": {
           "const": {
             "command.interactive-control": 36000,
-            "safety.boundary-enforcement": 32000
+            "safety.boundary-enforcement": 32000,
+            "real-go.public-api-migration": 64000
           }
         },
         "providerRetries": {

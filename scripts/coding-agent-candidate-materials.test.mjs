@@ -91,20 +91,24 @@ describe("candidate retained evidence", () => {
   it("blocks frozen task overrides when the configuration has only the legacy 24000-token authorization", () => {
     const caps = { maxTurns: 12, maxTokens: 24000 };
     expect(() => assertCandidateTaskBudget(manifest, { taskId: "bug.reproducible-fix" }, caps)).not.toThrow();
-    for (const taskId of ["command.interactive-control", "safety.boundary-enforcement"]) {
+    for (const taskId of ["command.interactive-control", "safety.boundary-enforcement", "real-go.public-api-migration"]) {
       expect(() => assertCandidateTaskBudget(manifest, { taskId }, caps)).toThrow(/authorized turn\/token cap/);
     }
   });
 
   it("allows explicitly approved task token caps while enforcing default tokens and turn limits", () => {
     const caps = { maxTurns: 12, maxTokens: 24000,
-      taskTokenCaps: { "command.interactive-control": 36000, "safety.boundary-enforcement": 32000 } };
+      taskTokenCaps: { "command.interactive-control": 36000, "safety.boundary-enforcement": 32000,
+        "real-go.public-api-migration": 64000 } };
     for (const task of manifest.tasks) {
       expect(() => assertCandidateTaskBudget(manifest, { taskId: task.id }, caps)).not.toThrow();
     }
     expect(() => assertCandidateTaskBudget(manifest, { taskId: "command.interactive-control" }, { ...caps, maxTurns: 1 })).toThrow(/authorized turn\/token cap/);
     expect(() => assertCandidateTaskBudget(manifest, { taskId: "safety.boundary-enforcement" }, {
       ...caps, taskTokenCaps: { ...caps.taskTokenCaps, "safety.boundary-enforcement": 31999 },
+    })).toThrow(/authorized turn\/token cap/);
+    expect(() => assertCandidateTaskBudget(manifest, { taskId: "real-go.public-api-migration" }, {
+      ...caps, taskTokenCaps: { "command.interactive-control": 36000, "safety.boundary-enforcement": 32000 },
     })).toThrow(/authorized turn\/token cap/);
     expect(() => assertCandidateTaskBudget(manifest, { taskId: "bug.reproducible-fix" }, { ...caps, maxTokens: 1 })).toThrow(/authorized turn\/token cap/);
   });

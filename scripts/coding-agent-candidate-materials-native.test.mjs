@@ -104,7 +104,8 @@ it("checks the frozen plan after the authorized approval contract clears preflig
   f.config.selection = manifest.tasks.flatMap((task) => task.platforms.flatMap((platform) =>
     Array.from({ length: manifest.suite.sampleRuns }, (_, index) => ({ taskId: task.id, platform, attempt: index + 1 }))));
   f.config.contracts.expectedReportPlan = { path: path.join(f.config.workspaceRoot, "absent-plan.json"), sha256: "e".repeat(64) };
-  f.config.execution.taskTokenCaps = { "command.interactive-control": 36000, "safety.boundary-enforcement": 32000 };
+  f.config.execution.taskTokenCaps = { "command.interactive-control": 36000, "safety.boundary-enforcement": 32000,
+    "real-go.public-api-migration": 64000 };
   await fs.writeFile(f.configPath, JSON.stringify(f.config));
 
   await expect(loadCandidateMaterials(f.configPath))

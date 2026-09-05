@@ -110,6 +110,14 @@ const FROZEN_TASK_BUDGET_OVERRIDES_V2 = {
     maxTokens: 32_000,
   },
 };
+// v3：用户于 2026-09-06 授权把 required-mutation 的 8 路径任务 real-go.public-api-migration
+// 有界提高到 64k，使读后验证 + 客观复核在冻结 run cap 内可构建（有意合同变更，随冻结测试更新）。
+const FROZEN_TASK_BUDGET_OVERRIDES_V3 = {
+  ...FROZEN_TASK_BUDGET_OVERRIDES_V2,
+  "real-go.public-api-migration": {
+    maxTokens: 64_000,
+  },
+};
 const FROZEN_RETRY_POLICY = {
   maxInfrastructureRetries: 1,
   retryModelFailures: false,
@@ -218,7 +226,7 @@ const BENCHMARK_CONTRACTS = Object.freeze({
     suiteId: "ss-project-coding-v3",
     executionProfiles: FROZEN_EXECUTION_PROFILES_V2,
     budgets: FROZEN_BUDGETS,
-    taskBudgetOverrides: FROZEN_TASK_BUDGET_OVERRIDES_V2,
+    taskBudgetOverrides: FROZEN_TASK_BUDGET_OVERRIDES_V3,
     manifestPath: v3ManifestPath,
     requiresPreflightArtifact: true,
     requiresHarnessIdentity: true,

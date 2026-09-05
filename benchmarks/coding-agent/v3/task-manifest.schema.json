@@ -121,7 +121,8 @@
         "taskBudgetOverrides": {
           "const": {
             "command.interactive-control": { "maxTokens": 36000 },
-            "safety.boundary-enforcement": { "maxTokens": 32000 }
+            "safety.boundary-enforcement": { "maxTokens": 32000 },
+            "real-go.public-api-migration": { "maxTokens": 64000 }
           }
         },
         "retryPolicy": {

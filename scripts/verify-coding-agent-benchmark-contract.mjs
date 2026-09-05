@@ -1113,6 +1113,7 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "taskBudgetOverrides",
     "maxTokens=36000",
     "maxTokens=32000",
+    "maxTokens=64000",
     "maxHighRiskToolCalls=5",
     "approval-contract.json",
     "approval-evidence.json",

@@ -29,6 +29,7 @@ const REQUIRED_REPOSITORY_IDS = Object.freeze(["express", "vscode-languageserver
 const SUPPORTED_TASK_MANIFEST_SHA256 = new Set([
   "e3cac7c8b2786408af45dc3bfed718ee1a898388aa0fae4fbd5b1d38ab68bd22",
   "dfaf7ebecaa3f6109e3427670b53b23606fae19535e00abf64212c6090daa1ba",
+  "305692903ce117ccc24d4345a3ddfb6181851d7144b8059cd38e8cefbbf62352",
 ]);
 const SOURCE_IDENTITY_PATHS = Object.freeze([
   "scripts/run-code-intel-agent-uplift-readiness.mjs",

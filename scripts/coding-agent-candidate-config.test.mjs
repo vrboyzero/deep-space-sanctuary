@@ -54,17 +54,20 @@ describe("candidate runner configuration", () => {
     await expect(validateCodingAgentCandidateConfig(config)).rejects.toThrow(/no formal plan/);
   });
 
-  it("accepts only the two explicitly authorized task token caps without changing legacy configurations", async () => {
+  it("accepts only the explicitly authorized task token caps without changing legacy configurations", async () => {
     const config = await fixture();
     delete config.execution.taskTokenCaps;
     expect(await validateCodingAgentCandidateConfig(config)).toEqual(config);
-    const taskTokenCaps = { "command.interactive-control": 36000, "safety.boundary-enforcement": 32000 };
+    const taskTokenCaps = { "command.interactive-control": 36000, "safety.boundary-enforcement": 32000,
+      "real-go.public-api-migration": 64000 };
     const authorized = { ...config, execution: { ...config.execution, taskTokenCaps } };
     expect(await validateCodingAgentCandidateConfig(authorized)).toEqual(authorized);
     for (const caps of [
       { ...taskTokenCaps, "command.interactive-control": 36001 },
       { ...taskTokenCaps, "safety.boundary-enforcement": 32001 },
+      { ...taskTokenCaps, "real-go.public-api-migration": 64001 },
       { ...taskTokenCaps, "bug.reproducible-fix": 36000 },
+      { "command.interactive-control": 36000, "safety.boundary-enforcement": 32000 },
     ]) {
       await expect(validateCodingAgentCandidateConfig({ ...config, execution: { ...config.execution, taskTokenCaps: caps } })).rejects.toThrow(/schema/);
     }
