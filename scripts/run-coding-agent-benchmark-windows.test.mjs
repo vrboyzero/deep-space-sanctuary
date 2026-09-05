@@ -627,7 +627,10 @@ describe("coding agent benchmark Windows launcher", () => {
     child.exitCode = null;
     child.signalCode = null;
     child.kill = vi.fn(() => true);
-    const taskkill = vi.fn(() => ({ status: 0, stderr: "" }));
+    const taskkill = vi.fn(() => {
+      queueMicrotask(() => { child.exitCode = 0; child.emit("close", 0, null); });
+      return { status: 0, stderr: "" };
+    });
 
     await stopWindowsBenchmarkGateway(child, {
       platform: "win32",
@@ -663,5 +666,45 @@ describe("coding agent benchmark Windows launcher", () => {
 
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
     expect(taskkill).not.toHaveBeenCalled();
+  });
+
+  it("waits for the child close event after taskkill returns successfully", async () => {
+    vi.useFakeTimers();
+    try {
+      const child = new EventEmitter();
+      Object.assign(child, { pid: 43212, exitCode: null, signalCode: null, kill: vi.fn() });
+      const taskkill = vi.fn(() => ({ status: 0 }));
+      let settled = false;
+      const stopping = stopWindowsBenchmarkGateway(child, {
+        platform: "win32", gracePeriodMs: 10, spawnSync: taskkill,
+      }).then(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(taskkill).toHaveBeenCalledOnce();
+      expect(settled).toBe(false);
+      child.exitCode = 0;
+      child.emit("close", 0, null);
+      await stopping;
+      expect(settled).toBe(true);
+      expect(child.listenerCount("close")).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails closed when taskkill succeeds without a child close confirmation", async () => {
+    vi.useFakeTimers();
+    try {
+      const child = new EventEmitter();
+      Object.assign(child, { pid: 43213, exitCode: null, signalCode: null, kill: vi.fn() });
+      const stopping = stopWindowsBenchmarkGateway(child, {
+        platform: "win32", gracePeriodMs: 10, spawnSync: () => ({ status: 0 }),
+      }).catch((error) => error);
+      await vi.advanceTimersByTimeAsync(20);
+      expect(await stopping).toBeInstanceOf(Error);
+      expect((await stopping).message).toMatch(/close confirmation timed out/);
+      expect(child.listenerCount("close")).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

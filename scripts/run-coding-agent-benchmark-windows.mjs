@@ -439,7 +439,11 @@ export async function verifyWindowsBenchmarkGateway(endpoint, options = {}) {
 export async function stopWindowsBenchmarkGateway(child, options = {}) {
   if (!child || hasExited(child)) return;
   const gracePeriodMs = options.gracePeriodMs ?? DEFAULT_GATEWAY_STOP_GRACE_MS;
-  const closed = new Promise((resolve) => child.once("close", () => resolve(true)));
+  let closeListener;
+  const closed = new Promise((resolve) => {
+    closeListener = () => resolve(true);
+    child.once("close", closeListener);
+  });
   if (child.connected && typeof child.send === "function") {
     try {
       child.send({ type: "gateway.shutdown/v1" }, (error) => {
@@ -473,6 +477,18 @@ export async function stopWindowsBenchmarkGateway(child, options = {}) {
     if (result.error) throw result.error;
     if (result.status !== 0 && !hasExited(child)) {
       throw new Error("Windows benchmark Gateway process tree cleanup failed.");
+    }
+    // taskkill 返回时 Node 可能尚未投递 exit/close；确认事件后才能发布清理完成证据。
+    let closeDeadline;
+    try {
+      const confirmed = await Promise.race([
+        closed,
+        new Promise((resolve) => { closeDeadline = setTimeout(() => resolve(false), gracePeriodMs); }),
+      ]);
+      if (!confirmed) throw new Error("Windows benchmark Gateway close confirmation timed out.");
+    } finally {
+      clearTimeout(closeDeadline);
+      child.off("close", closeListener);
     }
     return;
   }

@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **4ae6eb4 探索 5/6 后冻结；进入证据驱动修复** | Windows interactive/safety 与 WSL Go 通过；JS 失败，WSL interactive 失败且资源 Gate 未闭合，记 unreported 并保留 $0.10；新计量在 Windows 原始 5/4 请求上逐条验真为零人工介入。RPC 配对重复发送与 Windows 关闭缺口已本地复现并修复，真实零 Provider OCI 关闭通过 | 历史失败和费用不回写；完成恢复凭据、相邻验证和新探索后再进入正式候选。完整 144、交付证据和第二候选仍未闭合 |
+| P2-C 分层开发与编排复用 | P2 | **资源恢复已验真；完整回归暴露的关闭确认竞态已定向修复** | `024c947` 完整回归 6710 passed / 1 failed / 8 skipped；首次失败原样保留，定向复现确认 taskkill 返回早于 child close，新增两条回归后相邻 32/32 通过。双平台材料已验真，但该配置尚未付费执行，下一探索须绑定修复后身份 | 继承 `explore-4ae6eb4-1` 权威账本和完整预留；完成新身份网关预检及固定六槽探索后再评估 formal。完整 144、交付证据和第二候选仍未闭合 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -1621,19 +1621,38 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 实际恢复 producer 和独立 verifier 均通过，原冻结账本与终态未变；不把恢复记录用于候选评分或原始安全 Gate。
 - 尚未执行后继 Provider 或正式候选；完整工程回归留到当前修复稳定后执行一次。
 
+#### P2-C 分层验证实现结论：完整回归与强制关闭确认（2026-09-05）
+
+##### 已完成内容
+
+1. **`scripts/run-coding-agent-benchmark-windows.mjs` 修改**：
+   - Windows 强制终止返回成功后，在既有有界时间内等待真实 child close 事件，再发布清理完成记录；缺失关闭确认明确失败，不以 taskkill 成功替代子进程终态。
+2. **`scripts/run-coding-agent-benchmark-windows.test.mjs` 扩展**：
+   - 新增“强制终止成功仍需等待事件”和“没有关闭确认时失败”两项确定性时序回归，更新原强制终止模拟以发出真实生命周期事件。
+3. **效果**：
+   - `024c947` 全仓 JSON 保留在 `tmp/p2c-layered-development/full-regression-024c947.json`；失败后只复跑相关测试，没有重新执行完整回归或创建付费 formal。
+   - `exploration-config-024c947.json` 六槽材料独立验真通过，但零槽分配、零 Provider；修复改变 harness 身份，后继配置须重新绑定，旧配置不启动。
+
+##### 验证结果
+
+- TypeScript 增量编译 exit=0；全仓首次结果为 `6710 passed / 1 failed / 8 skipped`，不能记为全绿。唯一失败为 `gateway-bootstrap-readiness.test.mjs` 的 `report.child.exited=false`；原文件隔离后两个场景均复现，排除仅全量争用的判断。
+- 两项新增回归在修复前均失败；修复后 launcher、真实子进程 readiness 和诊断三个文件 `32/32` 通过，包含原失败路径。其余全仓通过记录保留，不跨身份冒充正式候选证据。
+- 修复前 `024c947` 双平台 build/inputs 原生验真通过；WSL RPC/关闭/recovery/runtime 四文件 `22 passed / 1 skipped`，跳过项受平台条件约束。WSL 首个测试命令误把专用 Go/Docker 工具目录当成 Node 目录，在启动前失败；确认系统 Node `v22.22.2` 后原测试命令正常完成，没有模型调用。
+
 ### 后续计划
 
-1. 冻结后的独立资源恢复凭据已验真，保持第五槽 unreported 和完整预留不变；接下来固定当前修复身份、执行一次完整工程回归并更新双平台材料。用新的预声明小样本验证 JS 与 WSL 审批真实行为，避免局部模拟通过直接进入 formal；同项授权无需重复申请。
+1. 冻结后的独立资源恢复凭据已验真，保持第五槽 unreported 和完整预留不变；完整工程回归已执行，新增关闭确认问题经原场景与相邻验证闭合。接下来更新双平台修复身份与 inputs，先验证零 Provider Gateway readiness/关闭及资源 Gate，再执行固定六槽探索，以确认 JS 与 WSL 审批真实行为；同项授权无需重复申请。
 2. 对现有 JS/Go 失败保留离线诊断：JS 新 patch 的零值处理仍有回归；两者 JSON review/repair 均为原始无效响应。非空响应终止原因诊断已补齐并局部验证，但旧日志缺失值不能回补；后续受控探索须采集该字段，不能只凭 token 上限改变预算、解析器或增加特例。
 3. 口径及产品修复稳定后，复用 staging/依赖缓存，重新绑定双平台 identity、inputs、预检和不可覆盖 plan；按固定探索清单验证真正改变的行为，避免无新证据重复同批模型调用。
-4. 后继正式候选仅在合同、工程与资源 Gate 闭合后进入完整 `144` 槽；普通失败只在资格仍可达且证据/资源闭合时续跑，硬门槛失败停止。继承 `formal-e0d181f-1` 权威费用，所有已冻结 identity 保持只读。
+4. 后继正式候选仅在合同、工程与资源 Gate 闭合后进入完整 `144` 槽；普通失败只在资格仍可达且证据/资源闭合时续跑，硬门槛失败停止。下一会话继承 `explore-4ae6eb4-1/cost-ledger-final.json`（SHA=`333adadbb6b19db3aeee35e369e8e9a38dd161b911c053338b09b16f84751446`）的全部观测费用和预留，所有已冻结 identity 保持只读。
 5. 完整候选后采集当前 identity 的真实 CI/CLI/TUI/Git delivery receipt、aggregate 与七维资格，再执行第二个连续完整候选；两个候选均须满足七维下限、raw weighted `>=9.500` 和全部硬 Gate。
 
 当前关键闭环是新计量版本的双平台真实运行，以及 JS/Go 行为与 JSON 输出失败的证据收敛；完整 `144` 槽、当前 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选均未完成。最终验收标准保持不变，审批计量与费用授权均已明确并持续有效。
 
 ### 重要问题说明
 
-- `4ae6eb4` WSL interactive 在错误序列拒绝后仍有活跃 job，Windows launcher 的 SIGTERM 使 Gateway 在约 15ms 内直接退出，留下 exited container 与 CID 目录；IPC 关闭路径已通过真实零 Provider 子进程+OCI 验证，回收后的全局资源为零。冻结账本仍记清理未完成，需追加独立恢复凭据，不能覆盖终态。处理决策为关闭路径 `fix_now / 本地闭合`、恢复协议 `fix_now / 待实现`。
+- `024c947` 完整回归暴露强制关闭确认竞态：taskkill 成功返回后，Node 尚未投递 exit/close，launcher 提前写入 `child.exited=false`。两个原场景隔离均失败，两条新增时序用例先红后绿；已增加有界确认和缺失事件失败关闭。处理决策为 `fix_now / 定向闭合`，保留首次全仓失败，不扩大到无关生命周期重构；新身份真实网关仍须预检。
+- `4ae6eb4` WSL interactive 在错误序列拒绝后仍有活跃 job，Windows launcher 的 SIGTERM 使 Gateway 在约 15ms 内直接退出，留下 exited container 与 CID 目录；IPC 关闭路径已通过真实零 Provider 子进程+OCI 验证，回收后的全局资源为零。冻结账本仍记清理未完成；独立资源恢复凭据已追加并验真，仅用于后继准入，不覆盖终态。处理决策为关闭路径和恢复协议均 `fix_now / 本地闭合`。
 - 相同 WSL 运行首次 permission response 没有首次接受证明，后续步骤失配；新的 accounting 正确失败关闭，manual 保留5。RPC 的配对事件与握手 timer 竞态已由两条失败测试复现，修复保留首次在途响应；原日志未存原始 RPC 响应，不能断言每条失败都由该竞态造成。模型 write 参数还遗漏末尾换行，属于独立失败，不放宽精确审批策略。
 - JS 新 patch 保留错误的 `offset + 1`，真实 getter 三例只读复现均失败；模型最终 JSON 却声称没有修改。当前请求未明确传递已成功修改状态，已最小修正标签，源码与文档仍完整且只增加1个估算 token；真实效果待验证。旧 non_json/长度根因不能由本轮正常 stop 反推已修复。离线工具首次将 file_read revision 误作内容 SHA 而拒绝，核对其实际为路径+内容绑定后修正工具，原源文件与报告未改。
 - WSL 运行另记录 conversation metadata `EPERM rename`，未影响已保留的原始报告，但宿主占用来源不确定；处理决策为 `record_only`，保留 stderr 供后继同类证据归因，不顺手扩展持久化重构。
