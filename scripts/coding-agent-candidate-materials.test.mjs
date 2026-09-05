@@ -26,7 +26,7 @@ async function fixture() {
   const config = {
     mode: "exploration", selection: [slot], identity, contracts: { manifest: manifestHash },
     roots: Object.fromEntries(["artifacts", "fixtures", "state", "ledger"].map((name) => [name, path.join(root, name)])),
-    execution: { provider: "openai", modelId: "deepseek-v4-flash" },
+    execution: { provider: "openai", modelId: "deepseek-v4-pro" },
   };
   const context = { config, configSha256: "d".repeat(64), manifest };
   const paths = candidateRunPaths(config, slot);
@@ -41,7 +41,7 @@ async function fixture() {
     execution: { profile: task.executionProfile, modelExecution: task.modelExecution,
       budgets: resolveCodingAgentBenchmarkTaskBudgets(manifest, task.id), infrastructureRetries: 0 },
     environment: { osRelease: "Windows fixture", arch: "x64", nodeVersion: process.version, packageManager: "pnpm fixture", wsl: null,
-      model: { provider: "openai", id: "deepseek-v4-flash", credentialsConfigured: true } },
+      model: { provider: "openai", id: "deepseek-v4-pro", credentialsConfigured: true } },
     evaluation: { source: "machine", taskCompleted: true, testsPassed: true, patchAccepted: null,
       dangerousOperationBlocked: null, recoverySucceeded: null, regressionCount: 0, manualInterventionCount: 0 },
     usage: { durationMs: 1, inputTokens: null, outputTokens: null, observation: { status: "not_reached", costUsd: null } }, artifacts,

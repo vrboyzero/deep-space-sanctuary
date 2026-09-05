@@ -305,7 +305,7 @@
           "const": "openai"
         },
         "modelId": {
-          "const": "deepseek-v4-flash"
+          "const": "deepseek-v4-pro"
         },
         "port": {
           "type": "integer",
@@ -341,13 +341,13 @@
           "const": 0
         },
         "inputUsdPerMillion": {
-          "const": 0.125
+          "const": 0.5625
         },
         "outputUsdPerMillion": {
-          "const": 0.25
+          "const": 1.6875
         },
         "cacheReadUsdPerMillion": {
-          "const": 0.0025
+          "const": 0.01875
         },
         "ociImage": {
           "const": "node:22-bullseye@sha256:62f550497561d6285e10abd952730db89c905be990237eaf8744137929c72844"

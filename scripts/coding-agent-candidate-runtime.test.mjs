@@ -31,8 +31,8 @@ async function fixture(platform = "windows-native") {
     windowsHarnessRoot: path.join(root, "harness"), providerEnvPath: path.join(root, "provider-placeholder"),
     wsl: { distribution: "Ubuntu-22.04", harnessRoot: path.join(root, "linux"), toolchainBin: "/var/tmp/tools", chromePath: "/var/tmp/chrome", libraryPath: "/var/tmp/lib" },
     roots: Object.fromEntries(["artifacts", "fixtures", "state", "ledger"].map((name) => [name, path.join(root, name)])),
-    execution: { provider: "openai", modelId: "deepseek-v4-flash", port: 28891, singleRunMaxUsd: 0.1,
-      inputUsdPerMillion: 0.125, outputUsdPerMillion: 0.25, cacheReadUsdPerMillion: 0.0025,
+    execution: { provider: "openai", modelId: "deepseek-v4-pro", port: 28891, singleRunMaxUsd: 0.1,
+      inputUsdPerMillion: 0.5625, outputUsdPerMillion: 1.6875, cacheReadUsdPerMillion: 0.01875,
       ociImage: "node:22-bullseye@sha256:62f550497561d6285e10abd952730db89c905be990237eaf8744137929c72844" },
     repositoryConfigs: { [platform]: { path: path.join(root, "inputs.json") } },
   };
@@ -65,7 +65,7 @@ describe("candidate runtime boundaries", () => {
     expect(await executeCandidateRuntime(f.context, f.slot, f.paths, { candidateProviderReportedCostUsd: 0.002 }, new Set(), {
       loadRunner: async () => ({ runWindowsBenchmark: fakeRunner, runWslBenchmark: fakeRunner }),
     })).toBe(0);
-    expect(received.input).toMatchObject({ modelId: "deepseek-v4-flash", infrastructureRetries: 0,
+    expect(received.input).toMatchObject({ modelId: "deepseek-v4-pro", infrastructureRetries: 0,
       priorObservedCostUsd: 0.002, maxTotalCostUsd: 0.10200000000000001 });
     expect(received.input).not.toHaveProperty("candidateId");
     expect(received.input).not.toHaveProperty("expectedReportPlanPath");
