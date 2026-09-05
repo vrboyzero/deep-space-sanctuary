@@ -2164,13 +2164,34 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 以测试加固的新 identity 再执行一次双平台 Go 两槽探索，判断模型补丁质量是否可稳定通过；若通过则重建候选，若仍失败则按模型能力结论记录并重新评估 9.5 可达性。正式候选仍以完整 CI 为准入。
 
+#### P2-C 固定探索实现结论：e0124bd Go 两槽再验证与 9.5 可达性评估（2026-09-06）
+
+##### 已完成内容
+
+1. **双平台探索执行**：`explore-e0124bd-1` 两槽（real-go.public-api-migration Windows a1 + WSL a1）均 `reported` 且 `product_workflow` failed；账本 SHA=`20207f09…377b`、close complete（observed=`2.50495453`、cleanup=true、资源 8 项=`0`、敏感扫描 findings=`0`）。
+2. **失败模式（均为模型补丁质量）**：
+   - Windows：apply_patch success=true、run.completed 声称完成迁移，但 workspace 仍残留 **45 处** `WriteStringAndCheck`（bash_completions.go 与 doc/man_docs.go），别名定义已被删除 → go test 失败、regression=`1`；复核基于写前证据错误接受。
+   - WSL：apply_patch 因 hunk 上下文不匹配被拒绝（`Failed to find expected lines`），run 失败关闭。
+   - 产品各阶段（导航、恢复、复核、校验）在两身份下均按合同运行，无可复现的确定性缺陷。
+3. **模型能力结论**：跨两个 identity、4/4 真实失败（不完整迁移×2、context-only hunk、错误 hunk 上下文），失败模式分散；该 8 文件 Go 迁移任务（冻结任务集）的通过率受模型补丁完整性限制。
+4. **9.5 可达性评估**：B 层 `regressionCountMaximum` 与 Go required-language 门槛要求该任务零回归通过；按当前样本，候选在该任务上大概率再次冻结，两个连续 9.5 候选的完整矩阵在当前模型与冻结任务真值下**可达性受限**。继续推进的选项需用户决策：① 继续小样本抽样并接受费用；② 记录模型能力上限并调整 9.5 结论；③ 修改任务真值/门槛（与冻结规则冲突，不推荐）。
+
+##### 验证结果
+
+- 探索账本 close complete：SHA=`20207f09…377b`、processed/pending/unreported=`2/0/0`、资源关闭=true；新增 Provider cost=`0.0034171 USD`，observed/reserved=`2.50495453/2.34221 USD`，next worst≈`39.9 RMB < 80`。
+- 双平台报告/事件完整保留；冻结槽未改写；CI 环境故障持续（record_only）。
+
+##### 后续计划
+
+等待用户对 9.5 可达性选项的决策；期间不新增付费槽。若选择继续抽样，按既有分层流程执行并继承 `explore-e0124bd-1/cost-ledger-final.json`。
+
 ### 后续计划（当前检查点，2026-09-05）
 
-1. **本环节结果**：`explore-953ced5-1` 双平台真实反馈确认导航死循环已闭合（两平台均发出 apply_patch），剩余失败为模型补丁质量——Windows 迁移不完整（残留 `WriteStringAndCheck`、go test 失败）、WSL context-only hunk 被校验拒绝；8 个 required path 超过冻结的 3-path 读后复核边界，复核基于写前证据的模型误判为 `record_only`。测试已按真实文件规模与任务标识符加固（本地提交，待推送）。
-2. **下一步准备做**：提交推送测试加固的新 identity；CI 环境恢复后以同一双平台两槽清单再执行一次探索，判断模型补丁质量能否稳定通过；通过则重建候选，仍失败则按模型能力结论记录并重新评估 9.5 可达性。
-3. **为什么先做它**：产品侧已无可复现的确定性缺陷，继续投入的唯一依据是模型在该任务上的真实通过率；再跑一轮小样本比直接重建候选更省费用（两槽 ≤`$0.20` vs 完整候选）。
-4. **当前还缺的关键闭环**：Go 真实任务稳定通过、完整 144 槽原生矩阵、aggregate、dimension evidence、qualification 与七维 score、第二个连续完整候选；`candidate-57b9cc5-1` 已冻结（17/144）、`e4bd1c3-1`（8/144）与旧 `63e0a41`（14/144）永久只读。
-5. 后继运行继承 `explore-953ced5-1/cost-ledger-final.json`（observed/reserved=`2.50153743/2.34221 USD`，next worst≈`39.7 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效。
+1. **本环节结果**：`explore-e0124bd-1` 双平台 Go 两槽再验证仍失败（4/4 模型补丁质量失败：不完整迁移×2、context-only hunk、错误 hunk 上下文），产品各阶段在两身份下均按合同运行，无可复现的确定性缺陷；已按模型能力结论记录并完成 9.5 可达性评估（B 层回归/Go 语言门槛要求该任务零回归通过）。
+2. **下一步准备做**：等待用户对可达性选项的决策——① 继续小样本抽样并接受费用；② 记录模型能力上限并调整 9.5 结论；③ 修改任务真值/门槛（与冻结规则冲突，不推荐）。期间不新增付费槽。
+3. **为什么先停在这里**：4/4 真实失败、失败模式分散且全部落在模型补丁生成与复核判断上；继续付费抽样的期望收益需要用户权衡，不能以“试到成功”方式替代模型能力结论。
+4. **当前还缺的关键闭环**：Go 真实任务稳定通过、完整 144 槽原生矩阵、aggregate、dimension evidence、qualification 与七维 score、第二个连续完整候选；`candidate-57b9cc5-1` 已冻结（17/144）、`e4bd1c3-1`（8/144）与旧 `63e0a41`（14/144）永久只读；CI 环境故障持续（record_only）。
+5. 后继运行继承 `explore-e0124bd-1/cost-ledger-final.json`（SHA=`20207f09…377b`，observed/reserved=`2.50495453/2.34221 USD`，next worst≈`39.9 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效。
 
 ### 暂停点的剩余工作量估算（2026-09-05）
 
@@ -2279,3 +2300,4 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 本轮 Quality/Docker CI 对 `7d380813`（docs-only）与 `b8edee69`（代码）均环境级失败：7 个 job 均在约 2 秒内 failure、job 日志 Blob 不存在、`gh run rerun` 后同样失败；workflow 文件未变且上一 identity 同 workflow 全绿，判定为 CI 环境故障而非代码回归。处理决策为 `record_only / CI 环境待恢复`；正式候选准入仍要求完整 CI 通过，本地回归（469/469、94/94、tsc、benchmark verifier）已绿不能替代。
 - `b8edee6` 双平台探索再次复现 Go 失败后，定位真根因是两层工具输出压缩破坏恢复证据：统一压缩层写入 `[compressed tool output]` 标记、microcompact 写入 `[old tool output cleared]` 摘要，file_read 结构化 JSON 因此不可解析，完整读取被误判缺失并陷入导航死循环。处理决策为 `fix_now completed / 证据压缩保护`：required mutation run 的两层压缩均保留 file_read 原文；普通 run 压缩行为不变。
 - `explore-953ced5-1` 两平台失败均为模型补丁质量：Windows 迁移不完整（bash_completions.go 仍残留 WriteStringAndCheck、go test 失败 regression=1，复核基于写前证据错误接受）；WSL 补丁含 context-only hunk 被校验拒绝并失败关闭。产品确定性缺陷已无（导航死循环闭合），处理决策为 `record_only / 模型能力样本`；8 个 required path 超过冻结 3-path 读后复核边界是既有冻结合同，不扩大。验证上限扩到 8 的中间尝试与冻结合同冲突，已完整回退。
+- `explore-e0124bd-1` 双平台 Go 两槽再次失败，跨两个 identity 共 4/4 真实失败：Windows 补丁不完整（workspace 残留 45 处 WriteStringAndCheck、定义已删除、go test 失败 regression=1，复核基于写前证据错误接受）；WSL hunk 上下文不匹配被校验拒绝。失败模式分散且全部落在模型补丁生成与复核判断上；产品导航/恢复/复核/校验各阶段均按合同运行。处理决策为 `record_only / 模型能力结论`，并完成 9.5 可达性评估：B 层回归与 Go required-language 门槛要求该任务零回归通过，按当前样本候选将大概率再次冻结，等待用户对「继续抽样 / 调整结论 / 改任务真值（不推荐）」的决策；期间不新增付费槽。
