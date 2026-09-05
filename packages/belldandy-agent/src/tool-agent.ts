@@ -2490,6 +2490,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let workspaceMutationObjectiveInputCorrectionReason: WorkspaceMutationObjectiveInputCorrectionReason | undefined;
     let workspaceMutationObjectiveOutputRepairPending = false;
     let workspaceMutationObjectiveOutputRepairAttempted = false;
+    let workspaceMutationFinalObjectiveOutputRepairAttempted = false;
     let workspaceMutationObjectiveOutputRepairValidationMessage: string | undefined;
     let workspaceMutationFinalizationPending = false;
     const successfulWorkspaceMutationPatchInputs: string[] = [];
@@ -2966,6 +2967,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
         let workspaceMutationObjectiveInputCorrectionCall = false;
         let workspaceMutationObjectiveInputCorrectionCallReason: WorkspaceMutationObjectiveInputCorrectionReason | undefined;
         let workspaceMutationObjectiveOutputRepairCall = false;
+        let workspaceMutationFinalObjectiveOutputRepairCall = false;
         let workspaceMutationObjectiveReviewRequest: WorkspaceMutationRecoveryRequest | undefined;
         let workspaceMutationFinalizationCall = false;
         let finalizationOnlyCall = false;
@@ -3278,6 +3280,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
             ? workspaceMutationObjectiveInputCorrectionReason
             : undefined;
           workspaceMutationObjectiveOutputRepairCall = workspaceMutationObjectiveOutputRepairPending;
+          workspaceMutationFinalObjectiveOutputRepairCall = workspaceMutationObjectiveOutputRepairCall
+            && workspaceMutationObjectiveCorrectionAttempted;
           const candidate = workspaceMutationObjectiveInputCorrectionCall
             ? buildWorkspaceMutationObjectiveInputCorrectionRequest({
                 messages: mutationRecoverySourceMessages,
@@ -3290,11 +3294,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
             : workspaceMutationObjectiveOutputRepairCall
             ? buildWorkspaceMutationObjectiveOutputRepairRequest({
                 messages: mutationRecoverySourceMessages,
-                tools: mutationTools,
+                tools: workspaceMutationObjectiveCorrectionAttempted ? [] : mutationTools,
                 maxInputTokens: remainingReviewInputTokens,
                 requiredChangedPaths,
                 structuredOutputSchema: input.structuredOutput?.schema,
                 validationMessage: workspaceMutationObjectiveOutputRepairValidationMessage ?? "Final output is invalid.",
+                correctionAllowed: !workspaceMutationObjectiveCorrectionAttempted,
                 tokenEstimateContext: dispatchTokenEstimateContext,
               })
             : buildWorkspaceMutationObjectiveReviewRequest({
@@ -3349,7 +3354,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
           if (workspaceMutationObjectiveOutputRepairCall) {
             workspaceMutationObjectiveOutputRepairPending = false;
-            workspaceMutationObjectiveOutputRepairAttempted = true;
+            if (workspaceMutationFinalObjectiveOutputRepairCall) {
+              workspaceMutationFinalObjectiveOutputRepairAttempted = true;
+            } else {
+              workspaceMutationObjectiveOutputRepairAttempted = true;
+            }
             workspaceMutationObjectiveOutputRepairValidationMessage = undefined;
           }
           workspaceMutationObjectiveReviewAttempts++;
@@ -3364,6 +3373,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             correctionAttempted: workspaceMutationObjectiveCorrectionAttempted,
             inputCorrection: workspaceMutationObjectiveInputCorrectionCall,
             outputRepair: workspaceMutationObjectiveOutputRepairCall,
+            finalOutputOnlyRepair: workspaceMutationFinalObjectiveOutputRepairCall,
             requiredPathCount: requiredChangedPaths.length,
             evidenceCount: candidate.evidenceCount,
             truncatedEvidenceCount: candidate.truncatedEvidenceCount,
@@ -4350,7 +4360,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
               const canRepairObjectiveOutput = !workspaceMutationObjectiveOutputRepairCall
                 && !workspaceMutationObjectiveOutputRepairAttempted
                 && !workspaceMutationObjectiveCorrectionAttempted;
-              if (canRepairObjectiveOutput) {
+              const canRepairFinalObjectiveOutput = !workspaceMutationObjectiveOutputRepairCall
+                && workspaceMutationObjectiveCorrectionAttempted
+                && !workspaceMutationFinalObjectiveOutputRepairAttempted;
+              if (canRepairObjectiveOutput || canRepairFinalObjectiveOutput) {
                 workspaceMutationObjectiveReviewPending = true;
                 workspaceMutationObjectiveOutputRepairPending = true;
                 workspaceMutationObjectiveOutputRepairValidationMessage = objectiveValidation.message;
@@ -4359,7 +4372,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 consecutiveDuplicateToolCalls = 0;
                 recentToolCallTraces.length = 0;
                 lastSuccessfulToolResult = undefined;
-                logWarn("[workspace-mutation] objective review returned invalid final output; scheduling one phase-aware output repair", {
+                logWarn(canRepairFinalObjectiveOutput
+                  ? "[workspace-mutation] final objective review returned invalid output; scheduling one tool-free JSON repair"
+                  : "[workspace-mutation] objective review returned invalid final output; scheduling one phase-aware output repair", {
                   requiredPathCount: requiredChangedPaths.length,
                   conversationId: input.conversationId,
                   agentId: resolvedAgentId,
@@ -4389,7 +4404,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 : input.structuredOutput.validateOutput(recoveredOutput);
               if (!recoveredValidation?.ok) {
                 yield* emitWorkspaceMutationFailure(
-                  "the post-write objective review returned neither valid final JSON nor an allowed correction after its one phase-aware output repair.",
+                  workspaceMutationFinalObjectiveOutputRepairCall
+                    ? "the post-write final objective review returned invalid JSON after its one tool-free output repair."
+                    : "the post-write objective review returned neither valid final JSON nor an allowed correction after its one phase-aware output repair.",
                 );
                 return;
               }
