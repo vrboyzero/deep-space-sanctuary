@@ -3098,8 +3098,15 @@ export class ToolEnabledAgent implements BelldandyAgent {
           && headroomCandidate !== undefined
           && requiresRequiredPathSourceNavigation(headroomCandidate);
         if (workspaceMutationRecoveryRequested && headroomCandidate === undefined) {
+          const recoveryMutationToolCount = selectWorkspaceMutationToolDefinitions(
+            tools,
+            (name) => this.opts.toolExecutor.getRegisteredToolContract?.(name),
+          ).length;
           yield* emitWorkspaceMutationFailure(
-            "no bounded mutation recovery request can be built from the allowed tools and remaining token budget.",
+            "no bounded mutation recovery request can be built from the allowed tools and remaining token budget."
+            + ` (exposedTools=${tools.length}, mutationTools=${recoveryMutationToolCount},`
+            + ` remainingTokens=${Math.max(0, runBudget.maxTotalTokens - runBudget.totalTokens)},`
+            + ` missingPaths=${workspaceMutationPathCoverage.missingPaths().length})`,
           );
           return;
         }

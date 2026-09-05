@@ -6738,6 +6738,158 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items).toContainEqual({ type: "final", text: "ordinary answer" });
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
+
+  it("builds the file_write-only mutation recovery after a text-only first response", async () => {
+    const requiredChangedPaths = ["src/recovery-target.txt"];
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        // The frozen failure: the first model call returned only text (no tool calls).
+        return response({
+          choices: [{
+            finish_reason: "stop",
+            message: { content: `{"summary":"will not write the file"}` },
+          }],
+          usage: { prompt_tokens: 1699, completion_tokens: 3481 },
+        });
+      }
+      if (requests.length === 2) {
+        return response(modelToolCall("write-recovery", "file_write", {
+          path: requiredChangedPaths[0],
+          content: "recovery-marker=completed-once\n",
+        }, 600, 120));
+      }
+      if (requests.length === 3) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: `{"summary":"recovered"}` } }],
+        usage: { prompt_tokens: 300, completion_tokens: 30 },
+      });
+    });
+    const execute = vi.fn(async (request: { id: string; name: string; arguments?: Record<string, unknown> }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({ path: request.arguments?.path, truncated: false, content: "recovery-marker=completed-once\n" }),
+          durationMs: 1,
+        };
+      }
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "File written",
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 12,
+      mutationToolNames: ["file_write"],
+      readToolNames: ["file_read", "list_files"],
+    });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-recovery-file-write-after-text",
+      text: "Continue the bounded coding run and overwrite src/recovery-target.txt.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          maxTotalTokens: 24_000,
+          toolLoopIterationBudget: 12,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => {
+          try {
+            const parsed = JSON.parse(text) as { summary?: unknown };
+            if (typeof parsed.summary === "string") {
+              return { ok: true as const, outputText: text };
+            }
+          } catch {
+            // Invalid JSON stays rejected below.
+          }
+          return { ok: false as const, message: "summary is required" };
+        },
+      },
+    } as any));
+
+    expect(requests).toHaveLength(4);
+    expect(requests[1]?.tools?.map((tool: any) => tool.function.name)).toEqual(["file_write"]);
+    expect(requests[1]?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "system",
+        content: expect.stringMatching(/Mutation-only recovery phase/),
+      }),
+    ]));
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual(["file_write", "file_read"]);
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "usage",
+      modelCalls: 4,
+      providerReportedModelCalls: 4,
+    }));
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("reports bounded recovery diagnostics when no mutation recovery request can be built", async () => {
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      return response({
+        choices: [{
+          finish_reason: "stop",
+          message: { content: `{"summary":"no tool call"}` },
+        }],
+        usage: { prompt_tokens: 1699, completion_tokens: 3481 },
+      });
+    });
+    const execute = vi.fn(async () => ({ id: "unused", name: "unused", success: true, output: "", durationMs: 1 }));
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 12,
+      mutationToolNames: [],
+      readToolNames: ["file_read", "list_files"],
+    });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-recovery-no-mutation-tools",
+      text: "Overwrite src/recovery-target.txt.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          maxTotalTokens: 24_000,
+          toolLoopIterationBudget: 12,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => ({ ok: false as const, message: "summary is required" }),
+      },
+    } as any));
+
+    expect(requests).toHaveLength(1);
+    const final = items.find((item) => (item as any).type === "final");
+    expect(String((final as any)?.text ?? "")).toContain(
+      "no bounded mutation recovery request can be built",
+    );
+    expect(String((final as any)?.text ?? "")).toMatch(/exposedTools=\d+, mutationTools=0, remainingTokens=\d+, missingPaths=\d+/);
+    expect(items.at(-1)).toEqual({ type: "status", status: "error" });
+  });
 });
 
 function createAgent(input: {

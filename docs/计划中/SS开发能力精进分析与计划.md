@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **candidate-e4bd1c3-1 冻结于 8/144（7 passed + 1 infrastructure failure），进入开发回归** | WSL 复核/双平台 build、两槽探索、新身份 CI=`33970948660` 全绿、candidate 创建与 canary passed；batch 01 四槽全过；disconnect-recovery 因 mutation recovery 请求无法构建 + fault 未注入判 infrastructure 并冻结，账本/资源/费用闭环 | 零 Provider 复现 disconnect-recovery 失败路径并修复；随后双平台验证、最小探索、新身份 CI 与 Gate，再创建新 candidate；完整 144 槽、七维资格与第二连续候选未完成 |
+| P2-C 分层开发与编排复用 | P2 | **开发回归完成并本地提交：disconnect-recovery 诊断加固；待新身份最小探索** | 冻结失败零 Provider 复现：重建输入下恢复请求可构建（函数级 built=true、tool-agent 单元级 4 调用全流程通过），触发差异在离线不可观测数据；失败消息加固有界计数诊断；定向 25 文件 `468/468`、tsc 与 benchmark verifier 通过 | 提交推送新 identity 并跑 CI；最小付费探索 disconnect-recovery Windows a1 验证复发与诊断；随后按分层流程重建候选；完整 144 槽与七维资格未完成 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -2035,12 +2035,35 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 保持候选冻结；进入开发回归：零 Provider 复现 disconnect-recovery 的“no bounded mutation recovery request can be built”路径（用保留 fixture workspace + 冻结 events），定位预算/工具集/状态机环节；修复后按分层流程做双平台验证、最小探索、新身份 CI 与 Gate，再创建新 candidate。不重跑或 reconcile 冻结槽。
 
+#### P2-C 开发回归实现结论：disconnect-recovery 失败分析与恢复诊断加固（2026-09-05）
+
+##### 已完成内容
+
+1. **冻结失败证据分析**：`e4bd1c3f` 的 disconnect-recovery 首调用（input=`1699`/output=`3481`、modelCalls=`1`）未发起任何工具调用，随后在恢复请求构建门槛失败；`63e0a41` 同任务首调用即 `file_write` 通过。fault proxy 因 run 提前终止未注入 → evaluator 判 `infrastructure`。
+2. **零 Provider 复现（未复现 undefined）**：
+   - 函数级重建：用真实 prompt、真实 file_write 定义、usage 预算（remaining=`18820`）调用 `buildWorkspaceMutationRecoveryPlan` → `built=true`（`1015` tokens、missingPaths=`1`）。
+   - tool-agent 单元级重建（新增用例）：文本-only 首响应 + file_write 唯一 mutation 工具 + requiredChangedPaths → 第 2 次调用即 `Mutation-only recovery phase`、tools=`["file_write"]`，流程完整走到 final。
+3. **packages/belldandy-agent/src/tool-agent.ts 修改**：恢复请求无法构建时的 fail-closed 消息增加有界计数诊断（`exposedTools`/`mutationTools`/`remainingTokens`/`missingPaths`），不改变行为；该消息随 events.jsonl 保留，使下次真实出现可自诊断。
+4. **tool-agent-workspace-mutation.test.ts 扩展**：新增 2 用例（file_write 恢复全流程 + 诊断消息契约）。
+5. **效果**：单元级证据说明恢复构建路径在重建输入下可用，触发差异在离线不可观测的运行时数据；诊断加固保证下一次真实出现时事件流自带根因计数，避免再次盲查。
+
+##### 验证结果
+
+- TypeScript：`tsc -b packages/belldandy-agent` exit=`0`。
+- workspace-mutation 家族 25 文件 `468/468` 通过（含新增 2 项）。
+- `corepack pnpm verify:coding-benchmark` exit=`0`。
+- 零 Provider；未重跑或 reconcile 冻结槽；`candidate-e4bd1c3-1` 冻结终态不改写。
+
+##### 后续计划
+
+以新 identity 做最小付费探索（disconnect-recovery Windows a1）验证复发与诊断；若复现，依据诊断计数定位工具集/预算/证据环节；随后按分层流程重建候选。若不复发，记录为模型输出可变性并继续候选链。
+
 ### 后续计划（当前检查点，2026-09-05）
 
-1. **本环节结果**：用户指定链全部完成（WSL 复核/双平台 build、两槽探索、新身份 CI 全绿、candidate-e4bd1c3-1 创建），并推进到 `8/144`（7 passed + 1 infrastructure failure），按门槛政策冻结。
-2. **下一步准备做**：开发回归——用保留 fixture workspace 与冻结 events 零 Provider 复现 disconnect-recovery 的“no bounded mutation recovery request can be built”，对比 63e0a41 同任务通过记录，区分预算收缩、工具集或状态机缺口；修复后按分层流程验证，再创建新 identity candidate。
-3. **为什么先做它**：该失败族会阻断 recovery 硬门槛（100%），不定位根因就无法进入下一个正式候选；零 Provider 复现是既定开发回归层入口。
-4. **当前还缺的关键闭环**：disconnect-recovery 恢复路径的稳定通过、完整 144 槽原生矩阵、aggregate、dimension evidence、qualification 与七维 score、第二个连续完整候选；`candidate-e4bd1c3-1` 已冻结、旧 `63e0a41` 14 槽永久只读。
+1. **本环节结果**：disconnect-recovery 冻结失败的零 Provider 复现已完成——重建输入下恢复请求可正常构建（函数级 built=true、tool-agent 单元级全流程通过），触发差异在离线不可观测的运行时数据；已对 fail-closed 失败消息加固有界计数诊断（本地提交，待推送），保证下次真实出现自带根因计数。
+2. **下一步准备做**：提交并推送新 identity，跑完整 CI；然后做最小付费探索（disconnect-recovery Windows a1，≤`$0.10`）验证复发与诊断输出；若复现则按诊断计数定位，若通过则记录为模型输出可变性并继续候选链。
+3. **为什么先做它**：该失败族阻断 recovery 硬门槛（100%），必须用真实运行取得缺失的运行时事实；诊断消息随 events 保留，是最便宜的证据来源。
+4. **当前还缺的关键闭环**：disconnect-recovery 恢复路径的稳定通过、完整 144 槽原生矩阵、aggregate、dimension evidence、qualification 与七维 score、第二个连续完整候选；`candidate-e4bd1c3-1` 已冻结（8/144）、旧 `63e0a41` 14 槽永久只读。
 5. 后继运行继承 `formal-e4bd1c3-1/cost-ledger-final.json`（SHA=`466222806b…76a0`，observed/reserved=`2.48774967/2.34221 USD`，next worst≈`39.4 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效。
 
 ### 暂停点的剩余工作量估算（2026-09-05）
@@ -2141,3 +2164,5 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - canary 前资源 Gate 首次因 Docker Desktop daemon 未运行失败，无槽分配、零费用；启动后恢复 `29.1.3/29.1.3` 并重跑通过（同探索轮记录）。处理决策为 `fix_now completed`。
 - `candidate-e4bd1c3-1` batch 02 的 `gateway.disconnect-recovery`（Windows attempt-1）以 `infrastructure_error` 冻结候选：run 自身以 `required workspace mutation was not completed: no bounded mutation recovery request can be built from the allowed tools and remaining token budget` 失败（input=`1699`/output=`3481` tokens），fault proxy 因此未注入、recoverySucceeded=null。同任务在 `63e0a41` 曾通过，需对比两次输入/预算/工具集差异定位；处理决策为 `record_only / 下一轮零 Provider 开发回归`，不提高预算、不改写冻结终态，候选按门槛政策冻结（账本 SHA=`466222806b…76a0`，reasons=`[infrastructure_failure]`）。
 - 冻结后资源 8 项、敏感扫描与 env 回收均闭环；`gateway.client-cancel` 及后续 136 槽未执行，按规则保留。
+- disconnect-recovery 冻结失败的离线复现未复现：函数级与 tool-agent 单元级重建（真实 prompt/真实 file_write 定义/usage 预算/requiredChangedPaths）下恢复请求均正常构建，undefined 触发条件只能来自离线不可观测的运行时数据（该任务无 local fixture，必须真实 Provider 才能取得响应形态证据）。处理决策为 `record_only / 诊断加固`：失败消息增加 `exposedTools/mutationTools/remainingTokens/missingPaths` 有界计数，随 events.jsonl 保留；不改变 fail-closed 行为、不重跑冻结槽。
+- 首版复现测试因 meta 未带 `requiredChangedPaths` 导致 verification 阶段不触发、mock 错配（测试缺陷，非产品问题）；补齐后 file_write 恢复全流程通过。处理决策为 `fix_now completed`。
