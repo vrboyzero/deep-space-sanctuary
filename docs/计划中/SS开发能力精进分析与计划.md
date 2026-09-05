@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **CI 已恢复（仓库公开后免费 minutes 生效）；恢复后暴露的 LSP `write EPIPE` 未处理拒绝与 TUI 集成超时已修复并推送 `7153da0f`，待新 CI 全绿后启动 f042505 双平台探索** | 双平台复发定位：两层工具输出压缩破坏 file_read 结构化证据 → 完整读取被误判缺失 → 导航死循环；修复为 required mutation run 压缩保护 file_read + 证据补齐 + 覆盖判定前移；8-path 真实规模用例先红后绿、家族 `469/469`、压缩相关 `94/94`、tsc/verifier 通过；Quality `33980091572` 恢复运行后暴露 LSP 宿主 `write EPIPE` 未处理拒绝（jsonrpc 8.2.0 `new Promise(async)` 反模式，WSL 修复前 4/5 复现）与 TUI 集成 15s 满载超时（负载余量不足），修复验证 WSL 8 连跑零 Errors、Windows `146/146`、`tsc -b` exit=0 | 等待新 CI `33981973124` 全绿；随后恢复目标并按《自动化持续开发规则》运行 `exploration-config-f042505.json` 双平台 Go 两槽；通过则重建候选；完整 144 槽、七维资格与第二连续候选未完成 |
+| P2-C 分层开发与编排复用 | P2 | **f042505 双平台探索两槽失败：WSL 定位为冻结 24k run cap 与 8 路径读后复核的确定性预算冲突（复核需 ≥2560 input、剩余仅 ~700–900）；Windows 为模型零写入+续跑合同不满足。等待用户对 run cap/复核预算的决策** | 双平台复发定位：两层工具输出压缩破坏 file_read 结构化证据 → 完整读取被误判缺失 → 导航死循环；修复为 required mutation run 压缩保护 file_read + 证据补齐 + 覆盖判定前移；8-path 真实规模用例先红后绿、家族 `469/469`、压缩相关 `94/94`、tsc/verifier 通过；CI 全绿（`33982477523`）；f042505 两槽报告完整保留：Windows changed_paths=0 续跑合同失败（模型行为）、WSL 8 文件不完整迁移且复核构建因预算枯竭 fail-closed；`debug-go-review-build.mjs` 离线复现 2048→undefined / 2560+→built | 等待用户决策（①授权提高 run cap（需新授权）②复核证据降本（质量风险）③复评 9.5 目标口径）；未获授权前不再启动付费槽；随后按决策重建候选或重估目标；完整 144 槽、七维资格与第二连续候选未完成 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -2231,13 +2231,36 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 等待新 CI `33981973124` 全绿；随后按《自动化持续开发规则》恢复目标并启动 `f042505f` 双平台 Go 两槽探索（`exploration-config-f042505.json`，SHA=`2291e278…d356`）。
 
+#### P2-C 固定探索实现结论：f042505 双平台真实反馈与 24k 预算硬约束（2026-09-06）
+
+##### 已完成内容
+
+1. **双平台 Go 两槽执行**（`explore-f042505-1`，两槽均 `product_workflow` failed，新增 Provider cost=`0.0037216 USD`，账本 `explore-f042505-1/cost-ledger-final.json`）：
+   - **Windows**：模型首响应纯文本、零写入（changed_paths=0），恢复续跑要求「每个缺失路径恰好一个 patch section」，模型响应不满足合同 → fail-closed（`internal`）；usage=input `12171`/output `2168`。
+   - **WSL**：模型写入 8 个文件但迁移不完整（`bash_completions.go`/`doc/man_docs.go` 等多处 `WriteStringAndCheck` 残留，`cobra.go` 已删定义 → go test 编译失败 regression=1）；读后验证 8 路径读回正常执行（events seq 29–43 全部 re-read），但随后**客观复核请求构建失败**：`the mutation was read back, but no bounded post-write objective review can be built`；usage=input `19506`/output `2901`（合计 22407/24000）。
+2. **根因定位（零 Provider 离线复现）**：
+   - `tmp/p2c-layered-development/debug-go-review-build.mjs` 用冻结文件规模重建 8-path 复核构建：`maxInputTokens=2048` → undefined；`2560/3072/4096` → built（evidence=8、missing=0）。即 8 路径复核请求本身需要 ≥2560 input token。
+   - 复核可用预算公式 `min(6144, floor((24000−totalTokens−验证输出)/1.2))`：WSL 在复核前 totalTokens≈22407，可用 ≈700–900 token ≪2560 → 构建必然失败。**这是「3→8 验证+复核」与冻结 24k run cap 的确定性冲突，与模型质量无关**。
+3. **预算语义核对**：`ReActRunBudgetTracker` 的 `totalTokens` 为 provider input+output 累计，`checkModelCallPreflight` 以投影拒绝；`REACT_FINALIZATION_INPUT_SAFETY_FACTOR=1.2`。
+4. **效果**：探索达成目的——验证了读后验证流程在 8 路径下机械运行正常，并暴露出复核阶段在冻结预算内的不可达性；该约束下无论模型补丁质量如何，WSL 槽都会确定性 fail-closed。
+
+##### 验证结果
+
+- 零 Provider 诊断：`debug-go-review-build.mjs` 复现 2048→undefined / 2560+→built；与真实运行一致。
+- 双槽 events/trace/report 完整保留；冻结槽与旧证据未改写；新增费用在授权内（累计 observed=`2.50867613` USD，next worst≈`20.5 RMB < 80`）。
+- TypeScript/回归未改动；本环节无代码变更。
+
+##### 后续计划
+
+向用户呈报 24k 预算硬约束与三条可选路径（见「重要问题说明」新增条目），等待决策；未获新授权前不再启动付费槽，也不提高任何上限。
+
 ### 后续计划（当前检查点，2026-09-06）
 
-1. **本环节结果**：CI 环境故障已由「仓库转公开、使用免费 minutes」闭环，重跑确认 Actions 恢复运行；恢复后的 Quality Gates 暴露两个真实失败——LSP `write EPIPE` 未处理拒绝（jsonrpc `new Promise(async)` 反模式）与 TUI 集成测试满载超时，均已修复、回归并推送 private/main（`7153da0f`）。
-2. **下一步准备做**：确认新 CI `33981973124` 全绿后，按《自动化持续开发规则》恢复目标，运行已备妥的 `exploration-config-f042505.json` 双平台 Go 两槽付费探索，验证「读后复核边界 3→8」合同变更对真实模型补丁质量的改善。
-3. **为什么先做它**：该合同变更是用户授权的唯一产品杠杆；探索通过则重建候选，若仍 4/4 失败则以新证据重新评估 9.5 可达性。
+1. **本环节结果**：f042505 双平台探索两槽均失败——Windows 为模型零写入+续跑合同不满足（模型输出行为）；WSL 为**冻结 24k run cap 与「8 路径读后复核」的确定性预算冲突**（复核需 ≥2560 input，剩余仅 ~700–900），换模型也会复发。CI 全绿（`33982477523` success）。
+2. **下一步准备做**：等待用户对「复核预算/run cap」的决策（候选路径：① 授权提高 required-mutation run 的 24k token 上限（需新授权，超出当前合同）；② 复核证据深度降本使 8 路径复核压进 ~1.5k token（有复核质量回退风险，可能重蹈「复核错误接受」）；③ 接受 Go 任务在冻结约束下不可达，复评 9.5 目标口径）。
+3. **为什么先做它**：未获授权前任何继续抽样都会在 WSL 槽确定性失败（已验证），盲目重跑只会消耗费用不产生新证据；必须先消除预算硬约束或改变目标口径。
 4. **当前还缺的关键闭环**：Go 真实任务稳定通过、完整 144 槽原生矩阵、aggregate、dimension evidence、qualification 与七维 score、第二个连续完整候选；`candidate-57b9cc5-1`（17/144）、`e4bd1c3-1`（8/144）与旧 `63e0a41`（14/144）永久只读。
-5. 后继运行继承 `explore-e0124bd-1/cost-ledger-final.json`（SHA=`20207f09…377b`，observed/reserved=`2.50495453/2.34221 USD`，next worst≈`39.9 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效。
+5. 后继运行继承 `explore-f042505-1/cost-ledger-final.json`（observed/reserved=`2.50867613/2.34221 USD`，next worst≈`20.5 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效。
 
 ### 暂停点的剩余工作量估算（2026-09-05）
 
@@ -2353,3 +2376,4 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - CI 计费根因已由用户处置（仓库转公开、使用免费 minutes）；重跑 Quality Gates `33980091572` 确认全部 job 真实执行、Actions 恢复，且公开后敏感信息扫描干净（keys 均为占位符，`artifacts/`、`tmp/`、`.env*` 均 gitignored）。恢复后的 `Build and full test suite` 暴露两个此前被环境故障掩盖的真实失败，处理决策均为 `fix_now completed`：① LSP 宿主 `Unhandled Rejection: write EPIPE`——vscode-jsonrpc 8.2.0 `sendRequest` 的 `new Promise(async)` 反模式使写入失败时 executor throw 被丢弃、外层 promise 永不落定（WSL 修复前 4/5 复现）；以 `createTolerantLspStdin` 容忍写入器 + 取消 token 移除 + race promise catch + 通知 catch 修复后 WSL 8 连跑零 Errors。② TUI 集成测试 `shows the same run events...` 15s 满载超时——WSL 单独运行 1.22s 通过，确认为 CI 并行负载余量不足而非功能缺陷，上限提至 30s。
 - 恢复期间 `scripts/coding-agent-benchmark-fixtures.test.mjs` 工作区显示 modified，实际 `git diff` 为空（仅换行符提示）；未提交、未修改内容，处理决策为 `record_only`。
 - 探索启动前重跑只读验真首次 exit=1：真因为调试 EPIPE 时将修复后的 `lsp-process-host.ts`/`lsp-process-host.test.ts`/`runtime.integration.test.ts` 复制进 WSL 冻结 harness，破坏了 f042505f 冻结 identity，WSL inputs 独立验真（`identity-sha256=68fcda06…01b5`）因此拒绝；恢复 harness `git checkout` 至 clean 后验真 exit=0、`configSha256=2291e278…d356` 与记录一致。处理决策为 `fix_now completed / 冻结 harness 保护`；同时明确口径：文档记录的配置 SHA 是 runner 的规范化 `configSha256`（`2291e278…d356`），不等于原始文件字节 SHA-256（`3626f869…e9f2`），后续核对应以 runner 输出为准。零 Provider、零费用。
+- `explore-f042505-1` 双平台 Go 两槽失败（Go 真实槽累计 9/9 失败）。Windows：模型首响应零写入（changed_paths=0），恢复续跑要求「每个缺失路径恰好一个 patch section」而模型响应不满足 → fail-closed，处理决策为 `record_only / 模型输出行为`（续跑提示对 8 路径的证据充分性仍需零 Provider 重建确认）。WSL：模型写入 8 文件但迁移不完整（多文件残留 `WriteStringAndCheck`、`cobra.go` 定义已删 → go test 编译失败）；读后验证 8 路径读回正常执行，但客观复核请求构建失败——`debug-go-review-build.mjs` 零 Provider 复现：8 路径复核构建 `2048→undefined / 2560+→built`，而真实运行复核前 `totalTokens=22407/24000`、可用预算仅 ~700–900 token。**结论：3→8 读后复核与冻结 24k run cap 是确定性预算冲突，WSL 槽换模型也必然 fail-closed；这是本轮最重要的新证据**。处理决策为 `record_only / 硬约束呈报`：24k 上限不得擅自提高，等待用户在三路径中决策（①授权提高 required-mutation run 上限（需新授权）②复核证据深度降本压进 ~1.5k token（质量回退风险，可能重蹈「复核错误接受」）③接受 Go 任务在冻结约束下不可达并复评 9.5 目标口径）。新增 Provider cost=`0.0037216 USD`，累计 observed=`2.50867613 USD`，next worst≈`20.5 RMB < 80`。
