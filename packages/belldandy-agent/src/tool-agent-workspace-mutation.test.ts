@@ -6866,8 +6866,8 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       "zsh_completions.go": 11328,
     };
     const frozenContent = (path: string) => (
-      `package main\n\n// ${path} migrated callers\n` + "func legacy() {\n\treturn\n}\n".repeat(
-        Math.floor((frozenSizes[path] ?? 200) / 36),
+      `package main\n\n// ${path} migrated callers\n` + "func legacy() {\n\tWriteStringAndCheck(buf, \"line\")\n\treturn\n}\n".repeat(
+        Math.floor((frozenSizes[path] ?? 200) / 44),
       )
     );
     const requests: Array<Record<string, any>> = [];
@@ -6944,7 +6944,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
 
     const items = await collect(agent.run({
       conversationId: "conv-recovery-eight-path-evidence",
-      text: "Migrate the public API across every required file.",
+      text: "Remove the deprecated WriteStringAndCheck alias and migrate every frozen caller across every required file.",
       automationProfile: "bare",
       meta: {
         _agentLaunchSpec: {

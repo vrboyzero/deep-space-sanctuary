@@ -2142,13 +2142,35 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 提交推送新 identity 并等待 CI 环境恢复；随后按分层流程重做双平台最小探索（real-go.public-api-migration Windows a1 + WSL a1），验证真实模型路径通过后再创建新 candidate。
 
+#### P2-C 固定探索实现结论：953ced5 双平台 Go 真实反馈与冻结合同确认（2026-09-06）
+
+##### 已完成内容
+
+1. **双平台探索执行**：`explore-953ced5-1` 两槽（real-go.public-api-migration Windows a1 + WSL a1）均 `reported` 且 `product_workflow` failed；config SHA=`bf854449…4761`、账本 SHA 闭环（observed=`2.50153743`、cleanup=true、资源/敏感值零残留）。
+2. **死循环修复的真实验证**：两平台都越过 recovery 并发出 apply_patch——Windows `apply_patch success=true`、run 以 `run.completed` 终态结束；WSL `apply_patch success=false`（context-only hunk 被补丁校验拒绝）。上一轮的“导航死循环”未再出现，压缩保护 + 证据补齐修复在真实路径生效。
+3. **剩余失败归类（模型补丁质量，record_only）**：
+   - Windows：模型补丁只迁移了部分 `WriteStringAndCheck` 调用方（`bash_completions.go` 仍残留），go test 失败（regression=`1`）；复核在冻结设计下基于写前证据并错误接受不完整迁移——8 个 required path 超过冻结的 3-path 读后复核边界（`react-workspace-mutation-formal-regressions.test.ts` 的“does not expand the three-path post-write verification boundary”为冻结合同），复核的一次纠正机会未被模型使用。
+   - WSL：模型提交的补丁含 context-only hunk 被校验拒绝，run 直接失败关闭。
+4. **测试加固**：8-path 回归改用冻结任务真实文件规模与任务相关标识符（`WriteStringAndCheck`），并覆盖 recovery→复核→final 全链（先红后绿保留）；验证上限扩到 8 的中间尝试与全部既有冻结合同冲突，已回退，不交付。
+5. **效果**：产品侧已无可复现的确定性缺陷；该任务能否通过取决于模型补丁完整性与复核判断，属于模型能力层面，不继续以代码修复掩盖。
+
+##### 验证结果
+
+- TypeScript：`tsc -b packages/belldandy-agent` exit=`0`；workspace-mutation 家族 `469/469`；压缩相关 `95/95`；`verify:coding-benchmark` exit=`0`。
+- 探索账本 `explore-953ced5-1/cost-ledger-final.json` close complete：observed/reserved=`2.50153743/2.34221 USD`、processed/pending/unreported=`2/0/0`、资源 8 项=`0`。
+- CI 环境故障持续（head `953ced5f` 的 Quality 仍为全部 job 秒级失败），保持 `record_only`。
+
+##### 后续计划
+
+以测试加固的新 identity 再执行一次双平台 Go 两槽探索，判断模型补丁质量是否可稳定通过；若通过则重建候选，若仍失败则按模型能力结论记录并重新评估 9.5 可达性。正式候选仍以完整 CI 为准入。
+
 ### 后续计划（当前检查点，2026-09-05）
 
-1. **本环节结果**：Go 失败族真根因已闭合——双平台真实复发后零 Provider 定位为两层工具输出压缩（统一压缩层 + microcompact）破坏 file_read 结构化证据，导致已完整读取的路径被误判缺失并陷入导航死循环；已修复（压缩保护 + 证据补齐 + 覆盖判定前移），8-path 真实规模用例先红后绿、家族 `469/469`、压缩相关 `94/94`（本地提交，待推送）。
-2. **下一步准备做**：提交推送新 identity；CI 环境恢复后（本轮 Quality 环境级全失败，见重要问题说明）按分层流程重做双平台最小探索（real-go.public-api-migration Windows a1 + WSL a1），验证真实模型路径通过后再创建新 candidate。
-3. **为什么先做它**：该失败族是确定性产品缺口，必须先用真实模型验证 Go 任务不再因同一路径失败，再决定是否重建候选与扩大付费槽。
+1. **本环节结果**：`explore-953ced5-1` 双平台真实反馈确认导航死循环已闭合（两平台均发出 apply_patch），剩余失败为模型补丁质量——Windows 迁移不完整（残留 `WriteStringAndCheck`、go test 失败）、WSL context-only hunk 被校验拒绝；8 个 required path 超过冻结的 3-path 读后复核边界，复核基于写前证据的模型误判为 `record_only`。测试已按真实文件规模与任务标识符加固（本地提交，待推送）。
+2. **下一步准备做**：提交推送测试加固的新 identity；CI 环境恢复后以同一双平台两槽清单再执行一次探索，判断模型补丁质量能否稳定通过；通过则重建候选，仍失败则按模型能力结论记录并重新评估 9.5 可达性。
+3. **为什么先做它**：产品侧已无可复现的确定性缺陷，继续投入的唯一依据是模型在该任务上的真实通过率；再跑一轮小样本比直接重建候选更省费用（两槽 ≤`$0.20` vs 完整候选）。
 4. **当前还缺的关键闭环**：Go 真实任务稳定通过、完整 144 槽原生矩阵、aggregate、dimension evidence、qualification 与七维 score、第二个连续完整候选；`candidate-57b9cc5-1` 已冻结（17/144）、`e4bd1c3-1`（8/144）与旧 `63e0a41`（14/144）永久只读。
-5. 后继运行继承 `formal-57b9cc5-1/cost-ledger-final.json`（SHA=`ad36a894…14f`，observed/reserved=`2.49696170/2.34221 USD`，next worst≈`39.5 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效。
+5. 后继运行继承 `explore-953ced5-1/cost-ledger-final.json`（observed/reserved=`2.50153743/2.34221 USD`，next worst≈`39.7 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效。
 
 ### 暂停点的剩余工作量估算（2026-09-05）
 
@@ -2256,3 +2278,4 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 本次回归期间首次尝试的「仅按 required path 最新证据」方案使 12 个既有导航语义用例失败（非 required 最近读取被丢弃、有读取但缺 required path 时不再导航），已改为「最近窗口 + 补齐缺失」方案并全量 `469/469` 通过；该过程保留为验证记录，未交付中间方案。
 - 本轮 Quality/Docker CI 对 `7d380813`（docs-only）与 `b8edee69`（代码）均环境级失败：7 个 job 均在约 2 秒内 failure、job 日志 Blob 不存在、`gh run rerun` 后同样失败；workflow 文件未变且上一 identity 同 workflow 全绿，判定为 CI 环境故障而非代码回归。处理决策为 `record_only / CI 环境待恢复`；正式候选准入仍要求完整 CI 通过，本地回归（469/469、94/94、tsc、benchmark verifier）已绿不能替代。
 - `b8edee6` 双平台探索再次复现 Go 失败后，定位真根因是两层工具输出压缩破坏恢复证据：统一压缩层写入 `[compressed tool output]` 标记、microcompact 写入 `[old tool output cleared]` 摘要，file_read 结构化 JSON 因此不可解析，完整读取被误判缺失并陷入导航死循环。处理决策为 `fix_now completed / 证据压缩保护`：required mutation run 的两层压缩均保留 file_read 原文；普通 run 压缩行为不变。
+- `explore-953ced5-1` 两平台失败均为模型补丁质量：Windows 迁移不完整（bash_completions.go 仍残留 WriteStringAndCheck、go test 失败 regression=1，复核基于写前证据错误接受）；WSL 补丁含 context-only hunk 被校验拒绝并失败关闭。产品确定性缺陷已无（导航死循环闭合），处理决策为 `record_only / 模型能力样本`；8 个 required path 超过冻结 3-path 读后复核边界是既有冻结合同，不扩大。验证上限扩到 8 的中间尝试与冻结合同冲突，已完整回退。
