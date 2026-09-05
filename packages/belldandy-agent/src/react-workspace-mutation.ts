@@ -20,6 +20,7 @@ import {
 import { isUnsafeCorrectionAfterCompletedTraceValuesApiMigration } from "./react-workspace-mutation-ts-api-migration.js";
 import { WORKSPACE_MUTATION_SOURCE_VERIFICATION_INSTRUCTION } from "./react-workspace-mutation-evidence-instructions.js";
 import { readClippedLeadingDocumentation } from "./react-workspace-mutation-documentation.js";
+import { buildReferencedReadEvidence } from "./react-workspace-mutation-supporting-evidence.js";
 
 export const WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE = 4_096;
 export const WORKSPACE_MUTATION_RECOVERY_MIN_OUTPUT_TOKEN_RESERVE = 1_024;
@@ -3117,6 +3118,16 @@ function buildBoundedWorkspaceMutationRequest(input: {
       - estimateTokens(userText, input.tokenEstimateContext)
       - estimateTokens(evidenceHeader, input.tokenEstimateContext),
   );
+  const supportingEvidence = input.latestRequiredFileReadEvidenceOnly
+    ? buildReferencedReadEvidence({
+        messages: input.messages,
+        taskText,
+        requiredPaths: input.missingRequiredChangedPaths ?? [],
+        maxTokens: Math.min(256, Math.floor(remainingTokens * 0.3)),
+        tokenEstimateContext: input.tokenEstimateContext,
+      })
+    : "";
+  if (supportingEvidence) remainingTokens -= estimateTokens(supportingEvidence, input.tokenEstimateContext) + 4;
   const evidenceSections: string[] = [];
   const missingRequiredSourceEvidence = new Map(
     (input.missingRequiredChangedPaths ?? []).map((requiredPath) => [
@@ -3195,6 +3206,7 @@ function buildBoundedWorkspaceMutationRequest(input: {
   if (evidenceSections.length > 0) {
     userText = `${userText}${evidenceHeader}${evidenceSections.join("\n\n")}`;
   }
+  userText += supportingEvidence;
   const messages = [
     { role: "system" as const, content: input.instruction },
     { role: "user" as const, content: userText },

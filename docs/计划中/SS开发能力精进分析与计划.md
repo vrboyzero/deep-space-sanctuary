@@ -1710,9 +1710,29 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - frozen-lockfile 安装通过；完整 workspace build/TypeScript exit=0。MCP、飞书 SDK/HTTP 传输和 output-schema 共 11 文件 `79/79` 通过。
 - 新身份真实 OSV/CI 尚待推送后验证；等待上一 ec083296 全量 CI 终态，避免新推送触发 concurrency 取消已消耗的全量运行。尚不能声称整个 Quality 已通过。
 
+#### P2-C JS 证据投影实现结论：保留已读任务断言（2026-09-05）
+
+##### 已完成内容
+
+1. **`react-workspace-mutation-supporting-evidence.ts` 与新测试**：
+   - 从现有 transcript 中选择任务精确引用的最近完整 file_read，排除 required paths、绝对/越界路径、截断和非零 offset；较新的无效读取阻止回退到旧证据。
+   - 只补一份按完整行限长的辅助源码，占既有证据配额最多 30%/256 tokens，明确标记不可信源码、不是测试执行；不执行 I/O、增加工具、扩大允许路径或预算。
+2. **`react-workspace-mutation.ts` 接线及 project-map**：
+   - 写后 review/repair/input correction 在原总预算内保留辅助断言与当前 source；可选文档让出空间，必要的 required-path 回读仍由原逻辑验真。
+   - 风险中等，主要是辅助内容挤占源码或错配文件；以精确引用、最近读取、截断拒绝、预算和当前源码保留测试约束，旧候选和模型配置不变。
+3. **效果**：
+   - ec08329 Windows 真实请求重建与日志同为 2038 tokens，确认原测试已经读取但复核完全遗漏。修改后为 2036 tokens，测试断言和当前 `Math.floor(offset)+1` 均保留；配套文档因预算让出空间，不宣称同时完整保留所有内容。
+
+##### 验证结果
+
+- TypeScript 增量编译 exit=0；新增行为先红后绿，supporting/documentation/mutation 三文件 `108/108`（12 项新增）；六个 Agent mutation/structured-output/final-repair/JS 相邻文件 `134/134`，合计 `242/242`。
+- 零 Provider 重建记录为 `js-supporting-evidence-exact-before.json` / `js-supporting-evidence-exact-after.json`。首次直接使用 events 的 tool.output 因传输限长 2049 字符无法还原完整 JSON，重建被拒绝；改用保留工作区源码、原 Git baseline 和原响应 metadata，逐项核对 bytesRead 后恢复准确 2038-token 输入。较早缺失 metadata 的 1961-token 探针不作为准确重建证据。
+- 首条相邻测试命令包含一个不存在的点分文件名，Vitest 实际只运行三个现存文件（108 项）；随后按真实路径运行六个工具 Agent 文件（134 项）。不把未发现的文件计为已测。
+- 这是已证实的信息遗漏修复，尚不证明真实模型错误或 length 已解决；不增加输出长度或恢复次数，下一探索须使用新身份。
+
 ### 后续计划
 
-1. 先按已证实的 OSV 公告更新 fast-uri/qs 的同主版本精确 override，跑直接使用方和真实 CI；依赖 Gate 是交付阻塞，避免创建注定无法交付的 formal。并保留 ec08329 两个 JS 失败，使用现有响应/输入/patch 建立零 Provider 反馈，证据支持后才做通用修复与新受控探索。
+1. fast-uri/qs 修复已通过 build/79 项直接使用方测试，辅助断言投影已通过准确请求重建和 242 项定向回归；等待上一 CI 全量终态后推送最终修复身份，获取新的 OSV/工程 CI。随后一次性更新双平台依赖/identity/inputs，做 JS 两槽探索验证本次证据变化，避免每个中间提交都重新准备和调用模型。
 2. 对现有 JS/Go 失败保留离线诊断：JS 新 patch 的零值处理仍有回归；两者 JSON review/repair 均为原始无效响应。非空响应终止原因诊断已补齐并局部验证，但旧日志缺失值不能回补；后续受控探索须采集该字段，不能只凭 token 上限改变预算、解析器或增加特例。
 3. 口径及产品修复稳定后，复用 staging/依赖缓存，重新绑定双平台 identity、inputs、预检和不可覆盖 plan；按固定探索清单验证真正改变的行为，避免无新证据重复同批模型调用。
 4. 后继正式候选仅在合同、工程与资源 Gate 闭合后进入完整 `144` 槽；普通失败只在资格仍可达且证据/资源闭合时续跑，硬门槛失败停止。下一会话继承 `explore-ec08329-1/cost-ledger-final.json`（SHA=`c98ba502778962e3dae6b5c15ee972bcf1534f8834aeed444567603445739523`）的全部观测费用和预留，所有已冻结 identity 保持只读。
@@ -1722,6 +1742,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 ### 重要问题说明
 
+- JS 复核只选择 required 源文件，已读取且由任务点名的测试断言在上下文收缩时全部丢失；准确重建复现该缺口。处理决策为 `fix_now / 本地闭合`：在同一预算内补精确绑定的辅助读取，当前源码优先；真实模型效果仍待验证，不能把信息遗漏直接断言为全部失败的根因。
 - `ec08329` 双平台 JS 均实际失败，Windows 明确出现 length 且保留 +1，WSL 重复代码；处理决策为 `record_only / 回到零 Provider 诊断`。有了首次真实终止原因也不能直接加预算、改模型或放宽解析；局部校验是否存在误拒需要原始 correction 证据，不能仅凭日志推断。
 - 当前 Quality 的 OSV Gate 明确为 fast-uri/qs 新漏洞，非扫描不可用；同主版本修复已安装，锁文件最小 diff、build 与 79 项直接使用方测试通过。处理决策为 `fix_now / 本地闭合，待真实 CI`，后续用同一 workflow 复核，禁止忽略漏洞或关闭 Gate。
 - `daa71ad` JS 虽通过原 HTTP 样例，仍被 evaluator 的特定源码正则拒绝；160 组只读上游对照确认本次三元表达式行为等价，不能把这次失败归为模型代码错误。处理决策为 `fix_now / Windows 离线闭合`：用原 HTTP 加 16 项边界行为和精确路径合同判断补丁；旧 failed report、费用和冻结语义保留，新行为仅随新 harness 生效。该结论不回溯否定更早实际 offset/零值/JSON 失败。
