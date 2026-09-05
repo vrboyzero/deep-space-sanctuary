@@ -646,6 +646,29 @@ describe("coding agent benchmark v3 fixture providers", () => {
       status: "passed",
       evaluation: { taskCompleted: true, testsPassed: true, patchAccepted: true },
     });
+    await fs.writeFile(
+      path.join(bugFixture.workspace, "lib", "request.js"),
+      "function subdomains(hostname, offset) {\n  var parts = hostname.split('.').reverse();\n  return offset ? parts.slice(offset) : parts;\n}\n",
+      "utf-8",
+    );
+    const equivalentEvaluation = await bugProvider.evaluate({
+      task: bugFixture.task, workspace: bugFixture.workspace, runnerExitCode: 0,
+      result: { summary: "Preserved the documented behavior with an equivalent expression." },
+    }, {
+      runTestCommands: async () => [{ command: "npm test -- test/benchmark-v3/real-js-bug-fix.js", exitCode: 0 }],
+    });
+    expect(equivalentEvaluation).toMatchObject({
+      status: "passed", evaluation: { testsPassed: true, patchAccepted: true },
+    });
+    const failedBehavior = await bugProvider.evaluate({
+      task: bugFixture.task, workspace: bugFixture.workspace, runnerExitCode: 0,
+      result: { summary: "A required behavior check failed." },
+    }, {
+      runTestCommands: async () => [{ command: "npm test -- test/benchmark-v3/real-js-bug-fix.js", exitCode: 1 }],
+    });
+    expect(failedBehavior).toMatchObject({
+      status: "failed", evaluation: { testsPassed: false, patchAccepted: false, regressionCount: 1 },
+    });
     const runnerFailure = await bugProvider.evaluate({
       task: bugFixture.task,
       workspace: bugFixture.workspace,

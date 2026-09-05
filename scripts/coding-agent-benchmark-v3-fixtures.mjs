@@ -25,6 +25,7 @@ import {
   renderCodingAgentBenchmarkWebUiPromptSuffix,
   renderCodingAgentBenchmarkWebUiVisibleTest,
 } from "./coding-agent-benchmark-v3-web-ui-truth-set.mjs";
+import { renderExpressSubdomainBoundaryTests } from "./coding-agent-benchmark-v3-express-behavior.mjs";
 
 const CORRECTED_V2_MANIFEST_VERSION = "coding-agent-benchmark-manifest/v2";
 export const CODING_AGENT_BENCHMARK_SNAPSHOT_RECEIPT_VERSION =
@@ -894,10 +895,8 @@ async function evaluateExpressFixture(input, dependencies = {}) {
   const changedPaths = collectChangedPaths(workspace);
   let patchAccepted;
   if (task.id === "real-js.bug-fix") {
-    const requestSource = await fs.readFile(path.join(workspace, "lib", "request.js"), "utf-8");
-    patchAccepted = JSON.stringify(changedPaths) === JSON.stringify(task.acceptance.requiredChangedPaths)
-      && /return [A-Za-z_$][\w$]*\.slice\(offset\);/.test(requestSource)
-      && !requestSource.includes("slice(offset + 1)");
+    patchAccepted = testsPassed
+      && JSON.stringify(changedPaths) === JSON.stringify(task.acceptance.requiredChangedPaths);
     if (!patchAccepted) {
       productWorkflowFailures.push("Express bug fix must restore the subdomain offset in lib/request.js only.");
     }
@@ -1568,6 +1567,7 @@ function createExpressSubdomainTest(input) {
     "  })",
     "})",
     "",
+    ...(input.failingExpectation ? [] : [renderExpressSubdomainBoundaryTests()]),
   ].join("\n");
 }
 
