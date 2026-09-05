@@ -1,6 +1,8 @@
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { Writable } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   LspProcessHost,
   LspProcessHostError,
+  createTolerantLspStdin,
   summarizeLspReadinessTimeline,
   type LspProcessHostOptions,
 } from "./lsp-process-host.js";
@@ -540,6 +543,38 @@ describe("LspProcessHost", () => {
   });
 });
 
+describe("createTolerantLspStdin", () => {
+  it("delivers writes to a live child and drops writes after the child exits", async () => {
+    const child = spawnKeepAliveChild();
+    try {
+      const stdin = createTolerantLspStdin(child);
+      await expect(writeChunk(stdin, "live")).resolves.toBeUndefined();
+
+      const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+      child.kill("SIGKILL");
+      await exited;
+
+      await expect(writeChunk(stdin, "dead")).resolves.toBeUndefined();
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    }
+  });
+
+  it("drops writes once the child stdin is destroyed without surfacing the stream error", async () => {
+    const child = spawnKeepAliveChild();
+    try {
+      const stdin = createTolerantLspStdin(child);
+      const closed = new Promise<void>((resolve) => child.stdin.once("close", () => resolve()));
+      child.stdin.destroy();
+      await closed;
+
+      await expect(writeChunk(stdin, "destroyed")).resolves.toBeUndefined();
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    }
+  });
+});
+
 async function createHost(overrides: Partial<LspProcessHostOptions> = {}): Promise<LspProcessHost> {
   const workspaceRoot = await mkdtemp(path.join(tmpdir(), "ss-lsp-host-"));
   tempDirs.push(workspaceRoot);
@@ -566,6 +601,23 @@ function minimumPlatformEnvironment(): Record<string, string> {
     ["TMP", process.env.TMP],
     ["TEMP", process.env.TEMP],
   ].filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+}
+
+function spawnKeepAliveChild(): ChildProcessWithoutNullStreams {
+  return spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    stdio: ["pipe", "ignore", "ignore"],
+    windowsHide: true,
+    shell: false,
+  });
+}
+
+function writeChunk(stdin: Writable, value: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    stdin.write(value, (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
 }
 
 async function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<boolean> {

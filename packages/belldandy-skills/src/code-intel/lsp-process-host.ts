@@ -5,10 +5,10 @@ import {
 } from "node:child_process";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
+import { Writable } from "node:stream";
 import { pathToFileURL } from "node:url";
 
 import {
-  CancellationTokenSource,
   ErrorCodes,
   ResponseError,
 } from "vscode-jsonrpc";
@@ -564,7 +564,7 @@ export class LspProcessHost {
       throw failure;
     }
 
-    const connection = createProtocolConnection(child.stdout, child.stdin);
+    const connection = createProtocolConnection(child.stdout, createTolerantLspStdin(child));
     this.connection = connection;
     this.installServerRequestHandlers(connection);
     connection.listen();
@@ -597,7 +597,7 @@ export class LspProcessHost {
         kind: "request_completed",
         method: InitializeRequest.method,
       });
-      connection.sendNotification(InitializedNotification.type, {});
+      connection.sendNotification(InitializedNotification.type, {}).catch(() => undefined);
       this.recordTimelineEvent({ kind: "notification_sent", method: InitializedNotification.method });
       this.state = "running";
     } catch (error) {
@@ -857,7 +857,6 @@ export class LspProcessHost {
       throw new LspProcessHostError("server_crashed", "LSP server process is not running.");
     }
 
-    const cancellation = new CancellationTokenSource();
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     let abortListener: (() => void) | undefined;
     const interruption = new Promise<never>((_resolve, reject) => {
@@ -867,18 +866,15 @@ export class LspProcessHost {
         return;
       }
       if (signal?.aborted) {
-        cancellation.cancel();
         reject(new LspProcessHostError("cancelled", "LSP request was cancelled by the caller."));
         return;
       }
       timeoutHandle = setTimeout(() => {
-        cancellation.cancel();
         reject(new LspProcessHostError("timeout", "LSP request exceeded its deadline."));
       }, remainingMs);
       timeoutHandle.unref?.();
       if (signal) {
         abortListener = () => {
-          cancellation.cancel();
           reject(new LspProcessHostError("cancelled", "LSP request was cancelled by the caller."));
         };
         signal.addEventListener("abort", abortListener, { once: true });
@@ -888,9 +884,16 @@ export class LspProcessHost {
       throw new LspProcessHostError("server_crashed", "LSP server exited before completing the request.");
     });
 
+    // Timeout and cancellation are enforced by killing the child process, so no
+    // jsonrpc cancellation token is needed. The raced request promise is handled
+    // below because its transport can reject after the process dies (write EPIPE
+    // on Linux) and must not surface as an unhandled rejection; the race outcomes
+    // above are authoritative.
+    const protocolRequest = connection.sendRequest<Result>(method, params ?? null);
+    protocolRequest.catch(() => undefined);
     try {
       const result = await Promise.race([
-        connection.sendRequest<Result>(method, params ?? null, cancellation.token),
+        protocolRequest,
         interruption,
         unexpectedExit,
       ]);
@@ -899,7 +902,6 @@ export class LspProcessHost {
     } catch (error) {
       throw toHostError(error, fallbackCode, "LSP protocol request failed.");
     } finally {
-      cancellation.dispose();
       if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
       if (signal && abortListener) signal.removeEventListener("abort", abortListener);
     }
@@ -939,7 +941,7 @@ export class LspProcessHost {
         this.connection.sendRequest(ShutdownRequest.type),
         this.shutdownTimeoutMs,
       );
-      this.connection.sendNotification(ExitNotification.type);
+      this.connection.sendNotification(ExitNotification.type).catch(() => undefined);
       await withTimeout(this.exitPromise ?? Promise.resolve(undefined), this.shutdownTimeoutMs);
     } catch {
       await this.forceTerminateCurrentChild();
@@ -1194,6 +1196,33 @@ function waitForSpawn(child: ChildProcess): Promise<void> {
     };
     child.once("spawn", onSpawn);
     child.once("error", onError);
+  });
+}
+
+/**
+ * Wraps the LSP child stdin so a late transport failure can never surface as an
+ * unhandled rejection. vscode-jsonrpc's sendRequest runs inside an async promise
+ * executor whose rejection is discarded when a write fails, so a frame written
+ * while the child is being terminated (write EPIPE on Linux) would escape every
+ * caller-level catch. Frames addressed to a child that is already gone are
+ * dropped here; the request outcome is decided by the host's timeout /
+ * cancellation / exit races instead, and non-EPIPE write errors still propagate
+ * through the wrapper stream.
+ */
+export function createTolerantLspStdin(child: ChildProcessWithoutNullStreams): Writable {
+  // The underlying stream's own "error" event must never fire unhandled.
+  child.stdin.on("error", () => undefined);
+  return new Writable({
+    write(chunk, _encoding, callback) {
+      if (child.exitCode !== null || child.signalCode !== null || child.stdin.destroyed) {
+        callback();
+        return;
+      }
+      child.stdin.write(chunk, (error) => {
+        const code = (error as NodeJS.ErrnoException | null | undefined)?.code;
+        callback(error === null || error === undefined || code === "EPIPE" ? undefined : error);
+      });
+    },
   });
 }
 
