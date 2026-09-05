@@ -928,6 +928,26 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 保持 `8f794af/candidate-1` 永久冻结。先用现有 mock model/fixture 建立零 Provider 回归，复现“首个修复正确、目标复核输出无效、output repair 追加非必要修正、最终输出仍无效”的事件序列；确认失败属于可泛化修复的工作流合同缺口后，再按 TDD 实现最小修复并执行定向测试、build、全仓回归与 benchmark contract 验证。若无法稳定复现或只能依赖特定模型输出，则记录为候选工作流失败，不修改产品逻辑。
 
+#### P2-C Fix Mode 实现结论：post-correction final JSON-only repair（2026-09-05）
+
+##### 已完成内容
+
+1. **react-workspace-mutation.ts 扩展**：新增纠正额度关闭后的最终输出修复请求；请求只允许返回满足合同的单个原始 JSON，工具定义强制为空。
+2. **tool-agent.ts 接入**：为最终 JSON 修复维护独立的一次性状态；在唯一代码纠正已执行或额度已关闭、随后目标复核输出无效时只追加一次无工具修复，持续无效则失败关闭。
+3. **tool-agent-workspace-mutation-final-output-repair.test.ts 新建**：固定复现 t03 的“初始 patch → 验证 → 无效复核 → 一次纠正 → 再验证 → 无效最终复核”序列，覆盖最终 JSON 成功和持续无效失败两条路径。
+4. **效果**：已验证源码不会因最终输出格式错误再次被修改；最终请求不暴露工具，不允许第二次代码纠正，也不放宽结构化输出合同。
+
+##### 验证结果
+
+- TDD 红灯为新增 `2/2` 用例均因缺少第 7 次最终修复请求失败；实现后新增用例=`2/2`、相邻重点回归=`42/42`、全部 workspace-mutation 回归=`415/415`。
+- TypeScript 编译无错误：`@belldandy/agent build`、全仓 `build` 与 `verify:coding-benchmark` 均通过。
+- 全仓 Vitest：`999` 个测试文件通过、`6558` 个测试通过，另有 `2` 个文件/`3` 个测试按设计跳过；无失败。
+- 修复提交=`6ce85bd`，已从本地 `main` 推送到 `private/main`；未推送 `origin/main`，未包含用户现有 `AGENTS.md`、D 盘说明或 `tmp-codeintel-summary.json`。
+
+##### 后续计划
+
+保持 `8f794af/candidate-1` 的失败终态不变。以修复提交 `6ce85bd` 创建全新双平台 candidate identity，从 clean detached staging、repository inputs、expected-report plan、operators、OCI Gate 和 Windows canary 重新开始；通过后再渐进执行完整矩阵与资格闭环。
+
 ## 实施计划进度表
 
 ### 当前阶段与完成边界（2026-09-05）
@@ -947,17 +967,18 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C 0e35c8b/candidate-1 | P2 | **首槽基础设施失败，永久冻结** | Windows attempt-1 readiness 60 秒超时；report/fixture/Provider usage 均未生成；ledger=`processed 0 / unreportedInfrastructure 1 / candidate cost 0 / reserve +0.10 USD`；敏感 env 与资源清理完成 | 禁止重跑，不启动 WSL 槽；只保留冻结 evidence 供恢复与归因复算 |
 | P2-C Windows readiness state-root | P2 | **完成并交付 private/main** | candidate fail-closed Gate、正负合同=`37/37`、benchmark verifier、build、全仓 `6554/6554` 已执行测试与零 Provider readiness 全部通过；commit=`6ec5db3`，敏感 env、端口和进程残留=`0` | 旧 identity 保持冻结；新候选不得回退该修复 |
 | P2-C 6ec5db3/candidate-1 | P2 | **batch 03 已冻结，13/144（3 passed + 1 product_workflow failure）；Fix Mode 修复已交付 private/main** | resume=`13/144`、remaining=`131`、unreported infrastructure=`0`；env/资源清理闭合；t13 `EPERM rename` evidence 已冻结；定向回归=`24/24`、workspace build 与 benchmark contract 通过；全仓=`6554 passed / 2 failed / 3 skipped`，两项隔离复跑均通过；fix commit=`8f794af` | 以 `8f794af` 重建双平台 candidate，旧 identity 不得重跑或启动 WSL |
-| P2-C 8f794af/candidate-1 | P2 | **batch 01 已冻结，3/144（2 passed + 1 product_workflow failure）** | resume=`3/144`、remaining=`141`、unreported infrastructure=`0`；t03 tests/patch 通过但目标复核输出合同失败；env/资源清理闭合 | 禁止重跑/reconcile 或启动 WSL；先以零 Provider 回归判定是否存在可泛化的工作流缺口 |
+| P2-C 8f794af/candidate-1 | P2 | **batch 01 已冻结，3/144（2 passed + 1 product_workflow failure）** | resume=`3/144`、remaining=`141`、unreported infrastructure=`0`；t03 tests/patch 通过但目标复核输出合同失败；env/资源清理闭合 | 禁止重跑/reconcile 或启动 WSL；修复只由新 identity 验证，不改写旧终态 |
+| P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 ### 后续计划
 
-1. 保持 `8f794af/candidate-1` 在 `3/144` 永久冻结；用现有 mock model/fixture 零 Provider 复现 t03 的 post-write objective review/output repair 事件序列，先确认是否为可泛化的产品工作流缺口。
-2. 若回归稳定复现，按 TDD 做最小修复并完成定向测试、build、全仓回归和 benchmark contract；若不能稳定复现，则保留失败证据并把该问题裁决为候选工作流失败，不修改产品逻辑。
-3. 只有修复完成并提交后才创建全新 candidate identity；新候选仍须从双平台 staging/inputs/plan/operators/OCI/Windows canary 重新开始，逐步补齐完整矩阵与真实 CI/CLI/TUI/Git delivery receipt。
-4. 两个连续候选均须满足七维下限与 raw weighted `>=9.500`；任何旧 identity 均禁止重跑、reconcile 或事后改写 aggregate。
+1. 保持 `8f794af/candidate-1` 在 `3/144` 永久冻结；以 `6ce85bd` 创建新的 Windows/WSL clean detached staging，并重新冻结 source/harness identity。
+2. 为新 identity 唯一生成双平台 repository inputs、expected-report plan 和 candidate operators，完成 OCI 与资源/费用 Gate 后才启动 Windows canary。
+3. canary 通过后按小批次渐进补齐完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt 和七维资格；任一失败立即冻结，不重跑或 reconcile。
+4. 两个连续候选均须满足七维下限与 raw weighted `>=9.500`；任何旧 identity 均禁止事后改写 aggregate。
 
-`8f794af` batch 01 已在 t03 失败后冻结并完成 ledger/env/资源闭环；当前优先缺口是确认目标复核输出失败能否由零 Provider 测试稳定复现并安全修复，其后才是新 identity 的完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选。
+`8f794af` batch 01 已永久冻结，目标复核工作流缺口已由 `6ce85bd` 的零 Provider 回归、实现和全仓验证闭合。当前优先缺口是建立 `6ce85bd` 新 identity 并通过双平台材料 Gate 与 Windows canary，其后才是完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选。
 
 ### 重要问题说明
 
@@ -983,4 +1004,4 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - WSL inputs 首次误把旧候选已发布的 `sources/caches` 当作 canonical seed，并误用空的默认 Go module cache，production owner 因此发布 `partial 2/4`：Express=`pinned_dependency_lock_unavailable`、Cobra=`offline_go_module_cache_incomplete`。该 root 经普通目录、目标不存在与报告 SHA-256=`75cc6975ec4dc3b76238432720e0e5f917355c94d0ac23c1d233b8ba09183e51` Gate 后原子改名为 `-rejected-material-roots` 保留；改用 canonical source/cache、Express seed lock `c3b…a82` 与固定 Go cache 后首次生成新的 canonical root并通过 `4/4/8`，处理决策为 `fix_now completed`。
 - expected-report writer 没有 `--help` 分支，首次帮助探针在参数解析处按设计退出且未创建 artifact；改为直接读取当前源码 CLI 合同并提供六组成对参数后唯一写入成功，随后 `EEXIST` 负例和独立 verifier 均通过，处理决策为 `fix_now completed`。
 - canary 的结构化 8 目标不存在探针首次在嵌套 `GetFullPath(Split-Path(...))` 表达式少一个右括号，PowerShell 在读取 plan 前即解析失败，没有创建或修改目标；改为先计算两个 artifact 路径再构造固定 8 项数组后全部 absent，处理决策为 `fix_now completed`。
-- `8f794af` Windows batch 01 的 t03 `bug.reproducible-fix` 在 patch、测试及 evaluator 均通过后仍以 `product_workflow` failed 结束：post-write objective review 未返回有效 JSON，随后一次 phase-aware output repair 又对已正确的数量修复追加 `items == null` 宽化，最终复核仍未完成输出合同。上一候选相同 fixture/平台/预算曾返回有效 JSON 并通过，说明当前失败由模型输出触发，但 fail-closed 分支可由固定响应序列做零 Provider 验证；处理决策为 `split_task`：候选永久冻结，先建立回归并判断是否存在不依赖具体 fixture 的最小修复，未证实前不修改产品逻辑。
+- `8f794af` Windows batch 01 的 t03 `bug.reproducible-fix` 在 patch、测试及 evaluator 均通过后仍以 `product_workflow` failed 结束：post-write objective review 未返回有效 JSON，随后 phase-aware output repair 消费唯一代码纠正额度，最终复核仍未完成输出合同。零 Provider 固定响应序列已稳定复现该通用状态机缺口；处理决策由 `split_task` 闭合为 `fix_now completed`：`6ce85bd` 在纠正后只允许一次无工具 JSON repair，持续无效仍失败关闭，旧候选终态保持冻结。
