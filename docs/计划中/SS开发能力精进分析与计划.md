@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **CodeIntel 清单修复完整 CI 通过；Go 新缺陷已通过双平台与真实验证，待提交** | 4fcf376 两端 clean inputs=`4/4/8`；Quality `33960798149`、`33961952586` 均七个 job 全通过。新增 Go 修复双平台各 `100/100`、build 与 benchmark verifier 通过；真实 Windows/WSL Go=`10/10`、comparator 通过、资源八项为0；本轮模型调用与正式付费槽均为0 | 提交 Go 环境/挂载/共享清单修复并验证对应完整 CI，再绑定最终 identity 的 inputs/plan/config。当前仅工程与交付前置闭合，不作为完整正式候选资格 |
+| P2-C 分层开发与编排复用 | P2 | **TypeScript 复核材料压缩本地修复完成，按用户要求暂停** | 63e0a41 候选仍为 `12 passed / 2 failed / 130 unexecuted`、永久冻结；原 API migration 失败已零模型准确复现并修复，原2048输入上限内请求=`2020`、三文件/六处源码位置验真；25文件 `462/462`（含9新增）与 Agent TypeScript 编译通过 | 恢复后先处理另一项真实模型输出失败，再做双平台及必要真实探索、新身份完整 CI；尚未建立新候选，旧槽永久只读，9.5最终验收未完成 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -1862,20 +1862,100 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - TypeScript/build：主仓与 Linux staging 均 `corepack pnpm build` 通过；benchmark contract verifier 通过。
 - 八文件联合回归 Windows/WSL 各 `100/100`，含11个新增用例与2项既有用例强化；环境与挂载修复前已实测 7 failed，修复后全部通过。
 - 标准 WSL 报告 `tmp/p2c-layered-development/go-oci-fixed-4fcf376/report.json`：readiness=`4139ms`，RSS peak=`33,259,520 bytes`、57 samples，全部 Gate 通过；Windows 报告位于同级 `go-native-fixed-4fcf376/report.json`，比较器位于 OCI 目录 `comparator-report.json` 并通过。临时诊断运行另行保留，不替代标准入口证据。
-- 资源检查八项均为0，lease/container/state/staging 清理全部通过。本批 Go 修改尚待提交与对应完整 CI，不能借用 4fcf376 的 CI 声称新修改已完整验收。
+- 资源检查八项均为0，lease/container/state/staging 清理全部通过。提交 `63e0a41b441744051e7656575db3795d3b512d7a` 已推送 private/main，其 Quality `33963386996` 七项全部通过，完整 build/test job 耗时19分20秒。
 
-### 后续计划
+#### P2-C 正式准入实现结论：63e0a41 证据预检与不可覆盖计划（2026-09-05）
 
-1. 提交这批已通过双平台/真实验证的 Go 环境、挂载和 receipt 修复并取得对应完整工程 CI；此前 `1fecbdcf`/`4fcf376` 的 Quality 均已完整通过。新身份完整 CI 通过后，创建并独立验真不可覆盖正式 plan/config，先关闭工程与交付前置再分配正式槽。
-2. 历史 JS/Go 失败及原始 JSON review/repair 证据继续保留供离线诊断；`023af38` 双平台 JS 新探索已通过，不再将历史失败当作当前未执行的修复步骤。后续真实失败须依据各自日志定位，旧日志缺失的终止原因不能回补，也不能只凭 token 上限改变预算、解析器或增加特例。
-3. 当前 inputs 与 Windows staging 为 `4fcf376`；Linux staging 已应用待提交 Go 补丁用于定向与真实验证。新提交后同步双平台最终 identity，复用已验真的只读 cache 并重新绑定 receipt。真实 CodeIntel paired-run、CI 采集与各 receipt 使用公共 producer，付费调用统一受已授权单次和累计守卫约束；本次 Go 环境和证据修改不重复既有双平台 JS 探索。
-4. 后继正式候选仅在合同、工程与资源 Gate 闭合后进入完整 `144` 槽；普通失败只在资格仍可达且证据/资源闭合时续跑，硬门槛失败停止。下一会话继承 `explore-023af38-1/cost-ledger-final.json`（SHA=`c0df071d2ac07f7616c7ebf4a4e5343c8b330d020d1a15915e181c0a418f6ded`）的全部观测费用和预留，所有已冻结 identity 保持只读。
-5. 完整候选后采集当前 identity 的真实 CI/CLI/TUI/Git delivery receipt、aggregate 与七维资格，再执行第二个连续完整候选；两个候选均须满足七维下限、raw weighted `>=9.500` 和全部硬 Gate。
+##### 已完成内容
 
-当前正式准入还缺本批 Go 修复的新提交完整工程 CI 与最终身份绑定；023af38 的失败 CI 保留。双平台 JS 探索、依赖审计、新计量审批和 Go 前置已有通过证据，但不外推为正式验收。完整 `144` 槽、当前 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选均未完成。最终验收标准保持不变，审批计量与费用授权均已明确并持续有效。
+1. **双平台 staging / inputs 更新**：
+   - 同一 clean commit=`63e0a41b441744051e7656575db3795d3b512d7a`；worktree SHA=`d3442b2699c299619345fc64ae4db745eef2b6debff230b2dc966051a74d33d6`，identity SHA=`de2c1946700a9ab8cd0b93d5468acc50c8dbf7b2ef9553d58c82ba2699abb2fb`；lockfile SHA 保持 `7862fc35...cbd97569`。
+   - inputs=`tmp/p2c-layered-development/inputs/windows-63e0a41` 与 WSL `/var/tmp/star-sanctuary-layered-inputs-63e0a41`，由当前公共 owner 重新生产 receipt/preflight，复用只读 source/cache。
+2. **`codeintel-63e0a41/` / `private-ci-63e0a41/` 生成**：
+   - 双平台 TS/JS truth=`14/14`、Go=`10/10`、resource soak、Go comparator、Context Inspector、uplift repository readiness 与 cohort runtime preflight 均通过；真实 paired-run 尚未执行。
+   - Quality `33963386996` 的原始 API、两平台 ZIP、lane receipt 和 Vitest 报告摘要均已校验；尚未绑定正式 aggregate，不提前生成 CI receipt。
+3. **`formal-63e0a41-1.expected-report-plan.json` / `formal-config-63e0a41-1.json` 生成**：
+   - 绑定 `candidate-63e0a41-1`，plan SHA=`ed444d8f388b1b9607b9b544c5f6e0b0166deb5b524f9c0a80cb60aa20e84a41`、config SHA=`fff732a382b30d1abe70f0fe34956457b76c702954d59e6549d32984c1c2d1fb`。
+4. **效果**：
+   - 正式候选的工程和交付前置已就绪，旧失败和旧计划保留；计划生成时模型调用及正式槽仍为0。
+
+##### 验证结果
+
+- TypeScript/build 两端通过；当前提交完整 Quality CI 通过，局部回归沿用本批双平台各 `100/100`，未重复执行已通过的同范围测试。
+- inputs 原生独立复算两端各 `4/4/8`；plan=`144/144/144`，独立 Cartesian 路径/身份验证与 EEXIST/hash 不变反例通过。
+- Gateway 零模型 readiness=`2040ms`，stop=`2064ms`，Provider environment load=0；新 env 已逐项校验并回收，资源八项为0。
+- 权威费用仍继承 `explore-023af38-1/cost-ledger-final.json`；observed=`2.47555869 USD`、reserved=`2.34221000 USD`，下一次最坏=`39.34214952 RMB`，低于已授权80 RMB。
+
+#### P2-C 正式候选实现结论：63e0a41 普通失败续跑与语言资格冻结（2026-09-05）
+
+##### 已完成内容
+
+1. **`artifacts/p2c-layered-candidates/63e0a41/candidate-1/windows-native/attempt-1/` 首次生成**：
+   - 执行14个槽，12 passed、2个 TypeScript product workflow failed；第一次普通失败后继续执行，第二次失败使 `B.requiredLanguageSuccessRateMinimum:typescript` 不可达后冻结，剩余130槽未执行，未启动 WSL。
+   - `real-ts.api-migration` 与 `real-ts.cross-package-refactor` 的 tests/patch 均通过，regression/manual 均为0；终态与日志保留，不将补丁通过等同于任务完成。
+2. **`tmp/p2c-layered-development/formal-63e0a41-1/cost-ledger-final.json` 首次生成**：
+   - 新权威账本 SHA=`af0168f97181df3d94dcf92e9eb29408c20827bb3adc245d6a257f3590564230`；observed=`2.4815528500000004 USD`、reserved=`2.34221000 USD`，本候选 observed=`0.00599416 USD`。
+   - processed/pending/unreported=`14/0/0`、resourceCleanupComplete=true；下一次最坏=`39.3901028 RMB < 80`。
+3. **效果**：
+   - 新流程保留普通失败并继续尚有资格的候选，只在硬门槛已不可达时停止；plan、report 和终态均未覆盖或重跑。
+
+##### 验证结果
+
+- TypeScript/build 沿用同身份双平台通过和 Quality 七项通过；本环节未修改产品源码，未重复工程测试。
+- 正式14槽结果为12通过、2失败，未取得完整144槽或数值资格；plan 仍为原不可覆盖 `144/144/144`，不能用12项通过替代最终验收。
+- 新生成 env 经逐项校验后回收，串行资源检查八项均为0；费用账本摘要已重新核对。
+
+#### P2-C TypeScript 诊断实现结论：多文件复核材料的有界源码投影（2026-09-05）
+
+##### 已完成内容
+
+1. **`react-workspace-mutation-evidence-budget.ts` 新建、`react-workspace-mutation.ts` 接入**：
+   - 完整读取的 size/bytesRead/range/encoding/revision 仅在模型投影中去重，原始消息、路径绑定、读取完整性和后续权限校验仍使用原始证据；部分、锚点或矛盾读取不省略元数据。
+   - 整段上下文装不下时先保留相关标识符所在的完整源码行，再扩展相邻原文；多个相关位置先各留空间，相同源码行复用正文并保留全部位置，更新行号和截断标记，无法容纳必要读取时继续失败关闭。
+   - 新逻辑限定在写后 objective review/output repair 的投影，既有纠正尾部、总预算、模型、工具和单次纠正边界保持原值；大型原文件仅新增接线。
+2. **`react-workspace-mutation-evidence-budget.test.ts` 新建、`docs/project-map.md` 同步**：
+   - 9项回归覆盖三文件/多位置、review/repair、缺失证据、预算不足、LF/CRLF 原文与行号、重复位置、超长源码行和不完整读取元数据；模块归属与入口已登记。
+3. **`tmp/p2c-layered-development/replay-ts-api-review.mjs` 新建**：
+   - 从冻结 session、events 和保留 workspace 重建7次读取，逐项比对字节长度和原始事件前缀，修改前素材取对应 Git 基线；不启动 Gateway 或 Provider。
+   - 原始失败与单变量探针、最终投影保留在 `ts-api-review-63e0a41-before.json`、`ts-api-review-63e0a41-probes.json`、`ts-api-review-63e0a41-final.json`。正式 plan/report/费用终态均未改写。
+4. **效果**：
+   - 原来三文件已经修改且完整回读后，系统仍无法整理出复核请求；现在同一原始输入在2020个估算输入 token 内生成请求，并保留 API 两处相同出口及 protocol 的实际字段位置。
+   - 完成本地通用缺陷修复；真实模型是否能据此稳定完成任务仍待新身份探索，不将离线通过升级为正式任务通过。
+
+##### 验证结果
+
+- `node .\node_modules\typescript\bin\tsc -b packages/belldandy-agent --pretty false` exit=0，TypeScript 编译无错误。
+- `node .\node_modules\vitest\vitest.mjs run workspace-mutation --reporter dot`：25文件、`462/462` 通过，含9项新增；请求构建与多位置保留两组关键行为均先红后绿。未重复全仓测试或旧候选。
+- `node --import tsx tmp/p2c-layered-development/replay-ts-api-review.mjs fixed`：原上限2048内请求=`2020`、三文件证据无缺失，6处行号对应的原文字节独立比对通过，含 API 两处同文位置和 `trace?: TraceValue;`；Provider calls=`0`。
+- 当前变更 diff 格式检查通过；Windows 本地验证已闭合，新变更尚未做 WSL、完整 CI 或真实模型验证。产品修复与本次文档按用户要求纳入本环节本地提交，尚未推送，双平台 staging/inputs 保持 `63e0a41`。
+
+### 后续计划（本环节结束后暂停）
+
+1. **已按用户要求暂停**，恢复后先核对 `real-ts.cross-package-refactor` 的原始 review/唯一 repair 请求与实际保留内容。这是剩余已知失败，必须先区分信息遗漏和模型输出能力，再决定是否需要进一步通用修复；不因 `length/non_json` 直接增加预算或重试。
+2. 当前 API migration 本地回放及相邻回归已通过，恢复后补双平台验证和最小必要的 TypeScript 代表探索；JS 单文件投影受影响时由相邻回归与有依据的代表验证覆盖，不无条件重跑旧探索清单。新身份完整 CI、材料与资源 Gate 闭合后才创建新候选。
+3. 后继运行继承 `formal-63e0a41-1/cost-ledger-final.json` 的全部费用和预留；本环节没有新增付费模型调用，observed/reserved 仍为 `2.4815528500000004/2.34221 USD`，下一次最坏仍为 `39.3901028 RMB`。旧14槽及余下130槽永久冻结，普通失败仅在资格仍可达且证据/资源闭合时续跑。
+4. 完整候选后执行当前身份的真实 CodeIntel paired-run，并采集 CI/CLI/TUI/Git delivery receipt、aggregate 与七维资格，再执行第二个连续完整候选；对照调用也须接入权威账本。两个候选均须完整144槽、七维下限、raw weighted `>=9.500` 和全部硬 Gate。
+
+当前关键闭环仍是复杂真实任务的稳定完成、连续两个完整候选及交付证据；本地462项通过不代表9.5已达成。审批计量与费用授权持续有效，恢复时无需再次确认同一范围。
+
+### 暂停点的剩余工作量估算（2026-09-05）
+
+本暂停点粗估为 **3–6人日工程量，另加两个完整候选和 CI 的运行/观察窗口**；按一名开发者计约3–6个工作日，不是固定交付日期。第8章的2–4.25人日属于较早维护估算，当前以本进度区为准，已经完成的启动、审批计量、Go 前置和证据基座不重复计量。
+
+| 剩余工作包 | 为什么需要 / 完成边界 | 粗估 |
+| --- | --- | ---: |
+| 剩余真实任务失败与必要探索 | 先解决已知输出失败，再验证这次复核材料修复的真实效果，防止带已知问题进入整轮验收 | 0.5–1.5人日 |
+| 新身份双平台与工程检查 | 当前修复尚未进入两端构建、完整 CI 和候选材料；确保验收使用同一真实版本 | 0.5–1人日 |
+| 两轮完整正式验收 | 每轮144项，保留失败并按资格规则推进，核对七维下限、总分和连续性 | 1–2人日 |
+| 实际交付与能力改善证据 | 补 CodeIntel 对照、CLI/TUI/Git delivery、当前 CI 绑定及评分复算，使成绩与交付均可验证 | 1–1.5人日 |
+
+估算以没有新增重大缺陷为前提，不含未知产品返工、Provider 费用、CI 排队和外部等待；若真实运行再次暴露问题，先按新证据重估，不能保证增加一次测试就能达到目标。当前风险中高，主要来自模型输出稳定性和跨平台真实验收；本地证据投影修复的代码风险为中等，回滚只涉及新增相邻模块及接线，不需要修改冻结成绩、用户配置或既有授权。
 
 ### 重要问题说明
 
+- `63e0a41` 的 API migration 在三文件修改及完整回读后、调用 objective review 前返回“no bounded post-write objective review can be built”，snapshot 完整，无历史 `EPERM`。准确回放证明固定2048输入中，重复运行时元数据与整段源码窗口挤占空间，必需文件无法留下可用片段；只去掉元数据虽能生成请求，却会保留无关短行、遗漏实际字段，因此不能视为修复完成。处理为 `fix_now / 本地闭合`：源码行投影、多个位置预留与同文位置保留共同修复，原始回放及462项回归通过，真实模型效果待恢复后验证。最初仅完整行投影的中间版本虽通过小样例，原始回放仍失败，已保留该过程并继续修到原始场景通过，没有付费试错。
+- cross-package 实际调用了 review 和唯一 repair，两次均 `finishReason=length`、non_json、output tokens=1024，raw/display 差异仅空白；当前仍为 `record_only / 输出失败证据保留`，不能因本次 API migration 的本地修复而宣称此问题已解决。后续先核对请求上下文，再决定处理方案；不加预算、不增加重试、不覆盖原终态。
+- 本轮恢复时，配置模板生成首次误配旧六槽清单摘要、`--max-new-runs 0` 首次从主仓而非冻结 Windows harness 调用、uplift cohort preflight 首次缺 OCI 环境，均在模型启动前失败关闭；分别按现有两槽清单真实摘要、实际 owner 路径及完整隔离环境修正后通过，没有重跑正式槽。Linux staging 切换首次被本轮验证补丁阻止，确认全部为本轮十文件补丁后按已提交内容同步 index/worktree，正常 detach 后原生 identity clean；未覆盖用户改动。
 - Go OCI 映射路径运行原来同时报 truth timeout、workspace/toolchain not readonly；一次性只读诊断证实实际三个挂载均只读，gopls 因显式 `GOWORK=auto` 生成错误路径进度，同时 Go 编译子进程遭遇资源不足。处理为 `fix_now completed / 默认工作区发现 + 固定 CPU 配额内收敛并发 + 精确挂载映射`，标准真实入口和双平台 comparator 已通过；未知路径、可写/重复/非 bind 挂载继续拒绝。最初 Windows `spawn_failed` 的宿主原因仍不确定，后续诊断及标准运行均通过，处理为 `record_only`，不宣称已修复该瞬时失败。
 - candidate Go receipt 误要求 Windows 九项与 OCI 完整 owner 清单等长且相同，真实 producer 因此必然被拒；已由真实清单形状回归证明并修复为共享九项逐路径比对，完整 OCI inventory 仍验真。处理为 `fix_now completed`；另外补齐两端同缺路径时不能以 `undefined===undefined` 视为匹配的反例。
 - CodeIntel 交付前置在 `1fecbdcf` 零模型复现 `task manifest identity drift`：readiness 和实际运行入口仍只接受旧清单，旧测试还把当前清单拒绝作为预期。四个 paired-run 任务及仓库真值未变化，处理为 `fix_now / 精确摘要兼容`，原 Gate 与未知漂移拒绝保留；Windows 真准备及 `39/39` 联合回归已通过，Linux/新 CI 待验证。同时发现 uplift 使用旧默认单次费用入口，补显式 `0.10 USD` 限制并保留超限终态；不通过提高上限绕过问题。

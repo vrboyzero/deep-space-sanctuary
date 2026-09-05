@@ -584,22 +584,326 @@ Git worktree 当前共 `117` 个，其中 `tmp` 下 `67` 个、`.tmp` 下 `41` �
 
 技术债处理决策：`split_task`。约 `127.42 GiB` 的历史 P0/P0A/P1/coding-agent 材料不纳入本轮优先候选，原因是 evidence 替代、dirty worktree、共享输入和 hardlink 实际块尚未逐 identity 闭合；未来应按阶段拆成独立只读 manifest 与清理授权批次。
 
+### 8.6 优先候选清理前 dry-run（2026-09-04）
+
+本轮已在提交 `11831974a7d5e657b9f3815ee4a2f461cf5df426` 推送并确认 `private/main` 同步后完成清理前 dry-run。逐路径 allowlist 已冻结到本机 ignored 文件 `artifacts/cleanup/cross-drive-priority-cleanup-20260904.json`，JSON 解析通过，SHA-256 为 `D0999C58A47A583831CEFBDA5E6D42C098ECBD92BA9AC61ADEC394FBEA114DE4`；执行时必须先重算并匹配该指纹。以下只是允许清理的精确边界，尚未执行删除、移动、进程停止、worktree prune、`fstrim` 或 VHDX 压缩。
+
+| 批次 | 精确范围 | 账面上限 | 当前 Gate | 回滚方式 |
+| --- | --- | ---: | --- | --- |
+| C1 | `Temp\cny1jl2q`、`Temp\m5uprlba` | 约 `3.62 GiB` | 路径均存在、是普通目录、不是 reparse point；无 Visual Studio Installer/`msiexec` 进程 | 只送入 C 盘回收站，由用户检查/还原 |
+| C2 | `Temp\DiagOutputDir\RdClientAutoTrace` | 复核时为 `7,451,189,248 bytes`（约 `6.940 GiB`） | 已增至 `556` 个文件；10 秒内总字节稳定，但最新写入时间持续变化，一个 `msrdc.exe` 仍在运行，原计数 Gate 已漂移，当前 blocked | 必须获得停止精确 `msrdc.exe` 的单独确认，停止后重新冻结文件数/字节并确认不再变化，才可只送入 C 盘回收站；失败即保留原目录 |
+| D1 | `/var/tmp` 下 51 个 `star-sanctuary-p2c-*` 历史顶层目录 | 合并目录视角约 `11.773 GiB` | 59 个匹配目录已精确分成 8 个 KEEP 与 51 个 CANDIDATE；Ubuntu 检查前为 Stopped，当前候选均为普通顶层目录 | WSL 内没有能同时释放 VHDX 空间的宿主回收站；推荐移动到 `E:\SS-cleanup-quarantine\20260904-wsl-p2c`，验证 51/51 后再 `fstrim`/停机压缩，需回滚时移回原路径 |
+| E1 | `E:\WSL-backups` | `45.457 GiB` | 仅含 `cleanup-r1-candidates.tar=8.75 GiB` 与 `ext4.vhdx=36.71 GiB`；用户已明确要求清理 | 只送入 E 盘回收站，由用户检查/还原；在用户清空回收站前不会真正返还 E 盘空间 |
+| E2 | 13 个旧 P2C identity 的 `tmp\p2c-<id>`、`tmp\p2c-candidate-<id>-inputs`、`.tmp\p2c-candidate-<id>-harness`，共 39 个路径 | `19,808,767,794 bytes`（约 `18.448 GiB`） | 39/39 根路径存在且 0 root reparse，13/13 有正式 artifact，13 个 harness 全部 clean detached，6 个仍登记为 worktree；内部 `17,618` 个依赖/fixture 链接已单独闭合 | 非 worktree 目标送入 E 盘回收站；6 个登记项必须先记录 HEAD，再走 Git 支持的移动/元数据流程，恢复时用回收站内容和记录的 HEAD |
+| E3 | `artifacts\winget`、`artifacts\_cache`、`artifacts\single-exe`、`artifacts\portable`、`artifacts\start-sh-envdir-wsl-smoke` | `7,276,188,789 bytes`（`6.776 GiB`） | 5/5 为普通目录、0 reparse；同名前缀下约 `1.655 MiB` 的日志/report/state 明确排除并保留 | 只送入 E 盘回收站；可由现有构建/验证入口重新生成 |
+| E4 | `E:\project\star-sanctuary\.tmp-codex` | `1.989 GiB` | 两个 Git repo 均 clean，未发现非 shell 进程引用 | 只送入 E 盘回收站，由用户检查/还原 |
+
+E2 的 13 个旧 identity 精确为：`2b1d91a`、`378a70e`、`3bb1901`、`3f66b71`、`526ee78`、`576a7dc`、`75502b6`、`9787b4c`、`bf1a481`、`c02eef7`、`df54f67`、`e05ddc4`、`f01f173`。其中登记为 worktree 的 6 个 harness 精确为 `378a70e`、`75502b6`、`bf1a481`、`c02eef7`、`df54f67`、`e05ddc4`。
+
+D1 的 KEEP 集合精确为：`0e35c8b` staging/inputs/repaired cache、`4d3b4b2` staging/inputs/repaired cache/toolchain，以及 `star-sanctuary-p2c-local-evidence-20260902`，共 8 个顶层目录。除此之外的 51 个候选只允许使用本次 dry-run 冻结的逐路径 allowlist，不允许在执行时重新用 `star-sanctuary-p2c-*` glob 生成删除输入。
+
+全局排除项：任何含 `0e35c8b` 或 `4d3b4b2` 的当前/冻结路径、`artifacts\p2c-*` 正式 evidence、`tmp\coding-agent-v3-sources`/`coding-agent-v3-caches`、pinned Node/Go/gopls、`E:\ss-toolchains`、仓库根 `node_modules`、共享 npm/pnpm store、约 `127.42 GiB` 深度核验池、`tmp-codeintel-summary.json` 及项目外路径。任何目标在执行前出现数量、类型、identity、进程或 Git 状态漂移，都必须整批停止。
+
+风险与容量说明：Windows 回收站操作是可恢复的，但在用户人工检查并清空回收站前不会真正增加对应盘符可用空间；D1 采用跨盘隔离会减少 D 盘/VHDX 占用，但会临时增加 E 盘约不超过 `11.773 GiB`。Git worktree、hardlink 与动态 VHDX 使账面值不能直接等同最终释放值，清理后必须以三盘实际可用空间复测为准。
+
+#### C1 实现结论：Visual Studio 临时树回收站清理（2026-09-04）
+
+##### 已完成内容
+
+1. **`C:\Users\admin\AppData\Local\Temp\cny1jl2q` 与 `m5uprlba` 清理**：
+   - 执行前重新匹配 manifest SHA-256、2/2 精确路径、普通目录类型、0 reparse point 和 0 个 Visual Studio Installer/`msiexec` 进程。
+   - 共 `957` 个文件、`3,883,660,967 bytes`，只送入 C 盘当前用户回收站，没有永久删除或触碰整个 `Temp`。
+   - 两个原路径均已不存在；C 盘回收站从 `153,855,066` 增至 `4,037,516,261 bytes`，增量 `3,883,661,195 bytes` 与目标一致。
+
+2. **恢复入口**：
+   - 在用户清空 C 盘回收站前，可按原目录名恢复到 `C:\Users\admin\AppData\Local\Temp`。
+   - `RdClientAutoTrace` 与两个 QoderSetup 进程所在目录不属于 C1，均未处理。
+
+3. **效果**：
+   - C1 的两个安装临时树已从原位置移出，并保持回收站可恢复性。
+   - C 盘回收站未清空，因此本批不宣称已经形成等量持久可用空间；执行后 C 盘可用为 `163,263,967,232 bytes`（约 `152.05 GiB`）。
+
+##### 验证结果
+
+- TypeScript 编译不适用：本批未修改源码或接口。
+- 测试数量为 `0`：未运行会重新生成大体量文件的项目测试。
+- manifest 指纹一致，2/2 原路径缺失、回收站字节增量一致；C1 完成，C2 继续保持 blocked。
+
+#### E2 实现结论：旧 P2C Windows 工作副本部分清理与恢复审计（2026-09-04）
+
+##### 已完成内容
+
+1. **E2 精确清理结果**：
+   - 39 个 manifest 目标中，32 个普通原路径已移出，逻辑大小合计 `10,714,565,227 bytes`（约 `9.979 GiB`）。
+   - `tmp\p2c-df54f67` 因 Shell 回收失败完整保留；6 个登记 worktree 在异常后已通过 Git 恢复原路径，均保持 clean 和原 HEAD，因此当前共有 7 个目标保留。
+   - 当前/冻结 identity、`tmp-codeintel-summary.json` 和 13/13 正式 artifact 均完整。
+
+2. **回收站恢复审计**：
+   - 23/32 个已移出路径具备匹配原父目录、原目录名、`$I` 元数据和 `$R` 数据的完整恢复条目，逻辑内容为 `4,595,137,075 bytes`。
+   - 9/32 个较大 `tmp\p2c-*` 工作目录没有恢复条目，合计 `6,119,428,152 bytes`（约 `5.699 GiB`），应认定为已被 Windows Shell 直接清除，不能从回收站恢复。
+   - E 盘回收站从执行前 `7,863,192,556` 增至 `12,458,332,915 bytes`，增量 `4,595,140,359 bytes`，与 23 个可恢复目标逻辑大小加回收元数据一致。
+
+3. **效果**：
+   - E2 已回收或清除 32 个历史普通目录，同时保留 6 个 Git worktree、失败目标 `df54f67` 和全部正式结果。
+   - 因 Windows Shell 未兑现全部“送入回收站”合同，E2 只能认定为部分完成；E3、E4、E1 不再复用该接口。
+
+##### 验证结果
+
+- TypeScript 编译不适用：本批未修改源码或接口。
+- 测试数量为 `0`：未运行会重新生成大体量工作副本的项目测试。
+- E2 状态为 `32 absent + 7 present = 39`；回收站为 `23 recoverable + 9 non-recoverable = 32`；13/13 artifact、6/6 worktree 与全部 KEEP 路径验证通过。
+
+#### D1 预检结论：51 个 WSL 历史目录执行基线（2026-09-04）
+
+##### 已完成内容
+
+1. **D1 manifest 与运行状态复核**：
+   - manifest SHA-256 一致，`59` 个现存 P2C 顶层目录精确分为 `51` 个候选和 `8` 个 KEEP，missing=`0`、unexpected=`0`。
+   - 51/51 根路径均为普通 directory，候选相关进程为 `0`；其中 14 个 Git 仓库全部 clean 并记录 HEAD。
+   - `E:\SS-cleanup-quarantine\20260904-wsl-p2c` 尚不存在，E 盘可用 `576,528,322,560 bytes`（约 `536.934 GiB`）。
+
+2. **容量口径冻结**：
+   - 单次 `du --apparent-size` 按 inode 去重为 `11,176,893,878 bytes`（约 `10.409 GiB`）。
+   - `du --count-links` 按目录名重复计数为 `15,437,204,055 bytes`（约 `14.377 GiB`），差值 `4,260,310,177 bytes`（约 `3.968 GiB`）属于 hardlink 重复视图。
+   - 旧 `11.773 GiB` 仅保留为早期近似值，不再作为执行后释放量合同。
+
+3. **正式 dry-run 内容合同**：
+   - `841,524` 个普通文件、`118,496` 个目录（含 51 个根）、`19,172` 个 symlink、`0` 个其他特殊文件。
+   - non-uid-1000=`0`、non-gid-1000=`0`，14 个 Git 仓库全部 clean，候选相关进程为 `0`。
+   - 确定性 tar-stream tree SHA-256 为 `e11511b8627a1316ff07e88307f46d51b99bd03ecd6a8b88348e1c0eaf1c5ca5`；正式移动后的隔离树必须复算为同一值。
+
+4. **效果**：
+   - D1 的允许集合、保留集合、Git 状态、进程与新容量基线已经闭合。
+   - 正式候选尚未移动；下一 Gate 是小型跨盘移动能否保留 Linux 权限、symlink 和 hardlink。
+
+##### 验证结果
+
+- TypeScript 编译不适用：本阶段只有只读文件系统检查。
+- 测试数量为 `0`：未运行项目测试。
+- dry-run 通过，Ubuntu 核对后恢复 Stopped；隔离目录未创建，51 个候选仍在原路径，已具备显式执行条件。
+
+#### D1 正式移动实现结论：跨盘复制完成但源端只读缓存残留（2026-09-05）
+
+##### 已完成内容
+
+1. **`execute-d1-quarantine-20260904.ps1` 正式执行**：
+   - manifest SHA-256、`51 candidate + 8 KEEP`、容量、类型、所有者、14 个 Git 仓库和零相关进程 Gate 均在移动前通过。
+   - 本次执行前 tree SHA-256 为 `db761be667240b78465d2ac90819fc39fb81656e068914ea7c064cc34aa0afef`；它与前一次 dry-run 的值不同，继续按已知的跨运行不稳定合同处理，不把两次运行间的 hash 差异单独当作内容损坏。
+   - 51 个冻结源在同一条 `mv` 中复制到 metadata 挂载的 `E:\SS-cleanup-quarantine\20260904-wsl-p2c`。
+
+2. **失败现场浅层核对**：
+   - `mv` 返回 exit code=`1`，错误集中为删除 Go module cache 只读文件时的 `Permission denied`。
+   - E 盘隔离区存在 `51/51` 个候选顶层目录；D 盘 WSL 源端有 `35/51` 个候选顶层目录已消失，另有 `16/51` 个候选顶层目录残留。
+   - `8/8` 个 KEEP 仍在源端，unexpected source=`0`；未直接重试、未回滚、未执行 `fstrim` 或 VHDX 压缩。
+
+3. **效果**：
+   - 51 个候选均已在 E 盘建立隔离副本，但 D1 尚不能认定完成，因为 16 个源目录仍可能包含复制成功后无法删除的只读重复文件。
+   - 当前现场保持可分析状态；后续只处理经源/目标逐项比对证明相同的残留，不覆盖隔离副本。
+
+##### 验证结果
+
+- TypeScript 编译不适用：本阶段只执行文件系统隔离操作。
+- 测试数量为 `0`：未运行会重新生成大体量目录的项目测试。
+- 浅层集合合同为 destination=`51/51`、source absent=`35/51`、source residual=`16/51`、KEEP=`8/8`、unexpected=`0`；深层内容、类型、Git 和 hardlink 合同尚待恢复核验。
+
+#### D1 已移动部分释放预检实现结论：35 个目录 trim Gate（2026-09-05）
+
+##### 已完成内容
+
+1. **`execute-d1-trim-20260905.ps1` 新建并完成 dry-run**：
+   - 重新校验冻结 manifest SHA-256、E 盘 51 个隔离根、source=`35 absent + 16 residual`、`8/8` KEEP、unexpected=`0`。
+   - 候选相关进程为 `0`；脚本经 PowerShell AST 检查为 syntax error=`0`，且不含删除、移动或 VHDX 压缩命令。
+   - `fstrim --dry-run --verbose /` exit=`0`；输出 `0 B (dry run) trimmed` 只表示本次没有执行 discard，不作为可释放量结论。
+
+2. **执行前容量基线冻结**：
+   - Ubuntu ext4 已用=`43,497,553,920 bytes`、可用=`982,611,267,584 bytes`。
+   - 相比 2026-09-04 已用空间基线 `54,533,861,376 bytes`，逻辑已用量减少 `11,036,307,456 bytes`（约 `10.28 GiB`）。
+   - VHDX 仍为 `56,919,851,008 bytes`，D 盘可用=`23,592,742,912 bytes`，E 盘可用=`564,522,065,920 bytes`。
+
+3. **效果**：
+   - 35 个已完成移动目录释放出的 Linux 逻辑空间已经体现在 ext4 容量中。
+   - Windows 侧 VHDX 尚未缩小；下一步正式 `fstrim` 只标记当前全部空闲块，不会删除或修改仍存在的 16 个 residual 和 8 个 KEEP。
+
+##### 验证结果
+
+- TypeScript 编译不适用：本阶段只有存储释放预检。
+- 测试数量为 `0`：未运行项目测试。
+- dry-run 全部 Gate 通过，正式 trim 尚未执行。
+
+#### D1 已移动部分释放实现结论：正式 fstrim（2026-09-05）
+
+##### 已完成内容
+
+1. **`execute-d1-trim-20260905.ps1 -Execute` 正式执行**：
+   - 执行前再次通过 manifest、destination=`51/51`、source=`35 absent + 16 residual`、KEEP=`8/8`、unexpected=`0` 和相关进程=`0` Gate。
+   - `fstrim --verbose /` exit=`0`，报告 `1,036,735,635,456 bytes`（`965.5 GiB`）trimmed。
+   - 执行后 source 集合仍为 `35 absent + 16 residual + 8 KEEP`，没有新增、恢复或误动目录。
+
+2. **容量复测**：
+   - ext4 已用量 `43,480,702,976 -> 43,489,832,960 bytes`，运行期增加 `9,129,984 bytes`；这是 WSL/文件系统启动产生的小幅波动，不代表候选目录恢复。
+   - VHDX 保持 `56,919,851,008 bytes`，D 盘可用保持 `23,592,742,912 bytes`，E 盘可用保持 `564,522,065,920 bytes`。
+   - 执行器 finally 已请求终止 Ubuntu-22.04；下一阶段仍需独立确认全部相关 WSL 状态和 VHDX 独占条件。
+
+3. **效果**：
+   - Ubuntu 当前全部空闲 extent 已通知宿主，可进入停机 VHDX 压缩 Gate。
+   - 正式 trim 没有触碰 16 个延期 residual、8 个 KEEP 或 E 盘隔离副本。
+   - `965.5 GiB` 是整个文件系统可 trim 范围，不能当作 35 个目录或最终 D 盘释放量。
+
+##### 验证结果
+
+- TypeScript 编译不适用：本阶段只有文件系统 trim。
+- 测试数量为 `0`：未运行项目测试。
+- `fstrim` 成功，35/16/8 集合回归通过；Windows 宿主空间尚未回升，待 VHDX 压缩。
+
+#### D1 已移动部分释放预检结论：停机 VHDX 压缩 Gate（2026-09-05）
+
+##### 已完成内容
+
+1. **WSL 与压缩能力只读复核**：
+   - `Ubuntu-22.04` 已为 `Stopped`，但 `docker-desktop` 仍为 `Running`，宿主仍有 `wsl.exe`/`wslhost.exe` 进程，因此尚未宣称 VHDX 已取得独占条件。
+   - 系统已确认提供 `Optimize-VHD`，来源为 `Hyper-V 2.0.0.0`。
+   - 精确目标仍为 `D:\WSL\Ubuntu-22.04\ext4.vhdx`，未扩大到 D 盘、WSL 根目录或其他发行版。
+
+2. **压缩前宿主基线复核**：
+   - VHDX 当前长度仍为 `56,919,851,008 bytes`，与正式 `fstrim` 后记录一致。
+   - D 盘当前可用空间仍为 `23,592,742,912 bytes`，基线未漂移。
+   - 下一动作只允许先执行一次 `wsl.exe --shutdown`，确认全部发行版停止和相关进程退出后，再对上述精确文件执行一次 `Optimize-VHD -Mode Full`。
+
+3. **首次全局停机尝试**：
+   - `wsl.exe --shutdown` exit=`0`，但 3 秒后 `docker-desktop` 已恢复为 `Running`，并存在 `8` 个 `wsl.exe`/`wslhost.exe` 进程；`Ubuntu-22.04` 仍为 `Stopped`。
+   - VHDX 仍为 `56,919,851,008 bytes`，D 盘可用仍为 `23,592,742,912 bytes`；本次没有执行 `Optimize-VHD`。
+   - 当前停机 Gate 未通过。下一次只允许先使用 Docker Desktop 支持的停止入口，随后再执行 `wsl.exe --shutdown` 和独立复核；若仍自动恢复，则停止而不压缩。
+
+4. **Docker Desktop 正常停止入口确认**：
+   - 当前安装的 Docker CLI 明确提供 `docker desktop stop`，帮助文本说明该命令用于停止 Docker Desktop。
+   - 当前可见的 Docker Desktop 前台/后端进程来自 `C:\Program Files\Docker\Docker`；`com.docker.service` 为 `Stopped / Manual`，不需要强制停止系统服务或未知进程。
+   - 下一动作采用上述受支持命令；完成后再独立执行全局 WSL shutdown 和状态复核。
+
+5. **第二次全局停机与独占 Gate**：
+   - `docker desktop stop` exit=`0` 并报告正在停止；随后 `wsl.exe --shutdown` exit=`0`。
+   - 等待后 `Ubuntu-22.04` 与 `docker-desktop` 均为 `Stopped`，`wsl.exe`/`wslhost.exe`/`vmmemWSL` 进程计数为 `0`。
+   - `D:\WSL\Ubuntu-22.04\ext4.vhdx` 可由只读、`FileShare.None` 方式独占打开并正常关闭；VHDX 仍为 `56,919,851,008 bytes`，D 盘可用仍为 `23,592,742,912 bytes`。
+   - `docker desktop status` 在 Desktop 未运行时 exit=`1`，同时明确输出“Is Docker Desktop running?”及可用的启动命令；结合发行版、进程和独占打开三项证据，判定为“已停止”而非停机失败。
+
+6. **效果**：
+   - 压缩工具、目标路径、容量基线和 VHDX 独占条件已经闭合，已具备执行一次正式压缩的条件。
+   - 本检查没有触碰 16 个延期 residual、8 个 KEEP、E 盘 51 个隔离副本或其他清理批次。
+
+##### 验证结果
+
+- TypeScript 编译不适用：本阶段只有宿主存储只读检查。
+- 测试数量为 `0`：未运行项目测试。
+- `Optimize-VHD` 可用且目标/基线无漂移；停止 Docker Desktop 后，全发行版停止、零 WSL 宿主进程和 VHDX 独占打开三项 Gate 均通过，正式压缩尚未执行。
+
+#### D1 已移动部分释放实现结论：VHDX 正式压缩（2026-09-05）
+
+##### 已完成内容
+
+1. **`D:\WSL\Ubuntu-22.04\ext4.vhdx` 单文件压缩**：
+   - 在全部 WSL 发行版停止、相关宿主进程为 `0` 且精确文件独占打开 Gate 通过后，仅执行一次 `Optimize-VHD -Mode Full`。
+   - 命令成功完成，未重试、未处理其他 VHDX，也未触碰 16 个延期 residual、8 个 KEEP 或 E 盘隔离副本。
+
+2. **宿主容量复测**：
+   - VHDX 从 `56,919,851,008` 降至 `47,211,085,824 bytes`，实际减少 `9,708,765,184 bytes`（约 `9.04 GiB`）。
+   - D 盘可用空间从 `23,592,742,912` 增至 `33,301,508,096 bytes`，实际增加同样的 `9,708,765,184 bytes`。
+   - 两个独立口径的变化逐字节一致，证明本次压缩已把宿主文件空间实际归还给 D 盘。
+
+3. **效果**：
+   - 35 个已完成移动目录所形成的 Linux 空闲空间，经过 `fstrim` 和停机压缩后，已在 Windows D 盘形成约 `9.04 GiB` 的可用空间增量。
+   - 当前仍需启动 Ubuntu 做最小只读 smoke，确认文件系统可挂载且 35/16/8 目录集合保持不变；smoke 通过前不把 D1 已移动部分标记为最终闭环。
+
+##### 验证结果
+
+- TypeScript 编译不适用：本阶段只执行宿主 VHDX 压缩。
+- 测试数量为 `0`：项目测试尚未运行，下一步只做存储与目录集合 smoke。
+- `Optimize-VHD -Mode Full` 成功；VHDX 减少量与 D 盘可用空间增加量均为 `9,708,765,184 bytes`，容量账目一致。
+
+#### D1 已移动部分释放实现结论：压缩后启动 smoke 与最终闭环（2026-09-05）
+
+##### 已完成内容
+
+1. **Ubuntu 压缩后启动验证**：
+   - 使用冻结 manifest（SHA-256=`D0999C58A47A583831CEFBDA5E6D42C098ECBD92BA9AC61ADEC394FBEA114DE4`）启动 `Ubuntu-22.04` 并读取根文件系统，检查脚本 exit=`0`。
+   - 根文件系统 `df` 可正常读取：used=`43,483,054,080 bytes`、available=`982,625,767,424 bytes`。
+   - E 盘隔离目录为 `51/51`；WSL 源端为 `35 absent + 16 residual + 8 KEEP`，unexpected=`0`、候选路径相关进程=`0`。
+
+2. **最终停机与首次容量复测**：
+   - smoke 的 finally 已终止 Ubuntu；等待后 `Ubuntu-22.04` 与 `docker-desktop` 均为 `Stopped`，WSL 宿主进程计数为 `0`。
+   - smoke 启动使动态 VHDX 从压缩后的 `47,211,085,824` 增至 `47,244,640,256 bytes`，正常重新分配 `33,554,432 bytes`（`32 MiB`）；D 盘可用空间同步减少相同字节数。
+   - 该时点相比正式压缩前基线，VHDX 净减少、D 盘可用空间净增加 `9,675,210,752 bytes`（约 `9.01 GiB`）。
+
+3. **停机后延迟变化**：
+   - 再等待约 10 秒后，VHDX 在无 WSL 宿主进程时继续从 `47,244,640,256` 降至 `47,226,814,464 bytes`，D 盘可用从 `33,267,953,664` 增至 `33,285,779,456 bytes`。
+   - 两侧同步变化 `17,825,792 bytes`（`17 MiB`），说明停机后的稀疏块回收仍有短暂异步收尾；不重复运行压缩，改为只读连续采样后再冻结最终容量。
+
+4. **容量稳定性确认**：
+   - 在 `35` 秒内每隔 `5` 秒读取一次，共 `8` 次；VHDX 均为 `47,226,814,464 bytes`，D 盘可用均为 `33,285,779,456 bytes`，WSL 宿主进程计数始终为 `0`。
+   - 采样结束后 `Ubuntu-22.04` 与 `docker-desktop` 仍均为 `Stopped`。
+   - 相比压缩前基线，最终稳定 VHDX 净减少、D 盘可用空间净增加 `9,693,036,544 bytes`（约 `9.03 GiB`）。
+
+5. **效果**：
+   - 35 个已完成移动目录的“逻辑释放 -> trim -> 停机压缩 -> 可重新启动 -> 再次停机 -> 容量稳定”链路已闭环。
+   - 16 个 residual 继续按用户决定保留到后续独立批次，8 个 KEEP 与 E 盘 51 个隔离副本未动。
+   - Docker Desktop 保持停止；需要使用 Docker 时可通过 `docker desktop start` 正常恢复，不在本轮自动启动。
+
+##### 验证结果
+
+- TypeScript 编译不适用：本阶段只验证 WSL 存储与目录合同。
+- 测试数量为 `0`：未运行会重新生成大体量材料的项目测试；执行了 1 次压缩后存储 smoke，exit=`0`。
+- Ubuntu 可挂载、根文件系统 `df` 正常、51/35/16/8 目录合同通过；最终两发行版均停止、WSL 宿主进程为 `0`，且 8 次连续容量采样无变化。
+
 ## 重要问题说明
 
-1. **C 盘远程桌面 trace 曾持续增长，主体当前已停但仍有活动句柄风险**：盘点期间从 `6.760 GiB / 549 files` 增至 `6.907 GiB / 553 files`；Ubuntu 停止后 `logman` 已无匹配 trace session，连续约 80 秒总字节不变，主体 Wpp ETL 最后写入停在 `18:52:41`。但一个 `msrdc.exe` 仍运行，并每隔数秒触碰 3 个总计 `8 KiB` 的 `MSRDCEventProcessor_*.etl`。处理方案是先关闭对应远程桌面/WSLg 占用，再把旧 ETL 列入人工清理；当前仍禁止边用边删。
+1. **C 盘远程桌面 trace 曾持续增长，主体当前已停但仍有活动句柄风险**：盘点期间从 `6.760 GiB / 549 files` 增至 `6.907 GiB / 553 files`；执行前复核又增至 `7,451,189,248 bytes / 556 files`（约 `6.940 GiB`）。最近 10 秒总字节稳定，但最新写入时间每隔约 10 秒变化，一个 `msrdc.exe` 仍在运行；因此原计数 Gate 已漂移，C2 整批继续 blocked。处理方案是只有在用户单独确认可停止该进程后，才停止精确 PID、重新冻结文件数/字节并观察不再变化，再把整个旧 trace 目录送入 C 盘回收站；任一检查失败即保留原目录，禁止边用边处理。
 2. **D 盘增长主要是真实 WSL 文件，不是单纯 VHDX 空洞**：VHDX 与 Ubuntu 实际已用量相对 2026-08-16 都增长约 `24 GiB`。处理方案是先处理已核验的历史 staging，再执行 Linux 内 `fstrim` 和 WSL 完全停机后的 VHDX 压缩；只删除 Linux 文件不会立即等量返还 D 盘。
-3. **目录逻辑大小存在 hardlink 重复计算**：P2C staging/harness 之间可能共享文件块，多个目录数字相加只能表示审计上限。处理方案是清理前按 inode/link 或 Windows hardlink 关系复算，清理后分别用文件系统已用量和 VHDX 大小验证实际收益。
+3. **目录逻辑大小存在 hardlink 重复计算**：P2C staging/harness 之间可能共享文件块，多个目录数字相加只能表示审计上限。D1 的 51 个目录在同一次 `du` 中按 inode 去重为 `11,176,893,878 bytes`，启用 `--count-links` 后为 `15,437,204,055 bytes`，重复视图达 `4,260,310,177 bytes`；这也说明此前约 `11.773 GiB` 的分目录近似值不能当作实际释放承诺。处理方案是以去重值作为移动内容基线，清理后分别用 ext4 已用量、VHDX 大小和三盘可用空间验证真实收益。
 4. **Git worktree 不能当普通文件夹处理**：当前登记 `117` 个 worktree，分组为 P0 Web `42`、P0 Native `25`、P0 Required `25`、P0A `10`、P2C `6`、其他 `9`；旧 P2C 候选中仍有 6 份登记项。处理方案是先核对 clean/dirty、HEAD、artifact 替代和当前引用，再使用 Git 支持的 remove/prune 流程；禁止直接递归删除。
 5. **只读扫描本身会放大诊断 trace**：WSL `du` 扫描遇到 `tmp` 下数百个大型顶层目录，预计耗时数小时，并持续触发 C 盘 trace。已停止本任务创建的 WSL 扫描 PID `344`；可选的 Windows `du.exe` 探针确认工具不存在后，不再重试，改用一次遍历的 Windows 原生统计。未停止或修改用户其他进程。
-6. **诊断命令出现四类可重复规避的问题**：PowerShell 的 `foreach { ... } | Format-Table` 产生空管道语法错误，且在 `.tmp-codex` Git 状态探针中复发；固定方案是先赋值 `$rows = foreach (...) { ... }` 再输出。多字段 `Sort-Object PSIsContainer -Descending, Name` 也因参数结构非法而失败，已改为显式 property expression。Robocopy 摘要最初未对行首 `Trim()`，误把 `:` 当数字，已修正解析；WSL 内嵌 shell 的 `\n` 与 `$d` 跨 PowerShell/WSL 边界失真，已改为直接传 argv 并逐路径调用。以上均为只读探针失败，没有删除或改写磁盘内容。
+6. **诊断命令出现四类可重复规避的问题**：PowerShell 的 `foreach { ... } | Format-Table` 产生空管道语法错误，且在 `.tmp-codex` Git 状态探针和执行前回收站探针中复发；回收站探针因第二段 `foreach` 仍直接接管道而连续失败两次。固定方案是每一段枚举都先赋值为数组，例如 `$rows = @(foreach (...) { ... })`，完成后才单独输出；修正后得到 C/E 回收站稳定基线。多字段 `Sort-Object PSIsContainer -Descending, Name` 也因参数结构非法而失败，已改为显式 property expression。Robocopy 摘要最初未对行首 `Trim()`，误把 `:` 当数字，已修正解析；WSL 内嵌 shell 的 `\n` 与 `$d` 跨 PowerShell/WSL 边界失真，已改为直接传 argv 并逐路径调用。以上均为只读探针失败，没有删除或改写磁盘内容。
 7. **E 盘约两百 GiB 的来源已经解释，但可释放量尚未闭环**：`tmp/.tmp/artifacts` 同口径总量为 `154.29 GiB`，另有 WSL 回滚资产等已确认路径，合计约 `205.2 GiB`。增长主要发生在 `tmp` 的 P0 多轮副本与 `.tmp` 的 P2C harness，不在正式 `artifacts`；处理方案是按 current/frozen identity、正式 evidence、历史 clean worktree、可再生成 fixture/build output 分层，完成引用与 hardlink 去重后才计算释放区间。
 8. **C 盘 Temp 仍有其他安装器活动，不能整棵处理**：最终进程核对没有发现 Visual Studio Installer 或 `msiexec`，但发现两个 QoderSetup 进程分别位于 `Temp\vscode-stable-user-x64` 与 `Temp\is-B37VC.tmp`，与两个 Visual Studio 临时树不是同一路径。处理方案是只把 `cny1jl2q`、`m5uprlba` 作为精确候选，并在人工处理当时再次检查句柄；禁止把整个 `Temp` 目录作为目标。
+9. **WSL 候选首次导出命令的分隔符被错误解释**：`find -printf '%f|%y\n'` 中的 `|` 跨 PowerShell/WSL 边界后被 `/bin/bash` 当成管道，命令报 `%yn: command not found`，得到的 `0` 项结果无效。该探针只读且 Ubuntu 随后恢复 Stopped；处理方案是移除 `-printf` 与特殊分隔符，改用直接 argv 的 `find ... -type d -print`。重跑后得到稳定 `59=8 KEEP+51 CANDIDATE`，不再复用失败结果。
+10. **启动 Ubuntu 只读核对时出现 systemd user session 警告**：WSL 输出 `Failed to start the systemd user session for 'vrboyzero'`，但直接 `find` 命令 exit code=`0`、59 个目录完整返回，且检查后发行版已再次终止。处理方案是清理批次只依赖直接文件系统命令和各自 exit code，不依赖 user systemd service；若正式移动命令出现非零退出、数量不足或发行版状态异常，立即停止并保留现场。
+11. **两个执行前探针因只检查第一层而出现欠计数**：首次检查 `E:\WSL-backups` 时只统计根目录直属文件，因两个大文件位于 `Ubuntu-22.04\20260816-r1` 而误报 `0`；首次检查 `.tmp-codex` 时也只识别到顶层 `wsl-wave0`，漏掉嵌套的 `external-reviews\codebase-memory-mcp-7d6cdb2`。两次均为只读探针，没有移动或删除。处理方案是执行 Gate 改用递归枚举：E1 已复核为 `2` 个文件、`48,808,878,080 bytes`，与 manifest 完全一致；E4 已复核为 `2` 个 Git 仓库且均为 clean，后续 receipt 必须记录递归结果。
+12. **E 盘回收站配额不足以一次容纳全部 E 批次，E1 当前也不能安全进入**：E 盘卷配置 `MaxCapacity=53,247 MiB`（约 `52 GiB`），执行前已占 `7,863,192,556 bytes`（约 `7.32 GiB`）；E1 单项为 `48,808,878,080 bytes`（`45.457 GiB`），两者合计已经超过配额，而 E1-E4 合计约 `72.672 GiB`。若强行继续，Windows 可能拒绝操作或淘汰较早的回收站内容，破坏“可恢复”前提。处理方案是禁止修改配额、禁止自动清空回收站，先执行仍能落入剩余额度的 E2-E4；E1 保持原位，待用户检查并人工清空 E 盘回收站后重新核对配额与路径，再作为独立批次执行。
+13. **E2 根目录 reparse Gate 被错误扩大到内部依赖链接，随后两种空 target 统计口径又产生欠计数**：E2 首次递归统计得到 `17,618` 个内部 reparse 后按“必须为 0”中止，原因是此前 `0 reparse` 合同只描述 39 个顶层目标，不代表 pnpm/fixture 内不能存在链接；该次中止发生在任何移动之前。分层复核确认其中 `16,877` 个为各候选内部 Junction，另外 `741` 个为 Windows 无法直接解析 target 的 WSL Linux symlink，细分为 `651` 个文件链接和 `90` 个目录链接。旧探针只把空 target 的目录计为 opaque，却把 651 个文件的空 target 字符串误解析为其父目录，因此曾欠计为 `90`；受控 dry-run 将空白 target 统一处理后按旧合同停止。`741/741` 个条目均已逐个通过 `fsutil` 确认为标签 `0xA000001D`，没有其他未知标签；所有可解析链接也均未指向主仓共享目录、当前 `0e35c8b` 或冻结 `4d3b4b2`。期间首次标签汇总还因 `Where-Object Exit-eq 0` 缺少参数空格而在查询完成后报错，已改用显式脚本块。处理方案是把合同修正为“39 个根路径不得为 reparse；内部 `16,877` 个 Junction 必须留在各自候选内；`741` 个空 target 必须全部匹配 Linux symlink 标签”，回收时只移动顶层目录本身，不跟随内部链接。
+14. **E2 在第 27 个普通目标 `tmp\p2c-df54f67` 处失败，自动回滚分支又遮蔽了原始异常**：同一个已通过 dry-run 的脚本成功将 6 个登记 worktree 移到唯一暂存名，并将前 26 个普通目标送入 E 盘回收站；处理含 `741` 个 Linux symlink 的 `df54f67` 时进入异常分支。异常分支错误使用 PowerShell 不支持的 `Select-Object -Reverse`，因此在任何回滚执行前再次报错，并遮蔽了 `DeleteDirectory` 的原始异常。现场核对显示 26 个普通目标已回收，7 个普通原路径仍存在；6 个 worktree 全部只停留在暂存路径，均为 clean、HEAD 与 Git 登记一致，尚未回收；KEEP、13 份 artifact 和 `tmp-codeintel-summary.json` 全部存在。首次尝试同时修复脚本并更新两个文档时又因补丁遗漏文件切换标记而整笔校验失败；首次独立回滚命令也因数字开头的 hashtable key 未加引号而在解析阶段失败；两者都没有执行文件或 worktree 操作。处理方案已将回滚循环改为显式倒序索引，并改用带引号的对象清单；独立脚本经语法检查和 dry-run 后，已用 `git worktree move` 将 6/6 worktree 恢复到原路径，6/6 clean、HEAD 未变、暂存登记归零。对失败目标的完整复算得到文件 `379,658/379,658`、子目录 `69,797/69,797`、字节 `5,330,726,526/5,330,726,526`、链接 `837/837`，合同完全一致，回收站同名条目为 `0`；最长路径为 `348` 字符。当前最可能的原因是旧式 Windows Shell 回收接口无法可靠处理超长路径与 `741` 个 WSL Linux symlink 的组合，但因原始异常已被遮蔽而不能进一步断言。该目标决策为 `defer`：本轮不在同一证据上重试，保持原位；只继续处理不含该特殊链接组合的独立目标。
+15. **E2 后半 6 个普通目标均返回回收成功，但验收发现只有 4 个明确恢复条目**：独立 dry-run 精确匹配 `141,233` 个文件、`24,390` 个子目录、`1,964,327,996 bytes`、`1,345` 个内部 Junction、`0` 个 opaque Linux symlink，最长路径仍达 `346` 字符。执行时 6 个目标逐一返回 `RECYCLED` 且原路径均不存在，但 E 盘回收站逻辑字节只增加 `655,869,440 bytes`，低于源目录逻辑值；Shell 回收站核对只找到 inputs 三项和 `f01f173` harness 共 4 个新 `$I/$R` 恢复条目，`tmp\p2c-e05ddc4` 与 `tmp\p2c-f01f173` 没有同名/同原位置记录。两者可能因长路径或内部 Junction 被 Shell 非预期直接清除，当前不能再把 `SendToRecycleBin` 的无异常返回等同于“可恢复”。期间一个只读同名搜索命令还因 `foreach ($root in$searchRoots)` 缺少必要空格而解析失败，没有修改现场；新建全量审计脚本后，又在运行前检查中发现双引号正则会把 `$R` 展开为变量，已在任何审计运行前改成单引号字面正则。处理方案是立即停止 E3、E4 和所有后续 Windows 回收调用，先对 E2 全部 32 个已移出路径逐一核对 Shell 原位置、`$I/$R` 元数据和删除时间；缺失条目如实认定为不可从回收站恢复，但对应 13 份正式 artifact 继续保留。后续 Windows 目录不再使用该 API，除非先形成能验证长路径行为的新方案。
+16. **C1 元数据复核首次生成了带反引号的错误路径**：Shell 界面和 `$R` 数据均显示 C1 两个目录存在，但初次将 `$Rxxxx` 替换为 `$Ixxxx` 时错误使用了包含 PowerShell 反引号的替换字符串，导致探针查询了不存在的 ``\`$Ixxxx`` 并误报 `MetadataExists=False`。该探针只读。处理方案是直接使用字面 `'$I' + suffix` 构造路径；重跑后 C1 为 2/2 `$R` 数据存在、2/2 `$I` 元数据存在，确认可从回收站恢复。
+17. **D1 首次内联预检同时触发错误处理拼接和 WSL 分隔符问题**：压缩 PowerShell 命令写成 `throw"..."`，因关键字后缺少空格而被当作不存在的命令，并遮蔽了 `stat` 原始错误；该次预检在 `stat` 阶段停止，没有创建隔离目录或移动目标。随后对单一路径独立重跑确认，`stat -c '%n|%F'` 中的 `|` 即使通过 `wsl.exe --` 直接传参仍被 WSL 边界解释为管道，得到 exit code `127`、`%F: command not found`。处理方案是停止使用压缩内联命令，改成经 PowerShell AST 语法检查的本机 dry-run 脚本；WSL 参数中完全移除 `|` 等 shell 特殊字符，目录类型只使用 `stat -c %F` 的逐行结果。
+18. **D1 普通 DrvFS 跨盘移动不能保留 Linux 权限**：独立探针只创建 32 字节 payload、一个 hardlink 和一个相对 symlink，从 `/var/tmp` 移到 `E:\SS-cleanup-quarantine\.probe-20260904`；SHA-256、uid/gid、hardlink inode 关系和 symlink target 均保持，但文件与目录 mode 从 `750` 变为 `777`，因此探针按 Gate 失败，51 个候选没有移动。原因是当前 `/mnt/e` 为 `9p/DrvFS` 且挂载参数不含 `metadata`，不能作为可精确恢复的 Linux 隔离介质。处理方案是保留该几 KB 失败探针作为证据，不修改持久 `wsl.conf`；临时把 E 盘以 `metadata` 选项挂到独立 WSL mountpoint，用第二个小型探针验证 mode、uid/gid、hardlink、symlink 和重挂后持久性，只有全部通过才允许 D1 使用该挂载路径。
+19. **D1 metadata 挂载探针在首次显式卸载时返回 busy**：第二个 32 字节探针已从 ext4 移到临时 `metadata` 挂载下的 `E:\SS-cleanup-quarantine\.probe-metadata-20260904`，并完成移动后的第一轮读取；但 `umount /mnt/ss-e-metadata-20260904` 返回 `target is busy`，脚本因此在重挂验证前按 Gate 停止。finally 再次尝试卸载后终止 Ubuntu，临时挂载随发行版停止而解除；51 个正式候选仍未移动。处理方案是不使用强制或 lazy unmount，改以终止发行版作为卸载边界；重新启动后以相同 `metadata` 参数挂载 E 盘，只读复核已通过：payload SHA-256 一致，文件/目录 mode=`750`、uid/gid=`1000/1000`，hardlink 与 symlink 均保持，D1 目录仍为 `51+8`。单目录跨重启保真 Gate 已关闭；正式移动前再验证一次跨两个顶层目录的 hardlink 是否能在单次 `mv` 中保持。
+20. **D1 的可选 xattr/ACL 探针工具未安装**：只读 `which setfattr` 与 `which getfacl` 均返回 exit code `1`，期间再次出现已记录的 systemd user-session 警告；没有安装包或修改 WSL。处理方案是不为本次容量清理引入新依赖，也不声称完成独立 xattr/ACL 对比；正式 Gate 继续验证文件内容、mode、uid/gid、hardlink、symlink、Git clean/HEAD 和完整目录集合。候选中若后续发现必须保真的业务 xattr/ACL，则改用 tar 归档路线并重新授权，不在当前证据上假定。
+21. **D1 需要确认跨顶层目录 hardlink 在单次移动中保持**：D1 去重与 `--count-links` 差值约 `3.968 GiB`，因此单目录探针不足以证明多个源目录间的 hardlink 不会被拆散。处理方案是创建两个小型 ext4 顶层目录，让二者共享一个 64 字节 hardlink 并含跨目录相对 symlink，再通过 metadata mount 在同一条 `mv` 中移动两个源。探针已通过：payload SHA-256 一致，跨目录 inode 相同，文件 mode=`640`、两个目录 mode=`750/750`，symlink target 保持；51 个正式候选未动。正式 D1 必须同样在一条 `mv` 中传入全部 51 个冻结源，并用移动前后确定性 tar-stream SHA-256、类型计数和 14 个 Git HEAD 复核。
+22. **D1 正式执行器首次 AST 检查发现变量边界语法错误**：错误消息中的 `$property:` 被 PowerShell 解析为无效的作用域变量引用，AST 返回 1 个 syntax error；脚本没有进入 dry-run，更没有挂载或移动候选。处理方案是改为 `${property}:` 明确变量边界，并从头重跑 AST 检查；只有 syntax error=`0` 后才允许耗时 dry-run。
+23. **D1 长时间移动期间的旁路 I/O 采样命令未通过解析**：拟从 Windows 侧只读比较 10 秒 `wsl/wslhost` I/O 和 D/E free-space，但压缩内联循环再次写成缺少必要空格的 `foreach ($after in$b...)`，PowerShell 在解析阶段停止，采样没有运行，也没有影响正在执行的 D1 `mv`。处理方案是不再对活动移动进程运行临时拼接的旁路命令；继续只轮询原执行 session，后续任何诊断循环必须先落盘并通过 AST 检查。
+24. **D1 正式跨盘 `mv` 在源端删除阶段遇到只读 Go module cache，形成 16 个残留目录**：51 个候选均已在 E 盘隔离区建立顶层目录，但非 root 用户删除源端 `gomodcache` 中的只读文件时连续返回 `Permission denied`，最终 exit code=`1`；源端 `35/51` 个候选顶层目录已消失，`16/51` 个候选顶层目录残留，`8/8` KEEP 与 unexpected=`0`。根因是跨文件系统 `mv` 实际执行“复制后删除”，Go 缓存目录常用只读 mode 防止修改；拥有文件并不代表对只读父目录有删除权限。处理方案是禁止直接重跑整批、禁止覆盖 E 盘副本，也不立即用 root 删除；先以冻结 manifest 对 E 盘 51 个目录做完整类型/内容/Git/hardlink 核验，再逐项比较 16 个源残留与对应目标。只有残留全部证明为目标中的相同副本后，才生成独立、可 dry-run、精确限定 16 个路径的 root 辅助清理器；任一差异都保留现场并停止。完成前禁止 `fstrim` 和 VHDX 压缩。
+25. **D1 失败后的临时挂载探针与恢复核验器启动曾多次在扫描前停止，但均未改动数据**：第一次在 Ubuntu 自动停机后复用临时 mountpoint，`find` 返回路径不存在并产生错误的 destination=`0`；第二次在 PowerShell/WSL 边界使用 `$mp`，变量被吞掉后只执行到 `mkdir -p ""` 并停止；恢复核验器第一次外层并行调用又因对象属性分隔符缺失而在 JavaScript 解析阶段停止，三个检查均未启动；核验器首次运行时，单独的 `mountpoint -q` 受 root systemd 会话异常影响返回 exit=`32`，在任何扫描前被 Gate 拦下；第一次 `Stats` 又在深层扫描前把同一条 systemd 警告误当成未知源路径并停止。处理方案是丢弃所有无效结果，先对落盘脚本执行 PowerShell AST 和 Bash syntax Gate，再把固定字面路径的 `mkdir + mount` 合并到同一次 root Bash 调用中，并只接受两个预期根目录下的绝对路径。修正后 `Inventory` 连续通过：manifest hash 正确，destination=`51/51`、source absent=`35/51`、residual=`16/51`、KEEP=`8/8`，unexpected source/destination=`0/0`。
+26. **D1 隔离树的普通文件数比旧 dry-run 基线少 224 个，当前不能直接解释为复制丢失**：恢复 `Stats` 已完成全树遍历，E 盘实际读到 `841,300` 个普通文件，而 2026-09-04 dry-run 为 `841,524`。但正式执行前 source tree hash 已由 dry-run 的 `e11511b8...` 变为 `db761be6...`，说明两次源快照本来就不相同；正式执行器又没有把当次 source stats 持久化，因此不能用旧计数单独判定 E 盘少文件。处理方案是保持 16 个源残留不动，先将 E 盘完整 tar-stream hash 与同一次正式执行前捕获的 `db761be667240b78465d2ac90819fc39fb81656e068914ea7c064cc34aa0afef` 比较；若 hash 一致，则以正式执行快照为准更新计数合同；若不一致，再用 16 个 residual 的 checksum 子集比对定位差异，禁止凭 224 这个计数直接清理或回滚。核验器同步改为先输出已计算的实际指标、再执行断言，防止后续长扫描结论因单项 Gate 失败而丢失。
+27. **D1 同次执行 tree hash Gate 未通过，但小目录重复性探针已证明旧 worker 在不变树上稳定**：E 盘完整树计算结果为 `a8a90bbd0e15219b1c4a0eaebc2254bf445f6a21cdc8eb39a49e1ae2eba252f9`，与正式执行前 source=`db761be667240b78465d2ac90819fc39fb81656e068914ea7c064cc34aa0afef` 不同；结合更早 dry-run=`e11511b8627a1316ff07e88307f46d51b99bd03ecd6a8b88348e1c0eaf1c5ca5`，当前已有三个完整树值。旧 worker 使用 `tar --format=gnu` 对元数据和内容打包；在 E 盘同一个小目录 `star-sanctuary-p2c-576a7dc-oci-probe` 上连续两次均得到 `d2d72986fdd84799ad6a293df9e97fb3bade445b20da96cd3c061c358342ad54`，说明“不变树随机出不同值”的假设不成立。但完整树差异仍不能单独区分“跨 ext4/DrvFS 元数据表示差异”“正式执行前 source 已漂移”或“复制内容差异”。处理方案是先对一个较小 residual 做 checksum-aware、非破坏的源到目标比较，确认比较输出能区分内容和元数据；合同可用后扩展到全部 16 个 residual。无论哪种结果，当前均不清理残留、不 `fstrim`、不压缩 VHDX。
+28. **16 个 D1 源残留按用户决定延期，不再阻塞本轮已完成部分的空间回收**：一个小残留 `star-sanctuary-p2c-candidate-3f66b71-inputs-rejected-express-seed` 的 `rsync -aHnicO --itemize-changes` dry-run exit=`0`，输出 `250` 行 `.d/.f` itemize 记录，但尚未把该输出合同校准为“真实差异数”，因此不能外推为 16 项全量一致。用户明确要求本轮先不处理 16 个源残留，后续可另找机会删除。处理方案是将其标记为 `defer`：停止 residual 深层扫描，不执行当前核验器的 `Residual` 阶段；以后使用冻结的 16 条精确路径，先确认零相关进程，再处理 Go cache 只读权限，优先整体移动到独立可恢复隔离区而不是永久删除。当前 D1 收口口径改为 35 个候选已完成跨盘移动、16 个候选源残留延期、8 个 KEEP 未动；本轮只对 35 个已释放的 ext4 空间继续执行 `fstrim` 和容量复测。
+29. **`fstrim --dry-run` 返回 `0 B` 不能解释为没有可释放空间**：本轮 dry-run exit=`0` 且输出 `/: 0 B (dry run) trimmed`，因为 dry-run 不发出实际 discard，报告值不能替代正式执行结果。同期 ext4 已用量已经比 2026-09-04 基线减少 `11,036,307,456 bytes`（约 `10.28 GiB`），而 VHDX 仍保持 `56,919,851,008 bytes`，符合“Linux 逻辑空间已释放、宿主容器尚未收缩”的状态。处理方案是保留 dry-run 只作为命令可用性和前置 Gate，通过后仅执行一次正式 `fstrim -v /`；随后立刻复核 35/16/8 集合和容量并回写，不能把 trim 报告字节直接归因给 35 个目录。
+30. **正式 `fstrim` 的 `965.5 GiB` 报告值远大于 35 个目录，且运行期 ext4 已用量小幅上升**：`fstrim -v /` 对整个约 1 TiB Ubuntu 文件系统报告 `1,036,735,635,456 bytes` 可 discard，它包含所有历史空闲 extent，不能作为本轮目录释放量；同一执行窗口 ext4 used 增加 `9,129,984 bytes`，但 35/16/8 目录集合完全不变，属于启动发行版和文件系统运行的正常小幅写入。处理方案是把 trim 值只记录为 discard 成功证据，35 个目录的逻辑收益仍以 2026-09-04 到 trim 前的 ext4 used 差值约 `10.28 GiB` 表示；最终宿主收益只使用停机压缩前后 VHDX 长度和 D 盘可用空间，不用 trim 报告值推算。
+31. **压缩 Gate 信息汇总探针曾因 PowerShell 字符替换重载选择失败**：第一次只读命令使用 `.Replace([char]0, '')`，但该重载要求第二个参数也是单个字符，因空字符串无法转换而报错；错误随后使未赋值的发行版文本触发连带空值异常。该命令没有执行停机、压缩或文件修改。处理方案是改用 PowerShell 正则 `-replace` 后从头重跑，只采用成功重跑的结果；以后处理 `wsl.exe` 的 UTF-16/NUL 输出统一使用这一方式，不再调用该字符重载。
+32. **`wsl.exe --shutdown` 成功返回后 Docker Desktop 自动恢复 WSL**：本轮命令 exit=`0`，但等待 3 秒后 `docker-desktop` 仍为 `Running`，宿主存在 `8` 个 `wsl.exe`/`wslhost.exe` 进程；这说明 Docker Desktop 前台或后台管理进程重新拉起了自身发行版，不能把命令成功返回等同于 VHDX 已具备独占条件。`Ubuntu-22.04` 始终为 `Stopped`，目标 VHDX 与 D 盘容量未变化，也未启动压缩。处理方案是先探测并使用 Docker Desktop 提供的正常停止入口，再执行一次 `wsl.exe --shutdown`；只有所有发行版均为 `Stopped`、相关宿主进程退出且目标长度未漂移时才压缩，仍自动恢复则停止本批而不强制结束未知进程。
+33. **`docker desktop status` 用 exit=`1` 表示 Desktop 未运行**：在 `docker desktop stop` 成功后，状态命令没有返回传统的成功码，而是输出“Could not retrieve status. Is Docker Desktop running?”；若只看退出码会误判停机失败。处理方案是把该输出作为辅助证据，不单独决定 Gate；本轮同时要求两个发行版均为 `Stopped`、WSL 宿主进程计数为 `0`、目标 VHDX 能以 `FileShare.None` 独占打开，三项均通过后才认定停机成功。
+34. **Linux 逻辑减少量不能与 VHDX 最终缩小量按目录一一对应**：9 月 4 日基线到 trim 前的 ext4 used 约减少 `10.28 GiB`，而本次宿主 VHDX 实际缩小约 `9.04 GiB`；动态虚拟磁盘的块分配、文件系统元数据、运行期写入和历史空洞都会影响两者关系。处理方案是分别保留两个口径：逻辑侧只说明文件系统已用量变化，宿主释放只认压缩前后 VHDX 长度与 D 盘可用空间的逐字节一致变化；不把差额当作丢失空间，也不把全部压缩收益绝对归因于某一个目录。
+35. **压缩后启动 smoke 会让动态 VHDX 小幅回长**：正式压缩结束时 VHDX 为 `47,211,085,824 bytes`，启动 Ubuntu 完成只读检查并再次停机后的首次读数为 `47,244,640,256 bytes`，增加 `33,554,432 bytes`（`32 MiB`）；D 盘可用空间同步减少相同字节数。目录集合仍为 `35 absent + 16 residual + 8 KEEP`，因此不是候选恢复，而是文件系统启动时的正常块分配。处理方案是以再次停机后的稳定读数作为最终口径，不沿用 smoke 前瞬时的 `9.04 GiB` 收益。
+36. **首次停机复测后 VHDX 仍继续异步缩小**：约 10 秒后的第二次读数从 `47,244,640,256` 降至 `47,226,814,464 bytes`，D 盘可用空间同步增加 `17,825,792 bytes`（`17 MiB`），期间两个发行版均为 `Stopped` 且 WSL 宿主进程为 `0`。这表明文件关闭或稀疏块回收可能在命令返回后继续短暂结算，首次读数不能称为“最终稳定值”。处理方案是不重复执行 `Optimize-VHD`，只做多点只读采样；随后 35 秒内的 8 次读数全部一致，最终冻结 VHDX=`47,226,814,464 bytes`、D 盘可用=`33,285,779,456 bytes`，相对压缩前稳定净收益为 `9,693,036,544 bytes`（约 `9.03 GiB`）。
 
-## 后续计划（2026-09-04）
+## 后续计划（2026-09-05）
 
 `E:\project\star-sanctuary\tmp`、`.tmp` 与 `artifacts` 的单次原生扫描已经完成；current/frozen P2C identity、正式 artifact、历史 P2C 候选和 worktree 登记也已分开。若后续准备实际处理，下一步应先为约 `49.52 GiB` 的优先候选生成精确只读 manifest/dry-run；为什么先做它：这批收益明确、与约 `127.42 GiB` 的深度核验池隔离，最容易在不触碰当前候选和唯一 evidence 的前提下复核。
 
-随后由用户决定是否保留 `E:\WSL-backups`，并另行决定是否对共享缓存和 Codex 历史会话做工具化归档。当前还缺的关键闭环不是占用来源，而是候选之间的 hardlink 实际块去重、处理当时的进程/句柄终检，以及 Linux 删除后通过 `fstrim`/停机压缩实际返还 D 盘的验证；这些属于未来清理批次，不在本轮只读盘点范围。本轮仍不执行任何清理。
+用户已确认执行 C1、D1、E1-E4 并跳过仍在写入的 C2；C1 已完成且 2/2 可恢复。E2 已完成恢复审计并冻结为部分完成：32 个普通原路径已移出，其中 23 个可由回收站恢复、9 个已直接清除；6 个登记 worktree 与 `df54f67` 保留。D1 正式移动已在 E 盘建立 51/51 个隔离顶层目录，35 个源候选已消失，16 个只读 Go cache 源残留按用户决定延期处理，8 个 KEEP 未动。下一步只针对已经释放的 35 个目录执行 `fstrim` 并复测 ext4/VHDX/盘符空间；为什么先做它：这一步不触碰延期目录，可以把已经完成的逻辑删除转化为实际可压缩空间。当前还缺的关键闭环是 D1 已完成部分的空间回收与容量复测、VHDX 压缩，以及 E1/E3/E4 的新可恢复方案；16 个残留另列后续精确清理，C2 继续 blocked。
+
+本轮按用户要求于 2026-09-05 在上述状态暂停。暂停前没有执行 `fstrim`、VHDX 压缩、16 个 source residual 清理、E1 `E:\WSL-backups`、E3 或 E4；也没有继续运行 `Residual` 全量核验。恢复后的第一步是先确认 Ubuntu 为 Stopped、冻结 D/E 盘和 ext4 当前容量，再仅对 35 个已经完成移动所释放的空间执行一次独立 `fstrim`；完成并回写实际结果后，才评估 VHDX 压缩。E1/E3/E4 仍需新的可恢复处理方案，不能复用已经失信的 Windows Shell 回收路线。
+
+用户随后确认恢复并先释放 35 个已完成移动目录的空间。trim dry-run 已通过，当前下一步是只执行一次正式 `fstrim -v /`；为什么先做它：ext4 已用量已减少约 `10.28 GiB`，但 VHDX 尚未收缩，必须先把当前空闲块通知给宿主。正式 trim 回写后再完全停止 WSL 并评估 `Optimize-VHD -Mode Full`，16 个 residual、E1/E3/E4 和 C2 均不在本步骤内。
+
+正式 `fstrim` 已完成且 35/16/8 集合回归通过。下一步先只读确认 Ubuntu-22.04、docker-desktop 等相关 WSL 发行版均为 Stopped，并确认系统提供 `Optimize-VHD`、精确 VHDX 路径与当前长度未漂移；为什么先做它：只有 VHDX 不再被任何 WSL 实例占用时才能安全压缩。Gate 通过后执行一次 `Optimize-VHD -Mode Full`，立即记录 VHDX 与 D 盘真实变化，再启动 Ubuntu 做最小文件系统 smoke；当前还缺的关键闭环就是停机压缩与压缩后可启动性验证。
+
+35 个已完成移动目录的释放链已经闭环：压缩后 Ubuntu 可正常挂载，`df` 正常，E 盘 destination=`51/51`，WSL source=`35 absent + 16 residual + 8 KEEP`；再次停机后完成 35 秒、8 次无变化采样，最终 D 盘稳定净增加 `9,693,036,544 bytes`（约 `9.03 GiB`）。下一步应先由用户检查本轮记录与实际容量，再另行决定 E1/E3/E4 的可恢复处理路线；为什么先做它：Windows Shell 在 E2 已出现 9 个不可恢复条目，不能把原路线直接复用于剩余大目录。当前仍缺的跨三盘总闭环是 E1/E3/E4 的安全处理、C2 活动 trace 的独立授权，以及延期 16 个 residual 的逐项核验；这些均不属于本轮 35 个目录释放范围。
 
 ## 实施计划进度表
 
@@ -616,3 +920,4 @@ Git worktree 当前共 `117` 个，其中 `tmp` 下 `67` 个、`.tmp` 下 `41` �
 | 容量与开发环境回归验证 | 进行中 | Ubuntu/ext4、Git、Node、pnpm、Go、gopls 最小 smoke 已通过；仍需观察一次受控 WSL 测试的容量增量后关闭长期治理问题 |
 | `tmp/.tmp/artifacts` 四级保留分层 | 已完成分析，尚未清理 | 2026-08-20 基线为三目录合计 `120.71 GB`；C0/C1 继续保留，C2/C3 需逐项 manifest、hash、引用、进程和敏感扫描核对；本轮不删除 |
 | 2026-09-04 C/D/E 三盘复盘 | 已完成盘点，未清理 | `tmp/.tmp/artifacts=154.29 GiB` 同口径扫描错误=`0`，E 盘约 `205.2 GiB` 已确认路径可解释；当前必留、优先候选约 `49.52 GiB`、用户决策、共享缓存、非 SS 和约 `127.42 GiB` 深度核验池已分层，实际释放量留待获授权后的独立批次验证 |
+| 跨三盘优先候选清理 | 执行中：C1 完成、E2 部分完成、D1 已移动 35 个目录释放闭环 | C1 为 2/2 可恢复；E2 为 32 个普通目标已移出、7 个目标保留。D1 destination=`51/51`，source absent=`35/51`、residual=`16/51`、KEEP=`8/8`；`fstrim`、单次 VHDX 压缩、启动 smoke、最终停机和 8 次稳定采样均通过，D 盘稳定净增加 `9,693,036,544 bytes`（约 `9.03 GiB`）。16 个 residual 继续延期；E1/E3/E4 与 C2 留待独立安全批次 |

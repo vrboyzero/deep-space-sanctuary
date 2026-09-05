@@ -92,6 +92,8 @@ For implementation-plan / proposal / rollout / phased design documents, add a fi
 - 为什么先做它，
 - 当前还缺的关键闭环是什么。
 
+当你回写项目文档时，如果本轮发现了问题、失败或异常，必须在同次回写中同步补一段“重要问题说明”，并说明问题现象、原因或当前判断，以及对应处理方案；本轮没有问题时不强制新增。
+
 ### Implementation Conclusion Format
 
 When a phase, step, or feature implementation is completed and written back to project docs, use the following structured format for the implementation conclusion:

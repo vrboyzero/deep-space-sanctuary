@@ -21,6 +21,7 @@ import { isUnsafeCorrectionAfterCompletedTraceValuesApiMigration } from "./react
 import { WORKSPACE_MUTATION_SOURCE_VERIFICATION_INSTRUCTION } from "./react-workspace-mutation-evidence-instructions.js";
 import { readClippedLeadingDocumentation } from "./react-workspace-mutation-documentation.js";
 import { buildReferencedReadEvidence, findMissingTaskReferencedTestPaths } from "./react-workspace-mutation-supporting-evidence.js";
+import { compactWorkspaceMutationReadMetadata, fitWorkspaceMutationSourceContexts } from "./react-workspace-mutation-evidence-budget.js";
 
 export const WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE = 4_096;
 export const WORKSPACE_MUTATION_RECOVERY_MIN_OUTPUT_TOKEN_RESERVE = 1_024;
@@ -3166,6 +3167,7 @@ function buildBoundedWorkspaceMutationRequest(input: {
       contentTokenBudget,
       input.tokenEstimateContext,
       input.includeMutationBranchTail,
+      input.latestRequiredFileReadEvidenceOnly,
     );
     if (!boundedContent) {
       continue;
@@ -3840,6 +3842,7 @@ function clipWorkspaceMutationEvidence(
   maxTokens: number,
   tokenEstimateContext?: TokenEstimateOptions,
   preserveStructuredContextTail = false,
+  allowFocusedLineFallback = false,
 ): string {
   const normalized = value.trim();
   const tokenBudget = normalizePositiveInt(maxTokens);
@@ -3866,6 +3869,12 @@ function clipWorkspaceMutationEvidence(
   const projected = parsed as Record<string, unknown>;
   if (!Array.isArray(projected.taskRelevantContexts)) {
     return clipTextToTokenBudget(normalized, tokenBudget, tokenEstimateContext);
+  }
+  if (allowFocusedLineFallback && !preserveStructuredContextTail) {
+    const { taskRelevantContexts: _contexts, ...metadata } = compactWorkspaceMutationReadMetadata(projected);
+    return fitWorkspaceMutationSourceContexts({
+      metadata, contexts: projected.taskRelevantContexts, maxTokens: tokenBudget, tokenEstimateContext,
+    });
   }
   const { taskRelevantContexts: _omittedContexts, ...metadata } = projected;
   const selectedContexts: unknown[] = [];
