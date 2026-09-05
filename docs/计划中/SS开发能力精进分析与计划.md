@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **开发回归完成并本地提交：disconnect-recovery 诊断加固；待新身份最小探索** | 冻结失败零 Provider 复现：重建输入下恢复请求可构建（函数级 built=true、tool-agent 单元级 4 调用全流程通过），触发差异在离线不可观测数据；失败消息加固有界计数诊断；定向 25 文件 `468/468`、tsc 与 benchmark verifier 通过 | 提交推送新 identity 并跑 CI；最小付费探索 disconnect-recovery Windows a1 验证复发与诊断；随后按分层流程重建候选；完整 144 槽与七维资格未完成 |
+| P2-C 分层开发与编排复用 | P2 | **candidate-57b9cc5-1 冻结于 17/144（16 passed + 1 Go regression failure），进入开发回归** | disconnect-recovery 诊断加固与单槽探索通过（未复发，模型输出可变性）；新候选 13 槽连过后 batch 04 的 real-go.public-api-migration 以 tests/patch=false、regression=1 冻结；账本 SHA=`ad36a894…14f`、资源/敏感值/费用闭环 | 零 Provider 分析 Go 失败证据并修复/记录；双平台验证、最小探索、新身份 CI 与 Gate 后重建候选；完整 144 槽、七维资格与第二连续候选未完成 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -2077,13 +2077,32 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 以 `57b9cc5` 创建新正式候选（`candidate-57b9cc5-1`）：生成 144 槽不可覆盖 plan/config、只读验真、Windows canary 与渐进矩阵；完整矩阵后执行 aggregate 与七维资格。
 
+#### P2-C 候选实现结论：candidate-57b9cc5-1 推进至 17/144 并因 Go 回归冻结（2026-09-05）
+
+##### 已完成内容
+
+1. **候选创建**：`candidate-57b9cc5-1` plan=`144/144/144`（SHA=`fc8eb4e4…b47`）、config SHA=`47aeed9e…b802`；只读验真 exit=`0`；继承 `explore-57b9cc5-1/cost-ledger-final.json`。
+2. **canary 与 batch 01–03 全过（13/144）**：rules、feature、bug、tests、navigation、interactive、safety、disconnect-recovery（上次冻结任务，本轮 passed 且 recoverySucceeded=true）、client-cancel、process-restart、git.dirty-worktree、git.delivery-guard、real-ts.api-migration 全部 passed；两项 token 例外按批准口径、计量豁免后 manual=`0`。
+3. **batch 04 三过一败后冻结（17/144）**：real-ts.cross-package-refactor（63e0a41 冻结任务）、real-js.bug-fix、real-js.failed-test-fix passed；`real-go.public-api-migration/windows-native/a1` 以 `product_workflow` failed（tests=false、patch=false、regression=`1`）。
+4. **冻结与闭环**：政策判定 stop，reasons=`[B.regressionCountMaximum, dimension:editing_testing/real_repository_editing/regression_count]`；账本 SHA=`ad36a894…14f`、cleanup=`true`、资源 8 项=`0`、敏感扫描与 env 回收闭环；剩余 127 槽未执行、未启动 WSL。
+
+##### 验证结果
+
+- 冻结账本 processed=`17`、pending/unreported=`0/0`；observed/reserved=`2.49696170/2.34221 USD`，next worst≈`39.5 RMB < 80`；Provider retry=`0`。
+- 各批次逐槽 resume 复算通过；候选新增 cost=`0.00906874 USD`（累计含 canary）。
+- 未改写任何冻结槽；旧 `e4bd1c3-1` 与 `63e0a41` 终态保持只读。
+
+##### 后续计划
+
+保持候选冻结；进入开发回归：零 Provider 分析 real-go.public-api-migration 的失败（用保留 fixture workspace 与冻结 events/报告）——区分模型补丁错误与评测/预算环节；修复或记录后按分层流程验证，再创建新 candidate。不重跑或 reconcile 冻结槽。
+
 ### 后续计划（当前检查点，2026-09-05）
 
-1. **本环节结果**：disconnect-recovery 冻结失败的零 Provider 复现已完成——重建输入下恢复请求可正常构建（函数级 built=true、tool-agent 单元级全流程通过），触发差异在离线不可观测的运行时数据；已对 fail-closed 失败消息加固有界计数诊断（本地提交，待推送），保证下次真实出现自带根因计数。
-2. **下一步准备做**：提交并推送新 identity，跑完整 CI；然后做最小付费探索（disconnect-recovery Windows a1，≤`$0.10`）验证复发与诊断输出；若复现则按诊断计数定位，若通过则记录为模型输出可变性并继续候选链。
-3. **为什么先做它**：该失败族阻断 recovery 硬门槛（100%），必须用真实运行取得缺失的运行时事实；诊断消息随 events 保留，是最便宜的证据来源。
-4. **当前还缺的关键闭环**：disconnect-recovery 恢复路径的稳定通过、完整 144 槽原生矩阵、aggregate、dimension evidence、qualification 与七维 score、第二个连续完整候选；`candidate-e4bd1c3-1` 已冻结（8/144）、旧 `63e0a41` 14 槽永久只读。
-5. 后继运行继承 `formal-e4bd1c3-1/cost-ledger-final.json`（SHA=`466222806b…76a0`，observed/reserved=`2.48774967/2.34221 USD`，next worst≈`39.4 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效。
+1. **本环节结果**：disconnect-recovery 诊断加固与单槽探索通过（冻结失败未复发，判定为模型输出可变性）；新候选 `candidate-57b9cc5-1` 推进至 `17/144`（16 passed + 1 Go product_workflow failure），因 `regressionCount` 硬门槛按政策冻结。
+2. **下一步准备做**：开发回归——零 Provider 分析 `real-go.public-api-migration` 的失败证据（保留 fixture workspace + 冻结 events/report），区分模型补丁错误与评测/预算环节；修复或记录后按分层流程验证（双平台、最小探索、新身份 CI 与 Gate），再创建新 candidate。
+3. **为什么先做它**：Go 回归失败阻断 real-repository-editing 的 regression 硬门槛（100%），不定位根因就无法进入下一个正式候选；该任务此前从未在正式矩阵中出现过，需要先建立失败画像。
+4. **当前还缺的关键闭环**：Go 真实任务稳定通过、完整 144 槽原生矩阵、aggregate、dimension evidence、qualification 与七维 score、第二个连续完整候选；`candidate-57b9cc5-1` 已冻结（17/144）、`e4bd1c3-1`（8/144）与旧 `63e0a41`（14/144）永久只读。
+5. 后继运行继承 `formal-57b9cc5-1/cost-ledger-final.json`（SHA=`ad36a894…14f`，observed/reserved=`2.49696170/2.34221 USD`，next worst≈`39.5 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效。
 
 ### 暂停点的剩余工作量估算（2026-09-05）
 
@@ -2185,3 +2204,5 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 冻结后资源 8 项、敏感扫描与 env 回收均闭环；`gateway.client-cancel` 及后续 136 槽未执行，按规则保留。
 - disconnect-recovery 冻结失败的离线复现未复现：函数级与 tool-agent 单元级重建（真实 prompt/真实 file_write 定义/usage 预算/requiredChangedPaths）下恢复请求均正常构建，undefined 触发条件只能来自离线不可观测的运行时数据（该任务无 local fixture，必须真实 Provider 才能取得响应形态证据）。处理决策为 `record_only / 诊断加固`：失败消息增加 `exposedTools/mutationTools/remainingTokens/missingPaths` 有界计数，随 events.jsonl 保留；不改变 fail-closed 行为、不重跑冻结槽。
 - 首版复现测试因 meta 未带 `requiredChangedPaths` 导致 verification 阶段不触发、mock 错配（测试缺陷，非产品问题）；补齐后 file_write 恢复全流程通过。处理决策为 `fix_now completed`。
+- `candidate-57b9cc5-1` 在 batch 04 的 `real-go.public-api-migration/windows-native/a1` 以 `product_workflow` 失败：testsPassed=false、patchAccepted=false、regressionCount=`1`，usage=cost `0.00057903 USD`；政策因 `B.regressionCountMaximum` 与 `dimension:editing_testing/real_repository_editing/regression_count` 冻结候选（17/144，16 passed）。该 Go 任务此前未在正式矩阵中出现（63e0a41 只到 14 槽、e4bd1c3-1 只到 8 槽），处理决策为 `record_only / 下一轮零 Provider 开发回归`：用保留 fixture workspace 与冻结 events/report 建立失败画像，区分模型补丁错误与评测/预算环节；不提高预算、不改写冻结终态。
+- disconnect-recovery 冻结任务在本轮正式槽通过（首调用 file_write、fault 注入与恢复成功），与上一轮探索一致，确认此前失败为模型输出可变性；诊断加固未触发，保留为后续同类失败的自诊断手段。处理决策为 `fix_now completed（诊断加固）`。
