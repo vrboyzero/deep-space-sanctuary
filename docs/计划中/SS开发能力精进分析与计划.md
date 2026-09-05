@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **已恢复开发回归；全仓验证未闭合** | 新增有界 IPC 阶段接线，定向=`47/47`（新增 7 项），build/benchmark contract 通过，r5 四阶段完整且 auth-ready=`6375ms`；上次全仓中断前已观察到并行 worktree 清理失败，未取得完整汇总 | 先检查测试残留并隔离验证失败，再完成必要回归；性能根因仍未关闭，不立刻创建新 formal |
-| P2-C 分层开发与编排复用 | P2 | **公共编排与局部修复通过；固定探索准备中** | 两次完整回归均保留失败报告：`6617/1/3` 与 `6616/1/8`（passed/failed/skipped）；workspace restore 与 disposal receipt 的 rename 容错缺口已分别局部修复；最新回收回归=`7/7`、原生材料验真=`9/9`、build 通过 | 更新既有开发 staging、重新绑定输入后串行 OCI/资源 Gate，再执行固定 7 槽探索；正式 144 槽的两项 token override 等待授权口径确认 |
+| P2-C 分层开发与编排复用 | P2 | **首轮固定探索完成：6 passed / 1 failed；通用复核说明已局部验证** | `0f85de0` 7 槽全部保留、pending/unreported=`0/0`、费用/资源闭合；Go 新增不存在字段的错误已零 Provider 编译复现；写后复核新增源码/执行证据区分，局部=`415/415`、build 通过 | 复用 staging 及原 7 槽清单验证新说明效果；正式 144 槽预算口径仍待确认，最终分数未授予 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -1283,12 +1283,47 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 回收故障注入先得到 `1 passed / 2 failed`；修复后回收/进程恢复/helper 三文件 `7/7`，材料验真两文件 `9/9`，共新增 6 项测试场景。
 - 回归行为：凭据短暂被占用后能保留 uncertain 终态；持续拒绝时错误不被吞掉、旧凭据不变、无临时文件遗留，恢复访问后重复确认不再次清理。
 
+#### P2-C 固定探索实现结论：复用 staging 与七槽闭环（2026-09-05）
+
+##### 已完成内容
+
+1. **双平台开发 staging 更新**：
+   - 复用已有 Windows SSD/WSL 目录，更新至 `0f85de05d993f0b324250cc036af34b8cfcfbb7f`；锁文件未变，复用各平台依赖，build 后 native identity 均 clean，worktree SHA=`c4320316…3bab4`。
+2. **新输入、探索配置与公共编排执行**：
+   - 新输入=`inputs/windows-0f85de0` 与 `/var/tmp/star-sanctuary-layered-inputs-0f85de0`，各自重新生成并独立复算 `4/4/8`；config=`tmp/p2c-layered-development/exploration-config-0f85de0.json`，SHA=`08f3303e…dcb70`。
+   - 7 槽预选清单及 hash 不变，旧配置没有启动槽且保持原样。最终 Windows=`4/4 passed`，WSL=`2 passed / 1 failed`；session=`tmp/p2c-layered-development/explore-0f85de0-1`，artifact=`artifacts/p2c-layered-exploration/0f85de0-1`，均为 `formal=false`。
+3. **效果**：
+   - 本轮局部修复只更新开发 staging 和轻量输入凭据，未重新 clone/install、复制 operators 或创建正式 plan；Go 普通失败后保留失败并继续最后的未执行槽，已通过槽没有重跑。
+
+##### 验证结果
+
+- 双平台 TypeScript build 无错误；新增修改在 WSL 定向 `9/9`，Windows 前述 `7/7 + 9/9`。
+- 双平台标准 `verify-command-sandbox-oci-fixture.mjs` 通过；WSL 使用项目已有 drive-backed `TMPDIR=tmp/p2c-layered-development/oci-tmp-0f85de0`。材料只读 Gate 通过，8 项资源计数及额外 drive-backed lease 均为零。
+- 全部 7 槽 `reported`，pending/unreported=`0/0`，usage/env/资源独立闭环；5 个 Provider 槽累计 observed=`0.00470323 USD`，global observed/reserved=`2.44453350/2.24221000 USD`。最终账本=`explore-0f85de0-1/cost-ledger-final.json`，SHA=`aecc80d9…719a3d`，资源关闭=`true`；后继必须引用此账本，探索始终 unscored。
+
+#### P2-C 开发回归实现结论：写后复核的源码与执行证据区分（2026-09-05）
+
+##### 已完成内容
+
+1. **`tmp/p2c-layered-development/reproduce-go-failure.mjs` 新建并执行**：
+   - 独立诊断目录复制源码及依赖，禁网执行同一 Go 测试，保留 `go-failure-repro-0f85de0/result.json`；原探索源码 hash 与报告不变。
+2. **`react-workspace-mutation-evidence-instructions.ts` 新建，`react-workspace-mutation.ts` 接入**：
+   - 写后复核、最终复核及其输出修复共用通用说明：源码回读不等于编译/测试执行；新增成员访问应有声明依据，片段遗漏视为未知；不加入 benchmark 名称或字段黑名单。
+3. **效果**：
+   - 已确认 Go 失败为生成代码访问不存在的 `c.name`，不是缓存或网络问题；通用说明已接入，但其模型改善效果尚未验证，不能宣称问题已修复。
+
+##### 验证结果
+
+- TypeScript build 无错误；workspace mutation 21 文件 `415/415` 通过。本次是提示说明收窄，未新增产品逻辑测试，继续由既有 token/证据/状态机测试与固定真实探索验证。
+- 离线 `go test -mod=readonly .` exit=`1`，明确两处 `c.name undefined`；Provider 调用=`0`，错误证据永久保留。
+- 初次把说明加入编辑阶段导致关键源码片段被 token 配额挤出，局部=`413 passed / 2 failed`；收窄到四类写后复核/输出阶段后 `415/415`。上限、证据项数及字符预算不变。
+
 ### 后续计划
 
 1. 保持 `8f794af/candidate-1` 与 `6ce85bd/candidate-1` 永久冻结，禁止重跑、reconcile 或为失败 identity 启动 WSL。
 2. worktree 清理用例隔离及相邻三文件回归已通过，原失败暂未复现；保持该项 `record_only / 待完整回归证据`。继续开发共享候选政策和配置，集中完成后再执行完整回归；若再次出现相同失败，保留当次阶段证据再进入 Fix Mode，不用盲目重跑掩盖失败。
 3. 用局部反馈回路关闭失败或明确复现边界，再验证启动诊断和必要回归；阶段稳定后才形成新的 source identity，不因每次小修直接重建正式候选。
-4. 两次完整回归报告均已保留，最新缺口已完成局部修复。更新既有 Windows/WSL 开发 staging 并复用未变更锁文件的原生依赖，重新绑定输入；串行完成双平台 OCI、实际配置只读材料 Gate、零资源与紧邻费用检查后，执行原固定 7 槽探索。完整矩阵预算冲突未获确认前，不进入正式验收。
+4. 首轮探索已完整关闭；将通用写后证据说明绑定新开发 identity，复用 staging 和平台依赖，以原固定 7 槽清单验证效果，费用必须继承 `explore-0f85de0-1/cost-ledger-final.json`。先获取可比较的小样本反馈，再做稳定版完整回归与正式冻结；预算冲突未获确认前不进入正式验收。
 5. 固定探索清单并完成少量真实模型验证，集中处理缺陷后再冻结新正式候选；按第 6.6 节执行完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt 和七维资格。普通失败只在资格仍可达且证据/资源闭合时继续未执行槽，硬门槛失败停止。
 6. 两个连续候选均须满足七维下限与 raw weighted `>=9.500`；任何旧 identity 均禁止事后改写 aggregate。
 
@@ -1296,6 +1331,9 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 ### 重要问题说明
 
+- 首轮 `real-go.bug-fix` 的 patch 满足路径/表面规则，但新增不存在的 `c.name`，真实编译失败，模型 summary 却声称测试通过；离线复制复现已确认两处 undefined。处理决策：源代码错误 `record_only / 保留模型失败样本`，通用复核的执行证据说明 `fix_now / 局部验证完成，真实效果待确认`。不为该字段新增特例规则，不改写原始 failed。
+- 新提示首次覆盖编辑阶段，增加的 system token 挤掉了两个紧预算测试需要的源码片段；已收窄到写后复核/输出，既有 `415/415` 恢复。处理决策为 `fix_now completed`，没有扩大预算或启动额外模型试错来掩盖回归。
+- OCI 预检最初使用 `node -e`，PTY fork 继承了 eval 参数而提前退出；标准脚本入口通过，后续固定使用仓库标准入口。WSL ext4 `/tmp` 首次预检失败，保留诊断 `/tmp/ss-layered-oci-path-y7rR9h/diagnostic.json`，实际错误为 Docker 缺失 distro mount service socket；恢复项目已有独立 drive-backed TMPDIR 后通过，未修改 daemon/镜像配置。两次失败均无 Provider，container/lease 已清零，处理决策为调用/预检配置 `fix_now completed`。
 - 第二次完整回归唯一失败为 disposal process recovery 确认凭据时的 `EPERM rename`；隔离通过，宿主占用来源仍不确定。选择性注入证实该 owner 缺少有限重试，已局部修复并验证持续错误不被吞掉；处理决策为容错 `fix_now completed`、外部占用来源 `record_only`。clean staging 另有 5 项历史 artifact 离线审计条件跳过，加原有 3 项模型/OCI条件跳过共 8 项；不复制旧 artifact 冒充新证据，也不将两次完整回归表述为全绿。
 - WSL 安装产生的 executable-bit 变化被 Windows UNC Git 忽略；已改由 Linux 原生 verifier 独立验证完整 identity，并补 4 项合同回归，处理决策为 `fix_now completed`。实际双平台材料 Gate 尚待更新 staging 后执行。
 - 新 SSD staging 的离线依赖安装缺少 `ws@8.21.1` 等锁定 tarball；按原锁文件使用 prefer-offline 补齐，未升级版本或改写 lockfile。WSL 安装改变了 relay 的 executable bit（`100644 -> 100755`），只恢复新 staging 中该文件到 Git 记录的 `644` 后，native identity clean。最初 checkout 在 clone 尚未完成时提前执行，未生效；等待 clone 正常结束后使用完整 SHA 成功 detach。处理决策为 `fix_now completed`，这些前置问题没有触发正式槽或 Provider。
