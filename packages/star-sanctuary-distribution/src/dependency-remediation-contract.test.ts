@@ -87,7 +87,8 @@ test("dependency contract deduplicates vulnerable transitive versions within con
   const lockfile = fs.readFileSync(path.join(workspaceRoot, "pnpm-lock.yaml"), "utf-8");
   expect(lockfile).toContain("form-data@4.0.6");
   expect(lockfile).not.toContain("form-data@4.0.5");
-  expect(lockfile).toContain("qs@6.15.3");
+  expect(lockfile).toContain("qs@6.16.0:");
+  expect(lockfile).not.toMatch(/^  qs@6\.15\.3:$/m);
   expect(lockfile).not.toContain("qs@6.14.1");
 });
 
@@ -195,7 +196,8 @@ test("dependency contract pins patched transitive security floors", () => {
 
   expect(overrides["@hono/node-server@1.19.14"]).toBe("1.19.17");
   expect(overrides["body-parser@2.2.2"]).toBe("2.3.0");
-  expect(overrides["fast-uri@3.1.3"]).toBe("3.1.5");
+  expect(overrides["fast-uri@3.1.3"]).toBe("3.1.6");
+  expect(overrides["qs@6.15.3"]).toBe("6.16.0");
   expect(overrides["hono@4.12.30"]).toBe("4.13.2");
   expect(overrides["ip-address@10.2.0"]).toBe("10.5.0");
 
@@ -203,7 +205,7 @@ test("dependency contract pins patched transitive security floors", () => {
   for (const fixedVersion of [
     "'@hono/node-server@1.19.17'",
     "body-parser@2.3.0:",
-    "fast-uri@3.1.5:",
+    "fast-uri@3.1.6:",
     "hono@4.13.2:",
     "ip-address@10.5.0:",
   ]) {
@@ -213,6 +215,7 @@ test("dependency contract pins patched transitive security floors", () => {
     /^  '@hono\/node-server@1\.19\.14':$/m,
     /^  body-parser@2\.2\.2:$/m,
     /^  fast-uri@3\.1\.3:$/m,
+    /^  fast-uri@3\.1\.5:$/m,
     /^  hono@4\.12\.30:$/m,
     /^  ip-address@10\.2\.0:$/m,
   ]) {

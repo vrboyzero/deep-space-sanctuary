@@ -1771,9 +1771,24 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 两槽资源八项计数均为0、敏感扫描 finding/unreadable/link 均为0，新生成 env 按既有授权校验后送回收站。账本 `explore-b564025-1/cost-ledger-final.json`（SHA=`d4aa99a9075dd08b912d7ae7d45848ea7267103fcbc27869b35dbc731b267440`）processed/pending/unreported=`2/0/0`，cleanup=true；累计 observed=`2.47354551 USD`、reserved=`2.34221000 USD`，本轮 observed=`0.00141118 USD`。
 - 本次新导航的 WSL/真实模型效果尚待新身份验证。较早 `js-b564025-exact-requests.json` 的首次修改回放误用固定4096输入配额，未匹配原计划，不作准确证据；改用原已报 usage 和生产 budget plan 后四项全部匹配。
 
+#### P2-C CI 合同实现结论：安全依赖版本断言同步（2026-09-05）
+
+##### 已完成内容
+
+1. **`dependency-remediation-contract.test.ts` 修改**：
+   - fast-uri 正向断言改为已审计的 `3.1.6`，增加旧 `3.1.5` snapshot 拒绝。
+   - qs 验证实际 `6.16.0` snapshot 及 override，拒绝旧 `6.15.3` snapshot，避免只匹配 override 的旧选择器而误通过。
+2. **效果**：
+   - `33958197116` 终态为 6698 passed / 1 failed / 39 skipped，唯一失败是旧 fast-uri 版本断言；无未处理 SQLite 异常，安全审计及其他六个 job 通过。旧全量结果仍保持 failed。
+
+##### 验证结果
+
+- 本次只改测试，TypeScript 沿用 d42f6778 双平台完整 build exit=0；依赖合同原文件 `17/17` 通过。
+- d42f6778 WSL Agent 导航及相邻五文件 `147/147` 通过；双平台 build 完成。新版本 inputs/真实模型及完整 CI 待验证，上一身份结果不跨版本授予正式资格。
+
 ### 后续计划
 
-1. 先收取 b564025 完整工程 CI 终态，再合并本次导航修复的双平台定向验证与 build，复用 staging/cache 更新 identity/inputs，做固定 JS 两槽探索。已修复的导航缺口有确定性证据，但 WSL 错误推断仍须真实反馈，不能用局部通过代替任务完成。
+1. 合并安全依赖断言同步与导航修复后推送最终身份，复用 staging/cache 更新 identity/inputs，做固定 JS 两槽探索并收取当前 CI。已修复的导航缺口有确定性证据，但 WSL 错误推断仍须真实反馈，不能用局部通过代替任务完成。
 2. 对现有 JS/Go 失败保留离线诊断：JS 新 patch 的零值处理仍有回归；两者 JSON review/repair 均为原始无效响应。非空响应终止原因诊断已补齐并局部验证，但旧日志缺失值不能回补；后续受控探索须采集该字段，不能只凭 token 上限改变预算、解析器或增加特例。
 3. 口径及产品修复稳定后，复用 staging/依赖缓存，重新绑定双平台 identity、inputs、预检和不可覆盖 plan；按固定探索清单验证真正改变的行为，避免无新证据重复同批模型调用。
 4. 后继正式候选仅在合同、工程与资源 Gate 闭合后进入完整 `144` 槽；普通失败只在资格仍可达且证据/资源闭合时续跑，硬门槛失败停止。下一会话继承 `explore-b564025-1/cost-ledger-final.json`（SHA=`d4aa99a9075dd08b912d7ae7d45848ea7267103fcbc27869b35dbc731b267440`）的全部观测费用和预留，所有已冻结 identity 保持只读。
@@ -1783,6 +1798,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 ### 重要问题说明
 
+- b564025 新 CI 唯一失败是 distribution 合同仍要求 fast-uri=`3.1.5`，并非 OSV 或产品失败；检查还发现 qs 正向匹配可误命中旧 override 选择器。处理决策为 `fix_now / 定向闭合`，同步到已安装、已通过审计的 patched snapshot，并加入旧 snapshot 拒绝；不重跑旧 CI、不撤销安全升级。
 - b564025 两槽 JS 均失败。准确回放证明 Windows 未读测试就被有界预算流程提前切入 mutation-only，处理决策为通用读取准入 `fix_now / 本地定向闭合`；WSL 首次修改及复核均有正确输入、断言和错误源码，最终仍把 `slice(3)` 误判为保留两个元素，处理决策为 `record_only / 真实模型推断失败`，不再将它归因于测试证据丢失、JSON 无效或 length。修复后仍需两槽真实反馈，不能无新证据重复调用或直接进入正式候选。
 - 旧 CI 所有测试断言通过仍被未处理的 `SQLITE_READONLY_DBMOVED` 阻断，日志归属 shared governance 用例；该用例在 `finally` 删除状态目录，之后 `afterEach` 才关闭 manager。处理决策为测试清理顺序 `fix_now / Windows 定向闭合`，先关闭全部已登记 manager 后再清理目录；原 SQLite 竞态未在 WSL 单例重现，不据此改动产品错误处理，真实全量 CI 仍待验证。
 - JS 复核只选择 required 源文件，已读取且由任务点名的测试断言在上下文收缩时全部丢失；准确重建复现该缺口。处理决策为 `fix_now / 本地闭合`：在同一预算内补精确绑定的辅助读取，当前源码优先；真实模型效果仍待验证，不能把信息遗漏直接断言为全部失败的根因。
