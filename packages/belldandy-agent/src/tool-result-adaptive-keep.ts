@@ -43,6 +43,7 @@ export function selectToolMessagesForCompression(input: {
   toolCallNameById: Map<string, string>;
   keepRecentToolMessages?: number;
   adaptive?: boolean;
+  protectToolNames?: ReadonlySet<string>;
 }): ToolResultCompressionSelection {
   const keepRecentToolMessages = Math.max(0, Math.floor(input.keepRecentToolMessages ?? 4));
   const adaptive = input.adaptive !== false;
@@ -63,6 +64,17 @@ export function selectToolMessagesForCompression(input: {
     if (!message || message.role !== "tool") continue;
 
     const toolName = input.toolCallNameById.get(message.tool_call_id) ?? "unknown";
+    if (input.protectToolNames?.has(toolName)) {
+      decisions.push({
+        messageIndex,
+        toolCallId: message.tool_call_id,
+        toolName,
+        contentChars: message.content.length,
+        action: "keep",
+        reason: "protected_workspace_mutation_source",
+      });
+      continue;
+    }
     const keepReason = adaptive
       ? resolveAdaptiveKeepReason({
         messages: input.messages,

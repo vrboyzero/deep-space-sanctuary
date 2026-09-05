@@ -2825,6 +2825,7 @@ export function buildWorkspaceMutationRecoveryRequest(input: {
     ...input,
     instruction: MUTATION_RECOVERY_INSTRUCTION,
     includeRequiredPathLatestEvidence: true,
+    allowFocusedLineProjection: true,
   });
 }
 
@@ -2842,6 +2843,7 @@ export function buildWorkspaceMutationContinuationRequest(input: {
     ...input,
     instruction: MUTATION_CONTINUATION_INSTRUCTION,
     includeRequiredPathLatestEvidence: true,
+    allowFocusedLineProjection: true,
   });
 }
 
@@ -2859,6 +2861,7 @@ export function buildWorkspaceMutationInputCorrectionRequest(input: {
     ...input,
     instruction: MUTATION_INPUT_CORRECTION_INSTRUCTION,
     includeRequiredPathLatestEvidence: true,
+    allowFocusedLineProjection: true,
   });
 }
 
@@ -3049,6 +3052,7 @@ function buildBoundedWorkspaceMutationRequest(input: {
   allowNoTools?: boolean;
   latestRequiredFileReadEvidenceOnly?: boolean;
   includeRequiredPathLatestEvidence?: boolean;
+  allowFocusedLineProjection?: boolean;
   includeMutationBranchTail?: boolean;
   includeAdjacentDuplicateClosingDelimiterEvidence?: boolean;
   includeLeadingDocumentation?: boolean;
@@ -3152,6 +3156,23 @@ function buildBoundedWorkspaceMutationRequest(input: {
   let latestSourceEvidenceIncluded = false;
   let truncatedEvidenceCount = 0;
 
+  // 恢复/续跑/纠正请求：覆盖判定是转录事实，先于展示预算。完整读取即使投影放不下
+  // 也视为已覆盖，避免大文件证据超出预算时被误判缺失而触发无法收敛的 source-navigation。
+  if (input.includeRequiredPathLatestEvidence) {
+    for (const item of evidence) {
+      if (!MUTATION_SOURCE_EVIDENCE_TOOLS.has(item.toolName)) continue;
+      for (const evidencePath of readMutationReadySourceEvidencePaths(item.toolName, item.content)) {
+        const normalizedEvidencePath = normalizeSourcePath(evidencePath);
+        for (const [requiredIdentity] of missingRequiredSourceEvidence) {
+          if (normalizedEvidencePath === requiredIdentity
+            || normalizedEvidencePath.endsWith(`/${requiredIdentity}`)) {
+            missingRequiredSourceEvidence.delete(requiredIdentity);
+          }
+        }
+      }
+    }
+  }
+
   for (let index = evidence.length - 1; index >= 0 && remainingTokens >= MIN_EVIDENCE_TOKENS; index--) {
     const item = evidence[index];
     const itemBudget = Math.max(
@@ -3178,7 +3199,7 @@ function buildBoundedWorkspaceMutationRequest(input: {
       contentTokenBudget,
       input.tokenEstimateContext,
       input.includeMutationBranchTail,
-      input.latestRequiredFileReadEvidenceOnly,
+      input.latestRequiredFileReadEvidenceOnly || input.allowFocusedLineProjection === true,
     );
     if (!boundedContent) {
       continue;
@@ -3194,12 +3215,14 @@ function buildBoundedWorkspaceMutationRequest(input: {
     evidenceSections.unshift(section);
     if (MUTATION_SOURCE_EVIDENCE_TOOLS.has(item.toolName)) {
       sourceEvidenceItemCount++;
-      for (const evidencePath of readMutationReadySourceEvidencePaths(item.toolName, item.content)) {
-        const normalizedEvidencePath = normalizeSourcePath(evidencePath);
-        for (const [requiredIdentity] of missingRequiredSourceEvidence) {
-          if (normalizedEvidencePath === requiredIdentity
-            || normalizedEvidencePath.endsWith(`/${requiredIdentity}`)) {
-            missingRequiredSourceEvidence.delete(requiredIdentity);
+      if (!input.includeRequiredPathLatestEvidence) {
+        for (const evidencePath of readMutationReadySourceEvidencePaths(item.toolName, item.content)) {
+          const normalizedEvidencePath = normalizeSourcePath(evidencePath);
+          for (const [requiredIdentity] of missingRequiredSourceEvidence) {
+            if (normalizedEvidencePath === requiredIdentity
+              || normalizedEvidencePath.endsWith(`/${requiredIdentity}`)) {
+              missingRequiredSourceEvidence.delete(requiredIdentity);
+            }
           }
         }
       }

@@ -1792,6 +1792,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
       conversationId?: string;
       agentId?: string;
       runId?: string;
+      protectSourceReads?: boolean;
     },
   ): Promise<CompressionBatchResult> {
     const pipeline = this.compressionPipeline;
@@ -1816,6 +1817,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
       messages,
       toolCallNameById,
       keepRecentToolMessages: keepRecent,
+      // 必达 workspace mutation 的 run 需要 file_read 原文作为恢复/复核证据源，
+      // 压缩会破坏结构化证据的可解析性并触发无法收敛的 source-navigation。
+      ...(ctx.protectSourceReads ? { protectToolNames: new Set(["file_read"]) } : {}),
     });
 
     const results: CompressionResult[] = [];
@@ -2798,6 +2802,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           this.lastCompressionBatch = await this.compressToolMessagesInPlace(messages, {
             conversationId: input.conversationId,
             agentId: resolvedAgentId,
+            protectSourceReads: workspaceMutationRequired,
           });
           if (this.lastCompressionBatch.appliedCount > 0) {
             logDebug("[compression] tool_result compressed in-place", {
@@ -2838,7 +2843,22 @@ export class ToolEnabledAgent implements BelldandyAgent {
             compactionMode: "microcompact",
           }, input.conversationId, resolvedAgentId, runHookRunner);
         }
-        const microcompactResult = microcompactMessages(messages, this.opts.microcompact);
+        const microcompactResult = microcompactMessages(messages, {
+          ...this.opts.microcompact,
+          // 必达 workspace mutation 的 run 需要 file_read 原文作为恢复/复核证据源。
+          ...(workspaceMutationRequired
+            ? {
+                compactableToolNames: (() => {
+                  const base = this.opts.microcompact?.compactableToolNames
+                    && this.opts.microcompact.compactableToolNames.length > 0
+                    ? this.opts.microcompact.compactableToolNames
+                    : ["run_command", "file_read", "list_files", "web_fetch"];
+                  const filtered = base.filter((name) => name !== "file_read");
+                  return filtered.length > 0 ? filtered : ["__no_tool_compaction__"];
+                })(),
+              }
+            : {}),
+        });
         if (microcompactResult.mutated) {
           const microcompactCompactedTokens = estimateMessagesTotal(messages, microcompactEstimateContext);
           logDebug("[microcompact] compacted stale tool messages", microcompactResult);

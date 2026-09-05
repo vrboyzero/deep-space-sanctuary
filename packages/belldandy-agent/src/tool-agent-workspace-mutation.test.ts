@@ -6854,6 +6854,22 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       "powershell_completions.go",
       "zsh_completions.go",
     ];
+    // 冻结任务的真实文件规模：完整读取存在，但远超 recovery 单请求预算。
+    const frozenSizes: Record<string, number> = {
+      "bash_completions.go": 23731,
+      "bash_completionsV2.go": 18337,
+      "cobra.go": 7668,
+      "completions.go": 40089,
+      "doc/man_docs.go": 7595,
+      "fish_completions.go": 11826,
+      "powershell_completions.go": 13961,
+      "zsh_completions.go": 11328,
+    };
+    const frozenContent = (path: string) => (
+      `package main\n\n// ${path} migrated callers\n` + "func legacy() {\n\treturn\n}\n".repeat(
+        Math.floor((frozenSizes[path] ?? 200) / 36),
+      )
+    );
     const requests: Array<Record<string, any>> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
@@ -6877,13 +6893,6 @@ describe("ToolEnabledAgent required workspace mutation", () => {
         });
       }
       if (requests.length === 2) {
-        // The frozen Go failure shape: the model returns text instead of a mutation.
-        return response({
-          choices: [{ finish_reason: "stop", message: { content: `{"summary":"no mutation"}` } }],
-          usage: { prompt_tokens: 1600, completion_tokens: 400 },
-        });
-      }
-      if (requests.length === 3) {
         return response(modelToolCall("migrate-all", "apply_patch", {
           input: requiredChangedPaths.map((path) => (
             `*** Begin Patch\n*** Update File: ${path}\n@@\n-old\n+new\n*** End Patch`
@@ -6897,17 +6906,19 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     });
     const execute = vi.fn(async (request: { id: string; name: string; arguments?: Record<string, unknown> }) => {
       if (request.name === "file_read") {
+        const readPath = String(request.arguments?.path ?? "");
+        const content = frozenContent(readPath);
         return {
           id: request.id,
           name: request.name,
           success: true,
           output: JSON.stringify({
-            path: request.arguments?.path,
-            size: 200,
-            bytesRead: 200,
+            path: readPath,
+            size: Buffer.byteLength(content),
+            bytesRead: Buffer.byteLength(content),
             truncated: false,
-            range: { offset: 0, endOffset: 200 },
-            content: `package main\n// ${request.arguments?.path}\n`,
+            range: { offset: 0, endOffset: Buffer.byteLength(content) },
+            content,
           }),
           durationMs: 1,
         };
@@ -6964,7 +6975,7 @@ describe("ToolEnabledAgent required workspace mutation", () => {
       expect.stringContaining("Bounded source-navigation phase"),
     ]));
     const recoveryIndex = systemTexts.findIndex((text) => text.includes("Mutation-only recovery phase"));
-    expect(recoveryIndex).toBe(2);
+    expect(recoveryIndex).toBe(1);
     const recoveryUserText = String(requests[recoveryIndex]?.messages?.[1]?.content ?? "");
     for (const path of requiredChangedPaths) {
       expect(recoveryUserText).toContain(path);

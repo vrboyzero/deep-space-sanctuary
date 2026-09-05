@@ -90,6 +90,29 @@ describe("tool result adaptive keep selection", () => {
       }),
     ]));
   });
+
+  it("protects protected tool names from compression regardless of the recent window", () => {
+    const messages = buildToolMessages([
+      ["read-old", "file_read", "src/old.ts\nold content ".repeat(40)],
+      ["cmd-old", "run_command", "ordinary output ".repeat(40)],
+      ["read-recent", "file_read", "src/current.ts\ncurrent content ".repeat(40)],
+    ]);
+    const selection = selectToolMessagesForCompression({
+      messages,
+      toolCallNameById: buildToolNameMap(messages),
+      keepRecentToolMessages: 1,
+      protectToolNames: new Set(["file_read"]),
+    });
+
+    expect(selection.selectedIndices).not.toContain(0);
+    expect(selection.decisions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        toolCallId: "read-old",
+        action: "keep",
+        reason: "protected_workspace_mutation_source",
+      }),
+    ]));
+  });
 });
 
 function buildToolMessages(items: Array<[string, string, string]>): ToolResultAdaptiveKeepMessage[] {

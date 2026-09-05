@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **Go 失败归因与多文件恢复证据修复完成并本地提交；待新身份探索** | 8 required path 完整读取存在但 recovery 按最近 6 条切片误判缺失 → 误触发导航；修复为最近窗口+补齐缺失 required path 读取；8-path 用例先红后绿、家族 25 文件 `469/469`、tsc 与 benchmark verifier 通过；candidate-57b9cc5-1 保持 17/144 冻结 | 提交推送新 identity 并跑 CI；最小探索验证 real-go.public-api-migration 与 Go 代表槽；随后重建候选；完整 144 槽、七维资格与第二连续候选未完成 |
+| P2-C 分层开发与编排复用 | P2 | **Go 失败真根因（证据压缩破坏）已修复并本地提交 `a1c53fa7`；待 CI 恢复与新身份探索** | 双平台复发定位：两层工具输出压缩破坏 file_read 结构化证据 → 完整读取被误判缺失 → 导航死循环；修复为 required mutation run 压缩保护 file_read + 证据补齐 + 覆盖判定前移；8-path 真实规模用例先红后绿、家族 `469/469`、压缩相关 `94/94`、tsc/verifier 通过；本轮 Quality 环境级全失败记录在案 | 推送新 identity；CI 恢复后重做双平台最小探索（real-go.public-api-migration 双平台 a1）；随后重建候选；完整 144 槽、七维资格与第二连续候选未完成 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -2117,11 +2117,36 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 提交推送新 identity 并跑完整 CI；随后按分层流程做最小探索（优先 real-go.public-api-migration Windows a1 与既有 Go 代表），验证修复与真实模型路径后再创建新 candidate。
 
+#### P2-C 开发回归实现结论：Go 双平台复发定位与工具证据压缩保护（2026-09-06）
+
+##### 已完成内容
+
+1. **真实复发证据**：`b8edee6` 最小探索的 real-go.public-api-migration 双平台均以同一消息失败（`the 1 bounded source-navigation call(s) did not produce complete source evidence`），确认上一轮“最近 6 条切片”修复不足以闭合该失败族。
+2. **根因定位（零 Provider 单元级复现）**：用冻结任务的真实文件规模（8 文件、7.6–40KB）重建 tool-agent 流程——模型的 8 个完整 file_read 输出在历史中被两层压缩（统一压缩层 `[compressed tool output]` 与 microcompact `[old tool output cleared]`）破坏为不可解析的结构化文本，恢复证据读取因此把已完整读取的路径误判为缺失，触发只能失败关闭的 source-navigation 死循环。
+3. **packages/belldandy-agent/src/react-workspace-mutation.ts 修改**：
+   - 恢复/续跑/纠正请求的证据补齐与展示投影（`includeRequiredPathLatestEvidence` + `allowFocusedLineProjection`）；
+   - 覆盖判定前移：完整读取是转录事实，先于展示预算清理 missing，展示预算不足不再误判缺失。
+4. **packages/belldandy-agent/src/tool-agent.ts 与 tool-result-adaptive-keep.ts 修改**：
+   - 必达 workspace mutation 的 run：统一压缩层以 `protectToolNames=["file_read"]` 保护源码读取；microcompact 的可压缩工具清单排除 `file_read`，两层的原文证据保持可解析。
+5. **测试**：8-path 真实规模回归（先红后绿：修复前误触发导航、修复后直接进入 Mutation-only recovery 且证据含全部 8 路径）；`tool-result-adaptive-keep.test.ts` 新增保护名单用例；压缩相关 3 文件 `94/94`。
+6. **效果**：多文件任务在模型已完整读取后不再因证据压缩/切片/展示预算任一环节误判缺失；真正未读取或截断的路径仍按原语义导航或失败关闭；两层压缩对普通 run 行为不变（保护仅在 required mutation 启用）。
+
+##### 验证结果
+
+- TypeScript：`tsc -b packages/belldandy-agent` exit=`0`；`git diff --check` 通过。
+- workspace-mutation 家族 25 文件 `469/469`；压缩相关（microcompact/adaptive-keep/tool-agent 压缩）`94/94`。
+- `corepack pnpm verify:coding-benchmark` exit=`0`；零 Provider；冻结槽未改写。
+- 本轮 CI 观察：head `b8edee69` 与 docs-only `7d380813` 的 Quality/Docker 均环境级失败（全部 job 约 2 秒内失败、日志 Blob 不存在、重跑同样失败），本地回归与工程 Gate 已绿，记录为 `record_only / CI 环境待恢复`，正式候选仍以完整 CI 为准入。
+
+##### 后续计划
+
+提交推送新 identity 并等待 CI 环境恢复；随后按分层流程重做双平台最小探索（real-go.public-api-migration Windows a1 + WSL a1），验证真实模型路径通过后再创建新 candidate。
+
 ### 后续计划（当前检查点，2026-09-05）
 
-1. **本环节结果**：Go 冻结失败已完成零 Provider 归因——8 个 required path 的完整读取存在，但 recovery 请求按「最近 6 条」切片误判 2 个路径缺失并误触发导航，模型未按导航指令补读后失败关闭；已修复为「最近窗口 + 补齐窗口外缺失 required path 完整读取」，新增 8-path 用例先红后绿（本地提交，待推送）。
-2. **下一步准备做**：提交推送新 identity 并跑完整 CI；随后按分层流程做最小探索（优先 `real-go.public-api-migration` Windows a1 与既有 Go 代表槽），验证修复与真实模型路径，再创建新 candidate。
-3. **为什么先做它**：该证据窗口盲点是确定性产品缺口，修复后必须先用真实模型验证 Go 任务不再因同一路径失败，再决定是否扩大付费槽。
+1. **本环节结果**：Go 失败族真根因已闭合——双平台真实复发后零 Provider 定位为两层工具输出压缩（统一压缩层 + microcompact）破坏 file_read 结构化证据，导致已完整读取的路径被误判缺失并陷入导航死循环；已修复（压缩保护 + 证据补齐 + 覆盖判定前移），8-path 真实规模用例先红后绿、家族 `469/469`、压缩相关 `94/94`（本地提交，待推送）。
+2. **下一步准备做**：提交推送新 identity；CI 环境恢复后（本轮 Quality 环境级全失败，见重要问题说明）按分层流程重做双平台最小探索（real-go.public-api-migration Windows a1 + WSL a1），验证真实模型路径通过后再创建新 candidate。
+3. **为什么先做它**：该失败族是确定性产品缺口，必须先用真实模型验证 Go 任务不再因同一路径失败，再决定是否重建候选与扩大付费槽。
 4. **当前还缺的关键闭环**：Go 真实任务稳定通过、完整 144 槽原生矩阵、aggregate、dimension evidence、qualification 与七维 score、第二个连续完整候选；`candidate-57b9cc5-1` 已冻结（17/144）、`e4bd1c3-1`（8/144）与旧 `63e0a41`（14/144）永久只读。
 5. 后继运行继承 `formal-57b9cc5-1/cost-ledger-final.json`（SHA=`ad36a894…14f`，observed/reserved=`2.49696170/2.34221 USD`，next worst≈`39.5 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效。
 
@@ -2229,3 +2254,5 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - disconnect-recovery 冻结任务在本轮正式槽通过（首调用 file_write、fault 注入与恢复成功），与上一轮探索一致，确认此前失败为模型输出可变性；诊断加固未触发，保留为后续同类失败的自诊断手段。处理决策为 `fix_now completed（诊断加固）`。
 - Go 冻结失败根因定位：run 已完整读取全部 8 个 required path，但 recovery 请求的证据选择按「最近 6 条」切片，`cobra.go`/`bash_completions.go` 被误判缺失 → 误触发一次 source-navigation，模型未按导航指令补读 → fail-closed，changes.patch 为空、evaluator 判 regression=`1`。处理为 `fix_now completed / 多文件恢复证据补齐`：恢复/续跑/纠正请求保留最近窗口并补齐窗口外缺失 required path 的完整读取，8-path 用例先红后绿；真正缺失/截断路径仍按原语义导航或失败关闭，导航与预算上限不变。
 - 本次回归期间首次尝试的「仅按 required path 最新证据」方案使 12 个既有导航语义用例失败（非 required 最近读取被丢弃、有读取但缺 required path 时不再导航），已改为「最近窗口 + 补齐缺失」方案并全量 `469/469` 通过；该过程保留为验证记录，未交付中间方案。
+- 本轮 Quality/Docker CI 对 `7d380813`（docs-only）与 `b8edee69`（代码）均环境级失败：7 个 job 均在约 2 秒内 failure、job 日志 Blob 不存在、`gh run rerun` 后同样失败；workflow 文件未变且上一 identity 同 workflow 全绿，判定为 CI 环境故障而非代码回归。处理决策为 `record_only / CI 环境待恢复`；正式候选准入仍要求完整 CI 通过，本地回归（469/469、94/94、tsc、benchmark verifier）已绿不能替代。
+- `b8edee6` 双平台探索再次复现 Go 失败后，定位真根因是两层工具输出压缩破坏恢复证据：统一压缩层写入 `[compressed tool output]` 标记、microcompact 写入 `[old tool output cleared]` 摘要，file_read 结构化 JSON 因此不可解析，完整读取被误判缺失并陷入导航死循环。处理决策为 `fix_now completed / 证据压缩保护`：required mutation run 的两层压缩均保留 file_read 原文；普通 run 压缩行为不变。
