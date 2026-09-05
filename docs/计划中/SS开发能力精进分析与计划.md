@@ -94,11 +94,11 @@ SS 内部评分误差约 +/-0.15，横向评分误差约 +/-0.3；横向表衡�
 ### 1.5 当前决策
 
 1. 不继续扩功能面，优先改善复杂真实任务的编辑/测试稳定性。
-2. 所有已执行 formal 永久冻结，不重跑，不为失败 identity 启动 WSL2。
+2. 所有已执行 formal 原始结果保持不可覆盖；已经宣布冻结的历史 candidate 不重启、不重跑、不启动其 WSL2。后继候选按第 6.6 节区分普通失败续跑与硬门槛停止，不再将所有开发失败都升级为候选重建。
 3. 2977780 required-mutation 和 e1f8aaa Web 双平台代表只证明局部闭环，不外推完整分母。
 4. candidate score evaluator、qualification v2、dimension mapping 和 fail-closed 测试已完成；当前不再缺评分 owner，缺的是 current-candidate 真实证据。
 5. Go canary 满足第二独立语义后端 Gate，但不改变生产默认路径或当前分数。
-6. 恢复后必须先完成新候选 operators、expected-report plan、资源/费用 Gate，再启动任何新付费槽位。
+6. 先完成开发回归、环境预检和固定小样本探索，再冻结稳定候选并生成 expected-report plan、配置与资源/费用 Gate；每次源码修复不自动触发正式候选重建。
 
 ## 2. 范围、方法与边界
 
@@ -230,7 +230,7 @@ Go canary 的正式边界是：goCanaryEligible=true、productionEligible=false�
 
 ### 6.2 当前证据要求
 
-每个 candidate 必须先冻结 source/harness、repository inputs 和 expected-report plan，再执行 operators；plan 必须声明唯一 task/platform/attempt/path，不可覆盖并通过 EEXIST/hash 不变负例。任何 report、ledger、usage、CI、artifact 或外部账单缺失，保持 incomplete 或拒绝，不补零、不猜测。
+每个正式 candidate 必须先冻结 source/harness、repository inputs 和 expected-report plan，再执行受测的公共 operator；plan 必须声明唯一 task/platform/attempt/path，不可覆盖并通过 EEXIST/hash 不变负例。`144/144/144` 是 plan 的报告数、唯一 ID 数、唯一路径数；实际矩阵为 `24 tasks × 2 platforms × 3 attempts = 144 runs`。任何 report、ledger、usage、CI、artifact 或外部账单缺失，保持 incomplete 或拒绝，不补零、不猜测。
 
 ### 6.3 关键 owner 与入口
 
@@ -256,10 +256,53 @@ Go canary 的正式边界是：goCanaryEligible=true、productionEligible=false�
 
 ### 6.5 冻结与禁止范围
 
-- 所有已执行 formal（包括 2977780、e1f8aaa、0e35c8b 及历史 identity）永久冻结，不重跑、不为失败 identity 启动 WSL2。
+- 已宣布冻结的历史 candidate（包括 2977780、e1f8aaa、0e35c8b、6ec5db3、8f794af、6ce85bd 及此前记录）保持原终态，不重跑、不 reconcile、不启动其 WSL2；新政策不追溯改写旧证据。
+- 后继 active candidate 的已执行槽不可重跑或覆盖；同一完整 identity 与冻结运行配置下，只能经独立对账续跑未执行槽。普通失败仍计入分母，是否停止由第 6.6 节规定。
 - 不增加 turn/token、Provider retry 或单 run 费用，不使用旧调价口径。
-- candidate qualification/七维证据和零模型 readiness 未闭合前，不启动完整付费矩阵。
+- 零模型环境预检、七维 evidence producer 的可用性与 candidate 运行前材料未闭合前，不启动完整付费矩阵；依赖 completed aggregate 的真实 receipt、qualification 和 score 在矩阵完成后生成，不作为循环依赖的运行前条件。
 - 不 push 到 origin，不公开发布，不执行生产操作，不自动 merge/release/deploy。
+
+### 6.6 分层开发测试与减少重复工作（2026-09-05 起适用）
+
+本节调整开发方法与后继候选执行策略。第 1.3/1.4 节的最终验收保持不变：两个连续正式候选分别具有单一 source/harness identity、完整 144 槽原生结果、失败保留分母、七维下限、raw weighted >=9.500 以及全部 hard Gate；探索结果、跨 revision 通过记录和局部回归均不得替代正式验收。
+
+#### 四层反馈回路
+
+| 层次 | 输入与执行方式 | 失败处理 | 完成条件与预期效果 |
+| --- | --- | --- | --- |
+| 开发回归 | 从真实失败建立零 Provider 复现；先跑失败用例、受影响模块及必要集成测试，改动稳定后执行要求的 build/完整回归 | 保留首个失败，修复后只扩展必要验证；同类问题集中关闭，不为每次小修创建 formal identity | 关键行为可重复断言，新增修复有回归依据；缩短反馈时间 |
+| 环境预检 | 正式槽分配前独立验证 Gateway readiness、OCI、worktree 清理、平台依赖与资源状态；冷/热启动条件单独标明 | 基础设施问题留在独立非正式 evidence 根中定位；不重试已消耗的 formal 槽，不将正式失败事后改名为预检 | 零 Provider 路径可靠，启动阶段与资源证据可诊断；减少正式首槽才发现环境问题 |
+| 探索验证 | 执行前固定小样本清单、版本、平台、预算和停止条件，优先历史失败族、高风险边界与代表性任务 | 每次结果追加保留并汇总原因；达到预设范围或预算即停，禁止试到成功后只保留成功样本 | 真实模型路径得到开发反馈；记录明确 `formal=false`、不进入 aggregate/qualification，先收敛问题再冻结候选 |
+| 正式验收 | 稳定版本通过工程/探索 Gate 后才创建不可覆盖 plan 和候选配置；按冻结顺序渐进执行完整矩阵 | 按下表决定暂停、继续或结束；修复源码后回开发层，不立刻重开完整候选 | 同一版本完整、可复算、无挑选的结果进入最终资格与评分；通过后再执行第二候选 |
+
+#### 正式运行停止与续跑规则
+
+| 情况 | 动作 | 证据边界 |
+| --- | --- | --- |
+| 普通产品失败，仍有达到所有门槛的可能 | 完成结果/usage/资源对账后，允许继续同 candidate 未执行槽 | 失败留在分母，不重跑、不用新结果替换；应使用正式 scorecard/manifest 计算，而非复制阈值常量 |
+| A 层必过项失败、安全/containment/重复副作用/敏感值等硬门槛失败，或按剩余槽最佳情况也不可能达标 | 停止后续付费槽，保留候选 failed/incomplete 证据，返回开发回归集中修复 | 停止用于减少无资格运行开销，不把未执行槽算成通过；风险状态未收敛前不继续探索 |
+| 正式槽出现基础设施失败、无报告、usage/证据不完整或身份漂移 | 立即暂停并对账；已触及不可恢复 hard Gate 时结束该候选 | Provider retry=0；已消耗或归属不明的槽不可重发。只能补充可验证的诊断信息，不伪造终态或补零 |
+| 用户暂停、批次边界或费用守卫停止，且未留下不确定执行 | 保留检查点，恢复时核对 identity、冻结配置、plan、ledger、artifact 与资源，只选未执行槽 | 暂停不意味着清空已通过记录；启动前再次计算下一次最坏累计费用 |
+| source/harness、fixture/evaluator、模型或其他冻结行为配置发生变化 | 后续正式结果必须属于新 identity/新候选，先返回开发与探索验证 | 旧结果可用于诊断比较，不拼入新版本正式分母；运行环境若是评估对象，不以热身或迁盘掩盖失败 |
+
+仅在可确定所有必要条件时允许普通失败后继续；缺少分类、外键或剩余资格判定时暂停并报告原因。`resume` 指调度未执行槽，不等于重试失败槽。独立 verifier 对原始证据的只读复算保持允许。
+
+#### 减少重复准备与记录
+
+1. **公共 operator + 候选配置**：将 launcher、身份/plan/续跑校验与停止政策迁入受版本控制、可测试的公共模块；candidate-specific JSON 只保存身份、路径、hash、平台和预算绑定，禁止每个 commit 复制修改七份脚本。先兼容已有 production runner，历史 operators 不改写。
+2. **有条件复用缓存与准备材料**：按平台、工具链、锁文件和内容 hash 复用只读 source/dependency cache；Windows/WSL 原生依赖分开。新候选仍重新绑定 identity、验证可变输入、生成自己的 plan/receipt，不能重贴旧哈希或借用旧正式报告。SSD staging 先在独立环境预检中验证，再固定入后继候选配置。
+3. **验证按影响扩展**：失败测试到相关模块，再到必要跨模块回归；只有新变更、真实失败或未关闭风险才扩大或重复。完整验收 Gate 仍须执行，局部通过不冒充全仓通过。
+4. **问题集中收敛**：探索清单在执行前固定，同一缺陷族优先零 Provider 复现；源码修复可以正常提交，但每个提交不自动对应一个 formal candidate。小样本只为发现问题，不承担“证明 9.5”。
+5. **记录精简但可恢复**：机器 evidence 保存逐槽原始结果与费用；本文件末尾进度表只写阶段结论、重要问题和恢复入口。历史失败保留，不因节省目录或 token 删除证据，不反复回填逐命令流水。
+
+#### 实施范围、风险与验收
+
+- **风险等级**：中等，涉及候选编排和验证合同；主要失败模式为过期缓存/跨身份结果误用、探索样本混入正式分母、普通失败被误判为可续跑以及费用重复或漏记。
+- **可行性与依赖**：复用现有 manifest/scorecard、production runner、不可覆盖 plan、resume verifier 和双层费用账本；先关闭当前 worktree 清理失败及启动证据缺口，再接入后继候选。缺少标准 producer 的判断保持 incomplete。
+- **粗略规模**：编排优化预计为中等规模，主要是候选配置、共享校验/停止政策与 launcher 接线及其合同测试；初估 1–3 人日工程量，不含未知产品缺陷、双平台运行、Provider/CI 观察时间。优先渐进迁移，不重写 Agent 或整套 benchmark。
+- **实施顺序与完成条件**：先通过局部复现和环境预检；再完成参数化编排、普通失败续跑/硬门槛停止/漂移拒绝/重复槽拒绝测试；随后执行固定探索清单；全部稳定后才创建正式候选并验证完整矩阵和资格。各环节完成立即更新末尾进度表。
+- **包含/排除**：包含新工作流、参数化候选准备、按影响验证和可复用缓存检查；排除修改 scorecard/任务真值/预算、重启历史失败 candidate、跨 revision 拼分、自动公开发布，以及无关重构。
+- **行为验收**：同一 active identity 的普通失败在资格仍可达且资源/费用闭合时，已执行结果原样保留并从下一未执行槽继续；硬门槛失败后不再启动付费槽；开发用例失败只进入局部诊断，探索 evidence 永远不能作为正式验收输入。
 
 ## 7. 风险与技术债裁决
 
@@ -1008,20 +1051,221 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C 6ec5db3/candidate-1 | P2 | **batch 03 已冻结，13/144（3 passed + 1 product_workflow failure）；Fix Mode 修复已交付 private/main** | resume=`13/144`、remaining=`131`、unreported infrastructure=`0`；env/资源清理闭合；t13 `EPERM rename` evidence 已冻结；定向回归=`24/24`、workspace build 与 benchmark contract 通过；全仓=`6554 passed / 2 failed / 3 skipped`，两项隔离复跑均通过；fix commit=`8f794af` | 以 `8f794af` 重建双平台 candidate，旧 identity 不得重跑或启动 WSL |
 | P2-C 8f794af/candidate-1 | P2 | **batch 01 已冻结，3/144（2 passed + 1 product_workflow failure）** | resume=`3/144`、remaining=`141`、unreported infrastructure=`0`；t03 tests/patch 通过但目标复核输出合同失败；env/资源清理闭合 | 禁止重跑/reconcile 或启动 WSL；修复只由新 identity 验证，不改写旧终态 |
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
-| P2-C 6ce85bd/candidate-1 | P2 | **双平台 staging/identity 与 repository inputs 完成；按用户要求暂停** | Windows/WSL clean detached；identity=`6ce85bd / false / 844c…b7d2 / 411a…7f36`；双端 build/benchmark contract 与 inputs=`4/4/8` 通过 | 恢复后先生成并独立验真不可覆盖 expected-report plan，再迁移 operators |
+| P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
+| P2-C Gateway 启动阶段诊断 | P2 | **已恢复开发回归；全仓验证未闭合** | 新增有界 IPC 阶段接线，定向=`47/47`（新增 7 项），build/benchmark contract 通过，r5 四阶段完整且 auth-ready=`6375ms`；上次全仓中断前已观察到并行 worktree 清理失败，未取得完整汇总 | 先检查测试残留并隔离验证失败，再完成必要回归；性能根因仍未关闭，不立刻创建新 formal |
+| P2-C 分层开发与编排复用 | P2 | **公共编排与零 Provider 预检通过；固定探索准备中** | 全仓=`6617 passed / 1 failed / 3 skipped`，新增公共编排/材料测试全通过；唯一 workspace restore EPERM 已局部复现容错缺口并修复；相关=`19/19 + 72/72`；readiness r6 auth-ready=`2037ms` | 准备 clean staging 与全新输入绑定后执行固定 7 槽探索；正式 144 槽的两项 manifest token override 等待授权口径确认 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
+
+#### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
+
+##### 已完成内容
+
+1. **`tmp/verify-p2c-expected-report-plan-6ce85bd.mjs` 新建**：
+   - 绑定冻结 source/harness identity、manifest 与全新 artifact/formal 路径，逐槽复核 task/platform/attempt/report path。
+2. **`artifacts/p2c-6ce85bd/candidate-1/expected-report-plan.json` 首次生成**：
+   - 双平台 inputs 重新通过独立 `4/4/8` 验真，四层输出目标不存在后由冻结 production writer 写入。
+   - SHA-256=`b73d28482a74bf9a8314f0e45bc8abe6d2acbe5d5c31730636ccf0755a4d4002`，长度=`49,164 bytes`。
+3. **效果**：
+   - 144 个 report 槽位、唯一 ID/path 与候选身份已在运行前冻结；重复写入被拒绝，历史证据保持只读。
+
+##### 验证结果
+
+- TypeScript 编译状态沿用本 identity 双平台 build 通过；本环节未修改产品源码，未重跑全仓测试，交付记录为 `6558 passed / 3 skipped / 0 failed`。
+- 新 verifier `node --check` 通过；双平台 inputs verifier=`2/2`、plan 独立 verifier=`1/1`、不可覆盖负例=`1/1`。
+- reports/unique IDs/unique paths=`144/144/144`；重复 writer exit=`1/EEXIST`，长度/hash 不变；formal root 与全部 report 目标不存在，未启动 Gateway、runner 或 Provider。
+
+#### P2-C 新候选运行编排实现结论：6ce85bd candidate operators（2026-09-05）
+
+##### 已完成内容
+
+1. **`tmp/migrate-p2c-operators-6ce85bd.mjs` 新建**：
+   - 预检全部 7 个目标不存在，机械迁移冻结 identity/path/plan/config hash 与 observed 费用基线，以 `wx` 写入并逐文件反向比对。
+2. **candidate launcher、launch-slot、resume、quiescence、ports、Docker wrapper 与 env cleanup 新建**：
+   - 仅绑定 `6ce85bd`；launcher SHA-256=`069710a641b523d0f37d113157df3bff85128a391f4f56b77b2fbef0afba044e`。
+   - 从旧候选只读 resume 验真复算 observed/reserved=`2.43983027/2.14221000 USD`；system-temp runtime、失败即停止、单 run/turn/token/retry 与回收站清理合同保持不变。
+3. **效果**：
+   - 新候选只允许进入 plan 声明槽位；cost-only 不创建 runtime、fixture、ledger 或 formal，旧候选证据没有改写。
+
+##### 验证结果
+
+- TypeScript 状态沿用冻结 identity 双平台 build 通过；新增产品测试=`0`，本环节未重跑全仓测试。
+- PowerShell AST=`4/4`、operator `node --check=2/2`、`bash -n=1/1`；migration helper 语法通过，7 个 operator 的反向比对全部一致，旧 identity/hash/path/observed 基线零命中。
+- terminal policy=`4/4`；双平台首槽精确映射 `rules.nested-precedence/attempt-1`，production validator 复算的 source/harness 四字段一致。
+- 双平台 cost-only=`2/2`，next worst=`37.45632216 RMB < 80`、processed=`0`；四类运行输出不存在，未启动 Gateway、runner 或 Provider。新候选双层 ledger 动态对账在首个真实终态后执行。
+
+#### P2-C 新候选运行前置实现结论：6ce85bd 双平台 OCI 与资源 Gate（2026-09-05）
+
+##### 已完成内容
+
+1. **candidate WSL toolchain 与 OCI 临时目录新建**：
+   - `/var/tmp/star-sanctuary-p2c-6ce85bd-toolchain` 只链接已冻结 Go、gopls 和新 Docker wrapper；WSL fixture 使用 `tmp/p2c-6ce85bd/oci-tmp` 独立 drive-backed TMPDIR。
+2. **双平台 production OCI fixture 执行**：
+   - 固定 `docker` 与 `node:22-bullseye@sha256:62f5…844`，覆盖 rootfs/workspace 隔离、network none、pipe/PTY、resize/cancel 与 lease cleanup。
+3. **`tmp/check-p2c-6ce85bd-resources.ps1` 新建**：
+   - 复用现有 Windows quiescence/ports operator，严格串行检查双端进程、端口、双 Docker 入口、三处临时资源及 clean detached staging；WSL `ps -ww` 保留完整命令匹配，固定显示尺寸避免宿主终端告警。
+4. **效果**：
+   - 新 identity 的实际 sandbox 和资源回收路径可用；检查脚本只读，不停止、删除或修改任何归属不明资源。
+
+##### 验证结果
+
+- TypeScript 状态沿用本 identity 双平台 build 通过；新增产品测试=`0`，未重复全仓测试。
+- Windows/WSL `corepack pnpm verify:command-sandbox-oci`=`2/2` 通过，均明确输出全部 OCI isolation/command job fixtures passed。
+- 串行资源脚本语法和实际运行通过：Windows/WSL 进程、端口、双入口 containers、Windows TEMP/drive-backed TMPDIR/WSL `/tmp` lease 全部为 `0`；双端 clean detached、WSL relay=`644`。
+- 本环节未启动 Gateway、benchmark runner 或 Provider；Docker Desktop 已恢复，双入口 client/server=`29.1.3/29.1.3`。
+
+#### P2-C 首槽实现结论：6ce85bd Windows canary 失败冻结与清理（2026-09-05）
+
+##### 已完成内容
+
+1. **唯一 Windows canary 执行并冻结**：
+   - 最终双平台 inputs=`4/4/8`、plan=`144/144/144`、首槽映射、8 目标不存在及资源/费用检查通过后，仅启动 `rules.nested-precedence/windows-native/attempt-1`。
+   - system-temp state root 内 `gateway-readiness.json` 记录 `gateway_readiness_timeout`，SHA-256=`6fc9416c71ae0f50830406e2611409fedef4e664dcbe15c762632b3ceb9d3dcd`；stdout/stderr 均为 0 bytes，未连接端口或进入 benchmark runner。
+2. **双层 ledger 与 env cleanup 闭环**：
+   - `tmp/p2c-6ce85bd/candidate-1/cost-ledger-global.json` 保留唯一无报告基础设施失败，新增未知费用预留 `$0.10`；未运行后续槽或 WSL。
+   - `.env` 逐文件 dry-run、containment、普通文件、非 reparse point 与 SHA-256 校验后送入 Windows 回收站；cleanup log SHA-256=`6a29cb6c288499924709ebdececd26152537f753c692251657507f6dabfbc47d`。
+3. **效果**：
+   - 失败和费用证据可复算，未把零 report 伪装为已处理槽位；candidate 永久冻结，后续只执行独立诊断。
+
+##### 验证结果
+
+- TypeScript 状态沿用本 identity 双平台 build 通过；本环节新增产品测试=`0`，未重复全仓测试。
+- resume verifier=`passed`：plan/IDs/paths=`144/144/144`，processed=`0`、remaining=`144`、unreportedInfrastructure=`1`、declared artifacts=`0`。
+- readiness timeout=`60055ms`，child stop completed=`60096ms`；candidate Provider cost=`0`，global observed/reserved=`2.43983027/2.24221000 USD`，不以该记录替代外部账单。
+- cleanup=`1 recycled / 0 remaining`；post-run Windows/WSL 进程、端口、containers 与三处 lease 全部为 `0`，双端 staging clean detached。
+
+#### P2-C 启动可诊断性实现结论：Gateway 有界 IPC 阶段反馈（2026-09-05）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/bin/gateway-startup-diagnostic.ts` 新建，`gateway.ts` 与 `gateway-main.ts` 接入**：
+   - 仅在受管父进程启用 `ipc-v1` 且 IPC 已连接时发送固定类型、固定阶段的消息；阶段为入口、build guard 完成、主模块主体、server listening。
+   - 入口文件只增加接线；消息不携带环境值、路径或日志正文，传输异常不改变 Gateway 启动行为。
+2. **`scripts/gateway-readiness-diagnostic.mjs` 与 `scripts/run-coding-agent-benchmark-windows.mjs` 扩展**：
+   - 受管 Gateway 启用 IPC，接收器按顺序接受最多四个合法阶段，拒绝额外字段、重复、乱序及终态后的消息。
+   - 阶段写入已有 v1 `events`；readiness 仍须实际端口与认证探针通过，timeout/retry 保持原上限。
+3. **测试与文档同步**：
+   - 新建 `gateway-startup-diagnostic.test.ts`、`scripts/gateway-bootstrap-readiness.test.mjs`，扩展 `scripts/gateway-readiness-diagnostic.test.mjs`，覆盖 opt-in、消息边界和真实子进程成功/超时路径。
+   - 更新 `benchmarks/coding-agent/README.md` 与 `docs/project-map.md`，记录诊断合同和模块入口。
+4. **效果**：
+   - 即使 Gateway 尚无 stdout/stderr，也可区分入口、build guard、主模块加载及监听阶段，后续超时可保留更明确的定位证据。
+   - 本轮完成的是启动可诊断性；冷加载/宿主 I/O 波动的性能根因尚未关闭，不能据此宣称 readiness 故障已修复。
+
+##### 验证结果
+
+- TypeScript 编译无错误：`corepack pnpm build` 通过，workspace entrypoint verifier 与 `corepack pnpm verify:coding-benchmark` 通过；后者仅有既有 AJV `date-time` warning。
+- 五个定向测试文件共 `47/47` 通过，包含 `7` 项新增测试。
+- `tmp/p2c-6ce85bd-diagnosis/r5/summary.json`：当前真实构建无临时 loader/marker 注入，四个 `bootstrap_*` 阶段完整，auth-ready=`6375ms`，child stop=`6390ms`，Provider environment load=`0`；benchmark 边界由测试替身接管，未执行 formal 或模型调用。
+- `corepack pnpm test` 尚未取得完整终态汇总；中断前至少观察到一项真实失败：`scripts/coding-agent-benchmark-system-harness.test.mjs` 的 `fans two isolated write lanes in only after a bound preview and confirmation` 返回 `resolution discard failed: operation_status_uncertain`，并报告 repository/worktree 状态残留。未执行隔离复跑，不能判定为环境偶发或产品回归。
+- 按用户暂停要求，已向全仓测试会话 `33876` 发送中断并收到 exit=`1`；随后只读检查确认该测试父子进程和仓库 Vitest/tinypool 匹配进程均已退出。本轮全仓结果记为“已中断、验证未完成”，不沿用旧 commit 的通过总数。
+
+### 暂停检查点（2026-09-05）
+
+- 已按用户要求回写并暂停；本轮启动诊断源码、测试和文档改动尚未提交或推送，未创建后继 candidate，也未再启动任何 formal 槽。
+- `6ce85bd/candidate-1` 保持永久冻结：`processed=0 / remaining=144 / unreportedInfrastructure=1`；权威账本仍为 `tmp/p2c-6ce85bd/candidate-1/cost-ledger-global.json`，global observed/reserved=`2.43983027/2.24221000 USD`。
+- canary 与 r1-r5 诊断环境文件已回收；全仓测试中断后的临时文件和 worktree 尚未完成全面残留验真，恢复时先按归属与路径边界检查，不套用此前 formal/诊断的零残留结论。
+- 保留用户现有 `AGENTS.md`、`docs/计划中/D盘容易增大问题与处理方法.md` 和 `tmp-codeintel-summary.json` 改动；后续提交须排除这些内容。
+
+#### P2-C 开发回归实现结论：失败分层与候选剩余资格政策（2026-09-05）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-progress.mjs` 新建**：
+   - 读取现有 manifest/scorecard/mapping，按 A/B/C、语言生态和七维 subgroup 计算剩余槽最佳界限，只返回调度决策与原因，不生成正式报告或分数。
+   - 普通 B 失败保留并允许继续；必过项、不可达门槛、基础设施/安全/资源失败停止；重复槽、retry 漂移及不完整证据暂停。
+2. **`scripts/coding-agent-candidate-progress.test.mjs` 新建**：
+   - 覆盖失败保留、生态/维度提前止损、nullable test denominator、冻结候选、探索边界和完整矩阵仍不授分。
+3. **效果**：
+   - 后继编排可按当前资格门槛决定是否继续，开发失败不再必然触发整套候选重建；旧 operators 和冻结报告保持原样。
+
+##### 验证结果
+
+- 新政策为 JavaScript，本环节未修改 TypeScript；已有启动诊断 build 通过记录保留，新增编排的完整工程 Gate 尚待接线后执行。
+- 将旧“任一产品失败即停止”逻辑接入新测试时明确出现 `4 failed / 12 passed`；改为门槛判断后新政策 `16/16`，连同原评分 evaluator 合计 `21/21` 通过。
+- 暂停点 worktree 清理用例隔离=`1/1`，system harness/user-worktree/managed-worktree 三文件=`46/46`；没有复现原 `operation_status_uncertain`，未修改删除逻辑，原全仓失败仍为未关闭观察项。
+
+#### P2-C 公共编排实现结论：配置、持久化费用与未执行槽续跑（2026-09-05）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-config.mjs` 与 `benchmarks/coding-agent/v3/candidate-runner-config.schema.json` 新建**：
+   - 固定模型、预算、重试、平台与输出边界；正式清单必须为 144 槽，探索最多 12 槽且不能携带正式 plan。
+2. **`scripts/coding-agent-candidate-session.mjs` 与 `scripts/run-coding-agent-candidate-matrix.mjs` 新建**：
+   - 执行前持久化费用预留与 session/slot 绑定；工作区级费用所有权要求后继 session 引用上一关闭账本。
+   - 终态不可覆盖，批次恢复只调度未执行槽，关闭后禁止重开；`--max-new-runs 0` 保持只读。
+3. **效果**：
+   - 局部失败无需清空历史结果；中断槽不会重复调用 Provider，跨候选并发或旧费用基线不能漏算支出。
+   - 探索清单结束时明确关闭并保持 `unscored`；报告与 runner 退出码矛盾时保留完整未知费用预留。
+
+##### 验证结果
+
+- 本环节修改 JavaScript/JSON/PowerShell，未修改 TypeScript；完整 build 与工程 Gate 待真实接线稳定后执行。
+- 配置、政策、session、matrix 与现有 evidence 五文件 `66/66` 通过；跨 session 旧基线测试先得到 `1 failed / 8 passed`，修复后通过；matrix 四项边界真实红灯后修复通过。
+- matrix 集成使用可控 runner adapter，证明调度和账本合同；尚不作为真实 Windows/WSL 运行、资源清理或正式候选验收证据。新增 Provider 调用=`0`。
+
+#### P2-C 真实边界实现结论：材料复算、探索隔离与 env 回收（2026-09-05）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-materials.mjs` 与 `scripts/verify-coding-agent-candidate-inputs.mjs` 新建**：
+   - 复用 production owner 独立复算四仓 receipt/八项 preflight，按平台验证 source/cache；逐报告重建并对照 events 复算 usage。
+   - 验证实际模型与不可覆盖的运行用途标记；入口必须来自冻结 Windows harness，新 session 拒绝既有输出根。
+2. **`scripts/coding-agent-candidate-runtime.mjs` 与两个 PowerShell helper 新建**：
+   - 接入 Windows/WSL production runner，使用真实进程、端口、Docker 和 lease 探针。
+   - env 清理先 dry-run，再保存不可覆盖 intent，经 containment/普通文件/非 reparse point/SHA-256 复核后送回收站并写最终记录；资源或敏感扫描不确定时禁止后继 session 花费。
+3. **`scripts/aggregate-coding-agent-benchmark.mjs` 与 `package.json` 修改**：
+   - 聚合入口在写输出前拒绝探索标记，新增公共候选矩阵命令；运行中只保留槽位证据，结束时生成最终账本，避免每个批次复制费用快照。
+4. **效果**：
+   - 缓存/config hash 本身不再代替独立输入验真，探索结果不能经正常聚合入口混入正式分母；环境文件清理保留可审计证据。
+
+##### 验证结果
+
+- `corepack pnpm build` 通过，TypeScript 编译无错误；`verify:coding-benchmark` 与 JavaScript/PowerShell 语法检查通过。
+- runtime/session/matrix/aggregate 四文件 `65/65` 通过，含真实 Windows 回收及磁盘敏感扫描；materials/inputs 八项测试 `8/8` 通过。随后增加资源关闭状态约束，session/matrix/materials `22/22` 通过；完整回归正在执行，尚无最终汇总。
+- 实际 Windows 与 WSL 资源探针均通过：process/listener/container/lease 八项为零。新增 Provider 调用=`0`，历史权威费用账本未改写。
+
+#### P2-C 开发回归实现结论：workspace restore 有界 rename 与并发修改保护（2026-09-05）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/atomic-file-replace.ts` 与 `workspace-revision.ts` 修改**：
+   - restore 复用已有三次、每次间隔 50ms 的文件替换 helper；每次替换前复查路径和 after hash，持续失败保留原文件，等待期间的新用户修改不被覆盖。
+2. **`packages/belldandy-core/src/workspace-revision.test.ts` 新增回归**：
+   - 三个确定性场景分别覆盖瞬态 EPERM、持续 EPERM、等待期间用户编辑；先取得真实红灯，再实现最小修复。
+3. **`scripts/prepare-coding-agent-candidate-inputs.mjs` 新建**：
+   - 共用 source/cache 指针生成新的候选输入与 preparation 绑定，重复发布稳定拒绝，避免每个候选复制 producer。
+4. **效果**：
+   - 开发失败留在局部回归层处理；没有重开旧 candidate 或因这次失败重建完整模型矩阵。Provider retry 仍为 0，文件系统有限重试不增加任何模型调用。
+
+##### 验证结果
+
+- 完整回归原始结果=`6617 passed / 1 failed / 3 skipped`，报告为 `tmp/p2c-layered-development/full-regression.json`；不覆盖、不改写为全绿。原并行 worktree 清理三文件在全量中为 `46/46`。
+- 唯一失败为 `server-methods/workspace-revision.test.ts` 恢复 `note.txt` 时的 `EPERM rename`；隔离=`1/1`，说明宿主占用暂未复现。三个注入场景先 `3 failed`，修复后相关四文件=`19/19`；共享 helper 其余调用者=`72/72`。新的输入 producer/verifier=`4/4`。
+- 修复后 `corepack pnpm build` 通过，TypeScript 编译无错误；新增测试 spy 的泛型首次过宽导致 TS2322，明确为 `MockInstance<typeof fs.rename>` 后编译通过。
+- 独立零 Provider readiness r6：新 state、当前构建、现有磁盘缓存条件下 auth-ready=`2037ms`，child stop=`2055ms`，完整四阶段 IPC；Provider env 读取=`0`、benchmark boundary=`1`。新 `.env/.env.local` 两文件完成回收，`28894` listener=`0`；不把该热缓存结果当作冷启动根因已修复。
+- 探索清单已固定为 7 槽，全部在 `12 turns / 24,000 tokens` 内；文件 `tmp/p2c-layered-development/exploration-selection.json`，SHA-256=`d315728f1c607c0cd0bbd3bbf851ee5020b19c73f7535729c85bc9d445f1f1d9`。尚未调用 Provider。
 
 ### 后续计划
 
-1. 保持 `8f794af/candidate-1` 在 `3/144` 永久冻结；`6ce85bd/candidate-1` 当前按用户要求暂停，不生成 plan、operators 或 formal 输出。
-2. 恢复后先通过四层目标不存在 Gate，首次生成并独立验真 expected-report plan=`144/144/144`；随后迁移并冻结 candidate operators，完成 OCI 与资源/费用 Gate 后才启动 Windows canary。
-3. canary 通过后按小批次渐进补齐完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt 和七维资格；任一失败立即冻结，不重跑或 reconcile。
-4. 两个连续候选均须满足七维下限与 raw weighted `>=9.500`；任何旧 identity 均禁止事后改写 aggregate。
+1. 保持 `8f794af/candidate-1` 与 `6ce85bd/candidate-1` 永久冻结，禁止重跑、reconcile 或为失败 identity 启动 WSL。
+2. worktree 清理用例隔离及相邻三文件回归已通过，原失败暂未复现；保持该项 `record_only / 待完整回归证据`。继续开发共享候选政策和配置，集中完成后再执行完整回归；若再次出现相同失败，保留当次阶段证据再进入 Fix Mode，不用盲目重跑掩盖失败。
+3. 用局部反馈回路关闭失败或明确复现边界，再验证启动诊断和必要回归；阶段稳定后才形成新的 source identity，不因每次小修直接重建正式候选。
+4. 完整回归已保留首个结果，唯一失败的局部容错修复与相邻回归已通过。集中冻结本轮稳定代码后，准备 C 盘 Windows 与 WSL clean staging，验证公共 producer/verifier 对真实缓存的独立复算和执行路径；任何 build/测试扩展由新变更或未关闭风险驱动，不因每次本地失败重开 formal。
+5. 固定探索清单并完成少量真实模型验证，集中处理缺陷后再冻结新正式候选；按第 6.6 节执行完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt 和七维资格。普通失败只在资格仍可达且证据/资源闭合时继续未执行槽，硬门槛失败停止。
+6. 两个连续候选均须满足七维下限与 raw weighted `>=9.500`；任何旧 identity 均禁止事后改写 aggregate。
 
-`8f794af` batch 01 已永久冻结，目标复核工作流缺口已由 `6ce85bd` 的零 Provider 回归、实现和全仓验证闭合；`6ce85bd` 双平台 staging/identity 与 repository inputs 已完成。当前按用户要求暂停；恢复后的优先缺口是 expected-report plan、operators、OCI 与 Windows canary，其后才是完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选。
+当前关键闭环是并行 worktree 清理失败归因、启动诊断回归、环境启动证据，以及新编排停止/续跑政策的受测接入。完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选均未闭合；后续按开发回归、环境预检、固定探索到正式验收推进。
 
 ### 重要问题说明
 
+- 本轮完整回归唯一 `EPERM rename` 发生于 workspace restore，原报告永久保留；真实宿主占用原因未证实，但恢复逻辑缺少仓库已有有限重试的容错路径已由三条注入测试证明并修复，且新增每次重试前路径/内容复核。处理决策：恢复容错 `fix_now completed`，外部占用归因 `record_only`；不宣称首次全仓已全绿。新增测试类型错误 TS2322 已纠正并重新 build 通过。
+- 冻结 v3 manifest 的 `command.interactive-control` / `safety.boundary-enforcement` task override 分别为 `36,000/32,000 tokens`，与《自动化持续开发规则.md》第 2.2 条的单 run `24,000 tokens` 硬上限冲突。公共材料 Gate 已在 Provider 前拒绝超限任务，并补回归测试。已请求用户裁定是否仅允许这两项沿用既有 manifest 上限；答复前不修改任务真值、正式分母或预算，不启动这两项。其余零 Provider 验证继续，处理决策为 `split_task / 预算口径待确认`。
+- 公共编排初版存在不同 session 可引用同一旧费用基线、只读模式写快照、探索结束未关闭，以及非零 runner exit 与 passed report 的费用复算不一致。已用失败测试确认并最小修复，处理决策为 `fix_now completed`；运行材料、WSL 与真实资源验证尚未闭合，不提前启动 Provider。配置 validator 初次错误使用 `compileOutputSchema` 返回值，现已使用 `compiled.validator`；新增 sensitive scan 导出缺少闭合括号已由语法/集成测试发现并修正。
+- 此前将普通产品失败、基础设施失败和无报告统一升级为整个 candidate 停止，并在局部修复后立即重建候选，导致准备材料、脚本迁移和模型调用重复；处理决策为 `fix_now / 分阶段迁移`：第 6.6 节已获用户确认，先落盘规则，再用受测公共编排替换后继候选政策。历史冻结结果保持不变，最终验收标准不放宽。
+- 本轮全仓 `corepack pnpm test` 在用户要求暂停前已出现并行 write fan-in 用例清理失败：`resolution discard failed: operation_status_uncertain; Coding benchmark parallel write left repository or worktree state behind.` 当前没有隔离复跑或足以归因的证据；处理决策为 `defer / 按用户要求暂停`，恢复后先保留失败证据、检查残留并定向复现，再决定最小修复。会话中断 exit=`1` 不作为完整测试汇总，也不把这项既有失败解释为暂停动作造成。
+- 独立 system-temp 零 Provider 探针 r1 同样在 60 秒超时且尚未生成默认 env/SQLite；r2 阶段标记下 build guard 约 2ms 完成、Gateway 在 `13021ms` auth-ready，r3 原始入口和 r4 模块采样均在 `2046ms` auth-ready。r4 进入 Gateway 主体前观察到 `6510` 次 resolve、`2643` 次 load，当前只支持冷加载/宿主 I/O 波动判断，不能证明单个模块缺陷。E 盘为 SATA HDD，验证期间采样 `AvgDiskQueueLength=5`，C 盘为另一块 NVMe SSD；Windows Node=`22.23.1`、WSL Node=`22.22.2`，这不是新发现的已证实版本回归。处理决策：可诊断性缺口 `fix_now`，底层性能根因 `record_only / 待新阶段证据`；r1-r5 诊断环境文件已按合同回收，r5 无临时 loader/marker 注入。
+- `6ce85bd` 唯一 canary 在已通过全部前置 Gate、使用 Windows system-temp state root 的条件下仍出现 60 秒 readiness 超时，stdout/stderr 均为 0 bytes；当前只确认基础设施失败，不能归因于模型、patch 或旧 E 盘 SQLite 问题。处理决策为 `fix_now / 诊断中`：冻结 formal，保留 readiness/ledger，建立独立零 Provider 反馈回路；不得提高超时、重试或改写旧终态。首次诊断路径查询误指 formal artifact root，按 launcher 源码改为 system-temp state root 后取得原始诊断，未修改证据。
+- 本轮 OCI 前置发现 Docker Desktop daemon 未运行，两入口仅有 client；启动本机 Docker Desktop 后两入口恢复 `29.1.3/29.1.3`，未修改镜像或 Docker 配置。WSL fixture 首次把 runtime 填为绝对 wrapper 路径，被只接受 `docker/podman` 的配置合同在容器启动前拒绝；改为 `runtime=docker` 并由候选专属 PATH 选择 wrapper 后通过，处理决策为 `fix_now completed`。
+- 本轮一次只读检索包含不存在的 `command-sandbox-oci.ts`，已改从实际 `command-sandbox.ts`/`command-sandbox-lease.ts` 核对合同；WSL 进程探针首次输出宿主终端尺寸告警，后续固定 `COLUMNS/LINES` 并使用 `ps -ww`，复验无告警且零残留。均未产生 Provider 调用或改变候选终态，处理决策为 `fix_now completed`。
 - 旧汇总行曾停留在“WSL inputs 发布前”，但后续第 816–819 条已完成 WSL 发布和独立 4/4/8 验真；本表以第 819 条为当前恢复点。
 - 历史候选的 product workflow 失败、usage 终态和缺失 plan 已分别保留并冻结；不得用新工具链事后改写旧 aggregate，也不得把历史 partial 结果当作当前分数。
 - 本轮文档压缩会移除逐轮命令和重复问题流水；完整证据仍可从 archive-05 回读，当前文档只保留影响决策的摘要和可验证闭环。

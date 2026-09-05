@@ -683,7 +683,7 @@ export function createCodingAgentCandidateScoredDecision(input) {
   };
 }
 
-async function evaluateCandidateRunEventGates(input) {
+export async function evaluateCandidateRunEventGates(input) {
   let incompleteTraceCount = 0;
   let incompleteProviderUsageCount = 0;
   for (const run of input.runs) {

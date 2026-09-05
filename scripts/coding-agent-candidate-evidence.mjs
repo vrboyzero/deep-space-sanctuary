@@ -27,6 +27,13 @@ export async function collectCodingAgentCandidateGlobalEvidence(input, dependenc
   return { sensitiveScan, resourceSweeps };
 }
 
+export async function collectCodingAgentCandidateSensitiveScan(input) {
+  return scanCandidateSensitiveValues({
+    roots: requireSensitiveRoots(input?.sensitiveRoots),
+    patterns: requireSensitivePatterns(input?.sensitiveValues),
+  });
+}
+
 export async function collectCodingAgentCandidateOwnedResourceSweep(input, dependencies = {}) {
   if (!CANDIDATE_PLATFORMS.includes(input?.platform)) {
     throw new Error(

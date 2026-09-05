@@ -64,6 +64,20 @@ afterEach(async () => {
 });
 
 describe("coding agent baseline aggregation", () => {
+  it("rejects exploration evidence before creating an aggregate", async () => {
+    const root = await makeTempRoot();
+    const sourceRoot = path.join(root, "exploration");
+    const task = manifest.tasks.find((item) => item.id === "rules.nested-precedence");
+    const reportPath = await writeSourceReport(sourceRoot, [createRun(task, "windows-native", 1)]);
+    await fs.writeFile(`${sourceRoot}.candidate.json`, JSON.stringify({
+      schemaVersion: "coding-agent-candidate-run-binding/v1", mode: "exploration", formal: false,
+    }));
+    const outputRoot = path.join(root, "aggregate");
+    await expect(aggregateCodingAgentBenchmarkReports({ manifestPath, reportPaths: [reportPath], outputRoot }))
+      .rejects.toThrow(/Exploration evidence/);
+    await expect(fs.access(outputRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("writes a partial baseline with an exact missing matrix and verifies it offline", async () => {
     const root = await makeTempRoot();
     const sourceRoot = path.join(root, "source");

@@ -378,6 +378,28 @@ P2-C candidate 模式（`--candidate-id` 与 `--expected-report-plan` 成对提�
 或 artifact 数据盘路径。Windows 与 WSL launcher 都会在 Provider 环境读取、WSL host 解析、端口探测和
 Gateway spawn 前失败关闭。Gateway 与 Coding CI 继续共享该 state root 以维持 pairing；fixture、report
 和 artifact 仍写入冻结 plan 声明的原路径，不随 runtime state 迁移。
+
+Windows launcher（也供 WSL host 复用）为受管 Gateway 开启仅含固定阶段的 `gateway.startup/v1` IPC，
+将入口、build guard 完成、主模块初始化开始、server listening 记录为 `gateway-readiness.json` 的
+`bootstrap_*` 事件。IPC 不包含日志、路径、环境值或凭据；额外字段、重复/乱序及终态后的消息不进入报告。
+这些事件只用于区分冷模块加载与初始化停顿，不替代 TCP/auth readiness，也不延长现有 timeout 或增加 retry。
+普通 Gateway 未显式启用该诊断或没有 IPC 时不发送事件；诊断传输失败不会阻断 Gateway。
+
+P2-C 后继候选使用公共 `scripts/run-coding-agent-candidate-matrix.mjs` 与
+`v3/candidate-runner-config.schema.json`，开发流程为局部回归、环境预检、固定小样本探索、正式验收。
+配置绑定单一 identity、输入/合同 hash、输出路径、预选槽与固定预算。公共入口必须从配置指定的 clean
+Windows harness 执行；首次 session 的全部输出根必须不存在，已运行配置只允许验真后续跑。
+`node --import tsx scripts/run-coding-agent-candidate-matrix.mjs --config <absolute-config-path> --max-new-runs 0`
+只读复核；将最后参数改为正整数后才允许在资源和费用 Gate 通过时执行该数量上限的未执行槽。
+普通产品失败保留分母，剩余资格可达才继续；硬门槛失败冻结，终态或中断槽不可重发。
+工作区费用所有权要求新 session 引用上一 session 的 `cost-ledger-final.json` 与 hash；
+活动 session 不能分叉费用基线；资源清理未闭合时也不能转移费用所有权。探索最多 12 个固定槽、无正式 plan、始终 `unscored`。
+每个原始报告目录旁的 `.candidate.json` 保留执行前用途绑定；aggregate 在输出前拒绝探索用途。
+`verify-coding-agent-candidate-inputs.mjs` 在目标平台独立复算 snapshot/cache receipt 与 stored preflight。
+任务的有效 turn/token 上限若超过配置授权上限，公共入口在任何 Provider 调用前阻断。
+正式验收仍要求两个完整候选及全部七维/hard Gate。历史冻结 candidate 不迁移、不重跑。
+当前公共运行接线仍在完成真实平台验证，本段命令不能替代生产环境预检或资格证据。
+
 repository config 不保存 receipt 内容或任何凭据；receipt 由独立文件提供并在运行前复核。B/C 专属 JSON
 artifact 均限制为 1 MiB，并拒绝常见 credential 字段。命令行会为 v3 装配 native system harness；browser
 behavior、parallel read isolation、parallel write fan-in 与 restart delivery reconciliation 均按本机生产

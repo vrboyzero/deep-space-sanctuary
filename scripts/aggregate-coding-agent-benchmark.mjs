@@ -323,6 +323,20 @@ function normalizeReportPaths(value) {
 }
 
 async function readInputReport(input) {
+  const candidateBindingPath = `${path.dirname(input.reportPath)}.candidate.json`;
+  const candidateBindingStat = await fs.lstat(candidateBindingPath).catch((error) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (candidateBindingStat) {
+    if (!candidateBindingStat.isFile() || candidateBindingStat.isSymbolicLink() || candidateBindingStat.size > 4096) {
+      throw new Error("Coding benchmark candidate binding must be a bounded ordinary file.");
+    }
+    const binding = parseJson(await fs.readFile(candidateBindingPath, "utf-8"), candidateBindingPath);
+    if (binding.schemaVersion !== "coding-agent-candidate-run-binding/v1" || binding.mode !== "formal" || binding.formal !== true) {
+      throw new Error("Exploration evidence cannot enter a benchmark aggregate.");
+    }
+  }
   const serialized = await fs.readFile(input.reportPath, "utf-8");
   const report = parseJson(serialized, input.reportPath);
   assertInputReportMetadata({ ...input, report });
