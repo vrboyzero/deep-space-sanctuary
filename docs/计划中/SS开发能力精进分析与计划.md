@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **纠正杠杆已实现并 CI 全绿（`05df1918`），实测两槽失败形态再次转移（Windows hunk 上下文不匹配、WSL continuation 路径覆盖不完整）；Go 真实槽累计 13/13 失败，9.5 可达性结论已呈报用户（冻结真值+当前模型下不可达）** | 双平台复发定位：两层工具输出压缩破坏 file_read 结构化证据 → 导航死循环；修复为 required mutation run 压缩保护 file_read + 证据补齐 + 覆盖判定前移；8-path 用例先红后绿、家族 `469/469`；f042505 定位 24k 预算冲突 → 64k 授权 + uplift gate 重冻结；f338e0d 验证预算解除；05df191 新增全量拒绝补丁的一次性有界纠正（红绿验证、家族 `136/136`）；13/13 失败模式全程记录 | 用户决策：①归档 9.5 暂不可达正式结论 ②继续其他杠杆（边际收益递减）③另行授权真值/模型调整（不推荐）；完整 144 槽、七维资格与第二连续候选未完成 |
+| P2-C 分层开发与编排复用 | P2 | **用户授权换模型已执行：v3 runner 切 `deepseek-v4-pro`（CI 全绿 `a34d7540`），V4-Pro Go 两槽前进到纠正/续跑阶段——Windows 首补丁+8 路径验证跑通、失败于幻觉上下文；WSL 失败于 JSON 转义抄进 hunk。Go 累计 15/15，等待用户对 pro 抽样的决策** | 双平台复发定位：两层工具输出压缩破坏 file_read 证据 → 导航死循环；修复压缩保护+证据补齐+覆盖判定前移（家族 `469/469`）；24k 预算冲突 → 64k 授权 + uplift gate 重冻结；全量拒绝补丁的一次性有界纠正（`136/136`）；13/13 归档后用户选路径①换 V4-Pro（定价 const + 规则例外记录，`64/64`）；零 Provider 复现确认 pro 失败为补丁保真度（JSON 转义/幻觉上下文），apply 工具换行容错正常 | 用户决策：①继续 pro 抽样（≈$0.03/槽，有机会出通过样本）②补丁保真度产品杠杆（新合同变更需评估）③复评目标口径；完整 144 槽、七维资格与第二连续候选未完成 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -2255,11 +2255,11 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 ### 后续计划（当前检查点，2026-09-06）
 
-1. **本环节结果**：用户选择归档——正式结论已落盘《[SS开发9.5候选可达性结论-2026-09-06](SS开发9.5候选可达性结论-2026-09-06.md)》：产品确定性缺陷全部闭合，Go 真实槽 13/13 失败全部落在 `deepseek-v4-flash` 补丁生成与应用质量，冻结真值下两个连续 9.5 候选**暂不可达**（目标保留，可重启）。
-2. **下一步准备做**：把本检查点同步到目标状态（blocked：Go required-language 零回归门槛 × 模型能力边界），停止新增付费槽；后续仅在重启条件满足时（用户授权换模型/调口径/flash 升级后重验）恢复。
-3. **为什么先做它**：用户已就 13/13 证据做出归档决策；继续抽样只会消耗费用不产生新证据。
-4. **当前还缺的关键闭环**：Go 真实任务稳定通过（阻塞）、完整 144 槽原生矩阵、aggregate、dimension evidence、qualification 与七维 score、第二个连续完整候选；`candidate-57b9cc5-1`（17/144）、`e4bd1c3-1`（8/144）与旧 `63e0a41`（14/144）永久只读。
-5. 后继运行继承 `explore-05df191-1/cost-ledger-final.json`（observed/reserved=`2.51820465/2.34221 USD`，next worst≈`18.4 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效。
+1. **本环节结果**：用户授权路径①已执行——v3 runner 切到 `deepseek-v4-pro`（定价 `0.5625/1.6875/0.01875`，上限不变，CI 全绿 `a34d7540`），V4-Pro 双平台 Go 两槽执行：Windows 首补丁 8 文件 26-hunk 成功 + 8 路径验证跑通、失败于纠正补丁的幻觉上下文；WSL 失败于把 file_read 的 JSON 转义（`\"`/`\\n`）抄进 hunk。Go 真实槽累计 15/15（flash 13 + pro 2），pro 的剩余失败仍是模型补丁保真度，但前进到纠正/续跑阶段。
+2. **下一步准备做**：等待用户决策——①继续 pro 抽样（当前样本显示 pro 稳定通过首补丁+验证，多抽几次有真实通过机会）；②补丁保真度导向的产品杠杆（如纠正请求重发当前文件原文以避免 JSON 转义/幻觉，属新一轮合同变更需评估）；③复评目标口径。
+3. **为什么先做它**：pro 已证明能稳定走通 flash 从未走通的前半程（首补丁+8 路径验证），失败集中在纠正补丁保真度；①费用极低（≈$0.03/槽）且可能直接出通过样本，②需要零 Provider 设计与回归，③为最终手段。
+4. **当前还缺的关键闭环**：Go 真实任务稳定通过、完整 144 槽原生矩阵、aggregate、dimension evidence、qualification 与七维 score、第二个连续完整候选；`candidate-57b9cc5-1`（17/144）、`e4bd1c3-1`（8/144）与旧 `63e0a41`（14/144）永久只读。
+5. 后继运行继承 `explore-a34d754-1/cost-ledger-final.json`（observed/reserved=`2.55101653/2.34221 USD`，next worst≈`21.2 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效。
 
 #### P2-C 固定探索实现结论：f042505 双平台真实反馈与 24k 预算硬约束（2026-09-06）
 
@@ -2338,6 +2338,26 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 ##### 后续计划
 
 向用户呈报 13/13 结论与目标口径复评选项，等待决策；未获新授权前不再启动付费槽。
+
+#### P2-C 固定探索实现结论：a34d754 DeepSeek-V4-Pro 双平台真实反馈（2026-09-06）
+
+##### 已完成内容
+
+1. **V4-Pro 合同变更实现**（用户授权路径①：更换更强模型）：`candidate-runner-config.schema.json` 的 `modelId` → `deepseek-v4-pro`，三项定价 const → `0.5625 / 1.6875 / 0.01875` USD/1M（用户提供价目 4.5 / 13.5 / 0.15 元每百万 tokens，8 CNY/USD）；`$0.10`/run、12 turns、Go 64k、retry=0、总额守卫不变；`自动化持续开发规则.md` 记录「不得换模型」条款的用户授权例外（只覆盖 v3 candidate runner）。定向 7 文件 `64/64`、verifier、tsc 全绿，CI 全绿（`a34d7540`）。
+2. **双平台 Go 两槽执行**（`explore-a34d754-1`，两槽均 `product_workflow` failed，新增 Provider cost=`0.03281188 USD`）：
+   - **Windows**：V4-Pro 发出 8 文件 26-hunk 首补丁并成功应用，8 路径读后验证全部执行；随后客观复核派发纠正补丁，但纠正补丁的 hunk 上下文为幻觉行（`must_have_one_flag=()` 在文件中不存在）→ `Failed to find expected lines in bash_completions.go` → fail-closed。
+   - **WSL**：V4-Pro 首补丁把 file_read 的 **JSON 转义文本**（`\"`、`\\n`）原样抄进 hunk 上下文（`doc/man_docs.go` 的 `%% \"%s\"...\\n`）→ 与文件永远不匹配；续跑补丁同样失败 → fail-closed。
+3. **零 Provider 复现**：`tmp/p2c-layered-development/replay-a34d754-hunks.mjs` 把事件里的补丁逐 hunk 对基线文件重放——WSL `doc/man_docs.go` 上下文含 `\"`/`\\n` 转义永不匹配；Windows 纠正补丁在基线与后置状态均 `minus mismatch`（幻觉上下文）。冻结源 `doc/man_docs.go`/`bash_completions.go` 为全 CRLF（246/246、709/709），但首补丁的 LF 上下文能成功应用，证明 apply 工具有换行容错，换行不是根因。
+4. **效果与结论更新**：V4-Pro 相比 flash 前进了一个阶段（首补丁生成正确、Windows 8 路径验证跑通、纠正/续跑流程被真正触达），Go 真实槽累计 **15/15 失败**（flash 13 + pro 2）；pro 的剩余失败仍是模型补丁保真度（JSON 转义抄写、幻觉上下文），与 flash 同族但落在更后阶段。产品流程（导航/验证/复核/纠正/预算）在 pro 下全部按合同运行。
+
+##### 验证结果
+
+- 双槽 events/report 完整保留；`explore-a34d754-1/cost-ledger-final.json` 生成；冻结槽与旧证据未改写。
+- 累计 observed=`2.55101653 USD`，next worst≈`21.2 RMB < 80`；`replay-a34d754-hunks.mjs`/`diagnose-a34d754-patches.mjs` 零 Provider。
+
+##### 后续计划
+
+向用户呈报 V4-Pro 首轮两槽证据与下一步选项（继续 pro 抽样 / 增加补丁保真度导向的产品杠杆 / 复评目标口径），等待决策。
 
 ### 暂停点的剩余工作量估算（2026-09-05）
 
@@ -2458,3 +2478,5 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - `explore-f338e0d-1` 双平台 Go 两槽失败，**但 24k 预算冲突确认解除**：两槽均未再出现「no bounded post-write objective review can be built」，失败全部移到模型补丁生成层——Windows 模型读取 10 个文件后 mutation-only 响应无工具调用（`must request exactly one allowed workspace mutation tool`）；WSL 发出 13 hunk 补丁，其中 `bash_completions.go` 1 个 context-only hunk 导致整包被校验拒绝（`context_only_hunk hunkCount=13 contextOnlyHunkCount=1`），其余 12/13 hunk 格式正确。Go 真实槽累计 11/11 失败，产品确定性缺陷已全部闭合，剩余为 `deepseek-v4-flash` 补丁质量与工具合同遵从。处理决策为 `record_only / 9.5 可达性复评`：呈报用户最后一个未尝试的产品杠杆——apply_patch 校验拒绝后以 validator diagnostic 派发一次有界纠正调用（对 WSL 类 12/13-hunk 失败有真实机会，费用 ≈$0.20/探索）；未经用户确认不实施该新杠杆，也不宣称 9.5 目标不可达（该结论需用户对目标口径的决策）。新增 Provider cost=`0.00411832 USD`，累计 observed=`2.51279445 USD`，next worst≈`20.7 RMB < 80`。
 - 用户于 2026-09-06 确认实施该杠杆，处理决策为 `fix_now completed / 用户确认产品杠杆`：mutation-only 补丁被全量拒绝且零 actionable section（`invalid_envelope` 等）时派发一次性有界纠正（原路径提取条件在该形态下必然失败，导致纠正被跳过）；先红后绿验证（不含修复时以 `context_only_hunk` 失败关闭）、家族 `136/136`、tsc exit=0、CI 全绿（`05df1918`）。注意该杠杆的作用域仅为「补丁结构校验拒绝」，不包括 hunk 上下文应用失败与 continuation 路径覆盖缺陷。
 - `explore-05df191-1` 双平台 Go 两槽再次失败（Go 真实槽累计 **13/13**），且失败形态再次转移到杠杆作用域之外：Windows 模型补丁 hunk 上下文与文件不符（`Failed to find expected lines in doc/man_docs.go`，凭记忆重写转义/换行）；WSL 在 missing-path continuation 阶段补丁未满足「每个缺失路径恰好一个 patch section」。**结论：产品确定性缺陷已全部闭合（导航/证据保护/8 路径验证/复核构建/64k 预算/全量拒绝纠正），剩余失败全部是模型补丁生成与应用质量，且失败模式在 7 个不同缺陷间随机转移；冻结任务真值 + `deepseek-v4-flash` 下 Go required-language 零回归门槛无法稳定满足，两个连续 9.5 候选不可达**。处理决策为 `record_only / 13:13 结论呈报`：新增 Provider cost=`0.0054102 USD`，累计 observed=`2.51820465 USD`，next worst≈`18.4 RMB < 80`；未获用户新授权前不再启动付费槽，冻结槽与旧证据全部保留。
+- 用户于 2026-09-06 选择归档「9.5 暂不可达」正式结论（《SS开发9.5候选可达性结论-2026-09-06》），目标状态置为 blocked；同日用户随即行使结论中的重启条件①：授权更换更强模型 `deepseek-v4-pro` 重跑 Go 探索槽。处理决策为 `fix_now completed / 用户授权合同变更`：v3 candidate runner `modelId` const → `deepseek-v4-pro`、三项定价 const → `0.5625/1.6875/0.01875` USD/1M（用户提供价目 4.5/13.5/0.15 元每百万 tokens × 8 CNY/USD）；`自动化持续开发规则.md` 第 2 条记录例外（只覆盖 v3 candidate runner，v1/v2 与 navigation/code-intel 冻结合同不动）；`$0.10`/run、12 turns、Go 64k、retry=0、总额守卫不变。同时记录存量风险：原 flash 定价 const（0.125/0.25/0.0025）系 2026-08-17 调价前旧值（调研文档已标记），本轮不顺手改。
+- `explore-a34d754-1` V4-Pro 双平台 Go 两槽失败（Go 真实槽累计 **15/15**），但阶段显著前进：Windows 首补丁 8 文件 26-hunk 成功应用、8 路径读后验证全部执行，失败于客观复核派发的纠正补丁——其 hunk 上下文为幻觉行（`must_have_one_flag=()` 文件中不存在）；WSL 首补丁把 file_read 的 **JSON 转义文本**（`\"`、`\\n`）原样抄进 hunk 上下文（`doc/man_docs.go` 的 `%% \"%s\"...\\n`）→ 与文件永不匹配，续跑补丁同样失败。零 Provider 复现（`replay-a34d754-hunks.mjs`）确认两类失败均为模型补丁保真度，不是产品缺陷：冻结源全 CRLF 但首补丁 LF 上下文可成功应用，apply 换行容错正常。**结论更新：V4-Pro 稳定通过 flash 从未走通的前半程（首补丁+8 路径验证），剩余失败集中在纠正/续跑补丁的保真度（JSON 转义抄写、幻觉上下文），与 flash 同族但落在更后阶段**。处理决策为 `record_only / pro 首轮样本呈报`：新增 Provider cost=`0.03281188 USD`，累计 observed=`2.55101653 USD`，next worst≈`21.2 RMB < 80`；下一步（继续 pro 抽样 / 补丁保真度产品杠杆 / 复评目标口径）待用户决策。
