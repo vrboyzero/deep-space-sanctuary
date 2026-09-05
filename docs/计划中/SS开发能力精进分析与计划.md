@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **恢复点第 1 步完成并本地提交；按用户要求暂停** | cross-package review/repair 逐字节回放：请求证据完整（review=`1895`/repair=`1852` tokens、missingPaths=`0`、json_object+thinking 关闭），两次输出 `length/non_json/1024` 判定为模型输出行为失败（record_only）；确定性恢复缩进容错 fix_now：定向 25 文件 `466/466`、tsc 与 benchmark verifier 通过；63e0a41 候选仍为 `12 passed / 2 failed / 130 unexecuted`、永久冻结 | 恢复后先补 WSL 定向复核、双平台 build 与新身份完整 CI，再做最小必要 TypeScript 代表探索、材料与资源 Gate；两个完整 144 槽候选与 9.5 最终验收未完成，旧槽永久只读 |
+| P2-C 分层开发与编排复用 | P2 | **双平台复核与两槽探索通过；进入新身份 CI 与候选准备** | cross-package review/repair 证据回放与恢复缩进容错已闭合；WSL workspace-mutation `466/466`、双平台 build 通过；e4bd1c3f 两槽探索双平台 passed（模型原生有效 JSON），账本 close complete、资源/敏感值闭环 | 推送新身份完整 CI；全绿后创建 `candidate-e4bd1c3-1` plan/config 并重跑材料与资源 Gate，再启动 canary 与渐进矩阵；两个完整 144 槽候选与 9.5 验收未完成 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -1965,13 +1965,44 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 按用户要求本环节完成后暂停；恢复后先补 WSL 定向复核与本修复的双平台 build，再推进最小必要 TypeScript 代表探索、新身份完整 CI、材料与资源 Gate；费用继续继承 `formal-63e0a41-1/cost-ledger-final.json`。
 
-### 后续计划（本环节结束后暂停）
+#### P2-C 分层验证与探索实现结论：e4bd1c3f 双平台复核与 cross-package 两槽真实反馈（2026-09-05）
 
-1. **本环节已完成恢复点第 1 步核对并暂停**：cross-package 失败判定为模型输出行为失败（record_only），review/repair 请求证据完整、不是信息遗漏；同时以 TDD 闭合确定性恢复的行首缩进容错缺口（本地提交 `39987d45`，尚未推送；连同上一环节 `cd0750ee` 待恢复后一起推送 `private/main`）。
-2. **恢复后先做**：本修复的 WSL 定向复核、两端 build 与既有身份 CI 观察；然后按最小必要范围做 TypeScript 代表探索（先验证 cross-package 同任务真实模型路径，再决定是否扩大），全部稳定且新身份完整 CI、材料与资源 Gate 闭合后才创建新候选。
-3. **为什么先做它**：修复只改变确定性恢复的匹配语义，必须先证明不破坏 WSL/跨平台路径与既有回归，才能进入付费探索；不因 `length/non_json` 加预算或重试的原则保持不变。
-4. **当前还缺的关键闭环**：cross-package 的“补丁正确 + JSON 输出失败”在真实模型路径尚无新证据（恢复修复是确定性兜底，不改变模型输出行为）；两个连续完整 144 槽候选、七维资格与 9.5 数值验收仍未完成。
-5. 后继运行继承 `formal-63e0a41-1/cost-ledger-final.json` 的全部费用和预留（observed/reserved=`2.4815528500000004/2.34221 USD`，next worst=`39.3901028 RMB < 80`）；本环节零 Provider，旧 14 槽及余下 130 槽永久冻结。审批计量与费用授权持续有效，恢复时无需再次确认同一范围。
+##### 已完成内容
+
+1. **WSL 定向复核与双平台 build**：
+   - WSL staging 更新至 `e4bd1c3f`、offline install（`Already up to date`）、完整 build 通过；已知 relay.mjs mode-only 漂移在确认 HEAD/worktree blob 一致（`005b1aa8…c1d`）后恢复 `644`，status clean。
+   - WSL workspace-mutation 家族 `25 文件 / 466/466` 通过；Windows 主仓 `corepack pnpm build` exit=`0`。
+
+2. **双平台探索材料重建**：
+   - 原 Windows SSD harness 只剩 `node_modules/packages` 且无 `.git`，重命名保留 remnant 后从本仓库重新 clone 至原路径、detach `e4bd1c3f`、offline install/build；identity 四字段一致（worktree SHA=`31ec1156…bcc0`），identity-sha256=`50e3a735…5d3c`。
+   - 双平台 inputs 由 frozen production owner 唯一发布并独立验真 `4/4/8`（Windows config SHA=`c3b0d948…680d`、WSL=`b4d1fd0e…3fb7`）。
+   - 固定两槽清单 `exploration-selection-e4bd1c3f.json`（cross-package Windows a1 + WSL a1）SHA=`9ff0ab69…cd36`；config=`exploration-config-e4bd1c3.json`（SHA=`bc68b6bb…8dc1`），`formal=false/unscored`，继承 `formal-63e0a41-1/cost-ledger-final.json`，显式绑定已批准 taskTokenCaps。
+
+3. **运行前 Gate 与执行**：
+   - `--max-new-runs 0` 只读验真 exit=`0`；零 Provider readiness=`3270ms`、stop=`3293ms`；Docker Desktop 未运行（环境项），启动后恢复 `29.1.3/29.1.3`。
+   - 两槽均 `reported`：Windows `passed`（input=`12499`/output=`959`/cost=`0.00086134 USD`，report SHA=`4aecdf97…`）、WSL `passed`（input=`12983`/output=`1080`/cost=`0.00099914 USD`，report SHA=`74bc9017…`）；tests/patch=`true`、regression=`0`、taskCompleted=`true`，两端均为模型原生有效 JSON（非确定性恢复兜底，输出未触 1024 上限）。
+
+4. **效果**：
+   - 冻结失败任务在新 identity 双平台真实模型路径通过；2 槽样本不能外推完整资格，恢复修复本轮未被触发，不把通过归功于该分支。
+   - 探索账本 close complete：SHA=`1d3ff746…73dd`，observed/reserved=`2.48341333/2.34221 USD`，processed/pending/unreported=`2/0/0`，资源关闭=`true`；8 项资源计数=`0/0`，敏感扫描 finding/unreadable/link=`0/0/0`，env 逐文件回收 remaining=`0`。
+
+##### 验证结果
+
+- Windows 主仓完整 build exit=`0`；WSL 完整 build 通过；WSL workspace-mutation `25 文件 466/466`。
+- 双平台 inputs 独立 verifier `4/4/8` + identity 一致；只读矩阵验真与 readiness 探针通过。
+- 新增 Provider 调用=`2` 槽、cost=`0.00186048 USD`，next worst≈`39.40 RMB < 80`；未触碰冻结 `63e0a41` 终态、未改写旧报告。
+
+##### 后续计划
+
+推送到 `private/main` 触发新身份完整 CI；CI 全绿后创建 `candidate-e4bd1c3-1` 的不可覆盖 plan/config，重跑材料与资源 Gate，再按冻结顺序启动 Windows canary 与渐进矩阵。若 CI 或后继槽暴露新缺陷，回开发回归层，不扩大付费槽。
+
+### 后续计划（当前检查点，2026-09-05）
+
+1. **本环节已完成并继续推进**：WSL 定向复核与双平台 build 通过；cross-package 两槽探索双平台 passed 并完整闭环（账本 `explore-e4bd1c3-1`，SHA=`1d3ff746…73dd`）。
+2. **下一步准备做**：推送 `cd0750ee`+`e4bd1c3f` 到 `private/main` 触发新身份完整 CI；CI 全绿后创建 `candidate-e4bd1c3-1` 不可覆盖 plan/config 并重跑材料/资源 Gate，再启动 Windows canary 与渐进矩阵。
+3. **为什么先做它**：完整 CI 与材料/资源 Gate 是正式候选的准入前提，探索已证明冻结失败任务的双平台真实模型路径通过，但 2 槽样本不能替代完整矩阵。
+4. **当前还缺的关键闭环**：新身份完整 CI、正式候选 144 槽、七维资格与数值 score、第二个连续候选；旧 `63e0a41` 14 槽与余下 130 槽永久冻结。
+5. 后继运行继承 `explore-e4bd1c3-1/cost-ledger-final.json`（observed/reserved=`2.48341333/2.34221 USD`，next worst≈`39.40 RMB < 80`）。审批计量与费用授权持续有效，恢复时无需再次确认同一范围。
 
 ### 暂停点的剩余工作量估算（2026-09-05）
 
@@ -2063,3 +2094,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 恢复点第 1 步对 `real-ts.cross-package-refactor` 的逐字节回放确认：review/repair 请求证据完整（完整写后源码、任务、任务点名测试、输出合同、json_object+thinking 关闭），模型补丁语义正确且 tests/patch 通过，但两次输出均 `finishReason=length`、non_json、`1024` tokens。结论为模型输出行为失败，处理决策为 `record_only`，不加预算、不增加重试、不覆盖原终态；原 `63e0a41` 冻结 14 槽不改写。
 - 同一 run 的确定性恢复本应命中（补丁与写后源码语义完全正确），但模型补丁省略行首 tab，apply_patch 的 Level-3 忽略首尾空白匹配并原样写入，使文件行丢失缩进；恢复常量却要求带 tab 的精确行，导致恢复失效、run 以 `product_workflow` 失败。处理为 `fix_now completed`：恢复核对改为行首缩进不敏感的整行内容精确比较，语义漂移、baseline 残留、重复命名空间、截断证据仍失败关闭；真实冻结证据红灯→绿灯复现，定向 25 文件 `466/466`、`tsc -b` 与 benchmark verifier 通过，本地提交待推送。apply_patch 的模糊匹配行为本身保持原样（record_only），未修改该工具。
 - 回放工具首次因三类证据细节失败：events 只保留 2049 字符前缀加 `…` 截断标记、`git show` 对无尾换行 blob 追加换行、apply_patch 参数在 events 中为 JSON 字符串包装；已逐项对齐（元数据重建 + CRLF 归一化 + 截断标记剥离 + 参数解包），这些工具调整只服务只读证据重建，不作为产品证据。
+- 原 Windows SSD harness（`ss-dev-harness-4b5dd97`）只剩 `node_modules/packages` 且无 `.git`，无法原地更新；已重命名保留 remnant 后从本仓库重新 clone 至原路径、detach `e4bd1c3f`、offline install/build 并复算 identity 一致。处理决策为 `fix_now completed`；remnant 目录后续按回收站合同清理，不影响冻结证据。
+- 探索配置 helper 按 7 字符 revision 前缀推导 inputs 目录，本轮 8 字符目录名首次不匹配；改为 7 字符命名后通过。处理决策为 `fix_now completed`，未发布任何配置或调用 Provider。
+- 首次矩阵执行在资源 Gate 因 Docker Desktop daemon 未运行失败（`npipe dockerDesktopLinuxEngine` 不存在），无槽分配、零费用、未创建 journal；按既有流程启动 Docker Desktop 并在守卫内恢复 `29.1.3/29.1.3` 后重跑通过。处理决策为 `fix_now completed`；未修改 Docker 配置或镜像。
+- 首次只读验真在主仓执行被“Candidate operators must execute from the frozen Windows harness”正确拒绝；改从冻结 harness 执行后 exit=0。该拦截符合合同，未修改代码，处理决策为 `fix_now completed`。
