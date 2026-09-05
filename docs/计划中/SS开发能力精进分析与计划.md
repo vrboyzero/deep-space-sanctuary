@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **64k 授权探索（f338e0d）两槽执行：24k 预算冲突确认解除（复核构建不再失败），剩余失败为模型补丁生成层（Windows 无工具调用、WSL 13-hunk 中 1 个 context-only 被整包拒绝）；Go 真实槽累计 11/11 失败，等待用户对「apply_patch 拒绝后的有界纠正」杠杆的决策** | 双平台复发定位：两层工具输出压缩破坏 file_read 结构化证据 → 完整读取被误判缺失 → 导航死循环；修复为 required mutation run 压缩保护 file_read + 证据补齐 + 覆盖判定前移；8-path 真实规模用例先红后绿、家族 `469/469`、压缩相关 `94/94`、tsc/verifier 通过；f042505 定位 24k 预算冲突 → 64k 授权（manifest override + schema + contract V3 冻结集 + uplift gate 重冻结）并 CI 全绿；f338e0d 探索报告完整保留：changed_paths=0×2、WSL `context_only_hunk hunkCount=13 contextOnlyHunkCount=1`、Windows `must request exactly one allowed workspace mutation tool` | 用户决策后：①实现 apply_patch 校验拒绝的有界纠正并重跑探索（≈$0.20）；或 ②接受 9.5 不可达并复评目标口径；通过则重建候选；完整 144 槽、七维资格与第二连续候选未完成 |
+| P2-C 分层开发与编排复用 | P2 | **纠正杠杆已实现并 CI 全绿（`05df1918`），实测两槽失败形态再次转移（Windows hunk 上下文不匹配、WSL continuation 路径覆盖不完整）；Go 真实槽累计 13/13 失败，9.5 可达性结论已呈报用户（冻结真值+当前模型下不可达）** | 双平台复发定位：两层工具输出压缩破坏 file_read 结构化证据 → 导航死循环；修复为 required mutation run 压缩保护 file_read + 证据补齐 + 覆盖判定前移；8-path 用例先红后绿、家族 `469/469`；f042505 定位 24k 预算冲突 → 64k 授权 + uplift gate 重冻结；f338e0d 验证预算解除；05df191 新增全量拒绝补丁的一次性有界纠正（红绿验证、家族 `136/136`）；13/13 失败模式全程记录 | 用户决策：①归档 9.5 暂不可达正式结论 ②继续其他杠杆（边际收益递减）③另行授权真值/模型调整（不推荐）；完整 144 槽、七维资格与第二连续候选未完成 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -2255,11 +2255,11 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 ### 后续计划（当前检查点，2026-09-06）
 
-1. **本环节结果**：64k 合同变更 + gate 重冻结已推送并 CI 全绿（`07c85168`）；f338e0d 双平台探索执行完毕——24k 预算冲突确认解除（复核构建不再失败），但两槽仍 fail-closed：Windows mutation-only 响应无工具调用（模型行为），WSL 13-hunk 补丁中 1 个 context-only hunk 被整包拒绝（12/13 hunk 有效）。Go 真实槽累计 11/11 失败，全部落在模型补丁生成层。
-2. **下一步准备做**：等待用户对「最后一个产品杠杆」的决策：为 apply_patch 校验拒绝增加一次有界纠正调用（把 validator diagnostic 交给模型重发补丁，只对 WSL 类失败有效）；或接受 9.5 不可达结论并复评目标口径。
-3. **为什么先做它**：WSL 补丁 12/13 hunk 正确，一次带诊断的纠正有真实修复机会且费用极低（≈$0.20）；若用户不选，则按计划以 11/11 证据复评 9.5 可达性。
+1. **本环节结果**：用户授权的纠正杠杆已实现（红绿验证 + CI 全绿 `05df1918`）并实测——两槽失败形态再次转移（Windows hunk 上下文不匹配、WSL continuation 路径覆盖不完整），纠正杠杆未触发；Go 真实槽累计 **13/13 失败**。9.5 可达性结论：冻结任务真值 + 当前模型下 Go 零回归门槛无法稳定满足，两个连续 9.5 候选不可达。
+2. **下一步准备做**：等待用户对目标口径的决策——①接受当前证据并归档「9.5 暂不可达」正式结论文档（冻结成绩与候选终态全部保留）；②授权继续其他产品杠杆（每轮需新证据，费用仍在 80 RMB 内，但失败模式已在 7 个不同缺陷间转移，边际收益递减）；③用户另行授权任务真值/模型调整（此前标记不推荐）。
+3. **为什么先做它**：产品确定性缺陷已全部闭合，剩余失败全部是模型补丁生成质量；继续加杠杆属于对同一能力边界的重复抽样，按规则应以新证据呈报决策点而不是无限迭代。
 4. **当前还缺的关键闭环**：Go 真实任务稳定通过、完整 144 槽原生矩阵、aggregate、dimension evidence、qualification 与七维 score、第二个连续完整候选；`candidate-57b9cc5-1`（17/144）、`e4bd1c3-1`（8/144）与旧 `63e0a41`（14/144）永久只读。
-5. 后继运行继承 `explore-f338e0d-1/cost-ledger-final.json`（observed/reserved=`2.51279445/2.34221 USD`，next worst≈`20.7 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效。
+5. 后继运行继承 `explore-05df191-1/cost-ledger-final.json`（observed/reserved=`2.51820465/2.34221 USD`，next worst≈`18.4 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效。
 
 #### P2-C 固定探索实现结论：f042505 双平台真实反馈与 24k 预算硬约束（2026-09-06）
 
@@ -2303,6 +2303,41 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 ##### 后续计划
 
 向用户呈报 9.5 可达性复评与最后一个产品杠杆（patch-validator 拒绝后的有界纠正），等待决策。
+
+#### P2-C 开发回归实现结论：apply_patch 全量拒绝后的有界纠正（2026-09-06）
+
+##### 已完成内容
+
+1. **`packages/belldandy-agent/src/tool-agent.ts` 修改**：mutation-only 调用返回的 apply_patch 被整体拒绝且零 actionable section（如 envelope 无效、全部 hunk 为 context-only）时，允许进入既有的「Atomic input correction phase」一次性有界纠正，而不是直接失败关闭。
+   - 原条件要求 `hasOnlyWorkspaceMutationPatchPaths` 从补丁提取路径，但该形态下 preserve 检查以 `invalid_envelope` 拒绝（sectionCount=0），路径提取失败 → 纠正机会被跳过。
+   - 新条件：`patchPreservationDiagnostics.actionableSectionCount === 0` 时跳过路径检查（工作区未被写入，unlisted-path 风险不存在）；重发的补丁仍经完整校验，纠正仍是一次性（`workspaceMutationInputCorrectionAttempted` 后失败关闭）。
+2. **`packages/belldandy-agent/src/tool-agent-workspace-mutation-exhausted-correction.test.ts` 新增测试**：text-only 首响应 → recovery 调用 → 混合换行 + 未列路径 + context-only hunk 的无效补丁 → 断言派发「Atomic input correction phase」→ 有效补丁 → 验证 → 完成。先红后绿验证：不含修复时该场景以 `context_only_hunk` 失败关闭（真实 WSL 槽形态），含修复时纠正后完成。
+3. **效果**：f338e0d WSL 槽的失败形态（12/13 hunk 有效但整包被拒）现在获得一次带 validator 诊断的重发机会；纠正后补丁的路径/结构/预算约束全部照旧。
+
+##### 验证结果
+
+- TypeScript `tsc -b` exit=0；workspace-mutation 家族 6 文件 `136/136` 通过（含 1 个新增测试）。
+- CI 全绿（`05df1918`）；零 Provider 调用；冻结槽与旧证据未改写。
+
+#### P2-C 固定探索实现结论：05df191 纠正杠杆双平台真实反馈与 13/13 结论（2026-09-06）
+
+##### 已完成内容
+
+1. **双平台 Go 两槽执行**（`explore-05df191-1`，两槽均 `product_workflow` failed，新增 Provider cost=`0.0054102 USD`）：
+   - **Windows**：模型读取 10 个文件后发出 apply_patch，但 hunk 上下文与文件不符（`Failed to find expected lines in doc/man_docs.go`，模型凭记忆重写转义/换行）→ 应用失败 → mutation 未完成 fail-closed。
+   - **WSL**：模型发出 apply_patch 后进入 missing-path continuation，其补丁未「每个缺失路径恰好一个 patch section」→ fail-closed。
+   - **纠正杠杆未触发**：两槽失败均不属于 context-only-hunk/envelope 拒绝形态，落点移到新的模型输出缺陷（hunk 上下文错误、continuation 路径覆盖不完整）。
+2. **9.5 可达性结论**：Go 真实槽累计 **13/13 失败**（57b9cc5 正式 1 + 六轮探索各 2），失败模式随每轮产品修复而转移，但每一轮都落在 `deepseek-v4-flash` 的补丁生成与应用质量：迁移不完整×3、context-only hunk×2、零写入+合同×4、复核预算×2、hunk 上下文不匹配×1、continuation 路径覆盖×1。产品确定性缺陷（导航/证据保护/8 路径验证/复核构建/64k 预算/全量拒绝纠正）已全部闭合。
+3. **效果**：用户授权的最后一个产品杠杆已实现并实测；按计划「仍失败则以新证据复评 9.5 可达性」——在冻结任务真值与当前模型下，Go required-language 零回归门槛无法稳定满足，两个连续 9.5 候选的目标不可达。
+
+##### 验证结果
+
+- 双槽 events/report 完整保留；`explore-05df191-1/cost-ledger-final.json` 生成；冻结槽与旧证据未改写。
+- 累计 observed=`2.51820465 USD`，next worst≈`18.4 RMB < 80`。
+
+##### 后续计划
+
+向用户呈报 13/13 结论与目标口径复评选项，等待决策；未获新授权前不再启动付费槽。
 
 ### 暂停点的剩余工作量估算（2026-09-05）
 
@@ -2421,3 +2456,5 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - `explore-f042505-1` 双平台 Go 两槽失败（Go 真实槽累计 9/9 失败）。Windows：模型首响应零写入（changed_paths=0），恢复续跑要求「每个缺失路径恰好一个 patch section」而模型响应不满足 → fail-closed，处理决策为 `record_only / 模型输出行为`（续跑提示对 8 路径的证据充分性仍需零 Provider 重建确认）。WSL：模型写入 8 文件但迁移不完整（多文件残留 `WriteStringAndCheck`、`cobra.go` 定义已删 → go test 编译失败）；读后验证 8 路径读回正常执行，但客观复核请求构建失败——`debug-go-review-build.mjs` 零 Provider 复现：8 路径复核构建 `2048→undefined / 2560+→built`，而真实运行复核前 `totalTokens=22407/24000`、可用预算仅 ~700–900 token。**结论：3→8 读后复核与冻结 24k run cap 是确定性预算冲突，WSL 槽换模型也必然 fail-closed；这是本轮最重要的新证据**。处理决策为 `record_only / 硬约束呈报`：24k 上限不得擅自提高，等待用户在三路径中决策（①授权提高 required-mutation run 上限（需新授权）②复核证据深度降本压进 ~1.5k token（质量回退风险，可能重蹈「复核错误接受」）③接受 Go 任务在冻结约束下不可达并复评 9.5 目标口径）。新增 Provider cost=`0.0037216 USD`，累计 observed=`2.50867613 USD`，next worst≈`20.5 RMB < 80`。
 - 用户于 2026-09-06 选择路径①并明确授权：`real-go.public-api-migration` 的 run cap 有界提高到 `64000`（只改运行预算，任务真值/门槛/七维/费用守卫不变）。处理决策为 `fix_now completed / 用户授权合同变更`：manifest `taskBudgetOverrides` + schema const + contract `FROZEN_TASK_BUDGET_OVERRIDES_V3` + 六项测试授权集同步；配套重冻结 uplift gate 历史 fixture（`e3cac7c8…bd22` → `e8bea4cb…e843`，gate 哈希 `b6266e37…dfc9` → `e0ebf3df…6290`）。新 CI `33984762662` 曾因「Build and full test suite」失败——正是该 gate 重冻结的遗漏（历史 fixture 与 v3 contract 的 overrides 漂移），补齐后本地 `32/32` 与 verifier 全绿、`615e803d` 推送；这是合同变更首次暴露 uplift gate 与 benchmark contract 的交叉冻结依赖，处理决策为 `fix_now completed`，后续合同变更须把 `code-intel/v1/agent-uplift-gate.json` 的冻结输入纳入配套检查清单。
 - `explore-f338e0d-1` 双平台 Go 两槽失败，**但 24k 预算冲突确认解除**：两槽均未再出现「no bounded post-write objective review can be built」，失败全部移到模型补丁生成层——Windows 模型读取 10 个文件后 mutation-only 响应无工具调用（`must request exactly one allowed workspace mutation tool`）；WSL 发出 13 hunk 补丁，其中 `bash_completions.go` 1 个 context-only hunk 导致整包被校验拒绝（`context_only_hunk hunkCount=13 contextOnlyHunkCount=1`），其余 12/13 hunk 格式正确。Go 真实槽累计 11/11 失败，产品确定性缺陷已全部闭合，剩余为 `deepseek-v4-flash` 补丁质量与工具合同遵从。处理决策为 `record_only / 9.5 可达性复评`：呈报用户最后一个未尝试的产品杠杆——apply_patch 校验拒绝后以 validator diagnostic 派发一次有界纠正调用（对 WSL 类 12/13-hunk 失败有真实机会，费用 ≈$0.20/探索）；未经用户确认不实施该新杠杆，也不宣称 9.5 目标不可达（该结论需用户对目标口径的决策）。新增 Provider cost=`0.00411832 USD`，累计 observed=`2.51279445 USD`，next worst≈`20.7 RMB < 80`。
+- 用户于 2026-09-06 确认实施该杠杆，处理决策为 `fix_now completed / 用户确认产品杠杆`：mutation-only 补丁被全量拒绝且零 actionable section（`invalid_envelope` 等）时派发一次性有界纠正（原路径提取条件在该形态下必然失败，导致纠正被跳过）；先红后绿验证（不含修复时以 `context_only_hunk` 失败关闭）、家族 `136/136`、tsc exit=0、CI 全绿（`05df1918`）。注意该杠杆的作用域仅为「补丁结构校验拒绝」，不包括 hunk 上下文应用失败与 continuation 路径覆盖缺陷。
+- `explore-05df191-1` 双平台 Go 两槽再次失败（Go 真实槽累计 **13/13**），且失败形态再次转移到杠杆作用域之外：Windows 模型补丁 hunk 上下文与文件不符（`Failed to find expected lines in doc/man_docs.go`，凭记忆重写转义/换行）；WSL 在 missing-path continuation 阶段补丁未满足「每个缺失路径恰好一个 patch section」。**结论：产品确定性缺陷已全部闭合（导航/证据保护/8 路径验证/复核构建/64k 预算/全量拒绝纠正），剩余失败全部是模型补丁生成与应用质量，且失败模式在 7 个不同缺陷间随机转移；冻结任务真值 + `deepseek-v4-flash` 下 Go required-language 零回归门槛无法稳定满足，两个连续 9.5 候选不可达**。处理决策为 `record_only / 13:13 结论呈报`：新增 Provider cost=`0.0054102 USD`，累计 observed=`2.51820465 USD`，next worst≈`18.4 RMB < 80`；未获用户新授权前不再启动付费槽，冻结槽与旧证据全部保留。
