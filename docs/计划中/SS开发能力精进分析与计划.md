@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **ec08329 双平台 JS 两槽均失败，完整对账后返回零 Provider 诊断** | 新行为验收双平台 19/19，真实探索正确拒绝两个错误补丁；Windows 首次明确 finishReason=length，WSL 产生重复代码。当前真实 CI 的 coding client 双平台通过，但依赖审计有 fast-uri/qs 共六组漏洞，阻塞交付 | 下一会话继承 `explore-ec08329-1` 账本；先处理已确认的依赖漏洞，再基于已有 JS 证据诊断，不重复试跑找成功。完整 144、交付证据和第二候选仍未闭合 |
+| P2-C 分层开发与编排复用 | P2 | **023af38 完整 CI 暴露测试替身缺口，已定向修复，等待新身份 CI** | 023af38 双平台 JS 探索 passed、资源与敏感扫描闭合，正式 plan 独立验真 `144/144/144`；Quality `33959329660` 六个 job 通过，但全仓 2 项失败均来自点名测试路径未接入新增 source-navigation 替身；修复后受影响模块 `127/127`、build 通过，正式付费槽仍为 `0/144` | 提交并推送测试合同修复，等待新身份完整工程 CI；通过后重新绑定 inputs/plan/费用基线并从新 candidate 的未执行槽推进。完整 144、交付证据、七维资格和第二候选仍未闭合 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -1786,15 +1786,35 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 本次只改测试，TypeScript 沿用 d42f6778 双平台完整 build exit=0；依赖合同原文件 `17/17` 通过。
 - d42f6778 WSL Agent 导航及相邻五文件 `147/147` 通过；双平台 build 完成。新版本 inputs/真实模型及完整 CI 待验证，上一身份结果不跨版本授予正式资格。
 
+#### P2-C 正式准入准备实现结论：023af38 双平台 JS 通过与不可覆盖计划（2026-09-05）
+
+##### 已完成内容
+
+1. **`explore-023af38-1` 真实探索**：
+   - Windows/WSL JS 各 attempt=1 均 passed；taskCompleted/testsPassed/patchAccepted=true，regression/manual=0。两端都主动先读测试再补齐源码，最终行为测试通过；本次未触发新增的“源码先读后强制补测试”分支，不能把成功全部归功于该分支。
+   - 原 reports/events/patch/usage 保持完整；两端敏感扫描 finding/unreadable/link 均为0，进程/端口/container/lease 八项均为0，新 env 已按原授权逐项校验后送回收站。
+2. **`formal-023af38-1.expected-report-plan.json` / `formal-config-023af38-1.json` 生成**：
+   - 唯一冻结 `candidate-023af38-1` 的 24 tasks × 2 platforms × 3 attempts；报告数、唯一 ID、唯一路径为 `144/144/144`，独立 Cartesian 验真与 EEXIST/hash 不变负例通过。
+   - plan SHA=`3f1382eb74512e2e7ff46ccf5cf563cdb683a5efc85da176ba0a6613074a8fb5`；config SHA=`123e85266960068269d4b4966c58117721007e9ebfbfa1c7e7897089778dbea5`。
+3. **效果**：
+   - 当前修复已有同一身份的双平台 JS 通过证据与正式计划，付费正式槽尚未启动；完整工程 CI 通过后再准入，旧失败不替换或补跑。
+
+##### 验证结果
+
+- TypeScript/build 沿用两端 d42f6778 通过结果；023af388 后续仅测试合同/文档变化，依赖合同两端各 `17/17`。两端新 inputs 生产与原生独立验真均 `4/4/8`。
+- `--max-new-runs 0` 正式独立验真 exit=0，selected=144、processed=0、qualification=unscored；零 Provider readiness auth-ready=`2033ms`，stop=`2056ms`。
+- 权威后继账本为 `explore-023af38-1/cost-ledger-final.json`（SHA=`c0df071d2ac07f7616c7ebf4a4e5343c8b330d020d1a15915e181c0a418f6ded`）；processed/pending/unreported=`2/0/0`，cleanup=true，observed=`2.47555869 USD`、reserved=`2.34221000 USD`，本次费用=`0.00201318 USD`。
+- 当前 Quality run=`33959329660`，除完整工程测试仍运行外，其他六个 job 均通过；当前身份未取得完整 CI、完整正式矩阵或数值资格。
+
 ### 后续计划
 
-1. 合并安全依赖断言同步与导航修复后推送最终身份，复用 staging/cache 更新 identity/inputs，做固定 JS 两槽探索并收取当前 CI。已修复的导航缺口有确定性证据，但 WSL 错误推断仍须真实反馈，不能用局部通过代替任务完成。
-2. 对现有 JS/Go 失败保留离线诊断：JS 新 patch 的零值处理仍有回归；两者 JSON review/repair 均为原始无效响应。非空响应终止原因诊断已补齐并局部验证，但旧日志缺失值不能回补；后续受控探索须采集该字段，不能只凭 token 上限改变预算、解析器或增加特例。
-3. 口径及产品修复稳定后，复用 staging/依赖缓存，重新绑定双平台 identity、inputs、预检和不可覆盖 plan；按固定探索清单验证真正改变的行为，避免无新证据重复同批模型调用。
-4. 后继正式候选仅在合同、工程与资源 Gate 闭合后进入完整 `144` 槽；普通失败只在资格仍可达且证据/资源闭合时续跑，硬门槛失败停止。下一会话继承 `explore-b564025-1/cost-ledger-final.json`（SHA=`d4aa99a9075dd08b912d7ae7d45848ea7267103fcbc27869b35dbc731b267440`）的全部观测费用和预留，所有已冻结 identity 保持只读。
+1. 等当前 `33959329660` 完整工程 CI 终态；若通过，复核资源和费用后执行 `candidate-023af38-1` 正式矩阵。计划已冻结并独立验真，剩余关键准入是完整工程 CI；若失败只诊断相关范围，不重跑历史候选。
+2. 历史 JS/Go 失败及原始 JSON review/repair 证据继续保留供离线诊断；`023af38` 双平台 JS 新探索已通过，不再将历史失败当作当前未执行的修复步骤。后续真实失败须依据各自日志定位，旧日志缺失的终止原因不能回补，也不能只凭 token 上限改变预算、解析器或增加特例。
+3. 当前双平台 staging、identity、inputs、预检及不可覆盖 plan 已就绪，直接复用已验真材料；只有实际修改冻结行为或出现新失败证据时才返回开发与固定探索清单，避免重复生成材料或无新证据重复调用。
+4. 后继正式候选仅在合同、工程与资源 Gate 闭合后进入完整 `144` 槽；普通失败只在资格仍可达且证据/资源闭合时续跑，硬门槛失败停止。下一会话继承 `explore-023af38-1/cost-ledger-final.json`（SHA=`c0df071d2ac07f7616c7ebf4a4e5343c8b330d020d1a15915e181c0a418f6ded`）的全部观测费用和预留，所有已冻结 identity 保持只读。
 5. 完整候选后采集当前 identity 的真实 CI/CLI/TUI/Git delivery receipt、aggregate 与七维资格，再执行第二个连续完整候选；两个候选均须满足七维下限、raw weighted `>=9.500` 和全部硬 Gate。
 
-当前关键闭环是 JS 修复的真实模型验证、依赖审计与完整工程 CI；新计量的双平台审批已取得通过证据，但不外推为正式验收。完整 `144` 槽、当前 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选均未完成。最终验收标准保持不变，审批计量与费用授权均已明确并持续有效。
+当前正式准入只剩新身份完整工程 CI 终态；023af38 的 CI 因测试替身缺口失败，不能作为准入证据。双平台 JS 探索、依赖审计及新计量的双平台审批已有通过证据，但不外推为正式验收。完整 `144` 槽、当前 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选均未完成。最终验收标准保持不变，审批计量与费用授权均已明确并持续有效。
 
 ### 重要问题说明
 
@@ -1863,3 +1883,4 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - Windows 首次离线安装超过 30 秒观察窗口，原并行调用未保留最终 exit code；确认唯一任务进程 PID、父进程和候选命令行后持续观察至退出，再以相同冻结离线命令幂等确认 `Already up to date`、exit=`0`。未重启并发安装、未进入 Provider，处理决策为 `fix_now completed`。
 - WSL npm cache 首次类型探针把含 `|` 的 `stat -c` 格式字符串交给 PowerShell，宿主将其解析为管道并在只读命令中失败；改用逗号分隔格式的直接 argv 后确认 source/target 均为非 symlink `755 directory`，复制后字节与目录内容一致。未影响 cache 或 inputs，处理决策为 `fix_now completed`。
 - WSL material Gate 先由 production resolver 正确返回 `benchmarks/coding-agent/v3/task-manifest.json`，随后人工哈希命令仍误用猜测的 `manifest.json` 而失败；改为读取 resolver 的真实路径，并同时核对 raw/contract SHA 后通过。该只读失败发生在 producer 前，未创建 output，处理决策为 `fix_now completed`。
+- Quality `33959329660` 的完整工程测试发现两项失败：`tool-agent-workspace-mutation-web-boolean-branch.test.ts` 中两个任务明确点名 `test/shared/benchmark-v3-ui-regression.test.js`，新增通用 source-navigation 准入后测试替身仍只返回 `src/diff/props.js`，有界导航因缺少被点名测试证据而失败关闭。未修改产品导航规则；补齐两个替身的测试路径响应与路径绑定后，受影响模块 `127/127` 通过、build 通过。处理决策为 `fix_now completed / 测试合同闭合`；023af38 失败 CI 保留，新身份完整 CI 必须重新验证。

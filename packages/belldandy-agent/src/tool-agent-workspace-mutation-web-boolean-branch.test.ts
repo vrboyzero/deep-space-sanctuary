@@ -218,6 +218,7 @@ describe("ToolEnabledAgent serialized-false boolean branch correction", () => {
 
   it("rebuilds the frozen broad fallback correction without rewriting correct prefix branches", async () => {
     const requiredPath = "src/diff/props.js";
+    const referencedTestPath = "test/shared/benchmark-v3-ui-regression.test.js";
     const lineEnding = "\r\n";
     const functionGuard = "\t\tif (typeof value == 'function') {";
     const functionComment = "\t\t\t// never serialize functions as attribute values";
@@ -347,6 +348,12 @@ describe("ToolEnabledAgent serialized-false boolean branch correction", () => {
           limit: 1_048_576,
         }));
       }
+      if (instruction.includes("Bounded source-navigation phase")) {
+        return jsonResponse(modelToolCall(`read-referenced-test-${requests.length}`, "file_read", {
+          path: referencedTestPath,
+          limit: 1_048_576,
+        }));
+      }
       if (instruction.includes("Post-mutation objective correction input retry phase")) {
         return jsonResponse(modelToolCall("broad-input-correction", "apply_patch", {
           input: broadInputCorrection,
@@ -378,15 +385,18 @@ describe("ToolEnabledAgent serialized-false boolean branch correction", () => {
       arguments?: Record<string, unknown>;
     }) => {
       if (request.name === "file_read") {
+        const requestedPath = String(request.arguments?.path ?? "");
         return {
           id: request.id,
           name: request.name,
           success: true,
           output: JSON.stringify({
-            path: requiredPath,
-            size: currentSource.length,
+            path: requestedPath,
+            size: requestedPath === requiredPath ? currentSource.length : 256,
             truncated: false,
-            content: currentSource,
+            content: requestedPath === requiredPath
+              ? currentSource
+              : "describe(\"deterministic UI regression\", () => { it(\"checks false and nullish values\", () => {}); });",
           }),
           durationMs: 1,
         };
@@ -456,6 +466,7 @@ describe("ToolEnabledAgent serialized-false boolean branch correction", () => {
 
   it("rebuilds the frozen WSL2 narrow-prefix output repair before accepting its final summary", async () => {
     const requiredPath = "src/diff/props.js";
+    const referencedTestPath = "test/shared/benchmark-v3-ui-regression.test.js";
     const functionGuard = "\t\tif (typeof value == 'function') {";
     const functionComment = "\t\t\t// never serialize functions as attribute values";
     const originalCondition = "\t\t} else if (value != NULL && value !== false) {";
@@ -595,6 +606,12 @@ describe("ToolEnabledAgent serialized-false boolean branch correction", () => {
           limit: 1_048_576,
         }));
       }
+      if (instruction.includes("Bounded source-navigation phase")) {
+        return jsonResponse(modelToolCall(`read-referenced-test-${requests.length}`, "file_read", {
+          path: referencedTestPath,
+          limit: 1_048_576,
+        }));
+      }
       if (instruction.includes("Post-mutation objective review output repair phase")) {
         return jsonResponse(modelToolCall("frozen-regressed-output-repair", "apply_patch", {
           input: regressedOutputRepair,
@@ -621,15 +638,18 @@ describe("ToolEnabledAgent serialized-false boolean branch correction", () => {
       arguments?: Record<string, unknown>;
     }) => {
       if (request.name === "file_read") {
+        const requestedPath = String(request.arguments?.path ?? "");
         return {
           id: request.id,
           name: request.name,
           success: true,
           output: JSON.stringify({
-            path: requiredPath,
-            size: currentSource.length,
+            path: requestedPath,
+            size: requestedPath === requiredPath ? currentSource.length : 256,
             truncated: false,
-            content: currentSource,
+            content: requestedPath === requiredPath
+              ? currentSource
+              : "describe(\"deterministic UI regression\", () => { it(\"checks false and nullish values\", () => {}); });",
           }),
           durationMs: 1,
         };
