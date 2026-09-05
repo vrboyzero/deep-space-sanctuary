@@ -1730,18 +1730,36 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 首条相邻测试命令包含一个不存在的点分文件名，Vitest 实际只运行三个现存文件（108 项）；随后按真实路径运行六个工具 Agent 文件（134 项）。不把未发现的文件计为已测。
 - 这是已证实的信息遗漏修复，尚不证明真实模型错误或 length 已解决；不增加输出长度或恢复次数，下一探索须使用新身份。
 
+#### P2-C 工程 Gate 实现结论：共享内存测试关闭顺序（2026-09-05）
+
+##### 已完成内容
+
+1. **`server.memory-experience.test.ts` 修改**：
+   - 三个 scoped/shared manager 用例在移除状态目录前调用现有 `cleanupGlobalMemoryManagersForTest()`，覆盖按需创建的共享层；保留 `afterEach` 兜底。
+   - shared governance 用例增加数据库已关闭的行为断言，原代码稳定失败，调整关闭顺序后通过。
+2. **效果**：
+   - 测试结束先收敛后台索引和 SQLite 句柄，再清理目录；不修改 MemoryManager 产品逻辑、关闭时限或失败 Gate。
+   - 旧 CI `33956747583` 已完整收取：1016 文件通过、2 跳过；6687 测试通过、39 跳过，但存在 1 个 `SQLITE_READONLY_DBMOVED` 未处理错误，整体保持 failed。依赖审计也保持原失败记录。
+
+##### 验证结果
+
+- `tsc -b packages/belldandy-core --pretty false` exit=0；Windows 原文件 `47/47`，含新增关闭行为断言，无未处理错误。
+- df37e408 两端依赖安装/build 已完成；WSL JS supporting/documentation/mutation/structured-output/final-repair 七文件 `233/233` 通过。
+- 原 shared governance 用例在 WSL 单独运行 `1/1`，未再现偶发 SQLite 异常；关闭前句柄仍可用则由 Windows 确定性断言复现。WSL 修正后原文件和当前身份真实 CI 待验证，不能把旧全量结果记为通过。
+
 ### 后续计划
 
-1. fast-uri/qs 修复已通过 build/79 项直接使用方测试，辅助断言投影已通过准确请求重建和 242 项定向回归；等待上一 CI 全量终态后推送最终修复身份，获取新的 OSV/工程 CI。随后一次性更新双平台依赖/identity/inputs，做 JS 两槽探索验证本次证据变化，避免每个中间提交都重新准备和调用模型。
+1. 先完成共享内存测试修正的 WSL 验证，与 fast-uri/qs、辅助断言修复一并推送当前身份，取得新的 OSV/工程 CI。双平台复用既有 staging 和缓存，更新 identity/inputs 后做 JS 两槽探索；每个中间修改不重复全量测试或模型调用。
 2. 对现有 JS/Go 失败保留离线诊断：JS 新 patch 的零值处理仍有回归；两者 JSON review/repair 均为原始无效响应。非空响应终止原因诊断已补齐并局部验证，但旧日志缺失值不能回补；后续受控探索须采集该字段，不能只凭 token 上限改变预算、解析器或增加特例。
 3. 口径及产品修复稳定后，复用 staging/依赖缓存，重新绑定双平台 identity、inputs、预检和不可覆盖 plan；按固定探索清单验证真正改变的行为，避免无新证据重复同批模型调用。
 4. 后继正式候选仅在合同、工程与资源 Gate 闭合后进入完整 `144` 槽；普通失败只在资格仍可达且证据/资源闭合时续跑，硬门槛失败停止。下一会话继承 `explore-ec08329-1/cost-ledger-final.json`（SHA=`c98ba502778962e3dae6b5c15ee972bcf1534f8834aeed444567603445739523`）的全部观测费用和预留，所有已冻结 identity 保持只读。
 5. 完整候选后采集当前 identity 的真实 CI/CLI/TUI/Git delivery receipt、aggregate 与七维资格，再执行第二个连续完整候选；两个候选均须满足七维下限、raw weighted `>=9.500` 和全部硬 Gate。
 
-当前关键闭环是 JS 新真实失败的通用修复与依赖审计阻塞；新计量的双平台审批已取得通过证据，但不外推为正式验收。完整 `144` 槽、当前 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选均未完成。最终验收标准保持不变，审批计量与费用授权均已明确并持续有效。
+当前关键闭环是 JS 修复的真实模型验证、依赖审计与完整工程 CI；新计量的双平台审批已取得通过证据，但不外推为正式验收。完整 `144` 槽、当前 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选均未完成。最终验收标准保持不变，审批计量与费用授权均已明确并持续有效。
 
 ### 重要问题说明
 
+- 旧 CI 所有测试断言通过仍被未处理的 `SQLITE_READONLY_DBMOVED` 阻断，日志归属 shared governance 用例；该用例在 `finally` 删除状态目录，之后 `afterEach` 才关闭 manager。处理决策为测试清理顺序 `fix_now / Windows 定向闭合`，先关闭全部已登记 manager 后再清理目录；原 SQLite 竞态未在 WSL 单例重现，不据此改动产品错误处理，真实全量 CI 仍待验证。
 - JS 复核只选择 required 源文件，已读取且由任务点名的测试断言在上下文收缩时全部丢失；准确重建复现该缺口。处理决策为 `fix_now / 本地闭合`：在同一预算内补精确绑定的辅助读取，当前源码优先；真实模型效果仍待验证，不能把信息遗漏直接断言为全部失败的根因。
 - `ec08329` 双平台 JS 均实际失败，Windows 明确出现 length 且保留 +1，WSL 重复代码；处理决策为 `record_only / 回到零 Provider 诊断`。有了首次真实终止原因也不能直接加预算、改模型或放宽解析；局部校验是否存在误拒需要原始 correction 证据，不能仅凭日志推断。
 - 当前 Quality 的 OSV Gate 明确为 fast-uri/qs 新漏洞，非扫描不可用；同主版本修复已安装，锁文件最小 diff、build 与 79 项直接使用方测试通过。处理决策为 `fix_now / 本地闭合，待真实 CI`，后续用同一 workflow 复核，禁止忽略漏洞或关闭 Gate。

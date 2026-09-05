@@ -399,6 +399,7 @@ test("memory.share.queue supports centralized claim and review across resident a
     ws.close();
     await closeP;
     await server.close();
+    await cleanupGlobalMemoryManagersForTest();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
 });
@@ -4262,7 +4263,7 @@ test("memory.search exposes R2 node-assisted diagnostics through resident memory
       store.searchHybrid = originalSearchHybrid;
     }
   } finally {
-    await memoryManager.close();
+    await cleanupGlobalMemoryManagersForTest();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
 });
@@ -5108,6 +5109,9 @@ test("memory.tree.report.shared_governance.preview consolidates boundary, queue,
       ],
     });
   } finally {
+    // 先关闭按需创建的共享层及 resident manager，再移除 SQLite 所在目录。
+    await cleanupGlobalMemoryManagersForTest();
+    expect(() => defaultRecord.manager.getDbHandleForSharedSchema()).toThrow("MemoryStore already closed");
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
 });
