@@ -6843,6 +6843,139 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("keeps every required read available to the mutation-only recovery without false navigation", async () => {
+    const requiredChangedPaths = [
+      "bash_completions.go",
+      "bash_completionsV2.go",
+      "cobra.go",
+      "completions.go",
+      "doc/man_docs.go",
+      "fish_completions.go",
+      "powershell_completions.go",
+      "zsh_completions.go",
+    ];
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return response({
+          choices: [{
+            finish_reason: "tool_calls",
+            message: {
+              content: null,
+              tool_calls: requiredChangedPaths.map((path, index) => modelToolCall(
+                `read-${index}`,
+                "file_read",
+                { path },
+                0,
+                0,
+              ).choices[0].message.tool_calls[0]),
+            },
+          }],
+          usage: { prompt_tokens: 800, completion_tokens: 120 },
+        });
+      }
+      if (requests.length === 2) {
+        // The frozen Go failure shape: the model returns text instead of a mutation.
+        return response({
+          choices: [{ finish_reason: "stop", message: { content: `{"summary":"no mutation"}` } }],
+          usage: { prompt_tokens: 1600, completion_tokens: 400 },
+        });
+      }
+      if (requests.length === 3) {
+        return response(modelToolCall("migrate-all", "apply_patch", {
+          input: requiredChangedPaths.map((path) => (
+            `*** Begin Patch\n*** Update File: ${path}\n@@\n-old\n+new\n*** End Patch`
+          )).join("\n"),
+        }, 900, 200));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: `{"summary":"migrated"}` } }],
+        usage: { prompt_tokens: 300, completion_tokens: 30 },
+      });
+    });
+    const execute = vi.fn(async (request: { id: string; name: string; arguments?: Record<string, unknown> }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: request.arguments?.path,
+            size: 200,
+            bytesRead: 200,
+            truncated: false,
+            range: { offset: 0, endOffset: 200 },
+            content: `package main\n// ${request.arguments?.path}\n`,
+          }),
+          durationMs: 1,
+        };
+      }
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({
+      execute,
+      maxTotalTokens: 24_000,
+      toolLoopIterationBudget: 12,
+      mutationToolNames: ["apply_patch"],
+      readToolNames: ["file_read"],
+    });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-recovery-eight-path-evidence",
+      text: "Migrate the public API across every required file.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          maxTotalTokens: 24_000,
+          toolLoopIterationBudget: 12,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => {
+          try {
+            const parsed = JSON.parse(text) as { summary?: unknown };
+            if (typeof parsed.summary === "string") {
+              return { ok: true as const, outputText: text };
+            }
+          } catch {
+            // Invalid JSON stays rejected below.
+          }
+          return { ok: false as const, message: "summary is required" };
+        },
+      },
+    } as any));
+
+    const systemTexts = requests.map((request) => String(request.messages?.[0]?.content ?? ""));
+    expect(systemTexts).not.toEqual(expect.arrayContaining([
+      expect.stringContaining("Bounded source-navigation phase"),
+    ]));
+    const recoveryIndex = systemTexts.findIndex((text) => text.includes("Mutation-only recovery phase"));
+    expect(recoveryIndex).toBe(2);
+    const recoveryUserText = String(requests[recoveryIndex]?.messages?.[1]?.content ?? "");
+    for (const path of requiredChangedPaths) {
+      expect(recoveryUserText).toContain(path);
+    }
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      ...requiredChangedPaths.map(() => "file_read"),
+      "apply_patch",
+    ]);
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("reports bounded recovery diagnostics when no mutation recovery request can be built", async () => {
     const requests: Array<Record<string, any>> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {

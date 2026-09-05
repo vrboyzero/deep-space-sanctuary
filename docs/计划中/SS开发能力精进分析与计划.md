@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **candidate-57b9cc5-1 冻结于 17/144（16 passed + 1 Go regression failure），进入开发回归** | disconnect-recovery 诊断加固与单槽探索通过（未复发，模型输出可变性）；新候选 13 槽连过后 batch 04 的 real-go.public-api-migration 以 tests/patch=false、regression=1 冻结；账本 SHA=`ad36a894…14f`、资源/敏感值/费用闭环 | 零 Provider 分析 Go 失败证据并修复/记录；双平台验证、最小探索、新身份 CI 与 Gate 后重建候选；完整 144 槽、七维资格与第二连续候选未完成 |
+| P2-C 分层开发与编排复用 | P2 | **Go 失败归因与多文件恢复证据修复完成并本地提交；待新身份探索** | 8 required path 完整读取存在但 recovery 按最近 6 条切片误判缺失 → 误触发导航；修复为最近窗口+补齐缺失 required path 读取；8-path 用例先红后绿、家族 25 文件 `469/469`、tsc 与 benchmark verifier 通过；candidate-57b9cc5-1 保持 17/144 冻结 | 提交推送新 identity 并跑 CI；最小探索验证 real-go.public-api-migration 与 Go 代表槽；随后重建候选；完整 144 槽、七维资格与第二连续候选未完成 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -2096,11 +2096,32 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 保持候选冻结；进入开发回归：零 Provider 分析 real-go.public-api-migration 的失败（用保留 fixture workspace 与冻结 events/报告）——区分模型补丁错误与评测/预算环节；修复或记录后按分层流程验证，再创建新 candidate。不重跑或 reconcile 冻结槽。
 
+#### P2-C 开发回归实现结论：Go 失败分析与多文件恢复证据补齐（2026-09-05）
+
+##### 已完成内容
+
+1. **冻结失败证据分析**：`real-go.public-api-migration/windows-native/a1` 的 run 做了 `list_files×2 + file_read×9`（含全部 8 个 required path 的完整读取），随后第 3 次模型调用返回纯文本（无工具调用），进入 mutation recovery；recovery 请求按「最近 6 条证据」切片只保留后 6 个文件，`cobra.go`/`bash_completions.go` 被误判缺失 → 触发一次 source-navigation，模型未按导航指令补读 → fail-closed（`the 1 bounded source-navigation call(s) did not produce complete source evidence for mutation recovery`）；changes.patch 为空、evaluator 判 regression=`1`。
+2. **零 Provider 单元级复现（红灯）**：新增 8-path 用例复现「完整读取存在却被最近窗口截断 → 误触发导航」；修复前该用例确实出现 `Bounded source-navigation phase` 调用。
+3. **packages/belldandy-agent/src/react-workspace-mutation.ts 修改**：恢复/续跑/输入纠正三类请求的 evidence 选择增加 `includeRequiredPathLatestEvidence`——保留最近证据窗口，同时从完整历史补齐窗口外仍缺失的 required path 完整读取；非 required 的最近读取仍保留（保持既有「有读取证据但缺 required path 就导航」语义）。
+4. **tool-agent-workspace-mutation.test.ts 扩展**：新增 8-path 恢复用例，断言无导航误触发、恢复请求含全部 8 个 path 证据、流程走到 done。
+5. **效果**：多文件（>6 required path）任务在模型已完整读取的情况下不再因最近窗口截断而误触发导航；真正缺失/截断的路径仍按原语义导航或失败关闭。
+
+##### 验证结果
+
+- TypeScript：`tsc -b packages/belldandy-agent` exit=`0`；`git diff --check` 通过。
+- workspace-mutation 家族 25 文件 `469/469` 通过（含新增 8-path 用例；修复前该用例红灯）。
+- `corepack pnpm verify:coding-benchmark` exit=`0`。
+- 零 Provider；未重跑或 reconcile 冻结槽；`candidate-57b9cc5-1` 冻结终态不改写。
+
+##### 后续计划
+
+提交推送新 identity 并跑完整 CI；随后按分层流程做最小探索（优先 real-go.public-api-migration Windows a1 与既有 Go 代表），验证修复与真实模型路径后再创建新 candidate。
+
 ### 后续计划（当前检查点，2026-09-05）
 
-1. **本环节结果**：disconnect-recovery 诊断加固与单槽探索通过（冻结失败未复发，判定为模型输出可变性）；新候选 `candidate-57b9cc5-1` 推进至 `17/144`（16 passed + 1 Go product_workflow failure），因 `regressionCount` 硬门槛按政策冻结。
-2. **下一步准备做**：开发回归——零 Provider 分析 `real-go.public-api-migration` 的失败证据（保留 fixture workspace + 冻结 events/report），区分模型补丁错误与评测/预算环节；修复或记录后按分层流程验证（双平台、最小探索、新身份 CI 与 Gate），再创建新 candidate。
-3. **为什么先做它**：Go 回归失败阻断 real-repository-editing 的 regression 硬门槛（100%），不定位根因就无法进入下一个正式候选；该任务此前从未在正式矩阵中出现过，需要先建立失败画像。
+1. **本环节结果**：Go 冻结失败已完成零 Provider 归因——8 个 required path 的完整读取存在，但 recovery 请求按「最近 6 条」切片误判 2 个路径缺失并误触发导航，模型未按导航指令补读后失败关闭；已修复为「最近窗口 + 补齐窗口外缺失 required path 完整读取」，新增 8-path 用例先红后绿（本地提交，待推送）。
+2. **下一步准备做**：提交推送新 identity 并跑完整 CI；随后按分层流程做最小探索（优先 `real-go.public-api-migration` Windows a1 与既有 Go 代表槽），验证修复与真实模型路径，再创建新 candidate。
+3. **为什么先做它**：该证据窗口盲点是确定性产品缺口，修复后必须先用真实模型验证 Go 任务不再因同一路径失败，再决定是否扩大付费槽。
 4. **当前还缺的关键闭环**：Go 真实任务稳定通过、完整 144 槽原生矩阵、aggregate、dimension evidence、qualification 与七维 score、第二个连续完整候选；`candidate-57b9cc5-1` 已冻结（17/144）、`e4bd1c3-1`（8/144）与旧 `63e0a41`（14/144）永久只读。
 5. 后继运行继承 `formal-57b9cc5-1/cost-ledger-final.json`（SHA=`ad36a894…14f`，observed/reserved=`2.49696170/2.34221 USD`，next worst≈`39.5 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效。
 
@@ -2206,3 +2227,5 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 首版复现测试因 meta 未带 `requiredChangedPaths` 导致 verification 阶段不触发、mock 错配（测试缺陷，非产品问题）；补齐后 file_write 恢复全流程通过。处理决策为 `fix_now completed`。
 - `candidate-57b9cc5-1` 在 batch 04 的 `real-go.public-api-migration/windows-native/a1` 以 `product_workflow` 失败：testsPassed=false、patchAccepted=false、regressionCount=`1`，usage=cost `0.00057903 USD`；政策因 `B.regressionCountMaximum` 与 `dimension:editing_testing/real_repository_editing/regression_count` 冻结候选（17/144，16 passed）。该 Go 任务此前未在正式矩阵中出现（63e0a41 只到 14 槽、e4bd1c3-1 只到 8 槽），处理决策为 `record_only / 下一轮零 Provider 开发回归`：用保留 fixture workspace 与冻结 events/report 建立失败画像，区分模型补丁错误与评测/预算环节；不提高预算、不改写冻结终态。
 - disconnect-recovery 冻结任务在本轮正式槽通过（首调用 file_write、fault 注入与恢复成功），与上一轮探索一致，确认此前失败为模型输出可变性；诊断加固未触发，保留为后续同类失败的自诊断手段。处理决策为 `fix_now completed（诊断加固）`。
+- Go 冻结失败根因定位：run 已完整读取全部 8 个 required path，但 recovery 请求的证据选择按「最近 6 条」切片，`cobra.go`/`bash_completions.go` 被误判缺失 → 误触发一次 source-navigation，模型未按导航指令补读 → fail-closed，changes.patch 为空、evaluator 判 regression=`1`。处理为 `fix_now completed / 多文件恢复证据补齐`：恢复/续跑/纠正请求保留最近窗口并补齐窗口外缺失 required path 的完整读取，8-path 用例先红后绿；真正缺失/截断路径仍按原语义导航或失败关闭，导航与预算上限不变。
+- 本次回归期间首次尝试的「仅按 required path 最新证据」方案使 12 个既有导航语义用例失败（非 required 最近读取被丢弃、有读取但缺 required path 时不再导航），已改为「最近窗口 + 补齐缺失」方案并全量 `469/469` 通过；该过程保留为验证记录，未交付中间方案。

@@ -2824,6 +2824,7 @@ export function buildWorkspaceMutationRecoveryRequest(input: {
   return buildBoundedWorkspaceMutationRequest({
     ...input,
     instruction: MUTATION_RECOVERY_INSTRUCTION,
+    includeRequiredPathLatestEvidence: true,
   });
 }
 
@@ -2840,6 +2841,7 @@ export function buildWorkspaceMutationContinuationRequest(input: {
   return buildBoundedWorkspaceMutationRequest({
     ...input,
     instruction: MUTATION_CONTINUATION_INSTRUCTION,
+    includeRequiredPathLatestEvidence: true,
   });
 }
 
@@ -2856,6 +2858,7 @@ export function buildWorkspaceMutationInputCorrectionRequest(input: {
   return buildBoundedWorkspaceMutationRequest({
     ...input,
     instruction: MUTATION_INPUT_CORRECTION_INSTRUCTION,
+    includeRequiredPathLatestEvidence: true,
   });
 }
 
@@ -3045,6 +3048,7 @@ function buildBoundedWorkspaceMutationRequest(input: {
   trustedPathsLabel?: string;
   allowNoTools?: boolean;
   latestRequiredFileReadEvidenceOnly?: boolean;
+  includeRequiredPathLatestEvidence?: boolean;
   includeMutationBranchTail?: boolean;
   includeAdjacentDuplicateClosingDelimiterEvidence?: boolean;
   includeLeadingDocumentation?: boolean;
@@ -3101,12 +3105,19 @@ function buildBoundedWorkspaceMutationRequest(input: {
       toolName: toolNames.get(String(message.tool_call_id ?? "")) || "unknown",
       content: String(message.content),
     }));
+  const recentEvidence = availableEvidence.slice(-MAX_EVIDENCE_ITEMS);
   const evidence = input.latestRequiredFileReadEvidenceOnly
     ? selectLatestRequiredFileReadEvidence(
         availableEvidence,
         input.missingRequiredChangedPaths ?? [],
       )
-    : availableEvidence.slice(-MAX_EVIDENCE_ITEMS);
+    : input.includeRequiredPathLatestEvidence
+      ? appendMissingRequiredPathEvidence(
+          recentEvidence,
+          availableEvidence,
+          input.missingRequiredChangedPaths ?? [],
+        )
+      : recentEvidence;
   if (input.latestRequiredFileReadEvidenceOnly
     && evidence.length !== input.missingRequiredChangedPaths?.length) {
     return undefined;
@@ -3602,8 +3613,42 @@ function taskSourceIdentifierPriority(identifier: string, taskText: string): num
   return taskText.includes(`${identifier}-`) ? 0 : -1;
 }
 
-function selectLatestRequiredFileReadEvidence(
-  evidence: Array<{ toolName: string; content: string }>,
+// 恢复/续跑/纠正请求保留最近证据窗口，同时补齐窗口外仍缺失的 required path 完整读取；
+// 避免多文件任务（>6 个 required path）因最近窗口截断而错误触发 source-navigation。
+function appendMissingRequiredPathEvidence(
+  recent: Array<{ toolName: string; content: string }>,
+  available: Array<{ toolName: string; content: string }>,
+  requiredPaths: readonly string[],
+): Array<{ toolName: string; content: string }> {
+  const covered = new Set<string>();
+  for (const item of recent) {
+    for (const evidencePath of readMutationReadySourceEvidencePaths(item.toolName, item.content)) {
+      covered.add(normalizeSourcePath(evidencePath));
+    }
+  }
+  const remaining = new Map(
+    requiredPaths.map((requiredPath) => [normalizeSourcePath(requiredPath), requiredPath]),
+  );
+  const selected = [...recent];
+  for (let index = available.length - 1; index >= 0 && remaining.size > 0; index--) {
+    const item = available[index];
+    if (item.toolName !== "file_read" || recent.includes(item)) continue;
+    const evidencePath = readMutationReadySourceEvidencePaths(item.toolName, item.content)[0];
+    if (!evidencePath) continue;
+    const normalizedEvidencePath = normalizeSourcePath(evidencePath);
+    const requiredIdentity = [...remaining.keys()].find((candidate) => (
+      normalizedEvidencePath === candidate
+      || normalizedEvidencePath.endsWith(`/${candidate}`)
+    ));
+    if (!requiredIdentity || covered.has(requiredIdentity)) continue;
+    selected.push(item);
+    covered.add(requiredIdentity);
+    remaining.delete(requiredIdentity);
+  }
+  return selected;
+}
+
+function selectLatestRequiredFileReadEvidence(  evidence: Array<{ toolName: string; content: string }>,
   requiredPaths: readonly string[],
 ): Array<{ toolName: string; content: string }> {
   const remainingPaths = new Map(
