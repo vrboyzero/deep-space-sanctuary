@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **已恢复开发回归；全仓验证未闭合** | 新增有界 IPC 阶段接线，定向=`47/47`（新增 7 项），build/benchmark contract 通过，r5 四阶段完整且 auth-ready=`6375ms`；上次全仓中断前已观察到并行 worktree 清理失败，未取得完整汇总 | 先检查测试残留并隔离验证失败，再完成必要回归；性能根因仍未关闭，不立刻创建新 formal |
-| P2-C 分层开发与编排复用 | P2 | **公共编排与零 Provider 预检通过；固定探索准备中** | 全仓=`6617 passed / 1 failed / 3 skipped`，新增公共编排/材料测试全通过；唯一 workspace restore EPERM 已局部复现容错缺口并修复；相关=`19/19 + 72/72`；readiness r6 auth-ready=`2037ms` | 准备 clean staging 与全新输入绑定后执行固定 7 槽探索；正式 144 槽的两项 manifest token override 等待授权口径确认 |
+| P2-C 分层开发与编排复用 | P2 | **公共编排与局部修复通过；固定探索准备中** | 两次完整回归均保留失败报告：`6617/1/3` 与 `6616/1/8`（passed/failed/skipped）；workspace restore 与 disposal receipt 的 rename 容错缺口已分别局部修复；最新回收回归=`7/7`、原生材料验真=`9/9`、build 通过 | 更新既有开发 staging、重新绑定输入后串行 OCI/资源 Gate，再执行固定 7 槽探索；正式 144 槽的两项 token override 等待授权口径确认 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -1158,7 +1158,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - `corepack pnpm test` 尚未取得完整终态汇总；中断前至少观察到一项真实失败：`scripts/coding-agent-benchmark-system-harness.test.mjs` 的 `fans two isolated write lanes in only after a bound preview and confirmation` 返回 `resolution discard failed: operation_status_uncertain`，并报告 repository/worktree 状态残留。未执行隔离复跑，不能判定为环境偶发或产品回归。
 - 按用户暂停要求，已向全仓测试会话 `33876` 发送中断并收到 exit=`1`；随后只读检查确认该测试父子进程和仓库 Vitest/tinypool 匹配进程均已退出。本轮全仓结果记为“已中断、验证未完成”，不沿用旧 commit 的通过总数。
 
-### 暂停检查点（2026-09-05）
+### 历史暂停检查点（2026-09-05，已恢复）
 
 - 已按用户要求回写并暂停；本轮启动诊断源码、测试和文档改动尚未提交或推送，未创建后继 candidate，也未再启动任何 formal 槽。
 - `6ce85bd/candidate-1` 保持永久冻结：`processed=0 / remaining=144 / unreportedInfrastructure=1`；权威账本仍为 `tmp/p2c-6ce85bd/candidate-1/cost-ledger-global.json`，global observed/reserved=`2.43983027/2.24221000 USD`。
@@ -1244,12 +1244,51 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 独立零 Provider readiness r6：新 state、当前构建、现有磁盘缓存条件下 auth-ready=`2037ms`，child stop=`2055ms`，完整四阶段 IPC；Provider env 读取=`0`、benchmark boundary=`1`。新 `.env/.env.local` 两文件完成回收，`28894` listener=`0`；不把该热缓存结果当作冷启动根因已修复。
 - 探索清单已固定为 7 槽，全部在 `12 turns / 24,000 tokens` 内；文件 `tmp/p2c-layered-development/exploration-selection.json`，SHA-256=`d315728f1c607c0cd0bbd3bbf851ee5020b19c73f7535729c85bc9d445f1f1d9`。尚未调用 Provider。
 
+#### P2-C 环境预检实现结论：双平台 clean staging 与固定探索输入（2026-09-05）
+
+##### 已完成内容
+
+1. **源码与公共 operator 本地检查点**：
+   - workspace restore 修复=`8454e72`，Gateway IPC 诊断=`d07c8cc`，分层流程和公共编排=`4b5dd97`；未推送，未纳入用户原有 AGENTS/D 盘计划/临时摘要改动。
+2. **Windows SSD 与 WSL staging 新建**：
+   - Windows=`C:\Users\admin\AppData\Local\Temp\ss-dev-harness-4b5dd97`，WSL=`/var/tmp/star-sanctuary-dev-4b5dd97`；均 detach 到 `4b5dd9750a65a21471d4c02f52d4b86bfb896b82`。
+   - 两平台各自安装锁定依赖并 build，原生复算 clean identity；lockfile=`844c0021…b7d2b`、worktree=`f754d989…88a88`。
+3. **公共输入 producer 与探索配置执行**：
+   - Windows=`tmp/p2c-layered-development/inputs/windows`，WSL=`/var/tmp/star-sanctuary-layered-inputs-4b5dd97`，各自唯一生成与独立复算 `4/4/8`。
+   - 固定探索配置=`tmp/p2c-layered-development/exploration-config.json`，config SHA=`33e5debe…d30930`，只读 source/cache 复用；新工具目录=`/var/tmp/star-sanctuary-layered-tools-4b5dd97`。
+4. **效果**：
+   - 一份公共编排可服务新版本准备，探索没有创建正式 plan，也没有迁移历史报告；每次局部修复无需复制整套 candidate operators。
+
+##### 验证结果
+
+- 两平台 TypeScript build 通过；原生 identity 均 clean 且四字段相同。
+- Windows 新输入 config SHA=`c3b0d948…8a680d`，WSL=`b4d1fd0e…9b3fb7`；各 `repositories/receipts/preflights=4/4/8`。
+- SSD staging 首次 Gateway 启动探针：auth-ready=`2237ms`、stop=`2256ms`，Provider env 读取=`0`、benchmark boundary=`1`，env 回收成功。该结果为新 staging 的首次启动，不代表重启宿主后的磁盘冷缓存测试。
+- C 盘完整回归=`6616 passed / 1 failed / 8 skipped`，原始报告=`tmp/p2c-layered-development/ssd-full-regression.json`；唯一失败是 disposal process recovery 的凭据 rename，后续局部修复见下。新增 Provider 调用=`0`；旧账本 SHA=`679f3a7a…45e50d`，observed/reserved=`2.43983027/2.24221000 USD`。
+
+#### P2-C 开发回归实现结论：disposal 凭据容错与 WSL 原生身份验真（2026-09-05）
+
+##### 已完成内容
+
+1. **`subtask-supervisor-worktree-disposal-runtime.ts` 与 process-recovery 测试修改**：
+   - 凭据替换复用三次有限 rename 重试；进程中断后的短暂/持续 EPERM 由真实恢复路径注入，持续失败保留原凭据，后续确认保持 uncertain 且不重复 cleanup。
+2. **`scripts/coding-agent-candidate-materials.mjs` 与 native 测试修改/新建**：
+   - WSL 身份交给原生 verifier，并核对返回的完整 identity、config hash 与 `4/4/8`；拒绝漂移、原生验真失败及不完整 receipt，不使用 Windows 经 UNC 的 Git 结果替代。
+3. **效果**：
+   - 两个问题在零 Provider 局部回归中关闭，没有重开正式候选或重复 144 槽；历史完整回归失败报告保持原样。
+
+##### 验证结果
+
+- `corepack pnpm build` 通过，TypeScript 编译无错误；`git diff --check` 通过。
+- 回收故障注入先得到 `1 passed / 2 failed`；修复后回收/进程恢复/helper 三文件 `7/7`，材料验真两文件 `9/9`，共新增 6 项测试场景。
+- 回归行为：凭据短暂被占用后能保留 uncertain 终态；持续拒绝时错误不被吞掉、旧凭据不变、无临时文件遗留，恢复访问后重复确认不再次清理。
+
 ### 后续计划
 
 1. 保持 `8f794af/candidate-1` 与 `6ce85bd/candidate-1` 永久冻结，禁止重跑、reconcile 或为失败 identity 启动 WSL。
 2. worktree 清理用例隔离及相邻三文件回归已通过，原失败暂未复现；保持该项 `record_only / 待完整回归证据`。继续开发共享候选政策和配置，集中完成后再执行完整回归；若再次出现相同失败，保留当次阶段证据再进入 Fix Mode，不用盲目重跑掩盖失败。
 3. 用局部反馈回路关闭失败或明确复现边界，再验证启动诊断和必要回归；阶段稳定后才形成新的 source identity，不因每次小修直接重建正式候选。
-4. 完整回归已保留首个结果，唯一失败的局部容错修复与相邻回归已通过。集中冻结本轮稳定代码后，准备 C 盘 Windows 与 WSL clean staging，验证公共 producer/verifier 对真实缓存的独立复算和执行路径；任何 build/测试扩展由新变更或未关闭风险驱动，不因每次本地失败重开 formal。
+4. 两次完整回归报告均已保留，最新缺口已完成局部修复。更新既有 Windows/WSL 开发 staging 并复用未变更锁文件的原生依赖，重新绑定输入；串行完成双平台 OCI、实际配置只读材料 Gate、零资源与紧邻费用检查后，执行原固定 7 槽探索。完整矩阵预算冲突未获确认前，不进入正式验收。
 5. 固定探索清单并完成少量真实模型验证，集中处理缺陷后再冻结新正式候选；按第 6.6 节执行完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt 和七维资格。普通失败只在资格仍可达且证据/资源闭合时继续未执行槽，硬门槛失败停止。
 6. 两个连续候选均须满足七维下限与 raw weighted `>=9.500`；任何旧 identity 均禁止事后改写 aggregate。
 
@@ -1257,11 +1296,14 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 ### 重要问题说明
 
+- 第二次完整回归唯一失败为 disposal process recovery 确认凭据时的 `EPERM rename`；隔离通过，宿主占用来源仍不确定。选择性注入证实该 owner 缺少有限重试，已局部修复并验证持续错误不被吞掉；处理决策为容错 `fix_now completed`、外部占用来源 `record_only`。clean staging 另有 5 项历史 artifact 离线审计条件跳过，加原有 3 项模型/OCI条件跳过共 8 项；不复制旧 artifact 冒充新证据，也不将两次完整回归表述为全绿。
+- WSL 安装产生的 executable-bit 变化被 Windows UNC Git 忽略；已改由 Linux 原生 verifier 独立验证完整 identity，并补 4 项合同回归，处理决策为 `fix_now completed`。实际双平台材料 Gate 尚待更新 staging 后执行。
+- 新 SSD staging 的离线依赖安装缺少 `ws@8.21.1` 等锁定 tarball；按原锁文件使用 prefer-offline 补齐，未升级版本或改写 lockfile。WSL 安装改变了 relay 的 executable bit（`100644 -> 100755`），只恢复新 staging 中该文件到 Git 记录的 `644` 后，native identity clean。最初 checkout 在 clone 尚未完成时提前执行，未生效；等待 clone 正常结束后使用完整 SHA 成功 detach。处理决策为 `fix_now completed`，这些前置问题没有触发正式槽或 Provider。
 - 本轮完整回归唯一 `EPERM rename` 发生于 workspace restore，原报告永久保留；真实宿主占用原因未证实，但恢复逻辑缺少仓库已有有限重试的容错路径已由三条注入测试证明并修复，且新增每次重试前路径/内容复核。处理决策：恢复容错 `fix_now completed`，外部占用归因 `record_only`；不宣称首次全仓已全绿。新增测试类型错误 TS2322 已纠正并重新 build 通过。
 - 冻结 v3 manifest 的 `command.interactive-control` / `safety.boundary-enforcement` task override 分别为 `36,000/32,000 tokens`，与《自动化持续开发规则.md》第 2.2 条的单 run `24,000 tokens` 硬上限冲突。公共材料 Gate 已在 Provider 前拒绝超限任务，并补回归测试。已请求用户裁定是否仅允许这两项沿用既有 manifest 上限；答复前不修改任务真值、正式分母或预算，不启动这两项。其余零 Provider 验证继续，处理决策为 `split_task / 预算口径待确认`。
 - 公共编排初版存在不同 session 可引用同一旧费用基线、只读模式写快照、探索结束未关闭，以及非零 runner exit 与 passed report 的费用复算不一致。已用失败测试确认并最小修复，处理决策为 `fix_now completed`；运行材料、WSL 与真实资源验证尚未闭合，不提前启动 Provider。配置 validator 初次错误使用 `compileOutputSchema` 返回值，现已使用 `compiled.validator`；新增 sensitive scan 导出缺少闭合括号已由语法/集成测试发现并修正。
 - 此前将普通产品失败、基础设施失败和无报告统一升级为整个 candidate 停止，并在局部修复后立即重建候选，导致准备材料、脚本迁移和模型调用重复；处理决策为 `fix_now / 分阶段迁移`：第 6.6 节已获用户确认，先落盘规则，再用受测公共编排替换后继候选政策。历史冻结结果保持不变，最终验收标准不放宽。
-- 本轮全仓 `corepack pnpm test` 在用户要求暂停前已出现并行 write fan-in 用例清理失败：`resolution discard failed: operation_status_uncertain; Coding benchmark parallel write left repository or worktree state behind.` 当前没有隔离复跑或足以归因的证据；处理决策为 `defer / 按用户要求暂停`，恢复后先保留失败证据、检查残留并定向复现，再决定最小修复。会话中断 exit=`1` 不作为完整测试汇总，也不把这项既有失败解释为暂停动作造成。
+- 此前全仓测试在用户要求暂停前出现并行 write fan-in 清理失败：`resolution discard failed: operation_status_uncertain; Coding benchmark parallel write left repository or worktree state behind.` 恢复后隔离=`1/1`，相邻三文件=`46/46`，本轮首次完整回归中同三文件仍为 `46/46`；没有复现原问题，未修改 worktree 删除逻辑。处理决策为 `record_only`，保留首次失败供再次出现时归因；此前会话中断 exit=`1` 不作为完整测试汇总。
 - 独立 system-temp 零 Provider 探针 r1 同样在 60 秒超时且尚未生成默认 env/SQLite；r2 阶段标记下 build guard 约 2ms 完成、Gateway 在 `13021ms` auth-ready，r3 原始入口和 r4 模块采样均在 `2046ms` auth-ready。r4 进入 Gateway 主体前观察到 `6510` 次 resolve、`2643` 次 load，当前只支持冷加载/宿主 I/O 波动判断，不能证明单个模块缺陷。E 盘为 SATA HDD，验证期间采样 `AvgDiskQueueLength=5`，C 盘为另一块 NVMe SSD；Windows Node=`22.23.1`、WSL Node=`22.22.2`，这不是新发现的已证实版本回归。处理决策：可诊断性缺口 `fix_now`，底层性能根因 `record_only / 待新阶段证据`；r1-r5 诊断环境文件已按合同回收，r5 无临时 loader/marker 注入。
 - `6ce85bd` 唯一 canary 在已通过全部前置 Gate、使用 Windows system-temp state root 的条件下仍出现 60 秒 readiness 超时，stdout/stderr 均为 0 bytes；当前只确认基础设施失败，不能归因于模型、patch 或旧 E 盘 SQLite 问题。处理决策为 `fix_now / 诊断中`：冻结 formal，保留 readiness/ledger，建立独立零 Provider 反馈回路；不得提高超时、重试或改写旧终态。首次诊断路径查询误指 formal artifact root，按 launcher 源码改为 system-temp state root 后取得原始诊断，未修改证据。
 - 本轮 OCI 前置发现 Docker Desktop daemon 未运行，两入口仅有 client；启动本机 Docker Desktop 后两入口恢复 `29.1.3/29.1.3`，未修改镜像或 Docker 配置。WSL fixture 首次把 runtime 填为绝对 wrapper 路径，被只接受 `docker/podman` 的配置合同在容器启动前拒绝；改为 `runtime=docker` 并由候选专属 PATH 选择 wrapper 后通过，处理决策为 `fix_now completed`。

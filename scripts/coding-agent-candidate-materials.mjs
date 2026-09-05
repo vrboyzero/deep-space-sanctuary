@@ -56,12 +56,9 @@ export async function loadCandidateMaterials(configPath) {
     if (plan.reports.some((slot) => !selectedKeys.has(candidateSlotKey(slot)))) throw new Error("Candidate formal selection is incomplete.");
   }
   const platforms = new Set(config.selection.map((slot) => slot.platform));
-  const harnesses = new Set([config.windowsHarnessRoot]);
-  if (platforms.has("wsl2-linux")) harnesses.add(config.wsl.harnessRoot);
-  for (const harnessRoot of harnesses) {
-    await assertCandidateOrdinaryPath(harnessRoot);
-    assert.deepEqual(await resolveBenchmarkRepositoryIdentity(harnessRoot), config.identity, "Candidate harness identity drifted.");
-  }
+  await assertCandidateOrdinaryPath(config.windowsHarnessRoot);
+  assert.deepEqual(await resolveBenchmarkRepositoryIdentity(config.windowsHarnessRoot), config.identity, "Candidate harness identity drifted.");
+  if (platforms.has("wsl2-linux")) await assertCandidateOrdinaryPath(config.wsl.harnessRoot);
   for (const platform of platforms) {
     const reference = config.repositoryConfigs[platform];
     if (candidateSha256(await readCandidateFile(reference.path)) !== reference.sha256) throw new Error("Candidate repository inputs drifted.");
@@ -83,6 +80,8 @@ export async function loadCandidateMaterials(configPath) {
         "--identity-sha256", candidateSha256(JSON.stringify(config.identity))],
       { windowsHide: true, timeout: 120_000, maxBuffer: 1024 * 1024 });
       const verified = JSON.parse(stdout);
+      // Windows Git 经 UNC 会忽略 Linux executable bit；身份必须由目标平台原生 Git 验真。
+      assert.deepEqual(verified.identity, config.identity, "Candidate native WSL harness identity drifted.");
       if (verified.configSha256 !== reference.sha256 || verified.repositories !== 4 || verified.receipts !== 4 || verified.preflights !== 8) {
         throw new Error("Candidate WSL repository verification is incomplete.");
       }

@@ -7,6 +7,7 @@ import type {
   SubTaskSupervisorWorktreeDisposalCapabilityResult,
 } from "@belldandy/skills";
 
+import { replaceFileWithRetry } from "./atomic-file-replace.js";
 import { withFileMutationLock } from "./file-mutation-lock.js";
 import { SubTaskSupervisorAdmissionError } from "./subtask-supervisor-runtime.js";
 import type { SubTaskRecord } from "./task-runtime.js";
@@ -186,7 +187,7 @@ export class SubTaskSupervisorWorktreeDisposalRuntime {
         mode: 0o600,
         flag: "wx",
       });
-      await fs.rename(temporaryPath, receiptPath);
+      await replaceFileWithRetry(temporaryPath, receiptPath);
     } finally {
       await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
     }

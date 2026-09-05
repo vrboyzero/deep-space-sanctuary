@@ -7,7 +7,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
-import { expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 
 import { SubTaskSupervisorWorktreeDisposalRuntime } from "./subtask-supervisor-worktree-disposal-runtime.js";
 import { SubTaskRuntimeStore } from "./task-runtime.js";
@@ -16,7 +16,9 @@ import { SubTaskWorktreeRuntime } from "./worktree-runtime.js";
 const execFile = promisify(execFileCallback);
 const children = new Set<ChildProcess>();
 
-test("recovers a cleanup interruption as uncertain without leaving a worktree or branch", async () => {
+afterEach(() => vi.restoreAllMocks());
+
+test.each(["uncontended", "transient", "persistent"] as const)("recovers a cleanup interruption without duplicate disposal: %s receipt replacement", async (replacement) => {
   const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-supervisor-dispose-crash-"));
   const repoDir = path.join(rootDir, "repo");
   const stateDir = path.join(rootDir, "state");
@@ -105,16 +107,39 @@ test("recovers a cleanup interruption as uncertain without leaving a worktree or
       runtimeStore: restartedStore,
       worktreeRuntime,
     });
+    const cleanup = vi.spyOn(worktreeRuntime, "cleanupTaskRuntime");
+    const receiptPath = path.join(stateDir, "subtasks", "supervisor-worktree-disposal", "receipts", `${preview.receipt.id}.json`);
+    const originalReceipt = await fs.readFile(receiptPath, "utf-8");
+    const originalRename = fs.rename.bind(fs);
+    const busy = Object.assign(new Error("Injected receipt replacement EPERM"), { code: "EPERM" });
+    let attempts = 0;
+    const rename = vi.spyOn(fs, "rename").mockImplementation(async (source, target) => {
+      if (String(target) === receiptPath) {
+        attempts += 1;
+        if (replacement === "persistent" || (replacement === "transient" && attempts === 1)) throw busy;
+      }
+      return originalRename(source, target);
+    });
+    if (replacement === "persistent") {
+      await expect(restarted.confirm({ ...binding, receiptId: preview.receipt.id, confirm: true })).rejects.toBe(busy);
+      expect(attempts).toBe(3);
+      await expect(fs.readFile(receiptPath, "utf-8")).resolves.toBe(originalReceipt);
+      expect(await fs.readdir(path.dirname(receiptPath))).toEqual([`${preview.receipt.id}.json`]);
+      rename.mockRestore();
+    }
     await expect(restarted.confirm({ ...binding, receiptId: preview.receipt.id, confirm: true })).resolves.toMatchObject({
       status: "uncertain",
       applied: false,
       duplicateSideEffect: false,
       blockers: ["worktree_cleanup_state_unknown"],
     });
+    if (replacement !== "persistent") expect(attempts).toBe(replacement === "transient" ? 2 : 1);
     await expect(restarted.confirm({ ...binding, receiptId: preview.receipt.id, confirm: true })).resolves.toMatchObject({
       status: "uncertain",
       blockers: ["worktree_cleanup_state_unknown"],
     });
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(JSON.parse(await fs.readFile(receiptPath, "utf-8")).result.status).toBe("uncertain");
     await expect(fs.access(worktreePath)).rejects.toThrow();
     expect(await runGit(["branch", "--list", branch], repoDir)).toBe("");
     await restartedStore.flushAndClose();

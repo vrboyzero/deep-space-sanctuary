@@ -139,7 +139,7 @@ star-sanctuary/
 - `scripts/run-coding-agent-benchmark-failure-analysis.mjs` / `benchmarks/coding-agent/v3/failure-analysis.schema.json`: completed v3 aggregate 的产品失败离线聚类 owner 与当前 v2 封闭报告合同；逐项复核 manifest/events/patch containment、hash、唯一终态与 Tool 生命周期，只输出受控 family/计数/布尔/哈希，排除不可信 runner 模型声明和模型可见正文；v2 补齐 required navigation、mutation patch、post-write correction、accepted-patch regression 与 stop-empty 五类签名，未知签名仍使结论 `incomplete`；`failure-analysis-v1.schema.json` 保留旧合同，`--verify` 按 artifact 版本重建，零 Gateway/模型/Provider/网络/凭据访问且不修改冻结输入
 - `scripts/coding-agent-candidate-evidence.mjs`: P2-C candidate-global 敏感值扫描与 Windows/WSL2 exact-owned resource evidence owner；只读取显式 roots、exact sensitive values 和显式 inventory，不跟随链接、不枚举资源归属，输出无路径/值正文的计数投影
 - `scripts/run-coding-agent-candidate-matrix.mjs`: P2-C 参数化候选执行入口；以固定配置和已验真终态续跑未执行槽，支持只读检查，探索结果不授予资格
-- `scripts/coding-agent-candidate-config.mjs` / `coding-agent-candidate-materials.mjs`: 候选配置 Schema、路径/预算、冻结 identity/plan/输入和逐槽报告/artifact 验真
+- `scripts/coding-agent-candidate-config.mjs` / `coding-agent-candidate-materials.mjs`: 候选配置 Schema、路径/预算、冻结 identity/plan/输入和逐槽报告/artifact 验真；WSL harness identity 由 Linux 原生 verifier 复算，避免 Windows UNC Git 忽略执行位漂移
 - `scripts/verify-coding-agent-candidate-inputs.mjs`: 在目标平台独立复算四仓 snapshot/cache receipt 与八项 stored preflight，防止只验证配置 hash 而漏掉可变缓存漂移
 - `scripts/prepare-coding-agent-candidate-inputs.mjs`: 从既有只读 source/cache 指针为新候选生成 receipt/preflight 与 identity/platform preparation 绑定；发布目录必须不存在，失败保留 staging，不重装已有依赖缓存
 - `scripts/coding-agent-candidate-progress.mjs` / `coding-agent-candidate-session.mjs`: 复用 scorecard/mapping 判断剩余资格；持久化执行意图、费用预留与不可覆盖终态，串行维护工作区费用所有权和关闭账本
@@ -230,7 +230,7 @@ star-sanctuary/
 - `packages/belldandy-core/src/tool-audit-log.ts`: Tool audit 日志级别与无正文 success/failure 摘要格式化；失败只展示稳定 failure kind、字节数与短 hash
 - `packages/belldandy-core/src/tool-audit-runtime-resource.ts`: 将 Tool audit 的无正文 backlog 快照映射为 `tool_audit` 通用资源水位，不向 Doctor 扩散审计正文或 sink 失败详情
 - `packages/belldandy-core/src/file-mutation-lock.ts`: Core 单文件跨进程 mutation 中性 owner；负责 exclusive-create、随机 owner token、live-owner timeout、dead/incomplete stale recovery 与失败 release 标记，由领域 Adapter 保留各自错误契约
-- `packages/belldandy-core/src/atomic-file-replace.ts`: Core 原子替换的有界 rename 重试 helper；仅重试瞬时 `EPERM/EACCES/EBUSY`，由 UserWorktree/RemoteDelivery audit 与 fan-in receipt owner 负责目标级跨进程锁、失败关闭和本轮临时文件清理
+- `packages/belldandy-core/src/atomic-file-replace.ts`: Core 原子替换的有界 rename 重试 helper；仅重试瞬时 `EPERM/EACCES/EBUSY`，可在每次尝试前重新验证目标；workspace restore 据此复核路径/after hash，UserWorktree/RemoteDelivery audit、fan-in 与 disposal receipt owner 负责目标级跨进程锁、失败关闭和本轮临时文件清理
 - `packages/belldandy-core/src/tool-agent-streaming-config.ts`: Tool/ReAct Provider streaming 灰度环境变量的严格解析 owner；只有显式 `true` 开启，缺失或非法值保持安全关闭
 
 ### Agent / Runtime
@@ -610,7 +610,7 @@ star-sanctuary/
 - `packages/belldandy-core/src/subtask-supervisor-fan-in-resolution-runtime.ts`: receipt-bound 本地 resolution worktree owner；仅在内部组合 lane patch，冲突生成不可确认 preview，显式 confirm 才经 `UserWorktreeRuntime` apply；同请求进程内单飞、共享 stateDir 的 receipt 文件锁负责跨 runtime/进程串行，重复 confirm 幂等并清理 resolution worktree；相邻 process-recovery test/fixture 覆盖 completed receipt 落盘后、cleanup 前的真实进程终止与重启收敛
 - `packages/belldandy-core/src/subtask-supervisor-approval-crash-recovery.test.ts`: Supervisor fault matrix 的 approval/journal/worktree/child 组合恢复测试；用真实 SubTask Store、pending permission、reconciliation journal 与 managed worktree 验证审批等待中的写 lane crash 后旧授权不跨进程继承、child 只重附为 `interrupted`、journal 保持 `uncertain` 且隔离 worktree 不自动 apply/cleanup
 - `packages/belldandy-core/src/subtask-supervisor-control-runtime.ts`: Supervisor `observe/cancel/steer` exact-bound control owner；mutation 必须绑定 manager Conversation/run、team/lane、task/current session 和可选 revision/idempotency key，复用 SubTask Store command claim 与既有 update/stop controller，并以 Store lifecycle reconciliation 阻止旧 session/迟到 completion 覆盖当前 generation
-- `packages/belldandy-core/src/subtask-supervisor-worktree-disposal-runtime.ts`: interrupted dirty write lane 的 receipt-bound 最终处置 owner；只接受 exact manager/team/lane/task/session/revision，preview 保存 worktree 内容摘要，confirm 在文件锁内重新核对摘要并调用受管 subtask cleanup，重复 confirm 幂等且不触碰 source repo
+- `packages/belldandy-core/src/subtask-supervisor-worktree-disposal-runtime.ts`: interrupted dirty write lane 的 receipt-bound 最终处置 owner；只接受 exact manager/team/lane/task/session/revision，preview 保存 worktree 内容摘要，confirm 在文件锁内重新核对摘要并调用受管 subtask cleanup；凭据替换复用有限 rename 重试，持续失败保留原凭据，重复 confirm 幂等且不触碰 source repo
 - `packages/belldandy-skills/src/builtin/session/subtask-supervisor.ts`: manager Agent 的窄 `subtask_supervisor` 工具入口；manager Conversation/run 由当前 ToolContext 注入，只返回无正文 lane observation，不开放模型自填 owner binding 或通用 task-level mutation
 - `packages/belldandy-skills/src/builtin/session/subtask-worktree-dispose.ts`: manager Agent 的两阶段 dirty interrupted lane 处置入口；当前 Conversation/run 注入 exact owner，参数不暴露 repo/worktree/path/patch，显式 confirm 只消费短期 receipt
 - `packages/belldandy-core/src/subagent-process-recovery.test.ts` / `fixtures/subagent-crash-child.mjs`: 通过生产 `createSubTaskAgentCapabilities()` 启动独立 Node child，在 task/session 已持久化且 orchestrator pending 后强制终止，验证 reload 不重新 spawn；同文件区分 live orchestrator 抛错的确定 `error` 终态
