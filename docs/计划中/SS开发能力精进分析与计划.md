@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **双平台复核与两槽探索通过；进入新身份 CI 与候选准备** | cross-package review/repair 证据回放与恢复缩进容错已闭合；WSL workspace-mutation `466/466`、双平台 build 通过；e4bd1c3f 两槽探索双平台 passed（模型原生有效 JSON），账本 close complete、资源/敏感值闭环 | 推送新身份完整 CI；全绿后创建 `candidate-e4bd1c3-1` plan/config 并重跑材料与资源 Gate，再启动 canary 与渐进矩阵；两个完整 144 槽候选与 9.5 验收未完成 |
+| P2-C 分层开发与编排复用 | P2 | **新身份 CI 全绿；candidate-e4bd1c3-1 创建，首槽 passed（1/144）** | WSL 复核 `466/466`、双平台 build 通过；两槽探索双平台 passed；Quality=`33970948660` 七项全绿；formal plan SHA=`e35b98aa…95e`、config SHA=`a0fc0c70…84f7`；Windows canary passed、资源/敏感值/费用闭环 | 从 ledger 差集选择下一组 Windows attempt-1 小批，按第 6.6 节门槛政策推进完整 144 槽与七维资格；第二连续候选与 9.5 验收未完成 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -1996,13 +1996,33 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 推送到 `private/main` 触发新身份完整 CI；CI 全绿后创建 `candidate-e4bd1c3-1` 的不可覆盖 plan/config，重跑材料与资源 Gate，再按冻结顺序启动 Windows canary 与渐进矩阵。若 CI 或后继槽暴露新缺陷，回开发回归层，不扩大付费槽。
 
+#### P2-C 新候选实现结论：candidate-e4bd1c3-1 创建与 Windows canary passed（2026-09-05）
+
+##### 已完成内容
+
+1. **新身份完整 CI**：`cd0750ee`+`e4bd1c3f`+文档已推送 `private/main`（`63e0a41b..991fb910`），Quality run=`33970948660` 七个 job 全绿（含 Build and full test suite），head=`991fb910`。
+2. **正式候选创建**：`create-formal-config.mjs` 生成 `candidate-e4bd1c3-1` 的 144 槽不可覆盖 expected-report plan（SHA=`e35b98aa…95e`）与 formal config（SHA=`a0fc0c70…84f7`）；Cartesian 独立验真=`144/144`、`EEXIST` 负例通过；继承 `explore-e4bd1c3-1/cost-ledger-final.json` 权威账本。
+3. **运行前 Gate**：`--max-new-runs 0` 只读验真 exit=`0`（selected=`144`、processed=`0`）；Docker `29.1.3/29.1.3`；零 Provider readiness 探针此前通过（`3270ms`）。
+4. **唯一 Windows canary 执行**：`rules.nested-precedence/windows-native/attempt-1` `passed`，taskCompleted=`true`、regression=`0`、failure=`null`，cost=`0.00023776 USD`；resume=`processed 1 / remaining 143 / unreported 0`。
+5. **效果**：候选从计划冻结推进到首个真实 passed 槽；`1/144` 不外推完整资格，仍须渐进矩阵、aggregate、dimension evidence、qualification 与七维 score。
+
+##### 验证结果
+
+- CI `33970948660` success（7/7 jobs）；Windows/WSL 双平台 build 与 WSL workspace-mutation `466/466` 前置通过。
+- 只读验真与首槽报告/账本复算通过；canary 后资源 8 项=`0`，敏感扫描 finding/unreadable/link=`0/0/0`，env 回收 remaining=`0`。
+- 新账本 observed/reserved=`2.48365109/2.34221 USD`，next worst≈`39.40 RMB < 80`；Provider retry=`0`，未启动 WSL 槽。
+
+##### 后续计划
+
+从 manifest/ledger 差集机器选择下一组 Windows attempt-1 小批；重跑 resume、资源、目标不存在与紧邻费用 Gate 后执行，按第 6.6 节门槛政策处理普通失败与硬门槛。渐进完成 144 槽后生成 aggregate 与七维资格，再执行第二个连续候选。
+
 ### 后续计划（当前检查点，2026-09-05）
 
-1. **本环节已完成并继续推进**：WSL 定向复核与双平台 build 通过；cross-package 两槽探索双平台 passed 并完整闭环（账本 `explore-e4bd1c3-1`，SHA=`1d3ff746…73dd`）。
-2. **下一步准备做**：推送 `cd0750ee`+`e4bd1c3f` 到 `private/main` 触发新身份完整 CI；CI 全绿后创建 `candidate-e4bd1c3-1` 不可覆盖 plan/config 并重跑材料/资源 Gate，再启动 Windows canary 与渐进矩阵。
-3. **为什么先做它**：完整 CI 与材料/资源 Gate 是正式候选的准入前提，探索已证明冻结失败任务的双平台真实模型路径通过，但 2 槽样本不能替代完整矩阵。
-4. **当前还缺的关键闭环**：新身份完整 CI、正式候选 144 槽、七维资格与数值 score、第二个连续候选；旧 `63e0a41` 14 槽与余下 130 槽永久冻结。
-5. 后继运行继承 `explore-e4bd1c3-1/cost-ledger-final.json`（observed/reserved=`2.48341333/2.34221 USD`，next worst≈`39.40 RMB < 80`）。审批计量与费用授权持续有效，恢复时无需再次确认同一范围。
+1. **本环节已完成用户指定链**：WSL 定向复核与双平台 build 通过；cross-package 两槽探索双平台 passed；新身份完整 CI 七项全绿；`candidate-e4bd1c3-1` 已创建且唯一 Windows canary passed（`1/144`）。
+2. **下一步准备做**：从 manifest/ledger 差集选择下一组 Windows attempt-1 小批（不重跑已处理槽），重跑 resume/资源/目标不存在/费用 Gate 后执行；任一非 passed 终态按第 6.6 节门槛政策处理。
+3. **为什么先做它**：小批渐进是按冻结顺序推进完整矩阵、控制费用与失败半径的既定方式；单槽通过不能外推资格。
+4. **当前还缺的关键闭环**：完整 144 槽原生矩阵、aggregate、dimension evidence、qualification 与七维 score、第二个连续完整候选；旧 `63e0a41` 14 槽与余下 130 槽永久冻结。
+5. 后继运行继承 `formal-e4bd1c3-1` 会话账本（当前 observed/reserved=`2.48365109/2.34221 USD`，next worst≈`39.40 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效，恢复时无需再次确认同一范围。
 
 ### 暂停点的剩余工作量估算（2026-09-05）
 
@@ -2098,3 +2118,5 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 探索配置 helper 按 7 字符 revision 前缀推导 inputs 目录，本轮 8 字符目录名首次不匹配；改为 7 字符命名后通过。处理决策为 `fix_now completed`，未发布任何配置或调用 Provider。
 - 首次矩阵执行在资源 Gate 因 Docker Desktop daemon 未运行失败（`npipe dockerDesktopLinuxEngine` 不存在），无槽分配、零费用、未创建 journal；按既有流程启动 Docker Desktop 并在守卫内恢复 `29.1.3/29.1.3` 后重跑通过。处理决策为 `fix_now completed`；未修改 Docker 配置或镜像。
 - 首次只读验真在主仓执行被“Candidate operators must execute from the frozen Windows harness”正确拒绝；改从冻结 harness 执行后 exit=0。该拦截符合合同，未修改代码，处理决策为 `fix_now completed`。
+- Linux 侧 git 无 GitHub 凭据，首次 `git push private main` 返回 `could not read Username`；改经 Windows git（凭据管理器）执行后 `63e0a41b..991fb910 main -> main` 推送成功。处理决策为 `fix_now completed / 推送路径记录`，未改变远程配置或提交内容。
+- canary 前资源 Gate 首次因 Docker Desktop daemon 未运行失败，无槽分配、零费用；启动后恢复 `29.1.3/29.1.3` 并重跑通过（同探索轮记录）。处理决策为 `fix_now completed`。
