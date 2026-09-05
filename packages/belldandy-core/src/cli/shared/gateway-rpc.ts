@@ -78,6 +78,8 @@ export async function invokeGatewayMethod<T>(input: {
     let requestSequence = 0;
     let pendingPairingRetry = false;
     let requestInFlight = false;
+    let pairingInProgress = false;
+    let pairingRetrySent = false;
 
     const finish = (
       result:
@@ -107,7 +109,16 @@ export async function invokeGatewayMethod<T>(input: {
     };
 
     const sendRequest = () => {
-      if (settled || requestInFlight) return;
+      if (settled || requestInFlight || pairingInProgress) return;
+      if (pendingPairingRetry) {
+        if (!paired) return;
+        if (pairingRetrySent) {
+          finish({ ok: false, error: "Gateway still requires pairing after approval.", errorCode: "pairing_required" });
+          return;
+        }
+        pairingRetrySent = true;
+        pendingPairingRetry = false;
+      }
       currentRequestId = `${input.requestIdPrefix}-${Date.now()}-${requestSequence += 1}`;
       requestInFlight = true;
       socket.send(JSON.stringify({
@@ -157,23 +168,28 @@ export async function invokeGatewayMethod<T>(input: {
       }
 
       if (frame.type === "event" && frame.event === "pairing.required") {
+        if (pairingInProgress || paired) return;
         const payload = isRecord(frame.payload) ? frame.payload : {};
         const code = typeof payload.code === "string" ? payload.code.trim() : "";
         if (!code) {
           finish({ ok: false, error: "Gateway pairing is required, but no pairing code was returned." });
           return;
         }
-        const approved = await approvePairingCode({
-          code,
-          stateDir: input.stateDir,
-        });
-        if (!approved.ok) {
-          finish({ ok: false, error: approved.message });
+        pairingInProgress = true;
+        try {
+          const approved = await approvePairingCode({ code, stateDir: input.stateDir });
+          if (!approved.ok) {
+            finish({ ok: false, error: approved.message });
+            return;
+          }
+          paired = true;
+        } catch {
+          finish({ ok: false, error: "Gateway pairing approval failed." });
           return;
+        } finally {
+          pairingInProgress = false;
         }
-        paired = true;
-        pendingPairingRetry = false;
-        requestInFlight = false;
+        // 配对完成不能覆盖在途 requestId；只有明确被拒绝的请求才能补发。
         sendRequest();
         return;
       }
@@ -198,6 +214,7 @@ export async function invokeGatewayMethod<T>(input: {
         const errorMessage = typeof error.message === "string" ? error.message : "Gateway request failed.";
         if (errorCode === "pairing_required") {
           pendingPairingRetry = true;
+          sendRequest();
           return;
         }
         finish({ ok: false, error: errorMessage, errorCode });
