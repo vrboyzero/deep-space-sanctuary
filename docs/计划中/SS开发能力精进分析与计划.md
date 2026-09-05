@@ -1747,18 +1747,43 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - df37e408 两端依赖安装/build 已完成；WSL JS supporting/documentation/mutation/structured-output/final-repair 七文件 `233/233` 通过。
 - 原 shared governance 用例在 WSL 单独运行 `1/1`，未再现偶发 SQLite 异常；关闭前句柄仍可用则由 Windows 确定性断言复现。WSL 修正后原文件和当前身份真实 CI 待验证，不能把旧全量结果记为通过。
 
+#### P2-C JS 探索与导航实现结论：读取任务指定的测试（2026-09-05）
+
+##### 已完成内容
+
+1. **`explore-b564025-1` 原始结果与准确请求回放**：
+   - 固定 Windows/WSL JS 各 attempt=1，两槽均为 `product_workflow` failed，tests/patch=false、regression=1、manual=0。两端最后响应均为正常 stop、有效 JSON；Windows 加入零值分支、WSL 加入负值分支，均保留错误 `offset + 1`。
+   - `replay-b564025-js.mjs` 用只读原事件、字节范围、Git baseline 与纯函数补丁应用重建请求；`js-b564025-exact-plans.json` 四次请求与日志逐项匹配 `3012/1946/4056/2006` tokens。Windows 未读取任务测试；WSL 首次修改及复核均保留测试输入/断言和错误源码，不能将其失败继续归因于测试断言丢失或输出截断。
+2. **`react-workspace-mutation-supporting-evidence.ts` / `react-workspace-mutation.ts` 修改**：
+   - 首次有界修改前，任务唯一明确引用的相对测试路径若未完整读取，则通过原一次 source-navigation 取得证据；拒绝绝对/越界/URL 路径，不从 tool 内容推导引用，不推断多个测试的优先级。
+   - 复用最近读取校验和现有 file_read owner；只改变导航所需证据，mutation 的允许修改路径、模型、重试、12 turns/24k tokens 和一次导航上限不变。读取仍不完整时失败关闭。
+3. **相邻测试与 `docs/project-map.md` 同步**：
+   - 固定 Agent 响应验证源码读取后必须先读取指定测试再执行补丁，截断读取耗尽导航时禁止修改；纯函数覆盖已读、未读、错配、偏移、无效路径与非用户引用。
+   - 两个原补丁纠正测试补齐任务中已点名的初始测试读取，继续保留原补丁与终态断言；未放宽产品检验。
+4. **效果与边界**：
+   - 已闭合 Windows 提前进入强制修改导致测试不可读的流程缺口；WSL 在证据齐全时仍有错误推断，尚未闭合真实 JS 能力，不作为正式候选准入证明。
+   - 风险中等，主要为误选引用及预算占用；只处理唯一显式路径、复用原导航和预算，范围约两处产品文件及定向回归，不扩展权限或测试执行能力。
+
+##### 验证结果
+
+- TypeScript `tsc -b packages/belldandy-agent --pretty false` exit=0；三项关键新行为先红后绿，九文件定向最终共 `261/261` 通过（含 14 项新增）。相邻初跑两处替身缺失证据，补齐后最后残留文件 `23/23`，未重复全部工程测试。
+- b564025 两端 build、原 memory-experience 测试各 `47/47`、inputs 原生独立 `4/4/8`、OCI 和零 Provider Gateway readiness 通过（auth-ready=`2142ms`、stop=`2166ms`）。新 Quality `33958197116` 的依赖审计、双平台 coding client、WebChat、Distribution、B00 均通过，完整工程测试仍在运行。
+- 两槽资源八项计数均为0、敏感扫描 finding/unreadable/link 均为0，新生成 env 按既有授权校验后送回收站。账本 `explore-b564025-1/cost-ledger-final.json`（SHA=`d4aa99a9075dd08b912d7ae7d45848ea7267103fcbc27869b35dbc731b267440`）processed/pending/unreported=`2/0/0`，cleanup=true；累计 observed=`2.47354551 USD`、reserved=`2.34221000 USD`，本轮 observed=`0.00141118 USD`。
+- 本次新导航的 WSL/真实模型效果尚待新身份验证。较早 `js-b564025-exact-requests.json` 的首次修改回放误用固定4096输入配额，未匹配原计划，不作准确证据；改用原已报 usage 和生产 budget plan 后四项全部匹配。
+
 ### 后续计划
 
-1. 先完成共享内存测试修正的 WSL 验证，与 fast-uri/qs、辅助断言修复一并推送当前身份，取得新的 OSV/工程 CI。双平台复用既有 staging 和缓存，更新 identity/inputs 后做 JS 两槽探索；每个中间修改不重复全量测试或模型调用。
+1. 先收取 b564025 完整工程 CI 终态，再合并本次导航修复的双平台定向验证与 build，复用 staging/cache 更新 identity/inputs，做固定 JS 两槽探索。已修复的导航缺口有确定性证据，但 WSL 错误推断仍须真实反馈，不能用局部通过代替任务完成。
 2. 对现有 JS/Go 失败保留离线诊断：JS 新 patch 的零值处理仍有回归；两者 JSON review/repair 均为原始无效响应。非空响应终止原因诊断已补齐并局部验证，但旧日志缺失值不能回补；后续受控探索须采集该字段，不能只凭 token 上限改变预算、解析器或增加特例。
 3. 口径及产品修复稳定后，复用 staging/依赖缓存，重新绑定双平台 identity、inputs、预检和不可覆盖 plan；按固定探索清单验证真正改变的行为，避免无新证据重复同批模型调用。
-4. 后继正式候选仅在合同、工程与资源 Gate 闭合后进入完整 `144` 槽；普通失败只在资格仍可达且证据/资源闭合时续跑，硬门槛失败停止。下一会话继承 `explore-ec08329-1/cost-ledger-final.json`（SHA=`c98ba502778962e3dae6b5c15ee972bcf1534f8834aeed444567603445739523`）的全部观测费用和预留，所有已冻结 identity 保持只读。
+4. 后继正式候选仅在合同、工程与资源 Gate 闭合后进入完整 `144` 槽；普通失败只在资格仍可达且证据/资源闭合时续跑，硬门槛失败停止。下一会话继承 `explore-b564025-1/cost-ledger-final.json`（SHA=`d4aa99a9075dd08b912d7ae7d45848ea7267103fcbc27869b35dbc731b267440`）的全部观测费用和预留，所有已冻结 identity 保持只读。
 5. 完整候选后采集当前 identity 的真实 CI/CLI/TUI/Git delivery receipt、aggregate 与七维资格，再执行第二个连续完整候选；两个候选均须满足七维下限、raw weighted `>=9.500` 和全部硬 Gate。
 
 当前关键闭环是 JS 修复的真实模型验证、依赖审计与完整工程 CI；新计量的双平台审批已取得通过证据，但不外推为正式验收。完整 `144` 槽、当前 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选均未完成。最终验收标准保持不变，审批计量与费用授权均已明确并持续有效。
 
 ### 重要问题说明
 
+- b564025 两槽 JS 均失败。准确回放证明 Windows 未读测试就被有界预算流程提前切入 mutation-only，处理决策为通用读取准入 `fix_now / 本地定向闭合`；WSL 首次修改及复核均有正确输入、断言和错误源码，最终仍把 `slice(3)` 误判为保留两个元素，处理决策为 `record_only / 真实模型推断失败`，不再将它归因于测试证据丢失、JSON 无效或 length。修复后仍需两槽真实反馈，不能无新证据重复调用或直接进入正式候选。
 - 旧 CI 所有测试断言通过仍被未处理的 `SQLITE_READONLY_DBMOVED` 阻断，日志归属 shared governance 用例；该用例在 `finally` 删除状态目录，之后 `afterEach` 才关闭 manager。处理决策为测试清理顺序 `fix_now / Windows 定向闭合`，先关闭全部已登记 manager 后再清理目录；原 SQLite 竞态未在 WSL 单例重现，不据此改动产品错误处理，真实全量 CI 仍待验证。
 - JS 复核只选择 required 源文件，已读取且由任务点名的测试断言在上下文收缩时全部丢失；准确重建复现该缺口。处理决策为 `fix_now / 本地闭合`：在同一预算内补精确绑定的辅助读取，当前源码优先；真实模型效果仍待验证，不能把信息遗漏直接断言为全部失败的根因。
 - `ec08329` 双平台 JS 均实际失败，Windows 明确出现 length 且保留 +1，WSL 重复代码；处理决策为 `record_only / 回到零 Provider 诊断`。有了首次真实终止原因也不能直接加预算、改模型或放宽解析；局部校验是否存在误拒需要原始 correction 证据，不能仅凭日志推断。

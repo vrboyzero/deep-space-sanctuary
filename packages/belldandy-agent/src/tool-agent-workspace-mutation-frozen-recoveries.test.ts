@@ -267,7 +267,7 @@ async function runScenario(scenario: Scenario): Promise<{
         return jsonResponse(modelToolCall(`incomplete-${requestCount}`, scenario.modelCorrectionPatch));
       }
       if (requestCount === 1) {
-        return jsonResponse(modelReads(scenario.requiredPaths, "source"));
+        return jsonResponse(modelReads(Object.keys(scenario.baselineSources), "source"));
       }
       return jsonResponse(modelFinal(scenario.successJson));
     }
@@ -402,6 +402,7 @@ function traceValuesScenario(): Scenario {
       [apiPath]: apiSource,
       [connectionPath]: connectionSource,
       [protocolPath]: protocolSource,
+      "test/benchmark-v3/real-ts-api-migration.mjs": "assert.equal('TraceValues' in api, false);",
     },
     postInitialSources: {},
     correctedSources: {

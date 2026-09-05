@@ -2190,9 +2190,13 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
       requests.push(body);
       const instruction = String(body.messages?.[0]?.content ?? "");
       if (requests.length === 1) {
-        return jsonResponse(modelToolCall("read-current-source", "file_read", {
+        const firstRead = modelToolCall("read-current-source", "file_read", {
           path: requiredPath,
-        }, 300, 60));
+        }, 300, 60);
+        firstRead.choices[0].message.tool_calls.unshift(modelToolCall("read-supplied-test", "file_read", {
+          path: "test/shared/benchmark-v3-ui-regression.test.js",
+        }, 0, 0).choices[0].message.tool_calls[0]);
+        return jsonResponse(firstRead);
       }
       if (instruction.includes("Mutation-only recovery phase")) {
         return jsonResponse(modelToolCall("patch-missing-current-line", "apply_patch", {
@@ -2236,6 +2240,11 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
       arguments?: Record<string, unknown>;
     }) => {
       if (request.name === "file_read") {
+        if (request.arguments?.path === "test/shared/benchmark-v3-ui-regression.test.js") {
+          return { id: request.id, name: request.name, success: true, durationMs: 1,
+            output: JSON.stringify({ path: request.arguments.path, truncated: false,
+              content: "assert.equal(render('aria-hidden', false), 'false');" }) };
+        }
         return {
           id: request.id,
           name: request.name,

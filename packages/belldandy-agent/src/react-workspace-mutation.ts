@@ -20,7 +20,7 @@ import {
 import { isUnsafeCorrectionAfterCompletedTraceValuesApiMigration } from "./react-workspace-mutation-ts-api-migration.js";
 import { WORKSPACE_MUTATION_SOURCE_VERIFICATION_INSTRUCTION } from "./react-workspace-mutation-evidence-instructions.js";
 import { readClippedLeadingDocumentation } from "./react-workspace-mutation-documentation.js";
-import { buildReferencedReadEvidence } from "./react-workspace-mutation-supporting-evidence.js";
+import { buildReferencedReadEvidence, findMissingTaskReferencedTestPaths } from "./react-workspace-mutation-supporting-evidence.js";
 
 export const WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE = 4_096;
 export const WORKSPACE_MUTATION_RECOVERY_MIN_OUTPUT_TOKEN_RESERVE = 1_024;
@@ -3241,7 +3241,11 @@ export function buildWorkspaceMutationRecoveryPlan(input: {
   missingRequiredChangedPaths?: readonly string[];
   tokenEstimateContext?: TokenEstimateOptions;
 }): WorkspaceMutationRecoveryPlan | undefined {
-  return buildWorkspaceMutationPlan(input, buildWorkspaceMutationRecoveryRequest);
+  const plan = buildWorkspaceMutationPlan(input, buildWorkspaceMutationRecoveryRequest);
+  if (!plan) return undefined;
+  // 这里只增加导航所需的只读证据；mutation 请求的允许修改路径保持原值。
+  const testPaths = findMissingTaskReferencedTestPaths(input.messages, input.missingRequiredChangedPaths ?? []);
+  return { ...plan, missingRequiredSourceEvidencePaths: [...plan.missingRequiredSourceEvidencePaths, ...testPaths] };
 }
 
 export function buildWorkspaceMutationContinuationPlan(input: {

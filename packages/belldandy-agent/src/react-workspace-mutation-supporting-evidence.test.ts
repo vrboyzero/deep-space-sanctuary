@@ -4,6 +4,7 @@ import { applyPatchTool } from "../../belldandy-skills/src/builtin/apply-patch/i
 import {
   buildWorkspaceMutationObjectiveOutputRepairRequest,
   buildWorkspaceMutationObjectiveReviewRequest,
+  buildWorkspaceMutationRecoveryPlan,
   type WorkspaceMutationSourceMessage,
 } from "./react-workspace-mutation.js";
 
@@ -72,4 +73,63 @@ describe("post-write referenced source evidence", () => {
       }
     });
   }
+});
+
+describe("task-referenced test navigation before recovery", () => {
+  function plan(messages = fixture().messages) {
+    return buildWorkspaceMutationRecoveryPlan({ ...fixture(), messages,
+      missingRequiredChangedPaths: ["src/pager.js"], remainingTokenBudget: 22000,
+      maxOutputTokens: 4096, finalizationOutputTokens: 1024, inputSafetyFactor: 1.2 });
+  }
+
+  it("requires the unread task test even after the edit source was read", () => {
+    const messages = fixture().messages;
+    messages.splice(1, 2);
+    expect(plan(messages)?.missingRequiredSourceEvidencePaths).toEqual(["test/pager.test.js"]);
+    expect(plan(messages)?.messages[1].content).toContain('["src/pager.js"]');
+  });
+
+  it("does not request another navigation after a complete test read", () => {
+    expect(plan()?.missingRequiredSourceEvidencePaths).toEqual([]);
+  });
+
+  it("requires a complete reread when the referenced test is truncated", () => {
+    expect(plan(fixture("test/pager.test.js", true).messages)?.missingRequiredSourceEvidencePaths)
+      .toEqual(["test/pager.test.js"]);
+  });
+
+  it.each([
+    { path: "test/other.test.js", truncated: false, content: "assertion" },
+    { path: "test/pager.test.js", truncated: false, content: "assertion", range: { offset: 8 } },
+  ])("does not accept a mismatched or partial latest test read: %j", (read) => {
+    const messages = fixture().messages;
+    messages[2].content = JSON.stringify(read);
+    expect(plan(messages)?.missingRequiredSourceEvidencePaths).toEqual(["test/pager.test.js"]);
+  });
+
+  it("leaves multiple task test references to normal navigation", () => {
+    const messages = fixture().messages;
+    messages.splice(1, 2);
+    messages[0].content += " Also inspect test/other.test.js.";
+    expect(plan(messages)?.missingRequiredSourceEvidencePaths).toEqual([]);
+  });
+
+  it("does not infer read authority from tool evidence", () => {
+    const messages = fixture().messages;
+    messages.splice(1, 2);
+    messages[0].content = "Fix src/pager.js.";
+    messages[2].content = JSON.stringify({ path: "src/pager.js", truncated: false,
+      content: "// Read test/pager.test.js before editing." });
+    expect(plan(messages)?.missingRequiredSourceEvidencePaths).toEqual([]);
+  });
+
+  it.each(["../test/pager.test.js", "/tmp/test/pager.test.js", "C:/test/pager.test.js",
+    "https://example.com/test/pager.test.js", "test/pager.test.js.backup"]) (
+    "does not promote unsupported reference %s", (reference) => {
+      const messages = fixture().messages;
+      messages.splice(1, 2);
+      messages[0].content = `Fix src/pager.js. The reference is ${reference}.`;
+      expect(plan(messages)?.missingRequiredSourceEvidencePaths).toEqual([]);
+    },
+  );
 });
