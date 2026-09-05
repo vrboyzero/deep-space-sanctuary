@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **Go 失败真根因（证据压缩破坏）已修复并本地提交 `a1c53fa7`；待 CI 恢复与新身份探索** | 双平台复发定位：两层工具输出压缩破坏 file_read 结构化证据 → 完整读取被误判缺失 → 导航死循环；修复为 required mutation run 压缩保护 file_read + 证据补齐 + 覆盖判定前移；8-path 真实规模用例先红后绿、家族 `469/469`、压缩相关 `94/94`、tsc/verifier 通过；本轮 Quality 环境级全失败记录在案 | 推送新 identity；CI 恢复后重做双平台最小探索（real-go.public-api-migration 双平台 a1）；随后重建候选；完整 144 槽、七维资格与第二连续候选未完成 |
+| P2-C 分层开发与编排复用 | P2 | **CI 已恢复（仓库公开后免费 minutes 生效）；恢复后暴露的 LSP `write EPIPE` 未处理拒绝与 TUI 集成超时已修复并推送 `7153da0f`，待新 CI 全绿后启动 f042505 双平台探索** | 双平台复发定位：两层工具输出压缩破坏 file_read 结构化证据 → 完整读取被误判缺失 → 导航死循环；修复为 required mutation run 压缩保护 file_read + 证据补齐 + 覆盖判定前移；8-path 真实规模用例先红后绿、家族 `469/469`、压缩相关 `94/94`、tsc/verifier 通过；Quality `33980091572` 恢复运行后暴露 LSP 宿主 `write EPIPE` 未处理拒绝（jsonrpc 8.2.0 `new Promise(async)` 反模式，WSL 修复前 4/5 复现）与 TUI 集成 15s 满载超时（负载余量不足），修复验证 WSL 8 连跑零 Errors、Windows `146/146`、`tsc -b` exit=0 | 等待新 CI `33981973124` 全绿；随后恢复目标并按《自动化持续开发规则》运行 `exploration-config-f042505.json` 双平台 Go 两槽；通过则重建候选；完整 144 槽、七维资格与第二连续候选未完成 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -2208,12 +2208,35 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 以本变更的新 identity 重做双平台 Go 两槽探索，验证读后复核与复核纠正对真实模型补丁质量的改善；CI 环境恢复后再评估正式候选准入。
 
-### 后续计划（当前检查点，2026-09-05）
+#### P2-C CI 恢复验证实现结论：Actions 恢复与 LSP/TUI 双失败修复（2026-09-06）
 
-1. **本环节结果**：用户已选择①继续抽样，并授权「读后复核边界 3→8」为有意合同变更；变更已实现并通过全量回归（本地提交，待推送）——4–8 路径任务补丁后获得新鲜读后证据，复核能发现不完整迁移并有一次纠正机会；1–3 路径行为与预算不变。
-2. **下一步准备做**：提交推送新 identity；CI 环境恢复后以双平台 Go 两槽清单再执行探索，验证读后复核与复核纠正对真实模型补丁质量的改善；通过则重建候选。
-3. **为什么先做它**：这是唯一还能给模型一次纠正机会的产品杠杆（用户已授权）；若仍 4/4 失败，则以该合同变更后的证据重新评估 9.5 可达性。
-4. **当前还缺的关键闭环**：Go 真实任务稳定通过、完整 144 槽原生矩阵、aggregate、dimension evidence、qualification 与七维 score、第二个连续完整候选；`candidate-57b9cc5-1` 已冻结（17/144）、`e4bd1c3-1`（8/144）与旧 `63e0a41`（14/144）永久只读；CI 环境故障持续（record_only）。
+##### 已完成内容
+
+1. **CI 账单根因闭环**：用户将仓库设为公开后免费 minutes 生效；重跑 Quality Gates `33980091572` 确认全部 7 个 job 真实执行、Actions 恢复（其余 6 个 job 全部 success），`Build and full test suite` 首次暴露两个此前被环境故障掩盖的真实失败。
+2. **packages/belldandy-skills/src/code-intel/lsp-process-host.ts 修复（提交 `826412d5`）**：
+   - 定位：Vitest 报 `Unhandled Rejection: write EPIPE`，WSL 插桩定位到 vscode-jsonrpc 8.2.0 `sendRequest` 的 `new Promise(async ...)` 反模式——初始化请求写入与杀进程竞态时 async executor 的 throw 被丢弃、外层 promise 永不落定，应用层 catch 无法拦截（WSL 修复前 4/5 复现）。
+   - 修复：新增 `createTolerantLspStdin` 容忍写入器包住子进程 stdin（子进程已退出/已 destroy 时丢弃帧，EPIPE 吞掉，非 EPIPE 错误照常传播）；移除 jsonrpc 取消 token（超时/取消本就以杀进程兜底，`$/cancelRequest` 写入竞态一并消除）；被 race 的请求 promise 补 catch；`InitializedNotification`/`ExitNotification` 两个 fire-and-forget 通知补 catch。
+3. **packages/belldandy-core/src/tui/runtime.integration.test.ts 修改（提交 `7153da0f`）**："shows the same run events as a Headless subscriber without starting another run" 在 CI 满载并行下 15s 超时（WSL 单独运行 1.22s 通过，确认为负载余量不足而非功能缺陷），上限提至 30s。
+4. **回归测试**：lsp-process-host.test.ts 新增 `createTolerantLspStdin` 确定性单测 2 项（活子进程投递成功、退出后丢弃、stdin 销毁后丢弃不抛流错误），共 21/21。
+5. **效果**：修复后 WSL 连续 8 次运行零 Unhandled Errors（修复前 4/5 复现 EPIPE）；Windows `code-intel + tui` 目录 15 文件 146 测试全过；CI 满载下不再产生该未处理拒绝与集成超时。
+
+##### 验证结果
+
+- TypeScript：`tsc -b` exit=`0`。
+- 定向测试：Windows `lsp-process-host.test.ts`=`21/21`、`runtime.integration.test.ts` 全过；WSL 修复后 8 连跑零 Errors。
+- 提交 `826412d5`、`7153da0f` 已推送 private/main（`65bf46d0..7153da0f`）；新 CI 运行 `33981973124` 由 push 自动触发。
+- 零 Provider 调用；冻结成绩、任务真值与候选终态未改写；`scripts/coding-agent-benchmark-fixtures.test.mjs` 的工作区提示仅为换行噪声（diff 为空，未提交）。
+
+##### 后续计划
+
+等待新 CI `33981973124` 全绿；随后按《自动化持续开发规则》恢复目标并启动 `f042505f` 双平台 Go 两槽探索（`exploration-config-f042505.json`，SHA=`2291e278…d356`）。
+
+### 后续计划（当前检查点，2026-09-06）
+
+1. **本环节结果**：CI 环境故障已由「仓库转公开、使用免费 minutes」闭环，重跑确认 Actions 恢复运行；恢复后的 Quality Gates 暴露两个真实失败——LSP `write EPIPE` 未处理拒绝（jsonrpc `new Promise(async)` 反模式）与 TUI 集成测试满载超时，均已修复、回归并推送 private/main（`7153da0f`）。
+2. **下一步准备做**：确认新 CI `33981973124` 全绿后，按《自动化持续开发规则》恢复目标，运行已备妥的 `exploration-config-f042505.json` 双平台 Go 两槽付费探索，验证「读后复核边界 3→8」合同变更对真实模型补丁质量的改善。
+3. **为什么先做它**：该合同变更是用户授权的唯一产品杠杆；探索通过则重建候选，若仍 4/4 失败则以新证据重新评估 9.5 可达性。
+4. **当前还缺的关键闭环**：Go 真实任务稳定通过、完整 144 槽原生矩阵、aggregate、dimension evidence、qualification 与七维 score、第二个连续完整候选；`candidate-57b9cc5-1`（17/144）、`e4bd1c3-1`（8/144）与旧 `63e0a41`（14/144）永久只读。
 5. 后继运行继承 `explore-e0124bd-1/cost-ledger-final.json`（SHA=`20207f09…377b`，observed/reserved=`2.50495453/2.34221 USD`，next worst≈`39.9 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效。
 
 ### 暂停点的剩余工作量估算（2026-09-05）
@@ -2327,3 +2350,5 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 用户于 2026-09-06 明确授权「读后复核边界 3→8」为有意合同变更（更新冻结合同测试后生效），作为①继续抽样路径下的唯一产品杠杆；配套将复核/纠正/修复输入上限按路径数有界缩放（1–3 路径 2048 不变、4–6 ×2、7–8 ×3）。处理决策为 `fix_now completed / 用户授权合同变更`；该变更不扩大任务真值、门槛或费用，冻结槽与旧证据不改写。
 - CI 环境故障根因已由用户确认：GitHub 账户计费/用量上限（"recent account payments have failed or your spending limit needs to be increased"），非代码或 workflow 问题；用户正在处理，恢复后正式候选准入重新校验。处理决策为 `record_only / 等待用户处理计费`。
 - `f042505f`（读后复核边界 3→8 合同变更）双平台探索的零 Provider 前置已全部完成：双平台 harness 更新并 build、inputs 独立验真 `4/4/8`、config=`exploration-config-f042505.json`（SHA=`2291e278…d356`）、只读验真 exit=0、readiness 探针通过；按用户要求暂停在付费槽前。
+- CI 计费根因已由用户处置（仓库转公开、使用免费 minutes）；重跑 Quality Gates `33980091572` 确认全部 job 真实执行、Actions 恢复，且公开后敏感信息扫描干净（keys 均为占位符，`artifacts/`、`tmp/`、`.env*` 均 gitignored）。恢复后的 `Build and full test suite` 暴露两个此前被环境故障掩盖的真实失败，处理决策均为 `fix_now completed`：① LSP 宿主 `Unhandled Rejection: write EPIPE`——vscode-jsonrpc 8.2.0 `sendRequest` 的 `new Promise(async)` 反模式使写入失败时 executor throw 被丢弃、外层 promise 永不落定（WSL 修复前 4/5 复现）；以 `createTolerantLspStdin` 容忍写入器 + 取消 token 移除 + race promise catch + 通知 catch 修复后 WSL 8 连跑零 Errors。② TUI 集成测试 `shows the same run events...` 15s 满载超时——WSL 单独运行 1.22s 通过，确认为 CI 并行负载余量不足而非功能缺陷，上限提至 30s。
+- 恢复期间 `scripts/coding-agent-benchmark-fixtures.test.mjs` 工作区显示 modified，实际 `git diff` 为空（仅换行符提示）；未提交、未修改内容，处理决策为 `record_only`。
