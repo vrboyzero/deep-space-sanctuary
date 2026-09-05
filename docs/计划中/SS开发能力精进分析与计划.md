@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **新身份 CI 全绿；candidate-e4bd1c3-1 创建，首槽 passed（1/144）** | WSL 复核 `466/466`、双平台 build 通过；两槽探索双平台 passed；Quality=`33970948660` 七项全绿；formal plan SHA=`e35b98aa…95e`、config SHA=`a0fc0c70…84f7`；Windows canary passed、资源/敏感值/费用闭环 | 从 ledger 差集选择下一组 Windows attempt-1 小批，按第 6.6 节门槛政策推进完整 144 槽与七维资格；第二连续候选与 9.5 验收未完成 |
+| P2-C 分层开发与编排复用 | P2 | **candidate-e4bd1c3-1 冻结于 8/144（7 passed + 1 infrastructure failure），进入开发回归** | WSL 复核/双平台 build、两槽探索、新身份 CI=`33970948660` 全绿、candidate 创建与 canary passed；batch 01 四槽全过；disconnect-recovery 因 mutation recovery 请求无法构建 + fault 未注入判 infrastructure 并冻结，账本/资源/费用闭环 | 零 Provider 复现 disconnect-recovery 失败路径并修复；随后双平台验证、最小探索、新身份 CI 与 Gate，再创建新 candidate；完整 144 槽、七维资格与第二连续候选未完成 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -2016,13 +2016,32 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 从 manifest/ledger 差集机器选择下一组 Windows attempt-1 小批；重跑 resume、资源、目标不存在与紧邻费用 Gate 后执行，按第 6.6 节门槛政策处理普通失败与硬门槛。渐进完成 144 槽后生成 aggregate 与七维资格，再执行第二个连续候选。
 
+#### P2-C 候选实现结论：candidate-e4bd1c3-1 batch 01/02 与 disconnect-recovery 冻结（2026-09-05）
+
+##### 已完成内容
+
+1. **batch 01 四槽全过**：`feature.cross-file`、`bug.reproducible-fix`、`tests.failed-diagnosis`、`navigation.large-repository`（Windows attempt-1）均 `passed`、`provider_reported`；resume=`processed 5 / remaining 139`。
+2. **batch 02 三槽执行后冻结**：`command.interactive-control`、`safety.boundary-enforcement` passed（两项 token 例外按批准口径，计量豁免后 manual=`0`）；`gateway.disconnect-recovery` 以 `infrastructure_error` failed，`gateway.client-cancel` 未启动；政策判定 `stop/候选冻结`，processed=`8` / remaining=`136`。
+3. **失败证据**：disconnect-recovery run 终态为 `required workspace mutation was not completed: no bounded mutation recovery request can be built from the allowed tools and remaining token budget`（usage=input `1699`/output `3481`/cost=`0.00087879 USD`），随后 recovery fault proxy 未注入（proxy frames 止于 `token.counter.result`）——evaluator 分类 `infrastructure`、recoverySucceeded=`null`。
+4. **效果**：候选在 `8/144`（7 passed + 1 infrastructure failure）冻结，账本 SHA=`466222806b…76a0`、cleanup=`true`、资源 8 项=`0`、env 回收闭环；未启动 WSL 或后续槽，未把已过槽外推为资格。
+
+##### 验证结果
+
+- 冻结账本 reasons=`[infrastructure_failure]`、processed=`8`、pending/unreported=`0/0`；observed/reserved=`2.48774967/2.34221 USD`，next worst≈`39.4 RMB < 80`。
+- 失败槽资源 8 项=`0`、敏感扫描与 env 回收闭环；双平台 staging 保持 clean。
+- 本批次新增 Provider cost=`0.00197448 USD`（candidate 累计 `0.00433634`）；Provider retry=`0`。
+
+##### 后续计划
+
+保持候选冻结；进入开发回归：零 Provider 复现 disconnect-recovery 的“no bounded mutation recovery request can be built”路径（用保留 fixture workspace + 冻结 events），定位预算/工具集/状态机环节；修复后按分层流程做双平台验证、最小探索、新身份 CI 与 Gate，再创建新 candidate。不重跑或 reconcile 冻结槽。
+
 ### 后续计划（当前检查点，2026-09-05）
 
-1. **本环节已完成用户指定链**：WSL 定向复核与双平台 build 通过；cross-package 两槽探索双平台 passed；新身份完整 CI 七项全绿；`candidate-e4bd1c3-1` 已创建且唯一 Windows canary passed（`1/144`）。
-2. **下一步准备做**：从 manifest/ledger 差集选择下一组 Windows attempt-1 小批（不重跑已处理槽），重跑 resume/资源/目标不存在/费用 Gate 后执行；任一非 passed 终态按第 6.6 节门槛政策处理。
-3. **为什么先做它**：小批渐进是按冻结顺序推进完整矩阵、控制费用与失败半径的既定方式；单槽通过不能外推资格。
-4. **当前还缺的关键闭环**：完整 144 槽原生矩阵、aggregate、dimension evidence、qualification 与七维 score、第二个连续完整候选；旧 `63e0a41` 14 槽与余下 130 槽永久冻结。
-5. 后继运行继承 `formal-e4bd1c3-1` 会话账本（当前 observed/reserved=`2.48365109/2.34221 USD`，next worst≈`39.40 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效，恢复时无需再次确认同一范围。
+1. **本环节结果**：用户指定链全部完成（WSL 复核/双平台 build、两槽探索、新身份 CI 全绿、candidate-e4bd1c3-1 创建），并推进到 `8/144`（7 passed + 1 infrastructure failure），按门槛政策冻结。
+2. **下一步准备做**：开发回归——用保留 fixture workspace 与冻结 events 零 Provider 复现 disconnect-recovery 的“no bounded mutation recovery request can be built”，对比 63e0a41 同任务通过记录，区分预算收缩、工具集或状态机缺口；修复后按分层流程验证，再创建新 identity candidate。
+3. **为什么先做它**：该失败族会阻断 recovery 硬门槛（100%），不定位根因就无法进入下一个正式候选；零 Provider 复现是既定开发回归层入口。
+4. **当前还缺的关键闭环**：disconnect-recovery 恢复路径的稳定通过、完整 144 槽原生矩阵、aggregate、dimension evidence、qualification 与七维 score、第二个连续完整候选；`candidate-e4bd1c3-1` 已冻结、旧 `63e0a41` 14 槽永久只读。
+5. 后继运行继承 `formal-e4bd1c3-1/cost-ledger-final.json`（SHA=`466222806b…76a0`，observed/reserved=`2.48774967/2.34221 USD`，next worst≈`39.4 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效。
 
 ### 暂停点的剩余工作量估算（2026-09-05）
 
@@ -2120,3 +2139,5 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 首次只读验真在主仓执行被“Candidate operators must execute from the frozen Windows harness”正确拒绝；改从冻结 harness 执行后 exit=0。该拦截符合合同，未修改代码，处理决策为 `fix_now completed`。
 - Linux 侧 git 无 GitHub 凭据，首次 `git push private main` 返回 `could not read Username`；改经 Windows git（凭据管理器）执行后 `63e0a41b..991fb910 main -> main` 推送成功。处理决策为 `fix_now completed / 推送路径记录`，未改变远程配置或提交内容。
 - canary 前资源 Gate 首次因 Docker Desktop daemon 未运行失败，无槽分配、零费用；启动后恢复 `29.1.3/29.1.3` 并重跑通过（同探索轮记录）。处理决策为 `fix_now completed`。
+- `candidate-e4bd1c3-1` batch 02 的 `gateway.disconnect-recovery`（Windows attempt-1）以 `infrastructure_error` 冻结候选：run 自身以 `required workspace mutation was not completed: no bounded mutation recovery request can be built from the allowed tools and remaining token budget` 失败（input=`1699`/output=`3481` tokens），fault proxy 因此未注入、recoverySucceeded=null。同任务在 `63e0a41` 曾通过，需对比两次输入/预算/工具集差异定位；处理决策为 `record_only / 下一轮零 Provider 开发回归`，不提高预算、不改写冻结终态，候选按门槛政策冻结（账本 SHA=`466222806b…76a0`，reasons=`[infrastructure_failure]`）。
+- 冻结后资源 8 项、敏感扫描与 env 回收均闭环；`gateway.client-cancel` 及后续 136 槽未执行，按规则保留。
