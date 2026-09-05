@@ -2931,6 +2931,7 @@ export function buildWorkspaceMutationObjectiveReviewRequest(input: {
   tools: WorkspaceMutationToolDefinition[];
   maxInputTokens: number;
   requiredChangedPaths: readonly string[];
+  requiredResidualIdentifiers?: readonly string[];
   correctionAllowed?: boolean;
   structuredOutputRequired?: boolean;
   structuredOutputSchema?: unknown;
@@ -2964,8 +2965,7 @@ export function buildWorkspaceMutationObjectiveReviewRequest(input: {
     allowNoTools: true,
     latestRequiredFileReadEvidenceOnly: true,
     includeLeadingDocumentation: true,
-  });
-  return request && input.structuredOutputRequired
+  });  return request && input.structuredOutputRequired
     ? { ...request, jsonObjectOutputRequired: true }
     : request;
 }
@@ -2975,6 +2975,7 @@ export function buildWorkspaceMutationObjectiveInputCorrectionRequest(input: {
   tools: WorkspaceMutationToolDefinition[];
   maxInputTokens: number;
   requiredChangedPaths: readonly string[];
+  requiredResidualIdentifiers?: readonly string[];
   correctionReason?: WorkspaceMutationObjectiveInputCorrectionReason;
   tokenEstimateContext?: TokenEstimateOptions;
 }): WorkspaceMutationRecoveryRequest | undefined {
@@ -3004,6 +3005,7 @@ export function buildWorkspaceMutationObjectiveOutputRepairRequest(input: {
   tools: WorkspaceMutationToolDefinition[];
   maxInputTokens: number;
   requiredChangedPaths: readonly string[];
+  requiredResidualIdentifiers?: readonly string[];
   structuredOutputSchema: unknown;
   validationMessage: string;
   correctionAllowed?: boolean;
@@ -3051,6 +3053,7 @@ function buildBoundedWorkspaceMutationRequest(input: {
   trustedPathsLabel?: string;
   allowNoTools?: boolean;
   latestRequiredFileReadEvidenceOnly?: boolean;
+  requiredResidualIdentifiers?: readonly string[];
   includeRequiredPathLatestEvidence?: boolean;
   allowFocusedLineProjection?: boolean;
   includeMutationBranchTail?: boolean;
@@ -3126,7 +3129,17 @@ function buildBoundedWorkspaceMutationRequest(input: {
     && evidence.length !== input.missingRequiredChangedPaths?.length) {
     return undefined;
   }
-  let userText = `${taskPrefix}${boundedTask}`;
+  const residualScanBlock = input.latestRequiredFileReadEvidenceOnly
+    && input.requiredResidualIdentifiers
+    && input.requiredResidualIdentifiers.length > 0
+    ? buildRequiredResidualScanBlock({
+        evidence: availableEvidence,
+        requiredPaths: input.missingRequiredChangedPaths ?? [],
+        identifiers: input.requiredResidualIdentifiers,
+        tokenEstimateContext: input.tokenEstimateContext,
+      })
+    : "";
+  let userText = `${taskPrefix}${boundedTask}${residualScanBlock}`;
   const evidenceHeader = evidence.length > 0 ? "\n\nBounded tool evidence:\n" : "";
   let remainingTokens = Math.max(
     0,
@@ -3699,6 +3712,124 @@ function selectLatestRequiredFileReadEvidence(  evidence: Array<{ toolName: stri
     remainingPaths.delete(requiredIdentity);
   }
   return selected;
+}
+
+const REQUIRED_RESIDUAL_SCAN_MAX_LINES_PER_PATH = 8;
+const REQUIRED_RESIDUAL_SCAN_BLOCK_MAX_TOKENS = 480;
+
+/**
+ * 基于最新 file_read 证据的零 Provider 残留扫描反馈：
+ * 对每个必需路径统计每个禁止标识符的出现次数（内容按原样计数，格式无关），
+ * 若证据包含真实换行再补充首次出现的行号。仅用于客观复核/纠正请求，
+ * 不改写任务真值、门槛或工作区，不触发任何工具。
+ */
+function buildRequiredResidualScanBlock(input: {
+  evidence: Array<{ toolName: string; content: string }>;
+  requiredPaths: readonly string[];
+  identifiers: readonly string[];
+  tokenEstimateContext?: TokenEstimateOptions;
+}): string {
+  if (input.requiredPaths.length === 0 || input.identifiers.length === 0) return "";
+  const remainingPaths = new Map(
+    input.requiredPaths.map((requiredPath) => [normalizeSourcePath(requiredPath), requiredPath]),
+  );
+  const perPath: Array<{ path: string; content: string }> = [];
+  for (let index = input.evidence.length - 1; index >= 0 && remainingPaths.size > 0; index--) {
+    const item = input.evidence[index];
+    if (item.toolName !== "file_read") continue;
+    const evidencePath = readMutationReadySourceEvidencePaths(item.toolName, item.content)[0];
+    if (!evidencePath) continue;
+    const normalizedEvidencePath = normalizeSourcePath(evidencePath);
+    const requiredIdentity = [...remainingPaths.keys()].find((candidate) => (
+      normalizedEvidencePath === candidate
+      || normalizedEvidencePath.endsWith(`/${candidate}`)
+    ));
+    if (!requiredIdentity) continue;
+    perPath.push({
+      path: remainingPaths.get(requiredIdentity) ?? requiredIdentity,
+      content: item.content,
+    });
+    remainingPaths.delete(requiredIdentity);
+  }
+  if (perPath.length === 0) return "";
+  const lines: string[] = [];
+  let totalHits = 0;
+  for (const { path, content } of perPath) {
+    const sourceText = readFileReadEvidenceSourceText(content);
+    const detail: string[] = [];
+    for (const identifier of input.identifiers) {
+      const hitCount = countTextOccurrences(sourceText, identifier);
+      if (hitCount <= 0) continue;
+      totalHits += hitCount;
+      const firstLines = firstOccurrenceLines(
+        sourceText,
+        identifier,
+        REQUIRED_RESIDUAL_SCAN_MAX_LINES_PER_PATH,
+      );
+      const lineSuffix = firstLines.length > 0
+        ? `；首次出现在行 ${firstLines.slice(0, REQUIRED_RESIDUAL_SCAN_MAX_LINES_PER_PATH).join("、")}${hitCount > firstLines.length ? " 等" : ""}`
+        : "";
+      detail.push(`${identifier}: ${hitCount} 处${lineSuffix}`);
+    }
+    if (detail.length > 0) lines.push(`- ${path}: ${detail.join("；")}`);
+  }
+  const prefix = totalHits === 0
+    ? "Post-write residual scan (runner-computed): no forbidden identifier occurrences remain in the latest file_read evidence for the required paths.\n\n"
+    : "Post-write residual scan (runner-computed from the latest file_read evidence; eliminate every occurrence before finalizing):\n";
+  if (totalHits === 0) return prefix;
+  const body = lines.join("\n");
+  const full = `${prefix}${body}\n\n`;
+  const bounded = clipTextToTokenBudget(
+    full,
+    REQUIRED_RESIDUAL_SCAN_BLOCK_MAX_TOKENS,
+    input.tokenEstimateContext,
+  );
+  return bounded ? `${bounded}\n\n` : `${prefix}\n\n`;
+}
+
+function countTextOccurrences(value: string, needle: string): number {
+  if (!needle) return 0;
+  return value.split(needle).length - 1;
+}
+
+/**
+ * 从 file_read 证据的 tool 结果字符串中还原原始源码文本：
+ * 结构化结果取 content 字段，非结构化（或解析失败）按原文计数，
+ * 保证 JSON 转义不影响计数，并让真实换行可用作行号依据。
+ */
+function readFileReadEvidenceSourceText(content: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return content;
+  }
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const sourceContent = (parsed as Record<string, unknown>).content;
+    if (typeof sourceContent === "string") return sourceContent;
+  }
+  return content;
+}
+
+function firstOccurrenceLines(
+  value: string,
+  needle: string,
+  limit: number,
+): number[] {
+  if (!needle || !value.includes("\n")) return [];
+  const lines: number[] = [];
+  let line = 1;
+  let offset = 0;
+  while (lines.length < limit) {
+    const hit = value.indexOf(needle, offset);
+    if (hit < 0) break;
+    for (let index = offset; index < hit; index++) {
+      if (value.charCodeAt(index) === 10) line++;
+    }
+    lines.push(line);
+    offset = hit + needle.length;
+  }
+  return lines;
 }
 
 function sourceLineAtOffset(value: string, offset: number): number {

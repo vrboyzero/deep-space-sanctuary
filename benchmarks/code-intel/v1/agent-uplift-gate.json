@@ -6,7 +6,7 @@
   "sourceIdentity": {
     "taskManifest": {
       "path": "benchmarks/coding-agent/v3/task-manifest.json",
-      "sha256": "e8bea4cbbde7e3cd3b3714c6b37a2e014f82b37f8ef2229dfe6f9a9c0235e843"
+      "sha256": "9039313b6b193cd12ae63bbb92aa55a79db76c07e2f68953c146a9629a67c1ea"
     },
     "truthSet": {
       "path": "benchmarks/code-intel/v1/truth-set.json",

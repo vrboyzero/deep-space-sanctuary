@@ -97,6 +97,7 @@ import { buildExtensionRuntimeReport } from "./extension-runtime.js";
 import { compileOutputSchema } from "./coding-run/output-schema.js";
 import { parseCodingRunCapabilityRequirements } from "./coding-run/capability-requirements.js";
 import { parseRequiredChangedPaths } from "./coding-run/required-changed-paths.js";
+import { parseRequiredResidualIdentifiers } from "./coding-run/required-residual-identifiers.js";
 import type { ExtensionHostState } from "./extension-host.js";
 import { handleMessageSendWithQueryRuntime, MessageSendConfigurationError } from "./query-runtime-message-send.js";
 import {
@@ -2593,6 +2594,7 @@ function parseCodingRunOptions(
     "expectedResolvedModelId",
     "workspaceMutationRequirement",
     "requiredChangedPaths",
+    "requiredResidualIdentifiers",
     "cwd",
     "toolAllow",
     "toolDeny",
@@ -2665,6 +2667,14 @@ function parseCodingRunOptions(
     return {
       ok: false,
       message: "codingRun.requiredChangedPaths requires workspaceMutationRequirement required",
+    };
+  }
+  const requiredResidualIdentifiers = parseRequiredResidualIdentifiers(value.requiredResidualIdentifiers);
+  if (!requiredResidualIdentifiers.ok) return requiredResidualIdentifiers;
+  if (requiredResidualIdentifiers.value && workspaceMutationRequirement !== "required") {
+    return {
+      ok: false,
+      message: "codingRun.requiredResidualIdentifiers requires workspaceMutationRequirement required",
     };
   }
   if (workspaceMutationRequirement === "required") {
@@ -2743,6 +2753,9 @@ function parseCodingRunOptions(
       ...(expectedResolvedModelId ? { expectedResolvedModelId } : {}),
       ...(workspaceMutationRequirement ? { workspaceMutationRequirement } : {}),
       ...(requiredChangedPaths.value ? { requiredChangedPaths: requiredChangedPaths.value } : {}),
+      ...(requiredResidualIdentifiers.value
+        ? { requiredResidualIdentifiers: requiredResidualIdentifiers.value }
+        : {}),
       ...(cwd ? { cwd } : {}),
       ...(toolAllow.value ? { toolAllow: toolAllow.value } : {}),
       ...(toolDeny.value ? { toolDeny: toolDeny.value } : {}),

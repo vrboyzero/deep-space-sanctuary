@@ -2137,12 +2137,14 @@ export class ToolEnabledAgent implements BelldandyAgent {
     maxCostUsd: boolean;
     workspaceMutationRequirement: true;
     requiredChangedPaths: true;
+    requiredResidualIdentifiers: true;
     steerAtModelBoundary: true;
   } {
     return {
       maxCostUsd: hasUsagePricing(this.opts.usagePricing),
       workspaceMutationRequirement: true,
       requiredChangedPaths: true,
+      requiredResidualIdentifiers: true,
       steerAtModelBoundary: true,
     };
   }
@@ -2473,6 +2475,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let emptyContentFinalizationAttempted = false;
     const workspaceMutationRequired = runtimeContext?.launchSpec?.workspaceMutationRequirement === "required";
     const requiredChangedPaths = runtimeContext?.launchSpec?.requiredChangedPaths ?? [];
+    const requiredResidualIdentifiers = runtimeContext?.launchSpec?.requiredResidualIdentifiers ?? [];
     const workspaceMutationPathCoverage = createWorkspaceMutationPathCoverage(requiredChangedPaths);
     const workspaceMutationVerificationEligible = requiredChangedPaths.length > 0
       && requiredChangedPaths.length <= WORKSPACE_MUTATION_REQUIRED_NAVIGATION_MAX_FILE_READ_CALLS;
@@ -3324,6 +3327,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 tools: mutationTools,
                 maxInputTokens: remainingReviewInputTokens,
                 requiredChangedPaths,
+                requiredResidualIdentifiers,
                 correctionReason: workspaceMutationObjectiveInputCorrectionReason,
                 tokenEstimateContext: dispatchTokenEstimateContext,
               })
@@ -3333,6 +3337,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 tools: workspaceMutationObjectiveCorrectionAttempted ? [] : mutationTools,
                 maxInputTokens: remainingReviewInputTokens,
                 requiredChangedPaths,
+                requiredResidualIdentifiers,
                 structuredOutputSchema: input.structuredOutput?.schema,
                 validationMessage: workspaceMutationObjectiveOutputRepairValidationMessage ?? "Final output is invalid.",
                 correctionAllowed: !workspaceMutationObjectiveCorrectionAttempted,
@@ -3343,6 +3348,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 tools: workspaceMutationObjectiveCorrectionAttempted ? [] : mutationTools,
                 maxInputTokens: remainingReviewInputTokens,
                 requiredChangedPaths,
+                requiredResidualIdentifiers,
                 correctionAllowed: !workspaceMutationObjectiveCorrectionAttempted,
                 structuredOutputRequired: input.structuredOutput !== undefined,
                 structuredOutputSchema: input.structuredOutput?.schema,

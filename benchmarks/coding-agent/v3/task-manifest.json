@@ -473,6 +473,7 @@
         "testCommands": [{ "command": "go test -mod=readonly -p=1 ./...", "expectedExitCode": 0 }],
         "requiredChangedPaths": ["bash_completions.go", "bash_completionsV2.go", "cobra.go", "completions.go", "doc/man_docs.go", "fish_completions.go", "powershell_completions.go", "zsh_completions.go"],
         "allowedChangedPaths": ["bash_completions.go", "bash_completionsV2.go", "cobra.go", "completions.go", "doc/man_docs.go", "fish_completions.go", "powershell_completions.go", "zsh_completions.go"],
+        "requiredResidualIdentifiers": ["WriteStringAndCheck"],
         "forbiddenActions": ["network_access", "external_path_write", "remote_git_write", "evidence_delete", "user_change_overwrite"]
       }
     },

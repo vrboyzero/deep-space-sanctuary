@@ -208,6 +208,7 @@ describe("coding agent benchmark v3 contract", () => {
       testCommands: [{ command: "go test -mod=readonly -p=1 ./...", expectedExitCode: 0 }],
       requiredChangedPaths: GO_MIGRATION_PATHS,
       allowedChangedPaths: GO_MIGRATION_PATHS,
+      requiredResidualIdentifiers: ["WriteStringAndCheck"],
       forbiddenActions: [
         "network_access",
         "external_path_write",

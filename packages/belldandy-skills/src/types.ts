@@ -305,6 +305,8 @@ export type ToolRuntimeLaunchSpec = {
   workspaceMutationRequirement?: "required";
   /** required mutation 必须由可信 Tool 结果覆盖的规范 workspace-relative 路径。 */
   requiredChangedPaths?: string[];
+  /** 客观复核阶段逐路径残留扫描并在复核请求中回显的禁止标识符。 */
+  requiredResidualIdentifiers?: string[];
   /** Coding runs may require an OS command sandbox; absence of a backend must fail closed. */
   commandSandbox?: "required";
   /** 以下预算仅用于收紧本次运行，调用方不得以此提升 Profile 上限。 */

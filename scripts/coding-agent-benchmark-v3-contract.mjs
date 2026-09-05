@@ -253,6 +253,7 @@ const EXPECTED_GO_TASK_ACCEPTANCE = Object.freeze({
     }]),
     requiredChangedPaths: GO_MIGRATION_PATHS,
     allowedChangedPaths: GO_MIGRATION_PATHS,
+    requiredResidualIdentifiers: Object.freeze(["WriteStringAndCheck"]),
     forbiddenActions: GO_FORBIDDEN_ACTIONS,
   }),
 });

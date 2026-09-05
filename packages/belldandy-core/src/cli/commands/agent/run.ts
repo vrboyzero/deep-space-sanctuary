@@ -20,6 +20,7 @@ import { WorkspaceChangeRecoveryRuntime } from "../../../workspace-change-recove
 import { WorkspaceChangeSnapshotRuntime } from "../../../workspace-change-snapshot.js";
 import { parseCodingRunCapabilityRequirements } from "../../../coding-run/capability-requirements.js";
 import { parseRequiredChangedPaths } from "../../../coding-run/required-changed-paths.js";
+import { parseRequiredResidualIdentifiers } from "../../../coding-run/required-residual-identifiers.js";
 
 type TextWriter = (text: string) => void;
 const MAX_STDIN_PROMPT_BYTES = 1024 * 1024;
@@ -51,6 +52,7 @@ export type AgentRunCliOptionsInput = {
   expectedResolvedModelId?: unknown;
   requireWorkspaceMutation?: unknown;
   requiredChangedPaths?: unknown;
+  requiredResidualIdentifiers?: unknown;
   cwd?: unknown;
   workspaceSnapshotRoot?: unknown;
   toolAllow?: unknown;
@@ -131,6 +133,14 @@ export function resolveAgentRunCliOptions(
       message: "--required-changed-paths requires --require-workspace-mutation.",
     };
   }
+  const requiredResidualIdentifiers = parseRequiredResidualIdentifiersOption(input.requiredResidualIdentifiers);
+  if (!requiredResidualIdentifiers.ok) return requiredResidualIdentifiers;
+  if (requiredResidualIdentifiers.value && !requireWorkspaceMutation) {
+    return {
+      ok: false,
+      message: "--required-residual-identifiers requires --require-workspace-mutation.",
+    };
+  }
   if (requireWorkspaceMutation) {
     if (automationProfile.value !== "bare") {
       return { ok: false, message: "--require-workspace-mutation requires --automation-profile bare." };
@@ -173,6 +183,9 @@ export function resolveAgentRunCliOptions(
     ...(expectedResolvedModelId.value ? { expectedResolvedModelId: expectedResolvedModelId.value } : {}),
     ...(requireWorkspaceMutation ? { workspaceMutationRequirement: "required" as const } : {}),
     ...(requiredChangedPaths.value ? { requiredChangedPaths: requiredChangedPaths.value } : {}),
+    ...(requiredResidualIdentifiers.value
+      ? { requiredResidualIdentifiers: requiredResidualIdentifiers.value }
+      : {}),
     ...(cwd.value ? { cwd: cwd.value } : {}),
     ...(toolAllow.value ? { toolAllow: toolAllow.value } : {}),
     ...(toolDeny.value ? { toolDeny: toolDeny.value } : {}),
@@ -642,6 +655,22 @@ function parseRequiredChangedPathsOption(
   return parseRequiredChangedPaths(parsed, "--required-changed-paths");
 }
 
+function parseRequiredResidualIdentifiersOption(
+  value: unknown,
+): ReturnType<typeof parseRequiredResidualIdentifiers> {
+  if (value === undefined) return { ok: true };
+  if (typeof value !== "string" || !value.trim()) {
+    return { ok: false, message: "--required-residual-identifiers must be a non-empty JSON array." };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return { ok: false, message: "--required-residual-identifiers must be a valid JSON array." };
+  }
+  return parseRequiredResidualIdentifiers(parsed, "--required-residual-identifiers");
+}
+
 function parseModelLoopBudgetPolicyOption(
   value: unknown,
 ): { ok: true; value?: CodingRunOptions["modelLoopBudgetPolicy"] } | { ok: false; message: string } {
@@ -709,6 +738,7 @@ export default defineCommand({
     "expected-resolved-model-id": { type: "string", description: "Fail unless Gateway resolves this exact model ID" },
     "require-workspace-mutation": { type: "boolean", description: "Fail unless this run successfully mutates the workspace" },
     "required-changed-paths": { type: "string", description: "JSON array of workspace-relative paths that must be changed" },
+    "required-residual-identifiers": { type: "string", description: "JSON array of forbidden residual identifiers surfaced in the post-write objective review" },
     timeout: { type: "string", description: "Run timeout in milliseconds (minimum: 1000)" },
     cwd: { type: "string", description: "Filesystem scope for this local Gateway run" },
     "workspace-snapshot-root": { type: "string", description: "Local mirror of --cwd used only for workspace change snapshots" },
@@ -741,6 +771,7 @@ export default defineCommand({
       expectedResolvedModelId: args["expected-resolved-model-id"],
       requireWorkspaceMutation: args["require-workspace-mutation"],
       requiredChangedPaths: args["required-changed-paths"],
+      requiredResidualIdentifiers: args["required-residual-identifiers"],
       cwd: args.cwd,
       workspaceSnapshotRoot: args["workspace-snapshot-root"],
       toolAllow: args["tool-allow"],

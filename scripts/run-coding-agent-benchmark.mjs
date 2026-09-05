@@ -517,6 +517,9 @@ export async function runStage0BTask(input, dependencies = {}) {
         ...(task.acceptance.requiredChangedPaths.length > 0
           ? { requiredChangedPaths: [...task.acceptance.requiredChangedPaths] }
           : {}),
+        ...(task.acceptance.requiredResidualIdentifiers?.length
+          ? { requiredResidualIdentifiers: [...task.acceptance.requiredResidualIdentifiers] }
+          : {}),
         ...(input.shadowCandidateId ? { shadowCandidateId: input.shadowCandidateId } : {}),
         taskId: task.id,
         manifestRevision: input.manifestRevision ?? "v1",
@@ -1041,6 +1044,9 @@ async function executeCodingCiProcess(input) {
       "--mode", input.mode,
       ...(input.requiredChangedPaths?.length
         ? ["--required-changed-paths", JSON.stringify(input.requiredChangedPaths)]
+        : []),
+      ...(input.requiredResidualIdentifiers?.length
+        ? ["--required-residual-identifiers", JSON.stringify(input.requiredResidualIdentifiers)]
         : []),
       ...(input.shadowCandidateId
         ? ["--shadow-candidate-id", input.shadowCandidateId]

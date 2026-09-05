@@ -334,6 +334,12 @@
         },
         "requiredChangedPaths": { "$ref": "#/$defs/changedPaths" },
         "allowedChangedPaths": { "$ref": "#/$defs/changedPaths" },
+        "requiredResidualIdentifiers": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+        },
         "forbiddenActions": {
           "type": "array",
           "minItems": 4,

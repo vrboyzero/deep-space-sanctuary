@@ -67,6 +67,10 @@ describe("bdd agent run", () => {
         "jsonrpc\\src\\common\\api.ts",
         "protocol/src/common/protocol.ts",
       ]),
+      requiredResidualIdentifiers: JSON.stringify([
+        "LegacyAlias",
+        "DeprecatedCall",
+      ]),
       requireCapability: "journal,trace,journal",
       requireTool: "file_read,file_read",
       requireMcpServer: "repo-index",
@@ -93,6 +97,10 @@ describe("bdd agent run", () => {
         requiredChangedPaths: [
           "jsonrpc/src/common/api.ts",
           "protocol/src/common/protocol.ts",
+        ],
+        requiredResidualIdentifiers: [
+          "LegacyAlias",
+          "DeprecatedCall",
         ],
         requiredCapabilities: {
           schemaVersion: 1,
@@ -129,6 +137,26 @@ describe("bdd agent run", () => {
     })).toMatchObject({
       ok: false,
       message: expect.stringContaining("requires --require-workspace-mutation"),
+    });
+    expect(resolveAgentRunCliOptions({
+      requiredResidualIdentifiers: JSON.stringify(["LegacyAlias"]),
+    })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("requires --require-workspace-mutation"),
+    });
+    expect(resolveAgentRunCliOptions({
+      requireWorkspaceMutation: true,
+      requiredResidualIdentifiers: "not-json",
+    })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("JSON array"),
+    });
+    expect(resolveAgentRunCliOptions({
+      requireWorkspaceMutation: true,
+      requiredResidualIdentifiers: JSON.stringify(["LegacyAlias", "LegacyAlias"]),
+    })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("duplicates"),
     });
     expect(resolveAgentRunCliOptions({
       requireWorkspaceMutation: true,
@@ -766,6 +794,64 @@ describe("bdd agent run", () => {
         })).toBe(4);
       });
       expect(stderr.join(" ")).toContain("cannot enforce the required changed-path coverage contract");
+      expect(runCalled).toBe(false);
+    } finally {
+      await server.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("fails before starting when the selected Agent cannot enforce required residual identifiers", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-residual-capability-"));
+    const cwd = path.join(stateDir, "workspace");
+    let runCalled = false;
+    const agent: BelldandyAgent = {
+      getCodingRunCapabilities: () => ({
+        maxCostUsd: false,
+        workspaceMutationRequirement: true,
+        requiredChangedPaths: true,
+        steerAtModelBoundary: true,
+      }),
+      async *run() {
+        runCalled = true;
+        yield { type: "final", text: "unexpected" };
+      },
+    };
+    await fs.promises.mkdir(cwd, { recursive: true });
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+      agentFactory: () => agent,
+    });
+    const stderr: string[] = [];
+
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(server.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        expect(await runAgentRunCommand({
+          stateDir,
+          prompt: "change every declared path",
+          jsonl: true,
+          codingRun: {
+            automationProfile: "bare",
+            cwd,
+            permissionMode: "acceptEdits",
+            toolAllow: ["apply_patch"],
+            workspaceMutationRequirement: "required",
+            requiredChangedPaths: ["src/api.ts"],
+            requiredResidualIdentifiers: ["LegacyAlias"],
+            maxTurns: 2,
+          },
+          writeStdout: () => {},
+          writeStderr: (text) => stderr.push(text),
+        })).toBe(4);
+      });
+      expect(stderr.join(" ")).toContain("cannot enforce the required residual-identifier review contract");
       expect(runCalled).toBe(false);
     } finally {
       await server.close();

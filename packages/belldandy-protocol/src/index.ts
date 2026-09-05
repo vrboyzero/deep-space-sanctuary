@@ -192,6 +192,8 @@ export type CodingRunOptions = {
   workspaceMutationRequirement?: "required";
   /** required mutation 必须由可信 Tool 结果覆盖的规范 workspace-relative 路径。 */
   requiredChangedPaths?: string[];
+  /** 客观复核阶段逐路径残留扫描并在复核请求中回显的禁止标识符。 */
+  requiredResidualIdentifiers?: string[];
   cwd?: string;
   toolAllow?: string[];
   toolDeny?: string[];

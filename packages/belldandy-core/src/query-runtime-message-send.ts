@@ -1042,6 +1042,14 @@ function assertCodingRunCapabilities(
       "This Agent cannot enforce the required changed-path coverage contract.",
     );
   }
+  if (
+    codingRun?.requiredResidualIdentifiers
+    && capabilities?.requiredResidualIdentifiers !== true
+  ) {
+    throw new CodingRunCapabilityError(
+      "This Agent cannot enforce the required residual-identifier review contract.",
+    );
+  }
 }
 
 async function assertTaskCapabilityClosure(input: {
@@ -1104,6 +1112,9 @@ function buildCodingRunLaunchSpec(
       : {}),
     ...(codingRun.requiredChangedPaths?.length
       ? { requiredChangedPaths: [...codingRun.requiredChangedPaths] }
+      : {}),
+    ...(codingRun.requiredResidualIdentifiers?.length
+      ? { requiredResidualIdentifiers: [...codingRun.requiredResidualIdentifiers] }
       : {}),
     ...(codingRun.maxWallTimeMs ? { maxRunWallTimeMs: codingRun.maxWallTimeMs } : {}),
     ...(codingRun.maxTurns ? { toolLoopIterationBudget: codingRun.maxTurns } : {}),

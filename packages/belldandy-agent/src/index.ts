@@ -484,6 +484,8 @@ export type CodingRunCapabilities = {
   workspaceMutationRequirement?: boolean;
   /** 运行时是否能按可信 Tool 结果强制 required changed-path 全集覆盖。 */
   requiredChangedPaths?: boolean;
+  /** 运行时是否能在客观复核请求中回显禁止残留标识符的逐路径扫描。 */
+  requiredResidualIdentifiers?: boolean;
   /** 仅表示可在下一次模型调用前注入，不表示可修改已发出的 Provider stream。 */
   steerAtModelBoundary?: boolean;
 };

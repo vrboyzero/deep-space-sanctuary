@@ -1114,6 +1114,7 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "maxTokens=36000",
     "maxTokens=32000",
     "maxTokens=64000",
+    "requiredResidualIdentifiers",
     "maxHighRiskToolCalls=5",
     "approval-contract.json",
     "approval-evidence.json",

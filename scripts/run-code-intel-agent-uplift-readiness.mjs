@@ -16,7 +16,7 @@ import {
 export const CODE_INTEL_AGENT_UPLIFT_CANDIDATE_ID = "code-intel-semantic-live-v1";
 export const CODE_INTEL_AGENT_UPLIFT_READINESS_VERSION = "code-intel-agent-uplift-readiness/v1";
 export const CODE_INTEL_AGENT_UPLIFT_GATE_SHA256 =
-  "e0ebf3df2616bac77b8efadeb5186bb1a782ec145de2827b98bff72626606290";
+  "ce6eede224887cfb8e4ee2a5b64181c86500fb42c29504faedf12b87658560cf";
 export const CODE_INTEL_AGENT_UPLIFT_TASK_IDS = Object.freeze([
   "real-ts.api-migration",
   "real-ts.cross-package-refactor",
@@ -30,6 +30,8 @@ const SUPPORTED_TASK_MANIFEST_SHA256 = new Set([
   "e8bea4cbbde7e3cd3b3714c6b37a2e014f82b37f8ef2229dfe6f9a9c0235e843",
   "dfaf7ebecaa3f6109e3427670b53b23606fae19535e00abf64212c6090daa1ba",
   "305692903ce117ccc24d4345a3ddfb6181851d7144b8059cd38e8cefbbf62352",
+  "9039313b6b193cd12ae63bbb92aa55a79db76c07e2f68953c146a9629a67c1ea",
+  "8c8b249e3647c10124f2198d06ee59e1a3656f56c0322cf9639e6baaa9c876f3",
 ]);
 const SOURCE_IDENTITY_PATHS = Object.freeze([
   "scripts/run-code-intel-agent-uplift-readiness.mjs",

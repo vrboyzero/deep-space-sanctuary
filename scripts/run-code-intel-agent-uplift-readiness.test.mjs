@@ -61,7 +61,7 @@ describe("CodeIntel Agent uplift readiness", () => {
       },
     });
     expect(report.gate.sha256).toBe(CODE_INTEL_AGENT_UPLIFT_GATE_SHA256);
-    expect(report.taskManifest.sha256).toBe("e8bea4cbbde7e3cd3b3714c6b37a2e014f82b37f8ef2229dfe6f9a9c0235e843");
+    expect(report.taskManifest.sha256).toBe("9039313b6b193cd12ae63bbb92aa55a79db76c07e2f68953c146a9629a67c1ea");
     expect(report.truthSet.sha256).toBe("f6d787ec2a20f446c69f90a467d3812c8ca9644517ee5c7acf328430f934500e");
     expect(report.pairMatrix).toHaveLength(8);
     expect(report.pairMatrix.filter((pair) => pair.platform === "windows-native")).toHaveLength(4);
@@ -335,7 +335,7 @@ function buildHistoricalTaskManifestText(currentText) {
     .replace('"real-web-ui-regression-v2"', '"real-web-ui-regression-v1"')
     .replace(/      "truthSet": \{\n[\s\S]*?      \},\n/u, "");
   const result = `${historicalBase.slice(0, start)}${frozenBlock}${historicalBase.slice(end)}`;
-  const expectedHash = "e8bea4cbbde7e3cd3b3714c6b37a2e014f82b37f8ef2229dfe6f9a9c0235e843";
+  const expectedHash = "9039313b6b193cd12ae63bbb92aa55a79db76c07e2f68953c146a9629a67c1ea";
   if (hashCanonicalText(result) !== expectedHash) {
     throw new Error("Historical v3 task manifest fixture drifted from the frozen uplift input.");
   }
