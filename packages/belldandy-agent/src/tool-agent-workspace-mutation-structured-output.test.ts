@@ -69,7 +69,8 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
       } : {}),
       durationMs: 1,
     }));
-    const agent = createAgent(execute);
+    const warn = vi.fn();
+    const agent = createAgent(execute, { warn, error: vi.fn() });
 
     const items = await collect(agent.run({
       conversationId: "conv-post-mutation-objective-full-length-prose",
@@ -91,6 +92,12 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
     } as any));
 
     expect(requests).toHaveLength(4);
+    const diagnostics = warn.mock.calls.filter(([, message]) => message === "[workspace-mutation] invalid objective output diagnostics");
+    expect(diagnostics.map(([, , data]) => data)).toEqual([
+      expect.objectContaining({ modelCallIndex: 3, phase: "objective_review", rawJsonKind: "non_json", rawSchemaValid: false, displaySchemaValid: false }),
+      expect.objectContaining({ modelCallIndex: 4, phase: "output_repair", rawJsonKind: "non_json", rawSchemaValid: false, displaySchemaValid: false }),
+    ]);
+    expect(JSON.stringify(diagnostics)).not.toContain("The post-write evidence requires further review.");
     expect(requests[2]?.response_format).toEqual({ type: "json_object" });
     expect(requests[3]?.response_format).toEqual({ type: "json_object" });
     expect(requests[2]?.messages[0]?.content).toContain(
@@ -3354,8 +3361,9 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
   });
 });
 
-function createAgent(execute: ReturnType<typeof vi.fn>): ToolEnabledAgent {
+function createAgent(execute: ReturnType<typeof vi.fn>, logger?: ConstructorParameters<typeof ToolEnabledAgent>[0]["logger"]): ToolEnabledAgent {
   return new ToolEnabledAgent({
+    logger,
     baseUrl: "https://api.openai.com/v1",
     apiKey: "test-key",
     model: "deepseek-v4-flash",

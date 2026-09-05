@@ -1353,12 +1353,30 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 新增 2 项测试先失败后通过，相关配置/材料/native identity/session/progress/matrix 六文件 `51/51` 通过。
 - 零 Provider 调用；最新权威费用账本仍为 `explore-9b5e4ba-1/cost-ledger-final.json`，预算例外未改变正式分母或最终验收。
 
+#### P2-C 输出诊断实现结论：无正文协议分类（2026-09-05）
+
+##### 已完成内容
+
+1. **`model-output-postprocess.ts` 新建**：
+   - 将原 `stripToolCallsSection` 原样迁出超大 runtime 文件，显示行为不变。
+   - 对无效 objective review/output repair 记录固定 JSON 类别、Schema 通过与否、原文/显示长度和协议标记计数，不记录响应、Tool 参数或校验消息正文。
+2. **`tool-agent.ts` 与相关测试接入**：
+   - 使用现有 logger，仅在无效 objective 输出时生成诊断；一次 repair、预算及失败关闭规则保持不变。
+3. **效果**：
+   - 可以区分空白收缩、正文中的工具协议标记及显示处理改变有效 JSON；合成测试不是原失败的响应证据，尚不能认定真实根因。
+
+##### 验证结果
+
+- Windows `corepack pnpm build` 通过，TypeScript 编译无错误；25 文件 `454/454` 定向回归通过。
+- 新增诊断单元测试 10 项，并在真实 Agent 调用路径补充 1 项既有测试断言，先确认缺诊断失败再接入；双无效输出依旧只发起一次 repair 后失败，不追加模型调用。
+- 历史会话 JSONL/meta 未保留两次中间响应，旧日志无法回补新分类。本步零 Provider；下一步固定探索使用相同七槽清单，并继承最新权威费用账本。
+
 ### 后续计划
 
 1. 保持 `8f794af/candidate-1` 与 `6ce85bd/candidate-1` 永久冻结，禁止重跑、reconcile 或为失败 identity 启动 WSL。
 2. worktree 清理隔离/相邻回归、最新完整工程回归及两轮共四个双平台 parallel-write 槽均已通过。宿主偶发占用来源保持 `record_only`；若再现，保留具体路径与阶段证据后做局部复现，不立即重跑完整矩阵。
 3. 用局部反馈回路关闭失败或明确复现边界，再验证启动诊断和必要回归；阶段稳定后才形成新的 source identity，不因每次小修直接重建正式候选。
-4. 两轮固定探索及 `9b5e4ba` 完整工程回归均已闭合。2026-09-05 用户已明确批准两项 token 例外，先将授权作为可验证的新配置合同接入并测试；并取得 Windows bug 最终输出失败的最小响应证据或建立不含敏感正文的协议分类诊断，再决定是否修改处理逻辑。局部验证闭合后进行固定探索，未收敛前不创建正式候选。
+4. 两项 token 例外已获批准并通过合同回归，无正文协议诊断通过 `454/454` 局部回归和 Windows build。先复用开发 staging 更新版本，双平台原生验证 identity 与新输入凭据，再执行相同七槽固定探索获取真实分类证据；根据证据决定处理方案，未收敛前不创建正式候选。
 5. 固定探索清单并完成少量真实模型验证，集中处理缺陷后再冻结新正式候选；按第 6.6 节执行完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt 和七维资格。普通失败只在资格仍可达且证据/资源闭合时继续未执行槽，硬门槛失败停止。
 6. 两个连续候选均须满足七维下限与 raw weighted `>=9.500`；任何旧 identity 均禁止事后改写 aggregate。
 
@@ -1366,7 +1384,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 ### 重要问题说明
 
-- 第二轮 Windows `bug.reproducible-fix` 的代码、tests、patch 全通过，但两次 objective review/output repair 均未产生有效 JSON，run 以 error 关闭。日志有 response/display 长度差异但无原始响应正文，无法确认是否为模型输出或文本协议处理；现有确定性测试已覆盖双无效输出失败关闭，暂不推测性修改解析器、放宽 Schema 或追加重试，处理决策为 `record_only / 缺最小原始响应证据`。
+- 第二轮 Windows `bug.reproducible-fix` 的代码、tests、patch 全通过，但两次 objective review/output repair 均未产生有效 JSON，run 以 error 关闭。日志有 response/display 长度差异但无原始响应正文，无法确认是否为模型输出或文本协议处理；合成测试证实空白收缩也可产生相似长度差。已新增无正文分类诊断并保留双无效输出失败关闭，未放宽 Schema 或追加重试，处理决策为 `record_only / 真实根因待证据；fix_now completed / 诊断接入`。
 - 首轮 `real-go.bug-fix` 的 patch 满足路径/表面规则，但新增不存在的 `c.name`，真实编译失败，模型 summary 却声称测试通过；离线复制复现已确认两处 undefined。处理决策：源代码错误 `record_only / 保留模型失败样本`，通用复核的执行证据说明 `fix_now / 局部验证完成，真实效果待确认`。不为该字段新增特例规则，不改写原始 failed。
 - 新提示首次覆盖编辑阶段，增加的 system token 挤掉了两个紧预算测试需要的源码片段；已收窄到写后复核/输出，既有 `415/415` 恢复。处理决策为 `fix_now completed`，没有扩大预算或启动额外模型试错来掩盖回归。
 - OCI 预检最初使用 `node -e`，PTY fork 继承了 eval 参数而提前退出；标准脚本入口通过，后续固定使用仓库标准入口。WSL ext4 `/tmp` 首次预检失败，保留诊断 `/tmp/ss-layered-oci-path-y7rR9h/diagnostic.json`，实际错误为 Docker 缺失 distro mount service socket；恢复项目已有独立 drive-backed TMPDIR 后通过，未修改 daemon/镜像配置。两次失败均无 Provider，container/lease 已清零，处理决策为调用/预检配置 `fix_now completed`。

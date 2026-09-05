@@ -31,6 +31,7 @@ import {
   createModelStreamTextDelivery,
   type ModelStreamTextDelivery,
 } from "./model-stream-delivery.js";
+import { diagnoseModelOutputPostprocess, stripToolCallsSection } from "./model-output-postprocess.js";
 import { applyOpenAICompatibleReasoningConfig } from "./openai-reasoning.js";
 import {
   applyOpenAICompatibleToolChoice,
@@ -4323,6 +4324,16 @@ export class ToolEnabledAgent implements BelldandyAgent {
           if (workspaceMutationObjectiveReviewCall && input.structuredOutput) {
             const objectiveValidation = input.structuredOutput.validateOutput(contentForDisplay);
             if (!objectiveValidation.ok) {
+              if (this.opts.logger?.warn) {
+                logWarn("[workspace-mutation] invalid objective output diagnostics", {
+                  ...diagnoseModelOutputPostprocess(response.content || "", contentForDisplay, input.structuredOutput.validateOutput),
+                  modelCallIndex: nextModelCallIndex,
+                  phase: workspaceMutationObjectiveOutputRepairCall ? "output_repair" : "objective_review",
+                  toolCallCount: response.toolCalls?.length ?? 0,
+                  conversationId: input.conversationId,
+                  agentId: resolvedAgentId,
+                });
+              }
               const canCorrectDeterministicObjectiveFailure = !workspaceMutationObjectiveInputCorrectionCall
                 && (noopSerializedFalseRemovalBranch
                   || serializedFalseNullishSerialization
@@ -7977,16 +7988,6 @@ function splitText(text: string, size: number): string[] {
     i += Math.max(1, size);
   }
   return out;
-}
-
-/** 移除模型输出中的工具调用协议块，避免在对话中展示给用户 */
-function stripToolCallsSection(text: string): string {
-  if (!text || typeof text !== "string") return text;
-  return text
-    .replace(/<\|tool_calls_section_begin\|>[\s\S]*?<\|tool_calls_section_end\|>/g, "\n\n（正在执行操作）\n\n")
-    .replace(/<\|tool_call_begin\|>[\s\S]*?<\|tool_call_end\|>/g, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
 }
 
 /**

@@ -250,6 +250,7 @@ star-sanctuary/
 - `packages/belldandy-agent/src/workspace-mutation-coverage.ts`: required changed paths 的单次 run 覆盖 owner；只读取 schema v1 Tool metadata，按大小写不敏感 identity 跨成功 mutation 单调累积，返回稳定的缺失路径集合，并校验 continuation metadata 不越出本次剩余路径范围
 - `packages/belldandy-agent/src/react-structured-output-repair.ts`: structured-output bounded repair 的无 I/O 请求 owner；完整保留 schema/validation repair contract，只按剩余输入预算裁剪不可信 previous draft，预算不足以容纳完整合同和最小 draft 时失败关闭；不读取 transcript/workspace，不执行 Tool，也不增加 session 的单次 repair 次数
 - `packages/belldandy-agent/src/agent-profile.ts`: Agent Profile 解析，含 per-profile token、tool-call、tool-loop、wall-time 与 high-risk-Tool 预算覆盖
+- `packages/belldandy-agent/src/model-output-postprocess.ts`: 非流式工具协议文本的显示处理与无正文诊断；objective review/output repair 无效时仅记录原文/显示文 JSON 分类、Schema 布尔值、长度和协议标记计数，诊断不影响接受判定或修复预算
 - `packages/belldandy-agent/src/agent-end-ledger.ts`: 面向 hook 的有界 Agent 终态账本，保留 usage、预算耗尽、final 与 status 证据
 - `packages/belldandy-agent/src/openai.ts`: 无工具 OpenAI chat agent；流式路径复用统一 `ModelResponseStream` 与 delivery contract，非流式路径保留 JSON 响应解析
 - `packages/belldandy-agent/src/openai-tool-choice.ts`: OpenAI-compatible Tool choice 与 DeepSeek thinking 兼容策略 owner；普通调用保持 `auto`，forced Tool 使用 `required`，并仅对 DeepSeek forced Tool 请求覆盖 `thinking=disabled`
