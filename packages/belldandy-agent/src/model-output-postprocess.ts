@@ -2,6 +2,14 @@ const TOOL_SECTION_BEGIN = "<|tool_calls_section_begin|>";
 const TOOL_SECTION_END = "<|tool_calls_section_end|>";
 const TOOL_CALL_BEGIN = "<|tool_call_begin|>";
 const TOOL_CALL_END = "<|tool_call_end|>";
+const FINISH_REASONS = new Set([
+  "stop", "length", "tool_calls", "function_call", "content_filter",
+  "end_turn", "max_tokens", "stop_sequence", "tool_use", "pause_turn", "refusal",
+]);
+
+export function classifyModelFinishReason(value: unknown): string {
+  return typeof value === "string" && FINISH_REASONS.has(value) ? value : "unknown";
+}
 
 export function stripToolCallsSection(text: string): string {
   if (!text || typeof text !== "string") return text;

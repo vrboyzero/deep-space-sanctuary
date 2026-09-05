@@ -31,7 +31,7 @@ import {
   createModelStreamTextDelivery,
   type ModelStreamTextDelivery,
 } from "./model-stream-delivery.js";
-import { diagnoseModelOutputPostprocess, stripToolCallsSection } from "./model-output-postprocess.js";
+import { classifyModelFinishReason, diagnoseModelOutputPostprocess, stripToolCallsSection } from "./model-output-postprocess.js";
 import { applyOpenAICompatibleReasoningConfig } from "./openai-reasoning.js";
 import {
   applyOpenAICompatibleToolChoice,
@@ -6769,6 +6769,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
         }
         logModelPhase("[model-call] response_extracted", {
           parser: `${usedProtocol}:${usedWireApi}:stream`,
+          finishReason: classifyModelFinishReason(streamedResponse.finishReason),
           contentLength: streamedResponse.content.length,
           toolCallCount: toolCalls?.length ?? 0,
           reasoningContentLength: streamedResponse.reasoningContent?.length ?? 0,
@@ -6803,6 +6804,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           : undefined;
         logModelPhase("[model-call] response_extracted", {
           parser: "anthropic",
+          finishReason: classifyModelFinishReason(json?.stop_reason),
           contentLength: parsed.content.length,
           toolCallCount: toolCalls?.length ?? 0,
           usageInputTokens: parsed.usage?.input_tokens ?? 0,
@@ -6940,6 +6942,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
       }
       logModelPhase("[model-call] response_extracted", {
         parser: "chat_completions",
+        finishReason: classifyModelFinishReason(finishReason),
         contentLength: content.length,
         toolCallCount: toolCalls?.length ?? 0,
         reasoningContentLength: reasoning_content?.length ?? 0,

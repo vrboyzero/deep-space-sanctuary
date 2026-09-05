@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { diagnoseModelOutputPostprocess, stripToolCallsSection } from "./model-output-postprocess.js";
+import { classifyModelFinishReason, diagnoseModelOutputPostprocess, stripToolCallsSection } from "./model-output-postprocess.js";
 
 function validateSummary(text: string): { ok: boolean } {
   try {
@@ -12,6 +12,15 @@ function validateSummary(text: string): { ok: boolean } {
 }
 
 describe("model output postprocess diagnostics", () => {
+  it.each(["stop", "length", "tool_calls", "max_tokens"])("retains the known finish reason %s", (value) => {
+    expect(classifyModelFinishReason(value)).toBe(value);
+  });
+
+  it.each([undefined, null, "private-provider-value", { reason: "private-value" }])
+    ("does not expose an absent or unrecognized finish reason %j", (value) => {
+      expect(classifyModelFinishReason(value)).toBe("unknown");
+    });
+
   it("distinguishes whitespace contraction from a protocol change without exposing text", () => {
     const raw = `${"\n".repeat(346)}private-response-value`;
     const diagnostics = diagnoseModelOutputPostprocess(raw, stripToolCallsSection(raw), validateSummary);

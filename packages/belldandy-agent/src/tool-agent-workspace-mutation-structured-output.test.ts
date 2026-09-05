@@ -70,7 +70,8 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
       durationMs: 1,
     }));
     const warn = vi.fn();
-    const agent = createAgent(execute, { warn, error: vi.fn() });
+    const debug = vi.fn();
+    const agent = createAgent(execute, { warn, debug, error: vi.fn() });
 
     const items = await collect(agent.run({
       conversationId: "conv-post-mutation-objective-full-length-prose",
@@ -92,6 +93,11 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
     } as any));
 
     expect(requests).toHaveLength(4);
+    expect(debug.mock.calls.filter(([, message, data]) => message === "[model-call] response_extracted"
+      && data.modelCallIndex >= 3).map(([, , data]) => data)).toEqual([
+      expect.objectContaining({ modelCallIndex: 3, finishReason: "length" }),
+      expect.objectContaining({ modelCallIndex: 4, finishReason: "length" }),
+    ]);
     const diagnostics = warn.mock.calls.filter(([, message]) => message === "[workspace-mutation] invalid objective output diagnostics");
     expect(diagnostics.map(([, , data]) => data)).toEqual([
       expect.objectContaining({ modelCallIndex: 3, phase: "objective_review", rawJsonKind: "non_json", rawSchemaValid: false, displaySchemaValid: false }),
