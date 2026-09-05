@@ -2058,6 +2058,25 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 以新 identity 做最小付费探索（disconnect-recovery Windows a1）验证复发与诊断；若复现，依据诊断计数定位工具集/预算/证据环节；随后按分层流程重建候选。若不复发，记录为模型输出可变性并继续候选链。
 
+#### P2-C 固定探索实现结论：57b9cc5 disconnect-recovery 单槽真实反馈（2026-09-05）
+
+##### 已完成内容
+
+1. **双平台 staging 与输入材料**：Windows SSD 与 WSL staging 均更新至 `57b9cc5`、offline install（锁文件未变，依赖复用）、build 通过；identity 四字段一致（worktree SHA=`300b2d2b…7e99`，identity-sha256=`baca2235…b62f`）；双平台 inputs 唯一发布并独立验真 `4/4/8`。
+2. **固定单槽探索**：config=`exploration-config-57b9cc5.json`（SHA=`5820be06…180e`），清单 SHA=`5a382343…45b0`，`formal=false/unscored`，继承 `formal-e4bd1c3-1/cost-ledger-final.json`；只读验真与零 Provider readiness（`2956ms`/stop=`2980ms`）通过，新身份 CI=`33974091694` 七项全绿后执行。
+3. **真实反馈**：`gateway.disconnect-recovery/windows-native/a1` `passed`——首调用即 file_write（input=`3908`/output=`438`），随后 file_read 复核、Gateway 断连注入与恢复成功（recoverySucceeded=`true`、taskCompleted=`true`），cost=`0.00014329 USD`。
+4. **效果**：冻结失败未复发，判定为模型输出可变性（首响应未发工具调用），不是确定性产品回归；诊断加固本轮未触发但保留。探索账本 close complete：SHA=`1e64d35a…b373`，observed/reserved=`2.48789296/2.34221 USD`，资源 8 项=`0`、敏感扫描 findings=`0`、env 回收闭环。
+
+##### 验证结果
+
+- 双平台 build 与 inputs 独立 verifier `4/4/8` 通过；新身份 CI `33974091694` success（7/7 jobs）。
+- 单槽 `reported`、pending/unreported=`0/0`、资源关闭=true；新增 Provider cost=`0.00014329 USD`，next worst≈`39.4 RMB < 80`。
+- 未触碰冻结 `candidate-e4bd1c3-1` 与旧 `63e0a41` 终态。
+
+##### 后续计划
+
+以 `57b9cc5` 创建新正式候选（`candidate-57b9cc5-1`）：生成 144 槽不可覆盖 plan/config、只读验真、Windows canary 与渐进矩阵；完整矩阵后执行 aggregate 与七维资格。
+
 ### 后续计划（当前检查点，2026-09-05）
 
 1. **本环节结果**：disconnect-recovery 冻结失败的零 Provider 复现已完成——重建输入下恢复请求可正常构建（函数级 built=true、tool-agent 单元级全流程通过），触发差异在离线不可观测的运行时数据；已对 fail-closed 失败消息加固有界计数诊断（本地提交，待推送），保证下次真实出现自带根因计数。
