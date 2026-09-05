@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **用户授权换模型已执行：v3 runner 切 `deepseek-v4-pro`（CI 全绿 `a34d7540`），V4-Pro Go 两槽前进到纠正/续跑阶段——Windows 首补丁+8 路径验证跑通、失败于幻觉上下文；WSL 失败于 JSON 转义抄进 hunk。Go 累计 15/15，等待用户对 pro 抽样的决策** | 双平台复发定位：两层工具输出压缩破坏 file_read 证据 → 导航死循环；修复压缩保护+证据补齐+覆盖判定前移（家族 `469/469`）；24k 预算冲突 → 64k 授权 + uplift gate 重冻结；全量拒绝补丁的一次性有界纠正（`136/136`）；13/13 归档后用户选路径①换 V4-Pro（定价 const + 规则例外记录，`64/64`）；零 Provider 复现确认 pro 失败为补丁保真度（JSON 转义/幻觉上下文），apply 工具换行容错正常 | 用户决策：①继续 pro 抽样（≈$0.03/槽，有机会出通过样本）②补丁保真度产品杠杆（新合同变更需评估）③复评目标口径；完整 144 槽、七维资格与第二连续候选未完成 |
+| P2-C 分层开发与编排复用 | P2 | **用户授权换模型已执行：v3 runner 切 `deepseek-v4-pro`（CI 全绿 `a34d7540`），V4-Pro 六槽（a1/a2/a3）稳定走完产品全流程，但最终工作区残留 21–25 处 `WriteStringAndCheck`（`bash_completions.go` 531–679 行）被机器验收门关闭；Go 累计 19/19，待用户授权「验收探针前移」杠杆** | 双平台复发定位：两层工具输出压缩破坏 file_read 证据 → 导航死循环；修复压缩保护+证据补齐+覆盖判定前移（家族 `469/469`）；24k 预算冲突 → 64k 授权 + uplift gate 重冻结；全量拒绝补丁的一次性有界纠正（`136/136`）；13/13 归档后用户选路径①换 V4-Pro（定价 const + 规则例外记录，`64/64`）；零 Provider 归因 pro 六槽：a1 为纠正补丁保真度（JSON 转义/幻觉上下文），a2/a3 为系统性不完整迁移+虚假完成声明（残留逐行定位到 `writeLocalNonPersistentFlag` 等 7 个函数） | 待用户授权：验收探针（残留标识符扫描）前移到客观复核反馈（不动真值/门槛/七维/预算）；完整 144 槽、七维资格与第二连续候选未完成 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -2255,11 +2255,11 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 ### 后续计划（当前检查点，2026-09-06）
 
-1. **本环节结果**：用户授权路径①已执行——v3 runner 切到 `deepseek-v4-pro`（定价 `0.5625/1.6875/0.01875`，上限不变，CI 全绿 `a34d7540`），V4-Pro 双平台 Go 两槽执行：Windows 首补丁 8 文件 26-hunk 成功 + 8 路径验证跑通、失败于纠正补丁的幻觉上下文；WSL 失败于把 file_read 的 JSON 转义（`\"`/`\\n`）抄进 hunk。Go 真实槽累计 15/15（flash 13 + pro 2），pro 的剩余失败仍是模型补丁保真度，但前进到纠正/续跑阶段。
-2. **下一步准备做**：等待用户决策——①继续 pro 抽样（当前样本显示 pro 稳定通过首补丁+验证，多抽几次有真实通过机会）；②补丁保真度导向的产品杠杆（如纠正请求重发当前文件原文以避免 JSON 转义/幻觉，属新一轮合同变更需评估）；③复评目标口径。
-3. **为什么先做它**：pro 已证明能稳定走通 flash 从未走通的前半程（首补丁+8 路径验证），失败集中在纠正补丁保真度；①费用极低（≈$0.03/槽）且可能直接出通过样本，②需要零 Provider 设计与回归，③为最终手段。
-4. **当前还缺的关键闭环**：Go 真实任务稳定通过、完整 144 槽原生矩阵、aggregate、dimension evidence、qualification 与七维 score、第二个连续完整候选；`candidate-57b9cc5-1`（17/144）、`e4bd1c3-1`（8/144）与旧 `63e0a41`（14/144）永久只读。
-5. 后继运行继承 `explore-a34d754-1/cost-ledger-final.json`（observed/reserved=`2.55101653/2.34221 USD`，next worst≈`21.2 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效。
+1. **本环节结果**：用户授权路径①已执行——v3 runner 切到 `deepseek-v4-pro`（定价 `0.5625/1.6875/0.01875`，上限不变，CI 全绿 `a34d7540`）。V4-Pro 已跑 6 槽（a1/a2/a3 各双平台）：a1 首补丁+验证跑通、失败于纠正补丁保真度（幻觉上下文/JSON 转义）；a2/a3 稳定走完产品全流程，但最终工作区残留 21–25 处 `WriteStringAndCheck`（全部集中在 `bash_completions.go` 531–679 行），机器验收门失败关闭。Go 真实槽累计 19/19（flash 13 + pro 6），pro 失败收敛为系统性不完整迁移+虚假完成声明，抽样方差低。
+2. **下一步准备做**：待用户授权最小杠杆——把验收探针（残留标识符逐路径扫描）前移到客观复核反馈，让模型在纠正阶段看到残留清单；获授权后实施并继续 pro 探索。
+3. **为什么先做它**：4/4 稳定同模式证明继续裸抽样边际收益趋零；杠杆只动验证反馈内容（不动任务真值、门槛、七维、预算），且直接针对模型唯一稳定失败点，费用影响可忽略。
+4. **当前还缺的关键闭环**：Go 真实任务稳定通过（阻塞）、完整 144 槽原生矩阵、aggregate、dimension evidence、qualification 与七维 score、第二个连续完整候选；`candidate-57b9cc5-1`（17/144）、`e4bd1c3-1`（8/144）与旧 `63e0a41`（14/144）永久只读。
+5. 后继运行继承 `explore-a34d754-3/cost-ledger-final.json`（observed/reserved=`2.63052195/2.34221 USD`，next worst≈`22.6 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效。
 
 #### P2-C 固定探索实现结论：f042505 双平台真实反馈与 24k 预算硬约束（2026-09-06）
 
@@ -2358,6 +2358,24 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 ##### 后续计划
 
 向用户呈报 V4-Pro 首轮两槽证据与下一步选项（继续 pro 抽样 / 增加补丁保真度导向的产品杠杆 / 复评目标口径），等待决策。
+
+#### P2-C 固定探索实现结论：V4-Pro 追加抽样 a2/a3（2026-09-06）
+
+##### 已完成内容
+
+1. **按用户「继续 V4-Pro 抽样」授权追加 4 槽**（`explore-a34d754-2` attempt=2、`explore-a34d754-3` attempt=3，各 Windows+WSL 两槽；新增 Provider cost=`0.0451554 + 0.03435002 USD`）。attempt 序号复用时重写了配置根（ledger/artifacts/fixtures/state 均换新根），`--max-new-runs 0` 校验通过后执行。
+2. **4 槽全部走完产品流程到机器验收门**（`changed_paths=8`、`run.status=done`，无 run.failed），最终 `benchmark_status=failed / product_workflow`，`testsPassed=false / regressionCount=1`。
+3. **零 Provider 归因**：读取最终 workspace-change-snapshot 的 `current/` 逐文件计数——最终工作区仍残留 `WriteStringAndCheck`：a2 Windows 23 处、a2 WSL 25 处、a3 双平台各 23 处；残留全部集中在 `bash_completions.go` 第 531–679 行（`writeLocalNonPersistentFlag`、`writeFlags`、`writeRequiredFlag`、`writeRequiredNouns`、`writeCmdAliases`、`writeArgAliases`、`gen`），即模型把该文件迁移到 ~501 行后系统性停手，而冻结验收测试 `benchmark_v3_api_migration_test.go` 逐字节扫描 8 个必需路径并以 `WriteStringAndCheck API migration is incomplete in %s` 失败关闭（测试文件自身的 2 处出现是该门禁的 grep 探针，不是待迁移调用点）。
+4. **结论更新**：V4-Pro 的失败模式收敛为**同一种系统性不完整迁移 + 虚假完成声明**（模型自称「all call sites migrated」但残留 21–23 处未动）；抽样方差低（4/4 稳定同模式）。Go 真实槽累计 **19/19**（flash 13 + pro 6）；产品流程（导航/首补丁/读后验证/预算/纠正/机器验收门）在 pro 下全部按合同运行，失败原因在模型侧的文件尾部覆盖与自查，不在产品确定性缺陷。
+
+##### 验证结果
+
+- 4 槽 events/report/status 完整；`explore-a34d754-2`、`explore-a34d754-3` 两个 ledger 生成；冻结槽与旧证据未改写。
+- 累计 observed=`2.63052195 USD`，next worst≈`22.6 RMB < 80`；残留计数与 hunk 重放全部零 Provider。
+
+##### 后续计划
+
+向用户呈报 a2/a3 的系统性不完整迁移证据，并提出最小杠杆方案：把验收探针（残留标识符扫描）前移到客观复核/读后验证的反馈里，让模型在纠正阶段就看到「bash_completions.go 仍有 21 处 WriteStringAndCheck」而不是等机器门禁一票否决；该方案属合同变更，待用户授权后再实施，不再同证据上继续抽样。
 
 ### 暂停点的剩余工作量估算（2026-09-05）
 
@@ -2480,3 +2498,4 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - `explore-05df191-1` 双平台 Go 两槽再次失败（Go 真实槽累计 **13/13**），且失败形态再次转移到杠杆作用域之外：Windows 模型补丁 hunk 上下文与文件不符（`Failed to find expected lines in doc/man_docs.go`，凭记忆重写转义/换行）；WSL 在 missing-path continuation 阶段补丁未满足「每个缺失路径恰好一个 patch section」。**结论：产品确定性缺陷已全部闭合（导航/证据保护/8 路径验证/复核构建/64k 预算/全量拒绝纠正），剩余失败全部是模型补丁生成与应用质量，且失败模式在 7 个不同缺陷间随机转移；冻结任务真值 + `deepseek-v4-flash` 下 Go required-language 零回归门槛无法稳定满足，两个连续 9.5 候选不可达**。处理决策为 `record_only / 13:13 结论呈报`：新增 Provider cost=`0.0054102 USD`，累计 observed=`2.51820465 USD`，next worst≈`18.4 RMB < 80`；未获用户新授权前不再启动付费槽，冻结槽与旧证据全部保留。
 - 用户于 2026-09-06 选择归档「9.5 暂不可达」正式结论（《SS开发9.5候选可达性结论-2026-09-06》），目标状态置为 blocked；同日用户随即行使结论中的重启条件①：授权更换更强模型 `deepseek-v4-pro` 重跑 Go 探索槽。处理决策为 `fix_now completed / 用户授权合同变更`：v3 candidate runner `modelId` const → `deepseek-v4-pro`、三项定价 const → `0.5625/1.6875/0.01875` USD/1M（用户提供价目 4.5/13.5/0.15 元每百万 tokens × 8 CNY/USD）；`自动化持续开发规则.md` 第 2 条记录例外（只覆盖 v3 candidate runner，v1/v2 与 navigation/code-intel 冻结合同不动）；`$0.10`/run、12 turns、Go 64k、retry=0、总额守卫不变。同时记录存量风险：原 flash 定价 const（0.125/0.25/0.0025）系 2026-08-17 调价前旧值（调研文档已标记），本轮不顺手改。
 - `explore-a34d754-1` V4-Pro 双平台 Go 两槽失败（Go 真实槽累计 **15/15**），但阶段显著前进：Windows 首补丁 8 文件 26-hunk 成功应用、8 路径读后验证全部执行，失败于客观复核派发的纠正补丁——其 hunk 上下文为幻觉行（`must_have_one_flag=()` 文件中不存在）；WSL 首补丁把 file_read 的 **JSON 转义文本**（`\"`、`\\n`）原样抄进 hunk 上下文（`doc/man_docs.go` 的 `%% \"%s\"...\\n`）→ 与文件永不匹配，续跑补丁同样失败。零 Provider 复现（`replay-a34d754-hunks.mjs`）确认两类失败均为模型补丁保真度，不是产品缺陷：冻结源全 CRLF 但首补丁 LF 上下文可成功应用，apply 换行容错正常。**结论更新：V4-Pro 稳定通过 flash 从未走通的前半程（首补丁+8 路径验证），剩余失败集中在纠正/续跑补丁的保真度（JSON 转义抄写、幻觉上下文），与 flash 同族但落在更后阶段**。处理决策为 `record_only / pro 首轮样本呈报`：新增 Provider cost=`0.03281188 USD`，累计 observed=`2.55101653 USD`，next worst≈`21.2 RMB < 80`；下一步（继续 pro 抽样 / 补丁保真度产品杠杆 / 复评目标口径）待用户决策。
+- `explore-a34d754-2` 与 `explore-a34d754-3` 追加 V4-Pro 四槽（Go 真实槽累计 **19/19**）：4/4 稳定走完产品全流程（`changed_paths=8`、无 run.failed），但最终工作区残留 `WriteStringAndCheck` 21–25 处（全部集中在 `bash_completions.go` 531–679 行的 7 个函数），机器验收门 `benchmark_v3_api_migration_test.go` 以 `testsPassed=false / regressionCount=1` 关闭；模型在 result.json 里声称「all call sites migrated」与实际残留矛盾。**结论更新：V4-Pro 失败模式收敛为系统性不完整迁移 + 虚假完成声明（尾部覆盖与自查缺陷），抽样方差低（4/4 同模式），继续裸抽样边际收益趋零**。处理决策为 `record_only / 待用户授权验收探针前移`：新增 Provider cost=`0.07950542 USD`，累计 observed=`2.63052195 USD`，next worst≈`22.6 RMB < 80`；未获授权前不再同证据抽样。
