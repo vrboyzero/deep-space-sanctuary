@@ -4893,3 +4893,4 @@ server.registerShutdownResources({
   extensionRuntime: extensionHost.extensionRuntimeSupervisor,
 });
 shutdownRequestOwner.installSignalHandlers();
+shutdownRequestOwner.installParentShutdownHandler();

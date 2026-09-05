@@ -13,6 +13,12 @@ export type GatewayShutdownSignalTarget = {
   off: (signal: GatewayShutdownSignal, listener: () => void) => unknown;
 };
 
+type GatewayShutdownParentTarget = {
+  connected?: boolean;
+  on: (event: "message", listener: (message: unknown) => void) => unknown;
+  off: (event: "message", listener: (message: unknown) => void) => unknown;
+};
+
 export type GatewayShutdownRequestOwnerSnapshot = {
   state: "idle" | "countdown" | "shutting_down" | "completed";
   requestKind: GatewayShutdownRequestKind | null;
@@ -49,6 +55,7 @@ export type GatewayShutdownRequestOwner = {
   requestConfigRestart: (fileName: string) => Promise<GatewayShutdownResult>;
   requestSystemRestart: (reason: string, options?: RestartRequestOptions) => Promise<GatewayShutdownResult>;
   installSignalHandlers: (target?: GatewayShutdownSignalTarget) => void;
+  installParentShutdownHandler: (target?: GatewayShutdownParentTarget) => void;
   close: () => void;
   getRuntimeSnapshot: () => GatewayShutdownRequestOwnerSnapshot;
 };
@@ -82,6 +89,13 @@ export function createGatewayShutdownRequestOwner(
   let completion: Promise<GatewayShutdownResult> | undefined;
   let signalTarget: GatewayShutdownSignalTarget | undefined;
   let signalHandlersInstalled = false;
+  let parentTarget: GatewayShutdownParentTarget | undefined;
+  const parentShutdownHandler = (message: unknown): void => {
+    if (!message || typeof message !== "object" || Array.isArray(message)
+      || Object.keys(message).length !== 1 || !("type" in message)
+      || message.type !== "gateway.shutdown/v1") return;
+    void requestSignal("SIGTERM").catch(() => undefined);
+  };
   const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
   const signalHandlers: Record<GatewayShutdownSignal, () => void> = {
     SIGINT: () => {
@@ -140,6 +154,7 @@ export function createGatewayShutdownRequestOwner(
     requestKind = input.request.kind;
     exitCode = input.request.exitCode;
     detachSignalHandlers();
+    detachParentShutdownHandler();
     completion = execute(input);
     return completion;
   }
@@ -209,8 +224,21 @@ export function createGatewayShutdownRequestOwner(
     signalTarget = undefined;
   }
 
+  function installParentShutdownHandler(target: GatewayShutdownParentTarget = process): void {
+    if (parentTarget || !target.connected || completion) return;
+    // Windows 的进程信号不能保证运行 JS 清理；父进程 IPC 复用同一关闭协调器。
+    parentTarget = target;
+    target.on("message", parentShutdownHandler);
+  }
+
+  function detachParentShutdownHandler(): void {
+    parentTarget?.off("message", parentShutdownHandler);
+    parentTarget = undefined;
+  }
+
   function close(): void {
     detachSignalHandlers();
+    detachParentShutdownHandler();
     if (!completion) {
       for (const timer of pendingTimers) cancelTimeout(timer);
       pendingTimers.clear();
@@ -222,6 +250,7 @@ export function createGatewayShutdownRequestOwner(
     requestConfigRestart,
     requestSystemRestart,
     installSignalHandlers,
+    installParentShutdownHandler,
     close,
     getRuntimeSnapshot: () => ({
       state,

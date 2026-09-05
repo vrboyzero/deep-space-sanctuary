@@ -440,11 +440,23 @@ export async function stopWindowsBenchmarkGateway(child, options = {}) {
   if (!child || hasExited(child)) return;
   const gracePeriodMs = options.gracePeriodMs ?? DEFAULT_GATEWAY_STOP_GRACE_MS;
   const closed = new Promise((resolve) => child.once("close", () => resolve(true)));
-  child.kill("SIGTERM");
+  if (child.connected && typeof child.send === "function") {
+    try {
+      child.send({ type: "gateway.shutdown/v1" }, (error) => {
+        if (error && !hasExited(child)) child.kill("SIGTERM");
+      });
+    } catch {
+      if (!hasExited(child)) child.kill("SIGTERM");
+    }
+  } else {
+    child.kill("SIGTERM");
+  }
+  let deadline;
   const stopped = await Promise.race([
     closed,
-    new Promise((resolve) => setTimeout(() => resolve(false), gracePeriodMs)),
+    new Promise((resolve) => { deadline = setTimeout(() => resolve(false), gracePeriodMs); }),
   ]);
+  clearTimeout(deadline);
   if (stopped || hasExited(child)) return;
 
   const platform = options.platform ?? process.platform;

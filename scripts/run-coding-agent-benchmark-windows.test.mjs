@@ -602,6 +602,25 @@ describe("coding agent benchmark Windows launcher", () => {
     }, dependencies)).toThrow(/WSL virtual adapter/i);
   });
 
+  it("lets the IPC-owned Gateway finish shutdown before sending a process signal", async () => {
+    const child = new EventEmitter();
+    child.pid = 43209;
+    child.exitCode = null;
+    child.signalCode = null;
+    child.connected = true;
+    child.kill = vi.fn(() => true);
+    child.send = vi.fn((message, callback) => {
+      expect(message).toEqual({ type: "gateway.shutdown/v1" });
+      callback(null);
+      queueMicrotask(() => { child.exitCode = 0; child.emit("close", 0, null); });
+    });
+    const taskkill = vi.fn(() => ({ status: 0 }));
+    await stopWindowsBenchmarkGateway(child, { platform: "win32", gracePeriodMs: 10, spawnSync: taskkill });
+    expect(child.send).toHaveBeenCalledOnce();
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(taskkill).not.toHaveBeenCalled();
+  });
+
   it("terminates the exact Gateway child and escalates only after the grace period", async () => {
     const child = new EventEmitter();
     child.pid = 43210;

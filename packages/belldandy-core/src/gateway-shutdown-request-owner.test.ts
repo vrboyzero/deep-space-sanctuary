@@ -24,6 +24,39 @@ afterEach(() => {
 });
 
 describe("Gateway shutdown request owner", () => {
+  it("accepts only the exact parent shutdown frame and drains before exit", async () => {
+    const parent = Object.assign(new EventEmitter(), { connected: true });
+    let finishShutdown!: (result: GatewayShutdownResult) => void;
+    const requestShutdown = vi.fn(() => new Promise<GatewayShutdownResult>((resolve) => { finishShutdown = resolve; }));
+    const exit = vi.fn();
+    const owner = createGatewayShutdownRequestOwner({ requestShutdown, exit });
+    owner.installParentShutdownHandler(parent);
+    owner.installParentShutdownHandler(parent);
+    expect(parent.listenerCount("message")).toBe(1);
+    for (const message of [null, "gateway.shutdown/v1", { type: "gateway.shutdown/v2" },
+      { type: "gateway.shutdown/v1", command: "unexpected" }]) parent.emit("message", message);
+    expect(requestShutdown).not.toHaveBeenCalled();
+    parent.emit("message", { type: "gateway.shutdown/v1" });
+    parent.emit("message", { type: "gateway.shutdown/v1" });
+    expect(requestShutdown).toHaveBeenCalledExactlyOnceWith({ kind: "signal", exitCode: 0 });
+    expect(parent.listenerCount("message")).toBe(0);
+    expect(exit).not.toHaveBeenCalled();
+    finishShutdown(createResult("signal", 0));
+    await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(0));
+  });
+
+  it("does not install a disconnected parent and releases its listener on close", () => {
+    const parent = Object.assign(new EventEmitter(), { connected: false });
+    const owner = createGatewayShutdownRequestOwner({ requestShutdown: vi.fn(), exit: vi.fn() });
+    owner.installParentShutdownHandler(parent);
+    expect(parent.listenerCount("message")).toBe(0);
+    parent.connected = true;
+    owner.installParentShutdownHandler(parent);
+    expect(parent.listenerCount("message")).toBe(1);
+    owner.close();
+    expect(parent.listenerCount("message")).toBe(0);
+  });
+
   it("keeps the first system restart request through countdown and competing entries", async () => {
     vi.useFakeTimers();
     const broadcasts: unknown[] = [];
