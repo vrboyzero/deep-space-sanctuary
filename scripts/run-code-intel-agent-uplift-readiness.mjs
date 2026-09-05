@@ -16,7 +16,7 @@ import {
 export const CODE_INTEL_AGENT_UPLIFT_CANDIDATE_ID = "code-intel-semantic-live-v1";
 export const CODE_INTEL_AGENT_UPLIFT_READINESS_VERSION = "code-intel-agent-uplift-readiness/v1";
 export const CODE_INTEL_AGENT_UPLIFT_GATE_SHA256 =
-  "b6266e37cdc22bffb87e61ef0c7616cc9539ce01e35e061caf5556550fd4dfc9";
+  "e0ebf3df2616bac77b8efadeb5186bb1a782ec145de2827b98bff72626606290";
 export const CODE_INTEL_AGENT_UPLIFT_TASK_IDS = Object.freeze([
   "real-ts.api-migration",
   "real-ts.cross-package-refactor",
@@ -27,7 +27,7 @@ export const CODE_INTEL_AGENT_UPLIFT_TASK_IDS = Object.freeze([
 const SUPPORTED_PROFILE_MODES = new Set(["workspace-write", "command-control"]);
 const REQUIRED_REPOSITORY_IDS = Object.freeze(["express", "vscode-languageserver-node"]);
 const SUPPORTED_TASK_MANIFEST_SHA256 = new Set([
-  "e3cac7c8b2786408af45dc3bfed718ee1a898388aa0fae4fbd5b1d38ab68bd22",
+  "e8bea4cbbde7e3cd3b3714c6b37a2e014f82b37f8ef2229dfe6f9a9c0235e843",
   "dfaf7ebecaa3f6109e3427670b53b23606fae19535e00abf64212c6090daa1ba",
   "305692903ce117ccc24d4345a3ddfb6181851d7144b8059cd38e8cefbbf62352",
 ]);

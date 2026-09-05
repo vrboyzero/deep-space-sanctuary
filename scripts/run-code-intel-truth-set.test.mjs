@@ -35,7 +35,7 @@ describe("CodeIntel truth set", () => {
     expect(gate.sourceIdentity).toEqual({
       taskManifest: {
         path: "benchmarks/coding-agent/v3/task-manifest.json",
-        sha256: "e3cac7c8b2786408af45dc3bfed718ee1a898388aa0fae4fbd5b1d38ab68bd22",
+        sha256: "e8bea4cbbde7e3cd3b3714c6b37a2e014f82b37f8ef2229dfe6f9a9c0235e843",
       },
       truthSet: {
         path: "benchmarks/code-intel/v1/truth-set.json",
