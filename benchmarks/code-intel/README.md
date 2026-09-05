@@ -125,6 +125,8 @@ runner 只创建并清理 OS 临时目录，不访问 Gateway、模型、付费 
 
 `v1/agent-uplift-readiness.schema.json` 约束真实 uplift 前的零费用准备证据。`run-code-intel-agent-uplift-readiness.mjs` 读取冻结 Gate、v3 task manifest、truth set、两个真实仓的本地 snapshot receipt，以及当前 source/dist，并重新执行 source/cache preflight，拒绝 receipt 与当前目录漂移；它生成 8 个 Windows/WSL2 逻辑 pair、当前平台 4 个 prepared pair，并证明 `workspace-write` / `command-control` candidate 相对 baseline 的唯一差异是 `toolAllow` 末尾追加一次 `code_intel`。导航 candidate 的单任务限制与 prompt augmentation 保持不变，CodeIntel candidate 不改 prompt、预算、permission、agent profile、tool deny 或 evaluator。
 
+readiness 与实际执行入口共用精确清单摘要准入：历史 `e3ca...bd22` 和当前 `dfaf...a1ba`。四个对照任务的 prompt、预算、验收和 repository 真值逐项一致；当前清单新增显式 Provider 执行声明，并更新 cohort 外的 Web 任务。原冻结 Gate 保持原字节，报告绑定实际完整清单摘要；其他摘要、任务内容、Gate 或 truth-set 漂移继续拒绝，不自动认可未来版本。
+
 Windows 与 WSL2 必须在各自原生进程中使用全新输出目录运行：
 
 ```powershell
@@ -140,7 +142,7 @@ wsl.exe --distribution Ubuntu-22.04 --cd /mnt/e/project/star-sanctuary --exec no
 
 首次准备隔离 state 时，必须先以 `--mode cohort-preflight --provision-agent-profile true` 写入并验证冻结 profile，再使用同一 state 启动 Gateway 与 pairing。真实 runner 启动前还会把同一组检查重新写入全新 `--cohort-preflight-output`，但不应在 Gateway 启动后才首次 provision profile。三项 pricing 与 `BELLDANDY_COMMAND_SANDBOX_BACKEND=oci`、OCI runtime、digest-pinned image 只通过当前进程环境注入；preflight 不读取 Provider 凭据、不调用模型或 Provider。
 
-runner 在每次 Provider report 后累加真实费用，并把下一 cell 的 `maxCostUsd` 限制为 `min(3 USD, 全局剩余费用)`，因此不修改 P0 的 `$3` 默认合同，也不能越过本次授权的 40 RMB 总额度。Windows 完成后，WSL2 必须把 Windows `priorObservedCostCny + runCostCny` 原值作为 `--prior-observed-cost-cny`，形成单一费用链。
+runner 在每次 Provider report 后累加真实费用，并把下一 cell 的 `maxCostUsd` 限制为单次上限与剩余费用的较小值。`--single-run-max-usd` 可显式收紧上限，必须为正数、不超过现有 Stage 0D 的 `$5` 上限且最多八位小数；省略时保留既有默认值。当前持续开发必须传 `--single-run-max-usd 0.10`，该值写入 platform report，双平台值不一致或实际单次费用超限均失败关闭。uplift 自身 40 RMB 子账本保持不变，外层仍须逐次继承完整费用和未知预留、检查下一次最坏累计 `<80 RMB`。Windows 完成后，WSL2 必须把 Windows `priorObservedCostCny + runCostCny` 原值作为 `--prior-observed-cost-cny`，形成单一费用链。
 
 平台报告由 `agent-uplift-platform.schema.json` 约束，保留每个 cell 的 report/events/Coding CI manifest/patch/result/repository receipt SHA-256、Provider usage、`semantic-live` 调用、首个 mutation 前导航字节、非目标整文件读取和冻结 evaluator 二值结果。双平台完成后使用 `--mode aggregate` 生成 `agent-uplift-report.schema.json` 约束的最终报告；聚合器要求 8 对齐全、逐对 task/patch/test 零回退、Provider failure 为 0、至少 6 个 candidate（每个平台至少 3 个）成功使用 `semantic-live`，并执行冻结 context-waste Gate。任何 usage 不完整、基础设施错误、identity 漂移、缺 pair 或费用链漂移都会阻止结论；selected failure 不自动重试。
 

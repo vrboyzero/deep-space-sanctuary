@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **023af38 完整 CI 暴露测试替身缺口，已定向修复，等待新身份 CI** | 023af38 双平台 JS 探索 passed、资源与敏感扫描闭合，正式 plan 独立验真 `144/144/144`；Quality `33959329660` 六个 job 通过，但全仓 2 项失败均来自点名测试路径未接入新增 source-navigation 替身；修复后受影响模块 `127/127`、build 通过，正式付费槽仍为 `0/144` | 提交并推送测试合同修复，等待新身份完整工程 CI；通过后重新绑定 inputs/plan/费用基线并从新 candidate 的未执行槽推进。完整 144、交付证据、七维资格和第二候选仍未闭合 |
+| P2-C 分层开发与编排复用 | P2 | **交付前置发现 CodeIntel 旧清单绑定，修复已通过 Windows 联合回归** | 1fecbdcf 两端 clean inputs 为 `4/4/8`，Quality `33960798149` 六个 job 通过、完整测试运行中；零模型复现 CodeIntel readiness 的清单漂移后，补精确摘要兼容和显式单次费用上限，Windows 联合回归 `39/39`、build、benchmark 合同 verifier 通过；本轮 Provider 调用与正式付费槽均为0 | 补 Linux 验证后统一提交这批交付前置修复；等待对应完整 CI，再绑定新 identity 的 inputs/plan/config。先关闭证据 producer 的实际阻塞，避免正式矩阵结束后才发现交付链不可执行 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -1806,18 +1806,54 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 权威后继账本为 `explore-023af38-1/cost-ledger-final.json`（SHA=`c0df071d2ac07f7616c7ebf4a4e5343c8b330d020d1a15915e181c0a418f6ded`）；processed/pending/unreported=`2/0/0`，cleanup=true，observed=`2.47555869 USD`、reserved=`2.34221000 USD`，本次费用=`0.00201318 USD`。
 - 当前 Quality run=`33959329660`，除完整工程测试仍运行外，其他六个 job 均通过；当前身份未取得完整 CI、完整正式矩阵或数值资格。
 
+#### P2-C 测试合同实现结论：点名测试导航替身与双平台身份同步（2026-09-05）
+
+##### 已完成内容
+
+1. **`tool-agent-workspace-mutation-web-boolean-branch.test.ts` 修改**：
+   - 两个测试替身补齐有界 source-navigation 对任务指定测试文件的响应；保留原产品逻辑、预算和断言。提交 `1fecbdcf2fdf57e17f0a92e41badd99e2103c4c3` 已推送 `private/main`。
+2. **双平台 staging / repository inputs 更新**：
+   - Windows/WSL 均切换至同一 clean identity，identity SHA=`a0b25e33279a4a8b29785fd895bf9461554fc1b6d9df40c6dfa13c07c3ec7ba9`；复用只读 source/cache，重新生产 `inputs/windows-1fecbdc` 和 `/var/tmp/star-sanctuary-layered-inputs-1fecbdc` 的 receipt/preflight。
+3. **效果**：
+   - 原两项稳定失败已修复，Linux 同一行为通过；本次只有测试与文档变化，不重复已通过的双平台付费 JS 探索。旧正式 plan/config 保留，不用于新 identity。
+
+##### 验证结果
+
+- TypeScript/build：主仓 `corepack pnpm build` 通过；Windows 原文件 `3/3`、受影响四文件 `127/127`，WSL 原文件 `3/3`。
+- 两端 inputs 原生生产和独立验真均为 repositories/receipts/preflights=`4/4/8`；本次 Provider 调用为0，权威账本仍为 `explore-023af38-1/cost-ledger-final.json`。
+- 新 Quality CI=`33960798149`，六个 job 已通过，完整测试仍运行；尚未宣告完整 CI 或正式资格通过。
+
+#### P2-C 交付前置实现结论：CodeIntel 清单兼容与单次费用收紧（2026-09-05）
+
+##### 已完成内容
+
+1. **`run-code-intel-agent-uplift-readiness.mjs` / `run-code-intel-agent-uplift.mjs` 修改**：
+   - 准备和实际执行共用历史/当前完整清单摘要白名单；独立核对四个对照任务及仓库真值一致，保留 Gate 原字节和未知漂移拒绝。
+   - 新增 `--single-run-max-usd`，在既有 Stage 0D 上限内收紧每次调用；实际超限保留费用并停止，双平台声明不一致不能通过 aggregate。后续本轮运行显式传 `0.10`，40 RMB 子账本及外层 `<80 RMB` 最坏守卫保持原约束。
+2. **readiness / uplift 测试、platform Schema、CodeIntel README 与 project-map 同步**：
+   - 新增当前清单真实执行边界、未知漂移拒绝、预算透传/超限停止/非法预算与跨平台预算一致性验证；旧格式未声明单次上限时仍使用既有默认值。
+3. **效果**：
+   - Windows 真实 repository/cache readiness 从 `task manifest identity drift` 转为四个 prepared pair，未触达 Provider；这次前置问题在正式槽分配前解决，未重开正式候选或丢弃旧结果。
+
+##### 验证结果
+
+- TypeScript/build：`corepack pnpm build` 通过；`verify-coding-agent-benchmark-contract.mjs` 通过。
+- 六个相关文件联合回归 `39/39`，含12个新增用例；本轮最初失败及修复后通过均已实测。真实 Windows readiness 为 `ready_for_authorization`、preparedPairs=4，状态仅表示准备器不读取授权，会话内持续授权仍有效。
+- 本次尚缺 Linux 对应验证和包含修复的新身份完整 CI；没有新增 Provider 调用，费用账本不变。
+
 ### 后续计划
 
-1. 等当前 `33959329660` 完整工程 CI 终态；若通过，复核资源和费用后执行 `candidate-023af38-1` 正式矩阵。计划已冻结并独立验真，剩余关键准入是完整工程 CI；若失败只诊断相关范围，不重跑历史候选。
+1. 收取 `1fecbdcf` 的 Quality `33960798149` 完整工程 CI 终态，同时完成这批 CodeIntel 修复的 Linux 定向验证和新提交；对应新身份完整 CI 通过后，创建并独立验真不可覆盖正式 plan/config。先关闭已经复现的交付前置阻塞，避免消耗不具备交付可能的正式槽。
 2. 历史 JS/Go 失败及原始 JSON review/repair 证据继续保留供离线诊断；`023af38` 双平台 JS 新探索已通过，不再将历史失败当作当前未执行的修复步骤。后续真实失败须依据各自日志定位，旧日志缺失的终止原因不能回补，也不能只凭 token 上限改变预算、解析器或增加特例。
-3. 当前双平台 staging、identity、inputs、预检及不可覆盖 plan 已就绪，直接复用已验真材料；只有实际修改冻结行为或出现新失败证据时才返回开发与固定探索清单，避免重复生成材料或无新证据重复调用。
+3. 当前双平台 staging 与 inputs 为 `1fecbdcf`；CodeIntel 修复提交后须同步新 identity，复用已验真的只读 cache 并重新绑定 receipt。真实 CodeIntel paired-run、CI 采集与各 receipt 的前置检查继续采用公共 producer，付费调用统一受已授权单次和累计守卫约束；仅测试替身/交付准备变化不重复既有 JS 探索。
 4. 后继正式候选仅在合同、工程与资源 Gate 闭合后进入完整 `144` 槽；普通失败只在资格仍可达且证据/资源闭合时续跑，硬门槛失败停止。下一会话继承 `explore-023af38-1/cost-ledger-final.json`（SHA=`c0df071d2ac07f7616c7ebf4a4e5343c8b330d020d1a15915e181c0a418f6ded`）的全部观测费用和预留，所有已冻结 identity 保持只读。
 5. 完整候选后采集当前 identity 的真实 CI/CLI/TUI/Git delivery receipt、aggregate 与七维资格，再执行第二个连续完整候选；两个候选均须满足七维下限、raw weighted `>=9.500` 和全部硬 Gate。
 
-当前正式准入只剩新身份完整工程 CI 终态；023af38 的 CI 因测试替身缺口失败，不能作为准入证据。双平台 JS 探索、依赖审计及新计量的双平台审批已有通过证据，但不外推为正式验收。完整 `144` 槽、当前 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选均未完成。最终验收标准保持不变，审批计量与费用授权均已明确并持续有效。
+当前正式准入还缺 CodeIntel 交付前置修复的双平台验证与新身份完整工程 CI；023af38 的失败 CI 保留。双平台 JS 探索、依赖审计及新计量的双平台审批已有通过证据，但不外推为正式验收。完整 `144` 槽、当前 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选均未完成。最终验收标准保持不变，审批计量与费用授权均已明确并持续有效。
 
 ### 重要问题说明
 
+- CodeIntel 交付前置在 `1fecbdcf` 零模型复现 `task manifest identity drift`：readiness 和实际运行入口仍只接受旧清单，旧测试还把当前清单拒绝作为预期。四个 paired-run 任务及仓库真值未变化，处理为 `fix_now / 精确摘要兼容`，原 Gate 与未知漂移拒绝保留；Windows 真准备及 `39/39` 联合回归已通过，Linux/新 CI 待验证。同时发现 uplift 使用旧默认单次费用入口，补显式 `0.10 USD` 限制并保留超限终态；不通过提高上限绕过问题。
 - b564025 新 CI 唯一失败是 distribution 合同仍要求 fast-uri=`3.1.5`，并非 OSV 或产品失败；检查还发现 qs 正向匹配可误命中旧 override 选择器。处理决策为 `fix_now / 定向闭合`，同步到已安装、已通过审计的 patched snapshot，并加入旧 snapshot 拒绝；不重跑旧 CI、不撤销安全升级。
 - b564025 两槽 JS 均失败。准确回放证明 Windows 未读测试就被有界预算流程提前切入 mutation-only，处理决策为通用读取准入 `fix_now / 本地定向闭合`；WSL 首次修改及复核均有正确输入、断言和错误源码，最终仍把 `slice(3)` 误判为保留两个元素，处理决策为 `record_only / 真实模型推断失败`，不再将它归因于测试证据丢失、JSON 无效或 length。修复后仍需两槽真实反馈，不能无新证据重复调用或直接进入正式候选。
 - 旧 CI 所有测试断言通过仍被未处理的 `SQLITE_READONLY_DBMOVED` 阻断，日志归属 shared governance 用例；该用例在 `finally` 删除状态目录，之后 `afterEach` 才关闭 manager。处理决策为测试清理顺序 `fix_now / Windows 定向闭合`，先关闭全部已登记 manager 后再清理目录；原 SQLite 竞态未在 WSL 单例重现，不据此改动产品错误处理，真实全量 CI 仍待验证。

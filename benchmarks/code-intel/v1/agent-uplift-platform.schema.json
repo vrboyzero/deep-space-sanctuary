@@ -39,6 +39,7 @@
         "provider": { "type": "string", "minLength": 1 },
         "modelId": { "const": "deepseek-v4-flash" },
         "maxTotalCostCny": { "type": "number", "exclusiveMinimum": 0, "maximum": 40 },
+        "singleRunMaxUsd": { "type": "number", "exclusiveMinimum": 0, "maximum": 5 },
         "priorObservedCostCny": { "type": "number", "minimum": 0 },
         "runCostCny": { "type": "number", "minimum": 0 },
         "remainingCostCny": { "type": "number", "minimum": 0 },

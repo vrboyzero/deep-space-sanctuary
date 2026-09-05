@@ -19,6 +19,7 @@ import {
   CODE_INTEL_AGENT_UPLIFT_CANDIDATE_ID,
   CODE_INTEL_AGENT_UPLIFT_GATE_SHA256,
   CODE_INTEL_AGENT_UPLIFT_TASK_IDS,
+  isCodeIntelAgentUpliftTaskManifestSupported,
 } from "./run-code-intel-agent-uplift-readiness.mjs";
 
 export const CODE_INTEL_AGENT_UPLIFT_PLATFORM_VERSION =
@@ -202,6 +203,12 @@ export async function runCodeIntelAgentUpliftPlatform(input, dependencies = {}) 
   const provider = requireString(input?.provider, "provider");
   const modelId = requireString(input?.modelId, "modelId");
   const maxTotalCostCny = requireAuthorizedCost(input?.maxTotalCostCny, "maxTotalCostCny");
+  const singleRunMaxUsd = input?.singleRunMaxUsd === undefined
+    ? STAGE_0D_BENCHMARK_USAGE_BUDGET_USD : input.singleRunMaxUsd;
+  if (!Number.isFinite(singleRunMaxUsd) || singleRunMaxUsd <= 0
+    || singleRunMaxUsd > STAGE_0D_BENCHMARK_USAGE_BUDGET_USD || round(singleRunMaxUsd) !== singleRunMaxUsd) {
+    throw new Error(`singleRunMaxUsd must be positive, at most ${STAGE_0D_BENCHMARK_USAGE_BUDGET_USD} USD and use at most eight decimal places.`);
+  }
   const priorObservedCostCny = requireAuthorizedCost(
     input?.priorObservedCostCny ?? 0,
     "priorObservedCostCny",
@@ -303,7 +310,7 @@ export async function runCodeIntelAgentUpliftPlatform(input, dependencies = {}) 
         break;
       }
       const maxCostUsd = round(Math.min(
-        STAGE_0D_BENCHMARK_USAGE_BUDGET_USD,
+        singleRunMaxUsd,
         remainingCostCny / EXCHANGE_RATE_CNY_PER_USD,
       ));
       let cell;
@@ -344,6 +351,10 @@ export async function runCodeIntelAgentUpliftPlatform(input, dependencies = {}) 
         cellBlocked = true;
       } else {
         runCostCny = round(runCostCny + cell.provider.costUsd * EXCHANGE_RATE_CNY_PER_USD);
+        if (cell.provider.costUsd > maxCostUsd + 1e-8) {
+          blockingFailures.push(`single_run_cost_exceeded:${cell.cellId}`);
+          cellBlocked = true;
+        }
         if (priorObservedCostCny + runCostCny > maxTotalCostCny + 1e-8) {
           throw new Error("CodeIntel uplift exceeded the authorized total cost.");
         }
@@ -394,6 +405,7 @@ export async function runCodeIntelAgentUpliftPlatform(input, dependencies = {}) 
       provider,
       modelId,
       maxTotalCostCny,
+      ...(input?.singleRunMaxUsd !== undefined ? { singleRunMaxUsd } : {}),
       priorObservedCostCny,
       runCostCny,
       remainingCostCny: round(maxTotalCostCny - priorObservedCostCny - runCostCny),
@@ -438,6 +450,10 @@ export function buildCodeIntelAgentUpliftAggregate(input) {
   if (windows.authorization.provider !== wsl.authorization.provider
     || windows.authorization.modelId !== wsl.authorization.modelId) {
     failures.push("model_identity_mismatch");
+  }
+  if ((windows.authorization.singleRunMaxUsd ?? STAGE_0D_BENCHMARK_USAGE_BUDGET_USD)
+    !== (wsl.authorization.singleRunMaxUsd ?? STAGE_0D_BENCHMARK_USAGE_BUDGET_USD)) {
+    failures.push("single_run_cost_cap_mismatch");
   }
   const expectedWslPrior = round(
     windows.authorization.priorObservedCostCny + windows.authorization.runCostCny,
@@ -905,8 +921,7 @@ async function verifyPlatformReadiness(input) {
     || readiness.platform !== input.platform
     || readiness.candidateId !== CODE_INTEL_AGENT_UPLIFT_CANDIDATE_ID
     || readiness.gate?.sha256 !== CODE_INTEL_AGENT_UPLIFT_GATE_SHA256
-    || readiness.taskManifest?.sha256
-      !== "e3cac7c8b2786408af45dc3bfed718ee1a898388aa0fae4fbd5b1d38ab68bd22"
+    || !isCodeIntelAgentUpliftTaskManifestSupported(readiness.taskManifest?.sha256)
     || readiness.truthSet?.sha256
       !== "f6d787ec2a20f446c69f90a467d3812c8ca9644517ee5c7acf328430f934500e") {
     throw new Error("CodeIntel uplift readiness contract drifted.");
@@ -1285,6 +1300,7 @@ async function main() {
     attempt: Number(values.get("attempt") ?? 1),
     maxTotalCostCny: Number(getRequired(values, "max-total-cost-cny")),
     priorObservedCostCny: Number(values.get("prior-observed-cost-cny") ?? 0),
+    ...(values.has("single-run-max-usd") ? { singleRunMaxUsd: Number(values.get("single-run-max-usd")) } : {}),
     finalizeExistingExecution: values.get("finalize-existing-execution") === "true",
     ...(values.has("generated-at") ? { generatedAt: getRequired(values, "generated-at") } : {}),
   });

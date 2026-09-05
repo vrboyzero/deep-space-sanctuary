@@ -327,6 +327,68 @@ describe("CodeIntel Agent uplift paired run", () => {
     }
   });
 
+  it.each([
+    { singleRunMaxUsd: 0.1, observed: 0.01, count: 8 },
+    { singleRunMaxUsd: 0.05, observed: 0.01, count: 8 },
+    { singleRunMaxUsd: 0.1, observed: 0.11, count: 1 },
+  ])("enforces the explicit single-run cap $singleRunMaxUsd for observed cost $observed", async ({ singleRunMaxUsd, observed, count }) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "code-intel-uplift-single-cap-"));
+    tempRoots.push(root);
+    const costs = [];
+    const report = await runCodeIntelAgentUpliftPlatform({
+      platform: "windows-native",
+      sourceRoot: workspaceRoot,
+      readiness: readinessFixture("windows-native"),
+      repositoryConfigPath: path.join(root, "repository-inputs.json"),
+      fixtureRoot: path.join(root, "fixtures"),
+      stateRoot: path.join(root, "state"),
+      outputRoot: path.join(root, "output"),
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      maxTotalCostCny: 40,
+      singleRunMaxUsd,
+    }, {
+      verifyReadiness: async () => {},
+      runCohortPreflight: async () => cohortPreflightFixture(),
+      executeCell: async (input) => {
+        costs.push(input.maxCostUsd);
+        return analyzedCellFixture(input.task.id, input.variant, observed);
+      },
+    });
+    expect(costs).toEqual(Array(count).fill(singleRunMaxUsd));
+    expect(report.authorization).toMatchObject({ singleRunMaxUsd, runCostCny: Number((observed * count * 8).toFixed(8)) });
+    expect(report.status).toBe(count === 8 ? "completed" : "blocked");
+    if (count === 1) expect(report.blockingFailures).toEqual([
+      "single_run_cost_exceeded:real-ts.api-migration:windows-native:a1:baseline",
+    ]);
+    const schema = JSON.parse(await fs.readFile(path.join(
+      workspaceRoot, "benchmarks/code-intel/v1/agent-uplift-platform.schema.json",
+    ), "utf8"));
+    const compiled = compileOutputSchema(schema);
+    expect(compiled.ok).toBe(true);
+    expect(compiled.validator.validateOutput(JSON.stringify(report)).ok).toBe(true);
+  });
+
+  it.each([0, -1, NaN, Infinity, null, 5.01, 1e-10, 0.100000005])("rejects an invalid single-run cap %s before execution", async (singleRunMaxUsd) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "code-intel-uplift-invalid-cap-"));
+    tempRoots.push(root);
+    const outputRoot = path.join(root, "output");
+    await expect(runCodeIntelAgentUpliftPlatform({
+      platform: "windows-native",
+      sourceRoot: workspaceRoot,
+      readiness: readinessFixture("windows-native"),
+      repositoryConfigPath: path.join(root, "repository-inputs.json"),
+      fixtureRoot: path.join(root, "fixtures"),
+      stateRoot: path.join(root, "state"),
+      outputRoot,
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      maxTotalCostCny: 40,
+      singleRunMaxUsd,
+    })).rejects.toThrow(/singleRunMaxUsd/);
+    await expect(fs.lstat(outputRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("writes a blocked report when paired input identity drifts", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "code-intel-uplift-identity-"));
     tempRoots.push(root);
@@ -482,6 +544,19 @@ describe("CodeIntel Agent uplift paired run", () => {
     });
     expect(attemptMismatch.status).toBe("blocked");
     expect(attemptMismatch.gate.failures).toContain("attempt_identity_mismatch");
+
+    const cappedWindows = structuredClone(windows);
+    const cappedWsl = structuredClone(wsl);
+    cappedWindows.authorization.singleRunMaxUsd = 0.1;
+    cappedWsl.authorization.singleRunMaxUsd = 0.1;
+    expect(buildCodeIntelAgentUpliftAggregate({
+      windows: cappedWindows, wsl: cappedWsl, maxTotalCostCny: 40,
+    }).status).toBe("passed");
+    const capMismatch = buildCodeIntelAgentUpliftAggregate({
+      windows: cappedWindows, wsl, maxTotalCostCny: 40,
+    });
+    expect(capMismatch.status).toBe("blocked");
+    expect(capMismatch.gate.failures).toContain("single_run_cost_cap_mismatch");
 
     const schema = JSON.parse(await fs.readFile(path.join(
       workspaceRoot,

@@ -26,6 +26,10 @@ export const CODE_INTEL_AGENT_UPLIFT_TASK_IDS = Object.freeze([
 
 const SUPPORTED_PROFILE_MODES = new Set(["workspace-write", "command-control"]);
 const REQUIRED_REPOSITORY_IDS = Object.freeze(["express", "vscode-languageserver-node"]);
+const SUPPORTED_TASK_MANIFEST_SHA256 = new Set([
+  "e3cac7c8b2786408af45dc3bfed718ee1a898388aa0fae4fbd5b1d38ab68bd22",
+  "dfaf7ebecaa3f6109e3427670b53b23606fae19535e00abf64212c6090daa1ba",
+]);
 const SOURCE_IDENTITY_PATHS = Object.freeze([
   "scripts/run-code-intel-agent-uplift-readiness.mjs",
   "scripts/run-coding-agent-ci.mjs",
@@ -47,6 +51,11 @@ const RUNTIME_IDENTITY_PATHS = Object.freeze([
 ]);
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultSourceRoot = path.resolve(path.dirname(scriptPath), "..");
+
+export function isCodeIntelAgentUpliftTaskManifestSupported(sha256) {
+  // 当前清单的四个对照任务及仓库真值未变；仅接受已核对的完整摘要，未知漂移仍拒绝。
+  return SUPPORTED_TASK_MANIFEST_SHA256.has(sha256);
+}
 
 export function buildCodeIntelAgentUpliftCandidateProfile(baseProfile, mode) {
   if (!SUPPORTED_PROFILE_MODES.has(mode)) {
@@ -351,7 +360,7 @@ function validateFrozenGate(gateSource, manifestSource, truthSetSource) {
   if (gateSource.sha256 !== CODE_INTEL_AGENT_UPLIFT_GATE_SHA256) {
     throw new Error("CodeIntel Agent uplift Gate identity drift.");
   }
-  if (gate.sourceIdentity?.taskManifest?.sha256 !== manifestSource.sha256) {
+  if (!isCodeIntelAgentUpliftTaskManifestSupported(manifestSource.sha256)) {
     throw new Error("CodeIntel uplift task manifest identity drift.");
   }
   if (gate.sourceIdentity?.truthSet?.sha256 !== truthSetSource.sha256) {

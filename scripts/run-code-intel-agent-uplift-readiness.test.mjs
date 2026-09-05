@@ -17,6 +17,7 @@ import {
   compareCodeIntelAgentUpliftReadinessReports,
   runCodeIntelAgentUpliftReadiness,
 } from "./run-code-intel-agent-uplift-readiness.mjs";
+import { runCodeIntelAgentUpliftPlatform } from "./run-code-intel-agent-uplift.mjs";
 
 const workspaceRoot = path.resolve(".");
 const tempRoots = [];
@@ -100,6 +101,65 @@ describe("CodeIntel Agent uplift readiness", () => {
     }, readinessDependencies("windows-native"))).rejects.toThrow(/output root already exists/i);
   });
 
+  it("prepares the compatible current manifest and reaches the production execution boundary", async () => {
+    const fixture = await createReadinessFixture("windows-native", { taskManifest: "current" });
+    const currentText = await fs.readFile(path.join(
+      fixture.sourceRoot, "benchmarks/coding-agent/v3/task-manifest.json",
+    ), "utf8");
+    const current = JSON.parse(currentText);
+    const historical = JSON.parse(buildHistoricalTaskManifestText(currentText));
+    const selectedTasks = (manifest) => manifest.tasks
+      .filter((task) => CODE_INTEL_AGENT_UPLIFT_TASK_IDS.includes(task.id))
+      .map(({ modelExecution, ...task }) => task);
+    expect(selectedTasks(current)).toEqual(selectedTasks(historical));
+    expect(current.repositories).toEqual(historical.repositories);
+    expect(current.tasks.filter((task) => CODE_INTEL_AGENT_UPLIFT_TASK_IDS.includes(task.id))
+      .every((task) => task.modelExecution === "provider")).toBe(true);
+
+    const readiness = await runCodeIntelAgentUpliftReadiness({
+      platform: "windows-native",
+      sourceRoot: fixture.sourceRoot,
+      repositoryConfigPath: fixture.repositoryConfigPath,
+      outputRoot: fixture.outputRoot,
+    }, readinessDependencies("windows-native"));
+    expect(readiness.taskManifest.sha256).toBe(hashCanonicalText(currentText));
+    expect(readiness.gate.sha256).toBe(CODE_INTEL_AGENT_UPLIFT_GATE_SHA256);
+
+    let executionBoundaryCalls = 0;
+    const executionInput = {
+      platform: "windows-native",
+      sourceRoot: fixture.sourceRoot,
+      readiness,
+      repositoryConfigPath: fixture.repositoryConfigPath,
+      fixtureRoot: path.join(fixture.outputRoot, "fixtures"),
+      stateRoot: path.join(fixture.outputRoot, "state"),
+      outputRoot: path.join(fixture.outputRoot, "execution"),
+      provider: "openai",
+      modelId: "deepseek-v4-flash",
+      maxTotalCostCny: 0.8,
+    };
+    const executionDependencies = {
+      runCohortPreflight: async () => ({ status: "passed", providerCalls: 0 }),
+      executeCell: async () => {
+        executionBoundaryCalls += 1;
+        throw new Error("test execution boundary reached");
+      },
+    };
+    const report = await runCodeIntelAgentUpliftPlatform(executionInput, executionDependencies);
+    expect(executionBoundaryCalls).toBe(1);
+    expect(report.blockingFailures).toEqual([
+      "cell_execution_error:real-ts.api-migration:windows-native:a1:baseline:test_execution_boundary_reached",
+    ]);
+    expect(report.authorization.runCostCny).toBe(0);
+
+    const drifted = structuredClone(readiness);
+    drifted.taskManifest.sha256 = "f".repeat(64);
+    await expect(runCodeIntelAgentUpliftPlatform({
+      ...executionInput, readiness: drifted, outputRoot: `${executionInput.outputRoot}-drift`,
+    }, executionDependencies)).rejects.toThrow(/readiness contract drifted/i);
+    expect(executionBoundaryCalls).toBe(1);
+  });
+
   it("compares cross-platform identities and fails closed on frozen input drift", async () => {
     const windows = await createReadinessFixture("windows-native");
     const wsl = await createReadinessFixture("wsl2-linux");
@@ -130,6 +190,7 @@ describe("CodeIntel Agent uplift readiness", () => {
     });
 
     const drift = await createReadinessFixture("windows-native", { taskManifest: "current" });
+    await fs.appendFile(path.join(drift.sourceRoot, "benchmarks/coding-agent/v3/task-manifest.json"), " ");
     await expect(runCodeIntelAgentUpliftReadiness({
       platform: "windows-native",
       sourceRoot: drift.sourceRoot,
