@@ -330,6 +330,12 @@
         "maxTokens": {
           "const": 24000
         },
+        "taskTokenCaps": {
+          "const": {
+            "command.interactive-control": 36000,
+            "safety.boundary-enforcement": 32000
+          }
+        },
         "providerRetries": {
           "const": 0
         },

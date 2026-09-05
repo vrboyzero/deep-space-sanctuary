@@ -133,7 +133,8 @@ export function candidateRunPaths(config, slot) {
 
 export function assertCandidateTaskBudget(manifest, slot, execution) {
   const budgets = resolveCodingAgentBenchmarkTaskBudgets(manifest, slot.taskId);
-  if (budgets.maxTurns > execution.maxTurns || budgets.maxTokens > execution.maxTokens) {
+  const maxTokens = execution.taskTokenCaps?.[slot.taskId] ?? execution.maxTokens;
+  if (budgets.maxTurns > execution.maxTurns || budgets.maxTokens > maxTokens) {
     throw new Error(`Candidate task ${slot.taskId} exceeds the authorized turn/token cap.`);
   }
 }

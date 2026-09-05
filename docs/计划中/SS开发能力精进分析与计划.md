@@ -250,7 +250,7 @@ Go canary 的正式边界是：goCanaryEligible=true、productionEligible=false�
 
 ### 6.4 费用与持续授权
 
-2026-08-31 起持续开发费用上限由 50 RMB 调整为 80 RMB；Stage 0D runner 的内部 5.00 USD guard 保持不变。计划记录的 Stage 0D 基线为 observed=USD 3.44041929、当前=49.14809707 RMB，完整预留一次 USD 0.10 后仍低于 80 RMB；每次新调用前必须重新从 authoritative ledger 计算，达到或可能突破 80 RMB 时停止并重新申请。模型固定 deepseek-v4-flash，单 run USD 0.10、12 turns / 24,000 tokens、Provider retry=0。项目内数字不能替代 Provider 外部账单。
+2026-08-31 起持续开发费用上限由 50 RMB 调整为 80 RMB；Stage 0D runner 的内部 5.00 USD guard 保持不变。计划记录的 Stage 0D 基线为 observed=USD 3.44041929、当前=49.14809707 RMB，完整预留一次 USD 0.10 后仍低于 80 RMB；每次新调用前必须重新从 authoritative ledger 计算，达到或可能突破 80 RMB 时停止并重新申请。模型固定 deepseek-v4-flash，单 run USD 0.10、12 turns / 24,000 tokens、Provider retry=0。2026-09-05 用户明确批准仅 command.interactive-control / safety.boundary-enforcement 沿用冻结 manifest 的 36,000 / 32,000 tokens，新配置须显式绑定两项例外；其他任务仍为 24,000，旧配置和证据不改写。项目内数字不能替代 Provider 外部账单。
 
 新生成 .env/.env.local 只能在 containment、常规文件、非 reparse point 和 SHA-256 校验后送入 Windows 回收站并记录 cleanup log；不得回显敏感值、覆盖原文件或处理范围外文件。
 
@@ -258,7 +258,7 @@ Go canary 的正式边界是：goCanaryEligible=true、productionEligible=false�
 
 - 已宣布冻结的历史 candidate（包括 2977780、e1f8aaa、0e35c8b、6ec5db3、8f794af、6ce85bd 及此前记录）保持原终态，不重跑、不 reconcile、不启动其 WSL2；新政策不追溯改写旧证据。
 - 后继 active candidate 的已执行槽不可重跑或覆盖；同一完整 identity 与冻结运行配置下，只能经独立对账续跑未执行槽。普通失败仍计入分母，是否停止由第 6.6 节规定。
-- 不增加 turn/token、Provider retry 或单 run 费用，不使用旧调价口径。
+- 除第 6.4 节明确批准的两项 token 例外外，不增加 turn/token、Provider retry 或单 run 费用，不使用旧调价口径。
 - 零模型环境预检、七维 evidence producer 的可用性与 candidate 运行前材料未闭合前，不启动完整付费矩阵；依赖 completed aggregate 的真实 receipt、qualification 和 score 在矩阵完成后生成，不作为循环依赖的运行前条件。
 - 不 push 到 origin，不公开发布，不执行生产操作，不自动 merge/release/deploy。
 
@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **工程回归通过；两轮固定探索各 6 passed / 1 failed** | `0f85de0` 与 `9b5e4ba` 各 7 槽原样保留、无 unreported、费用/资源闭合；第二轮 Go 通过，Windows bug 的代码/tests/patch 通过但最终 JSON 合同失败；局部=`415/415`、双平台 build、完整工程回归=`6623/0/8`（passed/failed/skipped） | 暂停新增 Provider；输出协议失败保留待最小响应证据，正式 144 槽的两项预算口径仍待用户裁定 |
+| P2-C 分层开发与编排复用 | P2 | **工程回归通过；两项预算例外接入验证通过** | `0f85de0` 与 `9b5e4ba` 各 7 槽原样保留、无 unreported、费用/资源闭合；第二轮 Go 通过，Windows bug 的代码/tests/patch 通过但最终 JSON 合同失败；原完整工程回归=`6623/0/8`；本轮预算/编排定向=`51/51` | 先补齐输出协议诊断，再进行固定探索；完整正式验收仍未闭合 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -1336,16 +1336,33 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 最新权威账本=`tmp/p2c-layered-development/explore-9b5e4ba-1/cost-ledger-final.json`，SHA=`03ee1ca2c9a48475ec1b9f96b10e17cdc48d9355e88b348bb47386d52fb2568f`；next worst=`38.33803888 RMB < 80`。两个旧 candidate 及两轮探索的已有槽均不重跑，后继费用必须从此继续。
 - 两轮共 14 槽的报告/artifact 只读复算通过，trace/usage 均完整、敏感值/孤儿资源均为零，14 份 env cleanup 均为 recycled/remaining=0；完整回归后再查双平台 8 项资源全部零，两平台 staging Git status 均 clean。
 
+#### P2-C 预算合同实现结论：两项显式 token 授权（2026-09-05）
+
+##### 已完成内容
+
+1. **`自动化持续开发规则.md` 与本计划第 6.4 节更新**：
+   - 记录用户明确批准的 interactive / safety 两项 `36,000 / 32,000 tokens` 例外；其他任务仍为 `24,000`，模型、turns、费用和 retry 不变。
+2. **`candidate-runner-config.schema.json` / `coding-agent-candidate-materials.mjs` 扩展**：
+   - 新增可选 `execution.taskTokenCaps`，只接受两项批准值；逐任务 Gate 应用显式例外，旧配置保持原校验语义。
+3. **效果**：
+   - 后继配置可合法通过既有 manifest 的预算 Gate；擅自扩大任务范围、token 值或 turns 仍被拒绝，历史配置和槽位不改写。
+
+##### 验证结果
+
+- 本次修改为 JSON Schema、ESM 校验与文档，无 TypeScript 源码变更；TypeScript 编译沿用上一阶段双平台通过记录，本步未重复全仓构建。
+- 新增 2 项测试先失败后通过，相关配置/材料/native identity/session/progress/matrix 六文件 `51/51` 通过。
+- 零 Provider 调用；最新权威费用账本仍为 `explore-9b5e4ba-1/cost-ledger-final.json`，预算例外未改变正式分母或最终验收。
+
 ### 后续计划
 
 1. 保持 `8f794af/candidate-1` 与 `6ce85bd/candidate-1` 永久冻结，禁止重跑、reconcile 或为失败 identity 启动 WSL。
 2. worktree 清理隔离/相邻回归、最新完整工程回归及两轮共四个双平台 parallel-write 槽均已通过。宿主偶发占用来源保持 `record_only`；若再现，保留具体路径与阶段证据后做局部复现，不立即重跑完整矩阵。
 3. 用局部反馈回路关闭失败或明确复现边界，再验证启动诊断和必要回归；阶段稳定后才形成新的 source identity，不因每次小修直接重建正式候选。
-4. 两轮固定探索及 `9b5e4ba` 完整工程回归均已闭合，暂不追加 Provider。先取得 Windows bug 最终输出失败的最小响应证据或建立不含敏感正文的协议分类诊断，再决定是否修改处理逻辑；同时等待正式两项 token 上限裁定。两项条件未收敛前不创建正式候选，避免继续无证据调提示或产生必然被 Gate 阻断的版本。
+4. 两轮固定探索及 `9b5e4ba` 完整工程回归均已闭合。2026-09-05 用户已明确批准两项 token 例外，先将授权作为可验证的新配置合同接入并测试；并取得 Windows bug 最终输出失败的最小响应证据或建立不含敏感正文的协议分类诊断，再决定是否修改处理逻辑。局部验证闭合后进行固定探索，未收敛前不创建正式候选。
 5. 固定探索清单并完成少量真实模型验证，集中处理缺陷后再冻结新正式候选；按第 6.6 节执行完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt 和七维资格。普通失败只在资格仍可达且证据/资源闭合时继续未执行槽，硬门槛失败停止。
 6. 两个连续候选均须满足七维下限与 raw weighted `>=9.500`；任何旧 identity 均禁止事后改写 aggregate。
 
-当前关键闭环是 Windows 最终输出失败的可诊断证据及两项正式 token 预算冲突的裁定；共享编排、局部回归、环境预检和两轮固定探索已落地。完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选均未闭合，最终验收标准保持不变。
+当前关键闭环是 Windows 最终输出失败的可诊断证据；两项 token 例外已完成合同验证，共享编排、局部回归、环境预检和两轮固定探索已落地。完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选均未闭合，最终验收标准保持不变。
 
 ### 重要问题说明
 
@@ -1357,7 +1374,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - WSL 安装产生的 executable-bit 变化被 Windows UNC Git 忽略；已改由 Linux 原生 verifier 独立验证完整 identity，并补 4 项合同回归，处理决策为 `fix_now completed`。实际双平台材料 Gate 尚待更新 staging 后执行。
 - 新 SSD staging 的离线依赖安装缺少 `ws@8.21.1` 等锁定 tarball；按原锁文件使用 prefer-offline 补齐，未升级版本或改写 lockfile。WSL 安装改变了 relay 的 executable bit（`100644 -> 100755`），只恢复新 staging 中该文件到 Git 记录的 `644` 后，native identity clean。最初 checkout 在 clone 尚未完成时提前执行，未生效；等待 clone 正常结束后使用完整 SHA 成功 detach。处理决策为 `fix_now completed`，这些前置问题没有触发正式槽或 Provider。
 - 本轮完整回归唯一 `EPERM rename` 发生于 workspace restore，原报告永久保留；真实宿主占用原因未证实，但恢复逻辑缺少仓库已有有限重试的容错路径已由三条注入测试证明并修复，且新增每次重试前路径/内容复核。处理决策：恢复容错 `fix_now completed`，外部占用归因 `record_only`；不宣称首次全仓已全绿。新增测试类型错误 TS2322 已纠正并重新 build 通过。
-- 冻结 v3 manifest 的 `command.interactive-control` / `safety.boundary-enforcement` task override 分别为 `36,000/32,000 tokens`，与《自动化持续开发规则.md》第 2.2 条的单 run `24,000 tokens` 硬上限冲突。公共材料 Gate 已在 Provider 前拒绝超限任务，并补回归测试。已请求用户裁定是否仅允许这两项沿用既有 manifest 上限；答复前不修改任务真值、正式分母或预算，不启动这两项。其余零 Provider 验证继续，处理决策为 `split_task / 预算口径待确认`。
+- 冻结 v3 manifest 的 `command.interactive-control` / `safety.boundary-enforcement` task override 分别为 `36,000/32,000 tokens`，曾与持续规则的单 run `24,000 tokens` 上限冲突。2026-09-05 用户回复“确认允许”，已同步第 6.4 节与持续规则第 2.2 条；新配置须显式绑定这两个固定例外，其他预算和最终验收不变。处理决策为 `fix_now completed / 合同回归通过`；历史配置、manifest 任务真值和已执行结果保持原样。
 - 公共编排初版存在不同 session 可引用同一旧费用基线、只读模式写快照、探索结束未关闭，以及非零 runner exit 与 passed report 的费用复算不一致。已用失败测试确认并最小修复，处理决策为 `fix_now completed`；运行材料、WSL 与真实资源验证尚未闭合，不提前启动 Provider。配置 validator 初次错误使用 `compileOutputSchema` 返回值，现已使用 `compiled.validator`；新增 sensitive scan 导出缺少闭合括号已由语法/集成测试发现并修正。
 - 此前将普通产品失败、基础设施失败和无报告统一升级为整个 candidate 停止，并在局部修复后立即重建候选，导致准备材料、脚本迁移和模型调用重复；处理决策为 `fix_now / 分阶段迁移`：第 6.6 节已获用户确认，先落盘规则，再用受测公共编排替换后继候选政策。历史冻结结果保持不变，最终验收标准不放宽。
 - 此前全仓测试在用户要求暂停前出现并行 write fan-in 清理失败：`resolution discard failed: operation_status_uncertain; Coding benchmark parallel write left repository or worktree state behind.` 恢复后隔离=`1/1`，相邻三文件=`46/46`，本轮首次完整回归中同三文件仍为 `46/46`；没有复现原问题，未修改 worktree 删除逻辑。处理决策为 `record_only`，保留首次失败供再次出现时归因；此前会话中断 exit=`1` 不作为完整测试汇总。
