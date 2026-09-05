@@ -40,6 +40,7 @@ describe("Gateway bootstrap IPC through the Windows benchmark launcher", () => {
           expect(options.stdio[3]).toBe("ipc");
           expect(options.env.BELLDANDY_GATEWAY_STARTUP_DIAGNOSTIC).toBe("ipc-v1");
           const script = [
+            'process.on("message", message => { if (message?.type === "gateway.shutdown/v1") process.exit(0); });',
             'process.send({type:"gateway.startup/v1",phase:"entry"});',
             'process.send({type:"gateway.startup/v1",phase:"build_guard_complete"});',
             'process.send({type:"gateway.startup/v1",phase:"module_body",token:"must-not-retain"});',

@@ -1637,6 +1637,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 - TypeScript 增量编译 exit=0；全仓首次结果为 `6710 passed / 1 failed / 8 skipped`，不能记为全绿。唯一失败为 `gateway-bootstrap-readiness.test.mjs` 的 `report.child.exited=false`；原文件隔离后两个场景均复现，排除仅全量争用的判断。
 - 两项新增回归在修复前均失败；修复后 launcher、真实子进程 readiness 和诊断三个文件 `32/32` 通过，包含原失败路径。其余全仓通过记录保留，不跨身份冒充正式候选证据。
+- WSL 补验进一步发现跨平台启动测试替身不响应 IPC，误入 Windows 专用 taskkill 分支，两个场景失败（含 `taskkill.exe ENOENT`）。`gateway-bootstrap-readiness.test.mjs` 已补相同关闭协议，Windows 原文件 `2/2` 通过；新测试身份的 WSL 复核待执行。生产 Windows launcher 的平台边界不变，强制终止仍由已有时序测试覆盖。
 - 修复前 `024c947` 双平台 build/inputs 原生验真通过；WSL RPC/关闭/recovery/runtime 四文件 `22 passed / 1 skipped`，跳过项受平台条件约束。WSL 首个测试命令误把专用 Go/Docker 工具目录当成 Node 目录，在启动前失败；确认系统 Node `v22.22.2` 后原测试命令正常完成，没有模型调用。
 
 ### 后续计划
@@ -1652,6 +1653,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 ### 重要问题说明
 
 - `024c947` 完整回归暴露强制关闭确认竞态：taskkill 成功返回后，Node 尚未投递 exit/close，launcher 提前写入 `child.exited=false`。两个原场景隔离均失败，两条新增时序用例先红后绿；已增加有界确认和缺失事件失败关闭。处理决策为 `fix_now / 定向闭合`，保留首次全仓失败，不扩大到无关生命周期重构；新身份真实网关仍须预检。
+- WSL 启动测试替身协议未同步导致 Linux 尝试 `taskkill.exe`；检查后没有遗留本次 Node 子进程。处理决策为测试替身 `fix_now`，补齐 IPC 并在双平台定向验证；`e062edb` 已生成的 Windows inputs 未付费使用，后继正式材料绑定最终修复身份，禁止把该测试失败当作模型失败。
 - `4ae6eb4` WSL interactive 在错误序列拒绝后仍有活跃 job，Windows launcher 的 SIGTERM 使 Gateway 在约 15ms 内直接退出，留下 exited container 与 CID 目录；IPC 关闭路径已通过真实零 Provider 子进程+OCI 验证，回收后的全局资源为零。冻结账本仍记清理未完成；独立资源恢复凭据已追加并验真，仅用于后继准入，不覆盖终态。处理决策为关闭路径和恢复协议均 `fix_now / 本地闭合`。
 - 相同 WSL 运行首次 permission response 没有首次接受证明，后续步骤失配；新的 accounting 正确失败关闭，manual 保留5。RPC 的配对事件与握手 timer 竞态已由两条失败测试复现，修复保留首次在途响应；原日志未存原始 RPC 响应，不能断言每条失败都由该竞态造成。模型 write 参数还遗漏末尾换行，属于独立失败，不放宽精确审批策略。
 - JS 新 patch 保留错误的 `offset + 1`，真实 getter 三例只读复现均失败；模型最终 JSON 却声称没有修改。当前请求未明确传递已成功修改状态，已最小修正标签，源码与文档仍完整且只增加1个估算 token；真实效果待验证。旧 non_json/长度根因不能由本轮正常 stop 反推已修复。离线工具首次将 file_read revision 误作内容 SHA 而拒绝，核对其实际为路径+内容绑定后修正工具，原源文件与报告未改。
