@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **JS 通用修复已分层验证，准备固定探索** | `26a2615` 双平台 build、Windows `418/418`、WSL `119/119`；完整回归 `6646 passed / 1 failed / 8 skipped`，唯一系统重启 smoke 失败隔离未复现，原/相邻回归 `16/16`；补诊断后 `5/5` | 复用 staging、重新绑定 inputs 后执行固定七槽；全量首个失败保持原样且根因 record_only，正式验收未启动 |
+| P2-C 分层开发与编排复用 | P2 | **JS 通用修复已完成探索验证，进入首候选准备** | `26a2615` 双平台 build、Windows `418/418`、WSL `119/119`；完整回归 `6646 passed / 1 failed / 8 skipped`，系统 smoke 隔离/相邻 `16/16`、补诊断 `5/5`；`e0d181f` 固定七槽 `5 passed / 2 failed`，7/7 报告闭合 | JS/Go 两个真实产品失败保留分母并记录；不重跑失败槽，生成首个 `144` 报告计划前先做独立 Cartesian 验真 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -1432,6 +1432,41 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 完整回归 exit=`1`，`6646 passed / 1 failed / 8 skipped`（1013 文件）；失败为重启交付 smoke 状态，不是 JS 投影回归。原 fixture 由既有 afterEach 清理，首个具体失败原因无法回补。
 - 独立 production smoke=`3/3`；原测试/相邻 harness=`16/16`，包括真实重启只交付一次与失败清理；补诊断后的原测试=`5/5`。隔离通过不将原完整回归改记全绿。
 - 私有仓库只读访问正常；旧 Quality run=`33933109109` 的唯一失败为 dependency audit Gate，属于旧 commit，不能用于新 candidate 验收。后继仍需真实当前 CI。
+
+#### P2-C 固定探索实现结论：e0d181f 七槽真实反馈（2026-09-05）
+
+##### 已完成内容
+
+1. **固定探索配置与运行**：
+   - 双平台 inputs 重新生成并独立复算 `4/4/8`；配置=`exploration-config-e0d181f.json`，固定清单 hash 保持不变，继承 `explore-47256f6-1` 权威账本。
+   - 公共编排执行 7 个预选槽；普通产品失败没有重跑，后续槽继续完成，所有终态和环境清理均写入独立目录。
+2. **真实反馈**：
+   - 通过：`rules.nested-precedence/windows`、`bug.reproducible-fix/windows+WSL`、`system.parallel-write-fan-in/windows+WSL`，共 5 槽。
+   - 失败：`real-js.bug-fix/windows`（测试失败且两次 JSON review/repair 输出均为 non_json）、`real-go.bug-fix/WSL`（测试和 patch 通过但最终合同 `taskCompleted=false`），共 2 槽。
+3. **效果**：
+   - 探索真实验证了文档补齐并未关闭 JS 行为/输出合同失败，也未把 Go 的执行证据误判为完成；结果保持 `formal=false/unscored`，不进入正式 aggregate。
+
+##### 验证结果
+
+- 双平台 build、OCI 和 readiness 已通过；零 Provider readiness=`2042ms`、停止=`2061ms`，八项资源计数=`0`。
+- 探索报告 `7/7` reported，`pending/unreported=0/0`，资源关闭=true；本轮新增 Provider cost=`0.00609351 USD`，累计 observed/reserved=`2.46103946/2.24221000 USD`。
+- 权威账本=`tmp/p2c-layered-development/explore-e0d181f-1/cost-ledger-final.json`，SHA-256=`972d17eb2afa5ac239b388d4a68e6491576fcf235071977a4f563735f7132b69`；后续正式候选必须继承此账本。
+- JS 日志诊断确认两次复核均 `rawJsonKind/displayJsonKind=non_json`、`whitespaceOnlyChange=true`、输出 token 达上限；这不是显示处理破坏有效 JSON 的证据。Go 失败仍保留为产品工作流失败，不修改任务真值或追加特例。
+
+#### P2-C 首候选准备实现结论：不可覆盖 expected-report plan 独立验真（2026-09-05）
+
+##### 已完成内容
+
+1. **`tmp/p2c-layered-development/create-formal-config.mjs` 新建**：
+   - 从冻结 `e0d181f` harness 读取 manifest、identity 和合同，生成首候选配置与不可覆盖 expected-report plan。
+2. **独立 Cartesian 验真**：
+   - 计划必须包含 24 task × 2 platform × 3 attempt=`144`，逐项重建 report ID、平台、attempt 和目标路径；随后以 `EEXIST` 负例确认不可覆盖。
+3. **范围与边界**：
+   - 只创建首候选的 plan/config，不启动 Gateway、runner 或 Provider；正式槽执行和交付 evidence 留到 plan 验真及资源 Gate 后。
+
+##### 验证结果
+
+- 配置 helper 语法检查通过；正式 plan/config 尚未发布，待独立 verifier 和所有结构化目标不存在探针通过后再启动首槽。
 
 ### 后续计划
 
