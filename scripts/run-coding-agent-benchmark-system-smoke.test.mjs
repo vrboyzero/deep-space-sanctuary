@@ -35,7 +35,9 @@ describe("coding agent benchmark system smoke", () => {
       ],
     });
 
-    expect(artifact).toMatchObject({
+    expect(artifact, JSON.stringify(artifact.results.map(({ taskId, status, diagnostics }) => ({
+      taskId, status, diagnostics,
+    })))).toMatchObject({
       schemaVersion: "coding-agent-benchmark-system-smoke/v1",
       status: "passed",
       capabilities: {

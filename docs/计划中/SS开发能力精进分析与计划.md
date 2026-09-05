@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **真实 JS 请求裁剪缺口已证实并局部修复** | 第三轮仍为 `6 passed / 1 failed`；重建 review 输入估算与原日志一致，确认注释示例输入被截断；通用补齐后 `418/418`、Windows build 通过 | 复用 staging 做双平台及完整回归，再进行固定探索；原 JSON 失败原因未全部闭合，正式验收未启动 |
+| P2-C 分层开发与编排复用 | P2 | **JS 通用修复已分层验证，准备固定探索** | `26a2615` 双平台 build、Windows `418/418`、WSL `119/119`；完整回归 `6646 passed / 1 failed / 8 skipped`，唯一系统重启 smoke 失败隔离未复现，原/相邻回归 `16/16`；补诊断后 `5/5` | 复用 staging、重新绑定 inputs 后执行固定七槽；全量首个失败保持原样且根因 record_only，正式验收未启动 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -1413,12 +1413,32 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 行为验收：注释输入/输出成对保留；紧预算优先当前源码；超长、未闭合或不规范注释不补齐，LF/CRLF 原样保留。首次紧预算测试取点未覆盖 repair 的临界区，改为有界预算区间验证，产品上限未变。
 - 本环节零 Provider；接下来进行双平台和完整工程回归，再固定探索，不回写旧失败槽。
 
+#### P2-C 分层验证实现结论：保留完整回归失败与局部诊断（2026-09-05）
+
+##### 已完成内容
+
+1. **`26a2615` 双平台 staging 验证**：
+   - 原生 identity 均 clean 且一致，worktree SHA=`cfab3cf3…73c3c`；Windows/WSL build 通过，WSL 三个 mutation 文件 `119/119`。
+2. **完整回归与独立系统 smoke**：
+   - 原报告=`tmp/p2c-layered-development/full-regression-26a2615.json`，不覆盖；隔离入口=`system-smoke-26a2615-isolated/system-smoke.json`，三个系统任务全部通过。
+3. **`scripts/run-coding-agent-benchmark-system-smoke.test.mjs` 修改**：
+   - 断言附带任务状态与 diagnostics，避免临时 fixture 清理后仅剩笼统状态差异；测试行为、超时和产品逻辑不变。
+4. **效果**：
+   - 单个完整回归失败进入局部诊断，未重启完整测试、重建正式候选或调用 Provider；已有失败可追溯，后续同类失败可直接看到诊断。
+
+##### 验证结果
+
+- TypeScript：`26a2615` 双平台编译无错误；随后仅测试断言信息和文档变更，未新增 TypeScript 逻辑。
+- 完整回归 exit=`1`，`6646 passed / 1 failed / 8 skipped`（1013 文件）；失败为重启交付 smoke 状态，不是 JS 投影回归。原 fixture 由既有 afterEach 清理，首个具体失败原因无法回补。
+- 独立 production smoke=`3/3`；原测试/相邻 harness=`16/16`，包括真实重启只交付一次与失败清理；补诊断后的原测试=`5/5`。隔离通过不将原完整回归改记全绿。
+- 私有仓库只读访问正常；旧 Quality run=`33933109109` 的唯一失败为 dependency audit Gate，属于旧 commit，不能用于新 candidate 验收。后继仍需真实当前 CI。
+
 ### 后续计划
 
 1. 保持 `8f794af/candidate-1` 与 `6ce85bd/candidate-1` 永久冻结，禁止重跑、reconcile 或为失败 identity 启动 WSL。
-2. worktree 清理隔离/相邻回归、最新完整工程回归及两轮共四个双平台 parallel-write 槽均已通过。宿主偶发占用来源保持 `record_only`；若再现，保留具体路径与阶段证据后做局部复现，不立即重跑完整矩阵。
+2. worktree 清理、系统重启隔离/相邻回归已通过；最新完整工程回归保留一次系统重启 smoke 失败，根因未确定，保持 `record_only`。若再现，使用新增断言诊断收集具体阶段，先局部复现，不立即重跑完整矩阵。
 3. 用局部反馈回路关闭失败或明确复现边界，再验证启动诊断和必要回归；阶段稳定后才形成新的 source identity，不因每次小修直接重建正式候选。
-4. 真实 JS 的有界请求已证实裁剪掉文档示例输入，通用补齐通过 `418/418` 与 Windows build；先复用 staging 做双平台/完整回归和输入复算，再执行原固定七槽探索验证实际影响。JSON 原文失败保持独立判断，不改解析器、Schema、retry 或增加 Express 答案特例；出现新失败先局部诊断。
+4. 真实 JS 文档补齐已完成双平台 build、局部 `418/418 + 119/119` 与完整工程回归执行；先将本次测试诊断与记录同步到复用 staging，重新生成并验真 inputs，再执行原固定七槽探索验证实际影响。JSON 原文失败保持独立判断，不改解析器、Schema、retry 或增加 Express 答案特例；出现新失败先局部诊断。
 5. 固定探索清单并完成少量真实模型验证，集中处理缺陷后再冻结新正式候选；按第 6.6 节执行完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt 和七维资格。普通失败只在资格仍可达且证据/资源闭合时继续未执行槽，硬门槛失败停止。
 6. 两个连续候选均须满足七维下限与 raw weighted `>=9.500`；任何旧 identity 均禁止事后改写 aggregate。
 
@@ -1426,6 +1446,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 ### 重要问题说明
 
+- `26a2615` 完整回归唯一失败为 `system.restart-delivery-reconciliation` smoke 返回 failed；原测试只断言总状态，afterEach 又清理了具体 artifact，无法确认是子进程时限、文件占用还是其他原因。相同独立 smoke=`3/3`、原/相邻=`16/16` 均通过。处理决策：根因 `record_only`、断言诊断缺口 `fix_now completed`（修改后 `5/5`）；不提高超时、不增加重试、不据此改重启产品逻辑，也不宣称全量已绿。
 - 失败请求重建发现真实 JS 复核保留了预期结果但漏掉配对的示例输入和默认配置说明，原因是源码声明前固定字符窗口从文档注释中间截断；处理决策为 `fix_now / 通用补齐局部通过，真实效果待探索`。这只能确认信息缺口，不证明原模型必然会因此犯错或 JSON 失败；后两项仍须真实反馈，不将局部测试当作任务成功。
 - 第三轮 Windows `real-js.bug-fix` 的 patch 同时改写 host label 顺序和切片边界，但仍保留额外的 `-1`，`testsPassed/patchAccepted=false`、regressionCount=`1`；真实 getter 三例只读复现全部失败。两次 objective 输出原文均无效 JSON，首次只发生空白收缩，第二次文本未变，排除本次由 `stripToolCallsSection` 损坏有效 JSON 的假设。处理决策为 `record_only / 模型代码与协议失败`；现有双无效输出回归仍正确失败关闭，未发现可据此修改解析器的通用缺陷，不通过增加输出预算、重试或 benchmark 特例掩盖失败。
 - 本轮首次新探索配置生成早于两端 inputs producer 完成，在读取尚不存在的 Windows inputs 时返回 `ENOENT`，未发布配置或调用 Provider。等待两 producer 均 exit=`0` 后再生成并独立校验成功，处理决策为 `fix_now completed / 严格等待依赖完成再执行后继命令`。
