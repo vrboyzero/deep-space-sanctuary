@@ -19,6 +19,7 @@ import {
 } from "./react-workspace-mutation-source-context.js";
 import { isUnsafeCorrectionAfterCompletedTraceValuesApiMigration } from "./react-workspace-mutation-ts-api-migration.js";
 import { WORKSPACE_MUTATION_SOURCE_VERIFICATION_INSTRUCTION } from "./react-workspace-mutation-evidence-instructions.js";
+import { readClippedLeadingDocumentation } from "./react-workspace-mutation-documentation.js";
 
 export const WORKSPACE_MUTATION_RECOVERY_OUTPUT_TOKEN_RESERVE = 4_096;
 export const WORKSPACE_MUTATION_RECOVERY_MIN_OUTPUT_TOKEN_RESERVE = 1_024;
@@ -2954,6 +2955,7 @@ export function buildWorkspaceMutationObjectiveReviewRequest(input: {
       : "Trusted required paths eligible for one post-write correction",
     allowNoTools: true,
     latestRequiredFileReadEvidenceOnly: true,
+    includeLeadingDocumentation: true,
   });
   return request && input.structuredOutputRequired
     ? { ...request, jsonObjectOutputRequired: true }
@@ -3025,6 +3027,7 @@ export function buildWorkspaceMutationObjectiveOutputRepairRequest(input: {
     trustedPathsLabel: "Trusted required paths for the bounded objective-review output repair",
     allowNoTools: true,
     latestRequiredFileReadEvidenceOnly: true,
+    includeLeadingDocumentation: true,
   });
   return request
     ? { ...request, jsonObjectOutputRequired: true }
@@ -3042,6 +3045,7 @@ function buildBoundedWorkspaceMutationRequest(input: {
   latestRequiredFileReadEvidenceOnly?: boolean;
   includeMutationBranchTail?: boolean;
   includeAdjacentDuplicateClosingDelimiterEvidence?: boolean;
+  includeLeadingDocumentation?: boolean;
   tokenEstimateContext?: TokenEstimateOptions;
 }): WorkspaceMutationRecoveryRequest | undefined {
   const maxInputTokens = normalizePositiveInt(input.maxInputTokens);
@@ -3143,6 +3147,7 @@ function buildBoundedWorkspaceMutationRequest(input: {
       input.includeAdjacentDuplicateClosingDelimiterEvidence,
       input.includeMutationBranchTail,
       estimateTokens(item.content, input.tokenEstimateContext) > contentTokenBudget,
+      input.includeLeadingDocumentation,
     );
     const boundedContent = clipWorkspaceMutationEvidence(
       item.toolName,
@@ -3369,6 +3374,7 @@ function projectFileReadEvidence(
   includeAdjacentDuplicateClosingDelimiterEvidence = false,
   includeMutationBranchTail = false,
   projectTaskContextForBudget = false,
+  includeLeadingDocumentation = false,
 ): string {
   if (toolName !== "file_read") {
     return content;
@@ -3431,6 +3437,7 @@ function projectFileReadEvidence(
           FILE_READ_TASK_CONTEXT_MAX_ITEMS - closingDelimiterContexts.length,
           FILE_READ_TASK_CONTEXT_MAX_CHARS - reservedContextChars,
           includeMutationBranchTail,
+          includeLeadingDocumentation,
         )
       : []),
   ];
@@ -3451,7 +3458,8 @@ function collectTaskRelevantFileContexts(
   maxItems = FILE_READ_TASK_CONTEXT_MAX_ITEMS,
   maxChars = FILE_READ_TASK_CONTEXT_MAX_CHARS,
   includeMutationBranchTail = false,
-): Array<{ identifier: string; lines: string; context: string }> {
+  includeLeadingDocumentation = false,
+): Array<{ identifier: string; lines: string; context: string; leadingDocumentation?: string }> {
   if (maxItems <= 0 || maxChars <= 0) {
     return [];
   }
@@ -3473,6 +3481,7 @@ function collectTaskRelevantFileContexts(
     identifier: string;
     lines: string;
     context: string;
+    leadingDocumentation?: string;
   }> = [];
   const retainedRanges: Array<{ start: number; end: number }> = [];
   let retainedChars = 0;
@@ -3523,13 +3532,20 @@ function collectTaskRelevantFileContexts(
         continue;
       }
       const context = fileContent.slice(start, end);
+      const documentation = includeLeadingDocumentation
+        ? readClippedLeadingDocumentation(fileContent, start, matchIndex)
+        : undefined;
+      const leadingDocumentation = documentation && context.length + documentation.length <= remainingChars
+        ? documentation
+        : undefined;
       retainedRanges.push({ start, end });
-      retainedChars += context.length;
+      retainedChars += context.length + (leadingDocumentation?.length ?? 0);
       const startLine = sourceLineAtOffset(fileContent, start);
       const endLine = sourceLineAtOffset(fileContent, Math.max(start, end - 1));
       contexts.push({
         identifier,
         lines: `${startLine}-${endLine}`,
+        ...(leadingDocumentation ? { leadingDocumentation } : {}),
         context,
       });
     }
@@ -3847,6 +3863,14 @@ function clipWorkspaceMutationEvidence(
     if (estimateTokens(candidate, tokenEstimateContext) <= tokenBudget) {
       selectedContexts.push(context);
       continue;
+    }
+    const { leadingDocumentation, ...sourceContext } = context as Record<string, unknown>;
+    if (typeof leadingDocumentation === "string") {
+      const sourceOnly = JSON.stringify({ ...metadata, taskRelevantContexts: [...selectedContexts, sourceContext] });
+      if (estimateTokens(sourceOnly, tokenEstimateContext) <= tokenBudget) {
+        selectedContexts.push(sourceContext);
+        continue;
+      }
     }
     if (!preserveStructuredContextTail) {
       continue;

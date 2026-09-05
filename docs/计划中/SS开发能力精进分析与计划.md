@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **预算与诊断接入完成；第三轮固定探索 6 passed / 1 failed** | `47256f6` 双平台 build、Windows 定向=`454/454`、WSL=`46/46`；7 槽证据/费用/资源闭合；Windows bug 本次通过，真实 JS 补丁及最终输出失败，原文无效 JSON 已由分类诊断确认 | JS 偏移错误已只读复现；保留模型能力失败，未发现足以支持修改解析器的证据，不重复同配置探索或创建正式候选 |
+| P2-C 分层开发与编排复用 | P2 | **真实 JS 请求裁剪缺口已证实并局部修复** | 第三轮仍为 `6 passed / 1 failed`；重建 review 输入估算与原日志一致，确认注释示例输入被截断；通用补齐后 `418/418`、Windows build 通过 | 复用 staging 做双平台及完整回归，再进行固定探索；原 JSON 失败原因未全部闭合，正式验收未启动 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -1394,19 +1394,39 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 新增费用=`0.00490109 USD`，累计 observed/reserved=`2.45494595/2.24221000 USD`，下一槽最坏=`38.37724760 RMB < 80`。
 - 最新权威账本=`tmp/p2c-layered-development/explore-47256f6-1/cost-ledger-final.json`，SHA=`c7b7b07830ff7d6183e8707d3ef8ecc82c77fc6e7abb399dccc37417737b7151`。后继必须继承此账本；正式 plan、144 槽、资格和第二候选均未启动或完成。
 
+#### P2-C 真实 JS 诊断实现结论：有界源码文档补齐（2026-09-05）
+
+##### 已完成内容
+
+1. **`tmp/p2c-layered-development/analyze-js-review.mjs` 重建失败输入**：
+   - 使用保留任务、原生 apply_patch 定义和哈希一致的失败源码，review 输入估算=`1864`，与原日志一致；完整函数仍在，注释中的示例输入和默认 offset 说明被前置 `192 chars` 窗口截断。
+   - 原 run 未读取/运行测试，不能声称测试证据被丢弃；无效 JSON 原文不是显示处理导致，此链继续保留独立失败判断。
+2. **`react-workspace-mutation-documentation.ts` 新建、`react-workspace-mutation.ts` 接线**：
+   - 仅 objective review/output repair 补齐标准短文档注释原文，最多 `1024 chars`，计入原字符与 token 预算；紧预算优先保留当前源码，初始编辑与工具权限保持不变。
+   - 风险中等，影响模型可见复核证据；范围为源码投影，不新增模型调用、不执行注释、不更改任务答案、Schema 或预算。实现为一个小 helper 与原 owner 接线，可独立回退。
+3. **效果**：
+   - 同失败源码的 review/repair 请求同时保留示例输入、输出及完整相关函数，估算=`2036/1988 <=2048`；仅证明信息缺口修复，尚未证明模型成功率改善。
+
+##### 验证结果
+
+- Windows `corepack pnpm build` 通过，TypeScript 无错误；20 个相邻文件 `418/418` 通过（新增 12 项，含中性分页用例先失败后通过）。
+- 行为验收：注释输入/输出成对保留；紧预算优先当前源码；超长、未闭合或不规范注释不补齐，LF/CRLF 原样保留。首次紧预算测试取点未覆盖 repair 的临界区，改为有界预算区间验证，产品上限未变。
+- 本环节零 Provider；接下来进行双平台和完整工程回归，再固定探索，不回写旧失败槽。
+
 ### 后续计划
 
 1. 保持 `8f794af/candidate-1` 与 `6ce85bd/candidate-1` 永久冻结，禁止重跑、reconcile 或为失败 identity 启动 WSL。
 2. worktree 清理隔离/相邻回归、最新完整工程回归及两轮共四个双平台 parallel-write 槽均已通过。宿主偶发占用来源保持 `record_only`；若再现，保留具体路径与阶段证据后做局部复现，不立即重跑完整矩阵。
 3. 用局部反馈回路关闭失败或明确复现边界，再验证启动诊断和必要回归；阶段稳定后才形成新的 source identity，不因每次小修直接重建正式候选。
-4. 两项 token 例外与无正文诊断已闭合，第三轮固定探索也已完成。当前先基于真实 JS 的偏移错误和两次无效原文收敛可验证的工作流假设；只有能够区分原因的最小复现或预先固定的诊断实验才继续，不为追求单次通过重复同配置探索。现有证据不足以支持修改解析器、放宽 Schema、增加 retry 或针对 Express 添特例；模型能力失败保留为 `record_only`，正式候选暂不创建。
+4. 真实 JS 的有界请求已证实裁剪掉文档示例输入，通用补齐通过 `418/418` 与 Windows build；先复用 staging 做双平台/完整回归和输入复算，再执行原固定七槽探索验证实际影响。JSON 原文失败保持独立判断，不改解析器、Schema、retry 或增加 Express 答案特例；出现新失败先局部诊断。
 5. 固定探索清单并完成少量真实模型验证，集中处理缺陷后再冻结新正式候选；按第 6.6 节执行完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt 和七维资格。普通失败只在资格仍可达且证据/资源闭合时继续未执行槽，硬门槛失败停止。
 6. 两个连续候选均须满足七维下限与 raw weighted `>=9.500`；任何旧 identity 均禁止事后改写 aggregate。
 
-当前关键闭环是把真实 JS 补丁/输出失败转化为有证据支持的通用工作流改进，而非继续盲目改提示或复跑；两项 token 例外、共享编排、无正文诊断、局部回归、环境预检和三轮固定探索已落地。完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选均未闭合，最终验收标准保持不变；目前没有新的授权待确认事项。
+当前关键闭环是验证有证据支持的文档裁剪修复在真实模型上的效果；两项 token 例外、共享编排、无正文诊断和局部修复已落地。完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选均未闭合，最终验收标准保持不变；目前没有新的授权待确认事项。
 
 ### 重要问题说明
 
+- 失败请求重建发现真实 JS 复核保留了预期结果但漏掉配对的示例输入和默认配置说明，原因是源码声明前固定字符窗口从文档注释中间截断；处理决策为 `fix_now / 通用补齐局部通过，真实效果待探索`。这只能确认信息缺口，不证明原模型必然会因此犯错或 JSON 失败；后两项仍须真实反馈，不将局部测试当作任务成功。
 - 第三轮 Windows `real-js.bug-fix` 的 patch 同时改写 host label 顺序和切片边界，但仍保留额外的 `-1`，`testsPassed/patchAccepted=false`、regressionCount=`1`；真实 getter 三例只读复现全部失败。两次 objective 输出原文均无效 JSON，首次只发生空白收缩，第二次文本未变，排除本次由 `stripToolCallsSection` 损坏有效 JSON 的假设。处理决策为 `record_only / 模型代码与协议失败`；现有双无效输出回归仍正确失败关闭，未发现可据此修改解析器的通用缺陷，不通过增加输出预算、重试或 benchmark 特例掩盖失败。
 - 本轮首次新探索配置生成早于两端 inputs producer 完成，在读取尚不存在的 Windows inputs 时返回 `ENOENT`，未发布配置或调用 Provider。等待两 producer 均 exit=`0` 后再生成并独立校验成功，处理决策为 `fix_now completed / 严格等待依赖完成再执行后继命令`。
 - 第二轮 Windows `bug.reproducible-fix` 的代码、tests、patch 全通过，但两次 objective review/output repair 均未产生有效 JSON，run 以 error 关闭。日志有 response/display 长度差异但无原始响应正文，无法确认是否为模型输出或文本协议处理；合成测试证实空白收缩也可产生相似长度差。已新增无正文分类诊断并保留双无效输出失败关闭，未放宽 Schema 或追加重试，处理决策为 `record_only / 真实根因待证据；fix_now completed / 诊断接入`。
