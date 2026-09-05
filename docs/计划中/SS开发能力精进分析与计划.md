@@ -1053,7 +1053,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C post-correction final output | P2 | **Fix Mode 完成并交付 private/main** | 零 Provider 回归稳定复现；新增=`2/2`、workspace-mutation=`415/415`、全仓=`6558 passed / 3 skipped`；build 与 benchmark contract 通过；commit=`6ce85bd` | 以 `6ce85bd` 建立全新双平台 candidate，验证真实模型路径 |
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
-| P2-C 分层开发与编排复用 | P2 | **JS 通用修复已完成探索验证，进入首候选准备** | `26a2615` 双平台 build、Windows `418/418`、WSL `119/119`；完整回归 `6646 passed / 1 failed / 8 skipped`，系统 smoke 隔离/相邻 `16/16`、补诊断 `5/5`；`e0d181f` 固定七槽 `5 passed / 2 failed`，7/7 报告闭合 | JS/Go 两个真实产品失败保留分母并记录；不重跑失败槽，生成首个 `144` 报告计划前先做独立 Cartesian 验真 |
+| P2-C 分层开发与编排复用 | P2 | **首候选 6/144 后冻结；审批计量已授权且本地修复通过** | `e0d181f` 探索 `5 passed / 2 failed`，formal 首 6 槽全 passed、资源与费用闭合；新计量/预检/相邻回归 `115/115`、TypeScript 与 benchmark 合同检查通过；旧六槽报告与账本逐项复核未变，新版本合同预检不再冲突；用户已明确批准逐条验真自动审批豁免 | 同范围不重复确认；下一步验证新身份的双平台运行与 JS/Go 终止原因。历史候选保持冻结、138 槽未执行；完整候选、交付 evidence 与第二候选仍未闭合 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -1462,25 +1462,117 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 2. **独立 Cartesian 验真**：
    - 计划必须包含 24 task × 2 platform × 3 attempt=`144`，逐项重建 report ID、平台、attempt 和目标路径；随后以 `EEXIST` 负例确认不可覆盖。
 3. **范围与边界**：
-   - 只创建首候选的 plan/config，不启动 Gateway、runner 或 Provider；正式槽执行和交付 evidence 留到 plan 验真及资源 Gate 后。
+   - 准备环节只创建首候选的 plan/config；独立验真与资源 Gate 通过后执行的正式槽另见下节冻结结论。
 
 ##### 验证结果
 
-- 配置 helper 语法检查通过；正式 plan/config 尚未发布，待独立 verifier 和所有结构化目标不存在探针通过后再启动首槽。
+- 配置 helper 语法检查、独立 Cartesian `144/144` 与 `EEXIST` 不可覆盖负例通过；materials 与资源 Gate 通过。
+- plan=`tmp/p2c-layered-development/formal-e0d181f-1.expected-report-plan.json`，SHA-256=`c935ab388da1ba68f243112844cb3e5dfa46e1fba72b605d28146ec7d0d93fa2`。
+- config=`tmp/p2c-layered-development/formal-config-e0d181f-1.json`；规范化 config SHA-256=`966b768351bb3a09f8ae9c21fb2b5189dada00d422aee428a4a5d174cbfdd1c8`，原始文件 SHA-256=`414cd225bb453453fe4ff618106b53fb2d8843b3325a427fdd14ff0d3e01c8d6`。
+
+#### P2-C 首候选实现结论：e0d181f 六槽通过后因指标矛盾冻结（2026-09-05）
+
+##### 已完成内容
+
+1. **`artifacts/p2c-layered-candidates/e0d181f/candidate-1` 正式证据**：
+   - Windows attempt-1 的 rules、feature、bug、tests、navigation、interactive 六槽均 passed，完整报告 `6/144`；第六槽后冻结，剩余 `138` 槽未执行，正式 WSL 未启动。
+   - 冻结原因为 `dimension:cli_tui/interactive_cli/manual_intervention_count`。交互测试要求五次权限请求，evaluator 将每次请求计入人工介入，mapping 要求该指标总和 `<=0`。
+2. **`tmp/p2c-layered-development/formal-e0d181f-1/cost-ledger-final.json` 权威费用**：
+   - observed/reserved=`2.46351238/2.24221000 USD`，本正式候选新增=`0.00247292 USD`；下一次最坏累计=`38.44577904 RMB <80`，不是预算阻塞。
+   - SHA-256=`69ff21814764890c6a9aa39265f376598dd2ca208b350ffe72089401d210ba47`；任何后继必须继承此账本，不能继续引用探索结束时的旧基线。
+3. **效果**：
+   - 首候选已保留完整已执行证据，遇不可达条件后停止继续花费；此候选永久冻结，不重跑、reconcile、改写终态或启动其 WSL。
+
+##### 验证结果
+
+- TypeScript：冻结 `e0d181f` 双平台 build 已通过；此次正式执行未修改源码。
+- 正式六槽全部通过；`pending/unreported=0/0`，resourceCleanupComplete=`true`。`6/144` 不能表述为完整验收或已具备数值资格。
+- 原终端 progress 显示 `0/144` 是冻结分支提前返回所致，权威 ledger 为 `6/138`；新修复只改善后继读取时的显示，不覆盖历史输出。
+- 当前工作区独立只读重建六份报告/逐 artifact hash 和 session journal 后，新 progress 正确返回 `stop / processed=6 / remaining=138`；所有终态与权威账本 hash 保持一致，费用守卫复算为 `38.44577904 RMB`。
+
+#### P2-C 运行前检查实现结论：合同矛盾拦截与冻结计数修复（2026-09-05）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-candidate-contract-preflight.mjs` 新建，`coding-agent-candidate-materials.mjs` 接入**：
+   - 由 `coding-agent-benchmark-fixtures.mjs` 提供成功所需指标下限；复用真实审批步骤数量，不将特定任务答案写入编排，也不调整评分阈值或 evaluator 计数。
+   - 对必须全部成功的任务计算最低总量；当前交互六槽的下限为 `6*5=30`，与 mapping 最大值 `0` 冲突，在 plan/inputs/运行槽/费用预留之前拒绝 formal。
+   - 预检仅检查已有确定下限的矛盾；无冲突不保证候选成功，探索仍为 unscored。
+2. **`scripts/coding-agent-candidate-progress.mjs` 修复**：
+   - 冻结或存在无报告槽时先校验并计数已有观测，再返回停止状态；观测无效仍不能重启已冻结候选。
+3. **效果**：
+   - 已知不可达合同在零 Provider 阶段暴露；暂停/冻结后的计数可与真实已执行证据一致，减少无收益的候选创建和付费运行。
+
+##### 验证结果
+
+- TypeScript：`node node_modules/typescript/bin/tsc -b --pretty false` exit=`0`。
+- 新增及相邻定向回归 `92/92`（9 文件，含 11 项新增）：预检/材料/进度 `31/31`，fixture/审批/编排/评分 `61/61`。
+- 测试先行复现预检遗漏和冻结计数两项缺口；新预检首次误用不存在的 `suite.revision`，真实合同测试未通过，已改为验证 v3 schema 后使用明确 revision，复验通过。
+- 本环节零 Provider、未新建正式候选、未重复完整回归；原全仓一次系统 smoke 失败继续保留，不能由定向通过改记全绿。
+
+##### 审批计量已授权方案（2026-09-05）
+
+- **授权记录**：用户在明确了解计分影响、权限边界、历史结果和误豁免风险后回复“确认，允许”，并要求持久化避免再次阻塞。此项持续授权已同步 `自动化持续开发规则.md` 第 2.5 条；后续恢复或候选推进不得再次将同一范围列为待确认，仅拟超出授权范围时另行确认。授权完成不等于代码或正式验收完成。
+- **已批准口径**：`manualInterventionCount` 统计运行开始后真正需要人工协助的权限处理；只排除预先声明、固定 controller 自动响应且逐条验真绑定的 fixture 审批。权限边界、五个交互动作和安全拒绝探针仍照常执行，最终七维下限、两个连续完整 `144` 槽、raw weighted `>=9.500` 不变。
+- **必要证据与失败路径**：校验原始 events、contract hash、run/conversation/agent binding、toolCallId、操作 hash、顺序与 response accepted；额外请求、人工响应、绑定漂移、证据缺失或响应失败不得凭 summary/status 整体归零，继续计数或失败关闭。使用可区分的新计量合同，仅作用于未来运行。
+- **风险与工作量**：中等风险，主要风险是错误排除额外审批而虚增分数；预计公共审批证据 verifier、evaluator 接线及反例回归约半人日至一人日，不含双平台和模型观察。完成条件是精确自动序列可区分，额外/漂移/失败证据均不豁免；不新增产品自动放权、不改评分或旧 report。
+- **兼容边界**：旧口径仍用于旧版本证据；`e0d181f/candidate-1` 保持冻结、原人工介入计数不回写。新口径实现与定向反例验证闭合后才继续后继候选；本次授权独立于此前的两个固定 token 上限授权，两者均持续有效。
+
+#### P2-C JS/Go 诊断实现结论：非空模型响应终止原因（2026-09-05）
+
+##### 已完成内容
+
+1. **`packages/belldandy-agent/src/model-output-postprocess.ts` 扩展**：
+   - 增加固定终止原因分类，未知值统一 `unknown`，不回显未知 Provider 字符串或响应正文。
+2. **`packages/belldandy-agent/src/tool-agent.ts` 接线**：
+   - stream、Anthropic、Chat Completions 的 `response_extracted` 日志记录分类后的 `finishReason`，保留原有 modelCallIndex/conversation 绑定。
+3. **效果**：
+   - 后续真实响应可凭 Provider 终止原因判断是否长度截断，不再只从输出 token 数推测；请求预算、JSON mode、工具调用和失败关闭行为不变。
+
+##### 验证结果
+
+- TypeScript 增量编译 exit=`0`；定向 `61/61`（3 文件，含 8 项新增分类测试及原 objective 双无效输出回归增强）。
+- 测试先行证实原非空响应遗漏 `finish_reason=length`；修改后两个无效 review/repair 的终止原因可见，仍只调用原有 4 次模拟响应并以 error 结束，不增加重试或恢复额度。
+- 本环节零 Provider；旧 JS/Go 日志不能回补缺失字段，真实终止原因仍未确定。本轮共 `153/153` 定向测试通过，未重跑完整工程回归或双平台正式矩阵。
+
+#### P2-C 审批计量实现结论：逐条验真的自动响应豁免（2026-09-05）
+
+##### 已完成内容
+
+1. **`自动化持续开发规则.md`、本计划文档**：
+   - 持久化用户“确认，允许”的授权及适用范围，同范围断点恢复和候选推进无需重复确认；原始请求、权限边界、历史冻结和最终验收标准保留。
+2. **`scripts/coding-agent-benchmark-approval.mjs` / `coding-agent-benchmark-approval-accounting.mjs`**：
+   - 新 v3 contract 显式绑定 `coding-agent-benchmark-approval-accounting/v1`，逐响应记录 controller 来源及首次接受证明，保留请求/自动响应/人工介入三项计数。
+   - 离线重放原始事件，与源 fixture 策略、SHA、run/conversation/toolCallId、操作、顺序和汇总完整对账；任何漂移均不豁免。Gateway `alreadyResolved=true`、响应无 accepted/operation/正确绑定时均失败关闭。
+3. **`scripts/coding-agent-benchmark-fixtures.mjs`、`run-coding-agent-benchmark.mjs`、candidate materials/preflight 与两份 approval Schema**：
+   - runner 发布新版本，interactive/safety evaluator 仅在独立验真后扣除自动响应；材料读取再次复算并与 report 对照，预检使用明确计量版本对应的成功下限。
+   - 无版本的旧证据保留旧计数，原 manifest/scorecard/mapping 阈值不变，不改写旧候选或增加产品自动授权。
+4. **效果**：
+   - 交互五次自动许可和安全四次自动拒绝可在完整证据下记为零人工介入；额外、人工、缺失、漂移或响应失败均不能通过计量豁免隐藏。
+
+##### 验证结果
+
+- TypeScript 增量编译 exit=`0`；最终定向回归 `115/115`（9 文件，含 27 项新 accounting 用例），覆盖两个实际 evaluator、历史计量和错误响应；此前 runner 相邻验证 `118/118`，包含真实 Gateway tracer/recovery，不作为付费 formal 证据。
+- `node --import tsx scripts/verify-coding-agent-benchmark-contract.mjs` 通过；新旧 Schema 均兼容原版本边界，未知计量版本被拒绝。
+- 原 `e0d181f` 六槽全部只读复核，interactive 仍为 `manualInterventionCount=5`，其他原计数和 artifact hash 未变；费用账本 SHA-256 仍为 `69ff21814764890c6a9aa39265f376598dd2ca208b350ffe72089401d210ba47`。旧口径预检仍报告 `30>0`，新明确版本无此冲突。
+- 本环节零付费模型调用；尚未执行新身份双平台真实审批或完整 formal，不将本地通过外推为两个完整候选达标。
 
 ### 后续计划
 
-1. 保持 `8f794af/candidate-1` 与 `6ce85bd/candidate-1` 永久冻结，禁止重跑、reconcile 或为失败 identity 启动 WSL。
-2. worktree 清理、系统重启隔离/相邻回归已通过；最新完整工程回归保留一次系统重启 smoke 失败，根因未确定，保持 `record_only`。若再现，使用新增断言诊断收集具体阶段，先局部复现，不立即重跑完整矩阵。
-3. 用局部反馈回路关闭失败或明确复现边界，再验证启动诊断和必要回归；阶段稳定后才形成新的 source identity，不因每次小修直接重建正式候选。
-4. 真实 JS 文档补齐已完成双平台 build、局部 `418/418 + 119/119` 与完整工程回归执行；先将本次测试诊断与记录同步到复用 staging，重新生成并验真 inputs，再执行原固定七槽探索验证实际影响。JSON 原文失败保持独立判断，不改解析器、Schema、retry 或增加 Express 答案特例；出现新失败先局部诊断。
-5. 固定探索清单并完成少量真实模型验证，集中处理缺陷后再冻结新正式候选；按第 6.6 节执行完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt 和七维资格。普通失败只在资格仍可达且证据/资源闭合时继续未执行槽，硬门槛失败停止。
-6. 两个连续候选均须满足七维下限与 raw weighted `>=9.500`；任何旧 identity 均禁止事后改写 aggregate。
+1. 审批计量已完成本地实现和反例验证；先将稳定源码形成新身份并做双平台必要验证，真实运行须同时保留新计量版本、原始请求和逐条证明。该步骤确认真实 Gateway 接受证据与本地测试一致，无需再次申请同项授权。
+2. 对现有 JS/Go 失败保留离线诊断：JS 新 patch 的零值处理仍有回归；两者 JSON review/repair 均为原始无效响应。非空响应终止原因诊断已补齐并局部验证，但旧日志缺失值不能回补；后续受控探索须采集该字段，不能只凭 token 上限改变预算、解析器或增加特例。
+3. 口径及产品修复稳定后，复用 staging/依赖缓存，重新绑定双平台 identity、inputs、预检和不可覆盖 plan；按固定探索清单验证真正改变的行为，避免无新证据重复同批模型调用。
+4. 后继正式候选仅在合同、工程与资源 Gate 闭合后进入完整 `144` 槽；普通失败只在资格仍可达且证据/资源闭合时续跑，硬门槛失败停止。继承 `formal-e0d181f-1` 权威费用，所有已冻结 identity 保持只读。
+5. 完整候选后采集当前 identity 的真实 CI/CLI/TUI/Git delivery receipt、aggregate 与七维资格，再执行第二个连续完整候选；两个候选均须满足七维下限、raw weighted `>=9.500` 和全部硬 Gate。
 
-当前关键闭环是验证有证据支持的文档裁剪修复在真实模型上的效果；两项 token 例外、共享编排、无正文诊断和局部修复已落地。完整 `144` 槽、真实 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选均未闭合，最终验收标准保持不变；目前没有新的授权待确认事项。
+当前关键闭环是新计量版本的双平台真实运行，以及 JS/Go 行为与 JSON 输出失败的证据收敛；完整 `144` 槽、当前 CI/CLI/TUI/Git delivery receipt、七维数值资格和第二候选均未完成。最终验收标准保持不变，审批计量与费用授权均已明确并持续有效。
 
 ### 重要问题说明
 
+- 首正式候选六槽全部 passed，仍被 `manual_intervention_count` 停止：成功 fixture 强制五次权限请求，旧 evaluator 全部计为人工介入，六个交互槽最低 `30` 而 mapping 最大为 `0`。处理决策：预检/冻结计数与版本化计量 `fix_now / 本地闭合`；用户已于 2026-09-05 明确授权，同范围无需再次确认。新 verifier 必须逐条回放，曾尝试的直接归零方案已全部撤回，相关临时测试不算最终实现证据。
+- Gateway 的权限响应可能返回 `ok=true/accepted=true/alreadyResolved=true`，表示请求已被先前响应者处理；只检查 `ok` 会把人工先行处理误计为自动完成。已用三项失败测试确认并修复：新计量要求 `responseFreshlyAccepted=true`，同时核对 operation/run/worktree 绑定，重复接受或裸传输成功均不豁免；旧版本行为不改。处理决策为 `fix_now completed`。
+- benchmark 合同 verifier 首次直接 `node` 调用因源码 TypeScript 的 `.js` 映射缺少 tsx loader 返回 `ERR_MODULE_NOT_FOUND`；使用 `node --import tsx` 后通过，未修改产品解析规则。现存 date-time format 警告保留为 `record_only`，不扩大本次计量修复范围。
+- 第四轮 `e0d181f` 探索仍有 JS/Go 两项真实产品失败：JS 修正 slice 的偏移后又加入 `if (!offset) offset=2`，破坏显式 `0`，tests=false、patch=true、regression=1；Go patch/tests 通过但 `taskCompleted=false`。两者 review/repair 原文均 non_json，显示处理只改变空白；旧非空响应无 finish_reason 记录，不能断言是截断或 JSON mode 遗漏。处理决策为根因 `record_only / 继续零 Provider 证据分析`、终止原因诊断缺口 `fix_now completed / 61 项定向通过`，不重跑或改写失败结果。
 - `26a2615` 完整回归唯一失败为 `system.restart-delivery-reconciliation` smoke 返回 failed；原测试只断言总状态，afterEach 又清理了具体 artifact，无法确认是子进程时限、文件占用还是其他原因。相同独立 smoke=`3/3`、原/相邻=`16/16` 均通过。处理决策：根因 `record_only`、断言诊断缺口 `fix_now completed`（修改后 `5/5`）；不提高超时、不增加重试、不据此改重启产品逻辑，也不宣称全量已绿。
 - 失败请求重建发现真实 JS 复核保留了预期结果但漏掉配对的示例输入和默认配置说明，原因是源码声明前固定字符窗口从文档注释中间截断；处理决策为 `fix_now / 通用补齐局部通过，真实效果待探索`。这只能确认信息缺口，不证明原模型必然会因此犯错或 JSON 失败；后两项仍须真实反馈，不将局部测试当作任务成功。
 - 第三轮 Windows `real-js.bug-fix` 的 patch 同时改写 host label 顺序和切片边界，但仍保留额外的 `-1`，`testsPassed/patchAccepted=false`、regressionCount=`1`；真实 getter 三例只读复现全部失败。两次 objective 输出原文均无效 JSON，首次只发生空白收缩，第二次文本未变，排除本次由 `stripToolCallsSection` 损坏有效 JSON 的假设。处理决策为 `record_only / 模型代码与协议失败`；现有双无效输出回归仍正确失败关闭，未发现可据此修改解析器的通用缺陷，不通过增加输出预算、重试或 benchmark 特例掩盖失败。

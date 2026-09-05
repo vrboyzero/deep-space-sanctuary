@@ -3,12 +3,17 @@ import fs from "node:fs/promises";
 
 export const BENCHMARK_APPROVAL_CONTRACT_VERSION = "coding-agent-benchmark-approval-contract/v1";
 export const BENCHMARK_APPROVAL_EVIDENCE_VERSION = "coding-agent-benchmark-approval-evidence/v1";
+export const BENCHMARK_APPROVAL_ACCOUNTING_VERSION = "coding-agent-benchmark-approval-accounting/v1";
 export const BENCHMARK_JOB_ID_PLACEHOLDER = "$BENCHMARK_JOB_ID";
 
 const JOB_ID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const MAX_RESPONSE_DIAGNOSTIC_LENGTH = 500;
 
 export function createBenchmarkApprovalContract(input) {
+  if (Object.hasOwn(input, "accountingVersion")
+    && (input.accountingVersion !== BENCHMARK_APPROVAL_ACCOUNTING_VERSION || input.manifestRevision !== "v3")) {
+    throw new Error("Benchmark approval accounting version is invalid.");
+  }
   const policy = normalizePolicy(input.policy);
   if (!policy) throw new Error("Benchmark approval policy is invalid.");
   const fixture = normalizeFixture(input.fixture);
@@ -31,6 +36,7 @@ export function createBenchmarkApprovalContract(input) {
     conversationId: input.conversationId.trim(),
     fixture,
     policy,
+    ...(input.accountingVersion ? { accountingVersion: input.accountingVersion } : {}),
   };
 }
 
@@ -173,6 +179,7 @@ export function createBenchmarkApprovalController(input) {
     let responseStatus = "not_sent";
     let responseErrorCode;
     let responseError;
+    let responseFreshlyAccepted = false;
     try {
       if (!eventBinding || !toolCallId) throw new Error("Permission binding is incomplete.");
       const response = await input.respondPermission({
@@ -183,7 +190,13 @@ export function createBenchmarkApprovalController(input) {
         toolCallId,
         decision,
       });
-      responseStatus = response?.ok === true ? "accepted" : "rejected";
+      const payload = response?.payload;
+      responseFreshlyAccepted = response?.ok === true && payload?.accepted === true
+        && payload.alreadyResolved !== true && payload.operation === "permission.respond"
+        && payload.binding?.agentRunId === eventBinding.agentRunId
+        && payload.binding?.worktreeId === permission?.worktreeId;
+      responseStatus = response?.ok === true && (!contract.accountingVersion || responseFreshlyAccepted)
+        ? "accepted" : "rejected";
       if (responseStatus === "rejected") {
         responseErrorCode = sanitizeResponseDiagnostic(response?.errorCode, 100);
         responseError = sanitizeResponseDiagnostic(response?.error, MAX_RESPONSE_DIAGNOSTIC_LENGTH);
@@ -206,6 +219,7 @@ export function createBenchmarkApprovalController(input) {
       decision,
       reason,
       responseStatus,
+      ...(contract.accountingVersion ? { responder: "benchmark_controller", responseFreshlyAccepted } : {}),
       ...(responseErrorCode ? { responseErrorCode } : {}),
       ...(responseError ? { responseError } : {}),
     });
@@ -254,6 +268,12 @@ export function createBenchmarkApprovalController(input) {
         responseFailureCount: requests.filter((item) => item.responseStatus !== "accepted").length,
         issueCount: issues.length,
       },
+      ...(contract.accountingVersion ? { accounting: {
+        schemaVersion: contract.accountingVersion,
+        permissionRequestCount: requests.length,
+        verifiedAutomaticResponseCount: complete ? requests.length : 0,
+        manualInterventionCount: complete ? 0 : requests.length,
+      } } : {}),
     };
   };
 
@@ -263,6 +283,10 @@ export function createBenchmarkApprovalController(input) {
 export function createNotRunApprovalEvidence(input) {
   if (input.manifestRevision !== "v2" && input.manifestRevision !== "v3") {
     throw new Error("Benchmark approval evidence requires manifest revision v2 or v3.");
+  }
+  if (input.accountingVersion !== undefined
+    && (input.accountingVersion !== BENCHMARK_APPROVAL_ACCOUNTING_VERSION || input.manifestRevision !== "v3")) {
+    throw new Error("Benchmark approval accounting version is invalid.");
   }
   return {
     schemaVersion: BENCHMARK_APPROVAL_EVIDENCE_VERSION,
@@ -283,6 +307,12 @@ export function createNotRunApprovalEvidence(input) {
       responseFailureCount: 0,
       issueCount: 0,
     },
+    ...(input.accountingVersion ? { accounting: {
+      schemaVersion: input.accountingVersion,
+      permissionRequestCount: 0,
+      verifiedAutomaticResponseCount: 0,
+      manualInterventionCount: 0,
+    } } : {}),
   };
 }
 

@@ -4,6 +4,15 @@
   "title": "Coding agent benchmark fixture approval evidence v1",
   "type": "object",
   "additionalProperties": false,
+  "allOf": [{
+    "if": { "required": ["accounting"] },
+    "then": {
+      "properties": {
+        "manifestRevision": { "const": "v3" },
+        "requests": { "items": { "required": ["responder", "responseFreshlyAccepted"] } }
+      }
+    }
+  }],
   "required": [
     "schemaVersion",
     "manifestRevision",
@@ -19,6 +28,17 @@
   ],
   "properties": {
     "schemaVersion": { "const": "coding-agent-benchmark-approval-evidence/v1" },
+    "accounting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "permissionRequestCount", "verifiedAutomaticResponseCount", "manualInterventionCount"],
+      "properties": {
+        "schemaVersion": { "const": "coding-agent-benchmark-approval-accounting/v1" },
+        "permissionRequestCount": { "type": "integer", "minimum": 0 },
+        "verifiedAutomaticResponseCount": { "type": "integer", "minimum": 0 },
+        "manualInterventionCount": { "type": "integer", "minimum": 0 }
+      }
+    },
     "manifestRevision": { "enum": ["v2", "v3"] },
     "taskId": { "enum": ["command.interactive-control", "safety.boundary-enforcement"] },
     "runId": { "type": "string", "minLength": 1, "maxLength": 200 },
@@ -52,6 +72,8 @@
           "decision": { "enum": ["allow", "deny"] },
           "reason": { "type": "string", "minLength": 1, "maxLength": 100 },
           "responseStatus": { "enum": ["accepted", "rejected", "error", "not_sent"] },
+          "responder": { "const": "benchmark_controller" },
+          "responseFreshlyAccepted": { "type": "boolean" },
           "responseErrorCode": { "type": "string", "minLength": 1, "maxLength": 100 },
           "responseError": { "type": "string", "minLength": 1, "maxLength": 500 }
         }

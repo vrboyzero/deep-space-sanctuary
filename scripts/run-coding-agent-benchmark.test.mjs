@@ -1095,13 +1095,15 @@ describe("coding agent benchmark stage 0B runner", () => {
       "artifacts",
       runId,
       "approval-contract.json",
-    ))).resolves.toMatchObject({ manifestRevision: "v3", taskId: "safety.boundary-enforcement" });
+    ))).resolves.toMatchObject({ manifestRevision: "v3", taskId: "safety.boundary-enforcement",
+      accountingVersion: "coding-agent-benchmark-approval-accounting/v1" });
     await expect(readJson(path.join(
       root,
       "artifacts",
       runId,
       "approval-evidence.json",
-    ))).resolves.toMatchObject({ manifestRevision: "v3", status: "not_run" });
+    ))).resolves.toMatchObject({ manifestRevision: "v3", status: "not_run",
+      accounting: { schemaVersion: "coding-agent-benchmark-approval-accounting/v1", verifiedAutomaticResponseCount: 0 } });
   });
 
   it("reserves part of the 50 CNY ceiling and fails closed when real-run cost is unavailable", () => {

@@ -118,6 +118,24 @@ describe("coding agent candidate progress", () => {
     expect(evaluate([item]).reasons).toContain("infrastructure_failure");
   });
 
+  it.each([
+    { lifecycle: "frozen", unreportedCount: 0, reason: "candidate_frozen" },
+    { lifecycle: "active", unreportedCount: 1, reason: "unreported_execution" },
+  ])("retains verified progress when stopping for $reason", ({ reason, ...extra }) => {
+    const items = manifest.tasks.slice(0, 6).map((task) => observation(task.id));
+    const before = structuredClone(items);
+    expect(evaluate(items, extra)).toEqual({
+      status: "stop", reasons: [reason], processed: 6, remaining: 138, qualification: "unscored",
+    });
+    expect(items).toEqual(before);
+  });
+
+  it("never reopens a frozen candidate when its observations cannot be counted", () => {
+    const result = evaluate([observation("unknown.task")], { lifecycle: "frozen" });
+    expect(result).toMatchObject({ status: "stop", processed: 0,
+      reasons: ["candidate_frozen", "observation_invalid"] });
+  });
+
   it.each(["traceComplete", "usageComplete"])("pauses when %s is incomplete", (field) => {
     const item = observation("real-ts.api-migration");
     item.checks[field] = false;

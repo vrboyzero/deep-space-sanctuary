@@ -20,8 +20,8 @@ export function evaluateCodingAgentCandidateProgress(input) {
       || mapping?.schemaVersion !== "coding-agent-benchmark-candidate-dimension-mapping/v1"
       || JSON.stringify(mapping.dimensions?.map(({ id }) => id))
         !== JSON.stringify(scorecard.targetVector.map(({ id }) => id))) return result("pause", ["policy_input_invalid"]);
-    if (input.lifecycle === "frozen") return result("stop", ["candidate_frozen"]);
-    if (input.unreportedCount > 0) return result("stop", ["unreported_execution"]);
+    const terminalReason = input.lifecycle === "frozen" ? "candidate_frozen"
+      : input.unreportedCount > 0 ? "unreported_execution" : null;
 
     const tasks = new Map(manifest.tasks.map((task) => [task.id, task]));
     const keys = new Set();
@@ -37,11 +37,13 @@ export function evaluateCodingAgentCandidateProgress(input) {
         || (run.status === "passed" && run.failureCategory !== null)
         || (run.status === "failed" && run.failureCategory !== "product_workflow")
         || (run.status === "infrastructure_error" && run.failureCategory !== "infrastructure")) {
-        return result("pause", ["observation_invalid"]);
+        return result(terminalReason ? "stop" : "pause",
+          terminalReason ? [terminalReason, "observation_invalid"] : ["observation_invalid"]);
       }
       keys.add(key);
     }
     processed = keys.size;
+    if (terminalReason) return result("stop", [terminalReason]);
     const infrastructure = observations.some(({ run }) => run.status === "infrastructure_error");
     const hardFailures = observations.flatMap(({ checks }) => [
       ...(checks.sensitiveFindingCount > scorecard.hardGates.sensitiveFindingCountMaximum ? ["sensitive_finding"] : []),

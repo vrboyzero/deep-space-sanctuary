@@ -21,6 +21,7 @@ import {
 } from "./coding-agent-benchmark-preflight.mjs";
 import {
   createBenchmarkApprovalContract,
+  BENCHMARK_APPROVAL_ACCOUNTING_VERSION,
   createNotRunApprovalEvidence,
   serializeBenchmarkApprovalContract,
 } from "./coding-agent-benchmark-approval.mjs";
@@ -442,6 +443,7 @@ export async function runStage0BTask(input, dependencies = {}) {
       : "fixture/boundary-cases.json";
     const contract = createBenchmarkApprovalContract({
       manifestRevision: input.manifestRevision,
+      ...(isV3Task ? { accountingVersion: BENCHMARK_APPROVAL_ACCOUNTING_VERSION } : {}),
       taskId: task.id,
       runId: input.runId,
       conversationId: `coding-benchmark-${input.runId}`,
@@ -1262,6 +1264,7 @@ async function ensureCodingCiArtifacts(artifactDir, runner, options = {}) {
     ...(options.approval ? {
       "approval-evidence.json": `${JSON.stringify(createNotRunApprovalEvidence({
         manifestRevision: options.manifestRevision,
+        accountingVersion: options.approval.contract.accountingVersion,
         taskId: options.approval.contract.taskId,
         runId: options.approval.contract.runId,
         contractSha256: options.approval.contractSha256,

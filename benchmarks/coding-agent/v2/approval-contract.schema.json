@@ -5,8 +5,13 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "manifestRevision", "taskId", "runId", "conversationId", "fixture", "policy"],
+  "allOf": [{
+    "if": { "required": ["accountingVersion"] },
+    "then": { "properties": { "manifestRevision": { "const": "v3" } } }
+  }],
   "properties": {
     "schemaVersion": { "const": "coding-agent-benchmark-approval-contract/v1" },
+    "accountingVersion": { "const": "coding-agent-benchmark-approval-accounting/v1" },
     "manifestRevision": { "enum": ["v2", "v3"] },
     "taskId": { "enum": ["command.interactive-control", "safety.boundary-enforcement"] },
     "runId": { "type": "string", "minLength": 1, "maxLength": 200 },

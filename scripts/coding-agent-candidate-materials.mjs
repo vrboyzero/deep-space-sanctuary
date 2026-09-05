@@ -14,6 +14,10 @@ import { validateCodingAgentBenchmarkV3SystemEvidence } from "./coding-agent-ben
 import { createCodingAgentBenchmarkCandidateExpectedReportPlan, loadCodingAgentBenchmarkCandidateExpectedReportPlanFile } from "./run-coding-agent-benchmark-expected-report-plan.mjs";
 import { assertCandidateOrdinaryPath, assertCandidatePathWithin, candidateSha256, candidateSlotKey, loadCodingAgentCandidateConfig, readCandidateFile } from "./coding-agent-candidate-config.mjs";
 import { verifyCandidateRepositoryInputs } from "./verify-coding-agent-candidate-inputs.mjs";
+import { assertCandidateContractConsistency } from "./coding-agent-candidate-contract-preflight.mjs";
+import { BENCHMARK_APPROVAL_ACCOUNTING_VERSION } from "./coding-agent-benchmark-approval.mjs";
+import { verifyBenchmarkApprovalAccounting } from "./coding-agent-benchmark-approval-accounting.mjs";
+import { getBenchmarkFixtureApprovalDefinition } from "./coding-agent-benchmark-fixtures.mjs";
 
 const execFile = promisify(execFileCallback);
 
@@ -36,6 +40,8 @@ export async function loadCandidateMaterials(configPath) {
   const manifest = await loadCodingAgentBenchmarkManifest(paths.manifest);
   const scorecard = await loadCodingAgentBenchmarkScorecardV3(paths.scorecard);
   const mapping = await loadCodingAgentCandidateDimensionMapping({ manifest, scorecard, mappingPath: paths.mapping });
+  if (config.mode === "formal") assertCandidateContractConsistency({ manifest, scorecard, mapping,
+    accountingVersion: BENCHMARK_APPROVAL_ACCOUNTING_VERSION });
   const selectedKeys = new Set(config.selection.map(candidateSlotKey));
   for (const slot of config.selection) {
     const task = manifest.tasks.find((item) => item.id === slot.taskId);
@@ -197,6 +203,20 @@ export async function readCandidateRunObservation(context, slot, expectedTermina
   }
   const events = (await readCandidateFile(path.resolve(paths.artifactRoot, run.artifacts.events), 64 * 1024 * 1024))
     .split(/\r?\n/).filter((line) => line.trim()).map((line) => JSON.parse(line));
+  const approvalDefinition = getBenchmarkFixtureApprovalDefinition({ task, manifestRevision: "v3" });
+  if (approvalDefinition) {
+    const accounting = await verifyBenchmarkApprovalAccounting({ events,
+      contractText: await readCandidateFile(path.resolve(paths.artifactRoot, run.artifacts.approvalContract)),
+      evidence: JSON.parse(await readCandidateFile(path.resolve(paths.artifactRoot, run.artifacts.approvalEvidence))),
+      expected: { ...approvalDefinition, taskId: task.id, manifestRevision: "v3", runId: run.runId,
+        binding: events.find((event) => event.type === "run.started")?.binding,
+        fixture: { ...approvalDefinition.fixture, baselineCommit: run.fixture.baselineCommit } },
+    });
+    if (accounting.manualInterventionCount !== run.evaluation.manualInterventionCount
+      || (run.status === "passed" && accounting.status === "failed")) {
+      throw new Error("Candidate approval accounting differs from retained permission evidence.");
+    }
+  }
   const usage = extractBenchmarkTokenUsage(events);
   assert.deepEqual({ inputTokens: run.usage.inputTokens, outputTokens: run.usage.outputTokens, observation: run.usage.observation },
     usage, "Candidate report usage differs from its events.");

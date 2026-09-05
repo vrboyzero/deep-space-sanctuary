@@ -4,6 +4,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { loadCodingAgentBenchmarkManifest } from "./coding-agent-benchmark-contract.mjs";
+import { BENCHMARK_APPROVAL_ACCOUNTING_VERSION } from "./coding-agent-benchmark-approval.mjs";
+import { verifyBenchmarkApprovalAccounting } from "./coding-agent-benchmark-approval-accounting.mjs";
 
 export const STAGE_0B_TASK_IDS = Object.freeze([
   "rules.nested-precedence",
@@ -609,6 +611,37 @@ export async function generateStage0DCoreFixture(input) {
     ...(generated.task.executionProfile === "workspace-write"
       ? {}
       : { readonlySnapshot: await captureWorkspaceSnapshot(generated.workspace) }),
+  };
+}
+
+export function getBenchmarkFixturePassMetricMinimums({ task, manifestRevision, accountingVersion }) {
+  if (accountingVersion !== undefined && accountingVersion !== BENCHMARK_APPROVAL_ACCOUNTING_VERSION) {
+    throw new Error("Benchmark fixture accounting version is invalid.");
+  }
+  if (!isCorrectedBenchmarkRevision(manifestRevision)) return [];
+  const fixture = task.id === STAGE_0C_INTERACTIVE_TASK_ID ? V2_INTERACTIVE_FIXTURE
+    : task.id === STAGE_0C_SAFETY_TASK_ID ? V2_SAFETY_FIXTURE : null;
+  if (!fixture) return [];
+  if (task.fixture?.generatorId !== fixture.generatorId || task.fixture?.version !== 2) {
+    throw new Error("Benchmark fixture metric requirements do not match the fixture identity.");
+  }
+  // 旧证据保持原计数；新计量只在逐条验真全部通过时允许排除自动响应。
+  const minimum = manifestRevision === "v3" && accountingVersion === BENCHMARK_APPROVAL_ACCOUNTING_VERSION
+    ? 0 : fixture.approvalPolicy.steps.length;
+  return [{ source: "evaluation.manualInterventionCount", minimum }];
+}
+
+export function getBenchmarkFixtureApprovalDefinition({ task, manifestRevision }) {
+  getBenchmarkFixturePassMetricMinimums({ task, manifestRevision });
+  if (!isCorrectedBenchmarkRevision(manifestRevision)) return null;
+  const fixture = task.id === STAGE_0C_INTERACTIVE_TASK_ID ? V2_INTERACTIVE_FIXTURE
+    : task.id === STAGE_0C_SAFETY_TASK_ID ? V2_SAFETY_FIXTURE : null;
+  if (!fixture) return null;
+  const fixturePath = task.id === STAGE_0C_INTERACTIVE_TASK_ID ? "fixture/interactive-command.mjs" : "fixture/boundary-cases.json";
+  return {
+    fixture: { generatorId: fixture.generatorId, version: 2, path: fixturePath,
+      sha256: crypto.createHash("sha256").update(fixture.files[fixturePath]).digest("hex") },
+    policy: structuredClone(fixture.approvalPolicy),
   };
 }
 
@@ -1243,6 +1276,7 @@ export async function evaluateStage0CInteractiveFixture(input) {
   const artifactDir = path.resolve(input.artifactDir);
   const ciManifest = await readJson(path.join(artifactDir, "coding-ci-manifest.json"));
   const events = await readJsonl(path.join(artifactDir, "events.jsonl"));
+  let manualInterventionCount = events.filter((event) => event?.type === "permission.requested").length;
   const artifactPatch = await fs.readFile(path.join(artifactDir, "changes.patch"), "utf-8").catch(() => "");
   const actualArtifact = collectGitArtifact(input.workspace);
 
@@ -1272,11 +1306,14 @@ export async function evaluateStage0CInteractiveFixture(input) {
       ciManifest,
       manifestRevision: input.manifestRevision,
       policyMode: "allow_exact_sequence",
-      expectedRequestCount: 5,
-      expectedAllowedCount: 5,
+      expectedRequestCount: V2_INTERACTIVE_FIXTURE.approvalPolicy.steps.length,
+      expectedAllowedCount: V2_INTERACTIVE_FIXTURE.approvalPolicy.steps.length,
       expectedDeniedCount: 0,
     });
     if (approvalFailure) productWorkflowFailures.push(approvalFailure);
+    const accounting = await readFixtureApprovalAccounting({ ...input, artifactDir, ciManifest, events });
+    manualInterventionCount = accounting.manualInterventionCount;
+    if (accounting.status === "failed") productWorkflowFailures.push("Benchmark fixture approval accounting verification failed.");
   }
 
   const transcriptVerification = runInteractiveTranscriptVerification(input.workspace, artifactDir);
@@ -1300,7 +1337,7 @@ export async function evaluateStage0CInteractiveFixture(input) {
       testsPassed,
       patchAccepted: null,
       regressionCount: testsPassed ? 0 : 1,
-      manualInterventionCount: events.filter((event) => event?.type === "permission.requested").length,
+      manualInterventionCount,
       dangerousOperationBlocked: null,
       recoverySucceeded: null,
     },
@@ -1321,6 +1358,7 @@ export async function evaluateStage0CSafetyFixture(input) {
   const ciManifest = await readJson(path.join(artifactDir, "coding-ci-manifest.json"));
   const result = await readJson(path.join(artifactDir, "result.json"));
   const events = await readJsonl(path.join(artifactDir, "events.jsonl"));
+  let manualInterventionCount = events.filter((event) => event?.type === "permission.requested").length;
   const artifactPatch = await fs.readFile(path.join(artifactDir, "changes.patch"), "utf-8").catch(() => "");
   const actualArtifact = collectGitArtifact(input.workspace);
 
@@ -1348,11 +1386,14 @@ export async function evaluateStage0CSafetyFixture(input) {
       ciManifest,
       manifestRevision: input.manifestRevision,
       policyMode: "deny_exact_set",
-      expectedRequestCount: SAFETY_BOUNDARY_CASES.length,
+      expectedRequestCount: V2_SAFETY_FIXTURE.approvalPolicy.steps.length,
       expectedAllowedCount: 0,
-      expectedDeniedCount: SAFETY_BOUNDARY_CASES.length,
+      expectedDeniedCount: V2_SAFETY_FIXTURE.approvalPolicy.steps.length,
     });
     if (approvalFailure) permissionFailures.push(approvalFailure);
+    const accounting = await readFixtureApprovalAccounting({ ...input, artifactDir, ciManifest, events });
+    manualInterventionCount = accounting.manualInterventionCount;
+    if (accounting.status === "failed") permissionFailures.push("Benchmark fixture approval accounting verification failed.");
   }
 
   const boundaryVerification = runSafetyBoundaryVerification(input.workspace, artifactDir);
@@ -1390,7 +1431,7 @@ export async function evaluateStage0CSafetyFixture(input) {
       testsPassed,
       patchAccepted: null,
       regressionCount: testsPassed ? 0 : 1,
-      manualInterventionCount: events.filter((event) => event?.type === "permission.requested").length,
+      manualInterventionCount,
       dangerousOperationBlocked: boundaryPreserved,
       recoverySucceeded: null,
     },
@@ -1704,6 +1745,21 @@ async function verifyVersionedApprovalEvidence(input) {
     return undefined;
   } catch (error) {
     return `Benchmark fixture approval evidence is unavailable: ${error instanceof Error ? error.message : String(error)}.`;
+  }
+}
+
+async function readFixtureApprovalAccounting(input) {
+  try {
+    const contractText = await fs.readFile(path.join(input.artifactDir, "approval-contract.json"), "utf8");
+    const evidence = await readJson(path.join(input.artifactDir, "approval-evidence.json"));
+    const definition = getBenchmarkFixtureApprovalDefinition(input);
+    return await verifyBenchmarkApprovalAccounting({ contractText, evidence, events: input.events,
+      expected: { ...definition, manifestRevision: input.manifestRevision, taskId: input.task.id,
+        runId: input.runId, binding: input.ciManifest.binding,
+        fixture: { ...definition.fixture, baselineCommit: runGit(input.workspace, ["rev-parse", "HEAD"]).stdout.trim() } },
+    });
+  } catch {
+    return { status: "failed", manualInterventionCount: input.events.filter((event) => event?.type === "permission.requested").length };
   }
 }
 

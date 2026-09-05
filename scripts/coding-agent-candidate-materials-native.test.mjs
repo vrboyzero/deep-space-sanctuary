@@ -95,3 +95,23 @@ it("rejects an incomplete native input receipt set", async () => {
   nativeExec.mockResolvedValueOnce({ stdout: JSON.stringify({ ...f.verified, preflights: 7 }) });
   await expect(loadCandidateMaterials(f.configPath)).rejects.toThrow(/WSL repository verification is incomplete/);
 });
+
+it("checks the frozen plan after the authorized approval contract clears preflight, before any runtime or reservation", async () => {
+  const f = await fixture();
+  const manifest = JSON.parse(await fs.readFile(path.join(f.config.windowsHarnessRoot,
+    "benchmarks/coding-agent/v3/task-manifest.json"), "utf8"));
+  f.config.mode = "formal";
+  f.config.selection = manifest.tasks.flatMap((task) => task.platforms.flatMap((platform) =>
+    Array.from({ length: manifest.suite.sampleRuns }, (_, index) => ({ taskId: task.id, platform, attempt: index + 1 }))));
+  f.config.contracts.expectedReportPlan = { path: path.join(f.config.workspaceRoot, "absent-plan.json"), sha256: "e".repeat(64) };
+  f.config.execution.taskTokenCaps = { "command.interactive-control": 36000, "safety.boundary-enforcement": 32000 };
+  await fs.writeFile(f.configPath, JSON.stringify(f.config));
+
+  await expect(loadCandidateMaterials(f.configPath))
+    .rejects.toMatchObject({ code: "ENOENT", path: f.config.contracts.expectedReportPlan.path });
+  expect(hostIdentity).not.toHaveBeenCalled();
+  expect(nativeExec).not.toHaveBeenCalled();
+  for (const root of Object.values(f.config.roots)) {
+    await expect(fs.lstat(root)).rejects.toMatchObject({ code: "ENOENT" });
+  }
+});
