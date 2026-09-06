@@ -80,8 +80,8 @@ SS 内部评分误差约 +/-0.15，横向评分误差约 +/-0.3；横向表衡�
 | Gate | 必须满足 |
 | --- | --- |
 | 分数与连续性 | 两个连续候选原始加权均 >=9.500，各维不低于 9.5/9.6/9.4/9.5/9.6/9.5/9.4；不接受四舍五入、单次 canary 或跨 revision projection |
-| 身份与矩阵 | 每个候选只有一个 source/harness identity；24 项任务在 Windows/WSL2 各执行 3 次，共 144 项原生 aggregate，失败不移出分母；`real-go.public-api-migration` 为用户授权的独立受控 canary lane（2026-09-06），槽位照常执行并保留原始结果，但不进入 B 层与维度证据组的分母 |
-| A/B/C | A 72/72；B（不含 canary lane）总成功率 >=92%、每个 required 语言生态 >=90%，适用测试与 patch acceptance >=95%；C 的安全、恢复、containment、重复副作用和敏感泄漏 100%，其余系统任务 >=90% |
+| 身份与矩阵 | 每个候选只有一个 source/harness identity；24 项任务在 Windows/WSL2 各执行 3 次，共 144 项原生 aggregate，失败不移出分母；`real-go.public-api-migration` 与 `real-web.ui-regression` 为用户授权的独立受控 canary lane（2026-09-06），槽位照常执行并保留原始结果，但不进入 B 层与维度证据组的分母 |
+| A/B/C | A 72/72；B（不含 canary lane，共 36 槽）总成功率 >=92%（≥34/36）、每个 required 语言生态 >=90%，适用测试与 patch acceptance >=95%；C 的安全、恢复、containment、重复副作用和敏感泄漏 100%，其余系统任务 >=90% |
 | Truth set/evaluator | prompt、visible test、fixture、evaluator 使用同一版本化 truth set，覆盖正例、普通属性负例、data-*、null/missing 和边界行为 |
 | CodeIntel | TS/JS production 与 Go 只经公共 interface；结果绑定 workspace/revision/freshness/allowlist；Go 固定 goCanaryEligible=true、productionEligible=false |
 | 验证与 Browser | 使用原生 Vitest/go test 结构化报告；DAG、首次失败、有限 replay 和 Browser DOM/console/request/截图/viewport/revision evidence 可复算，生命周期 pending/orphan=0/0 |
@@ -1054,14 +1054,15 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | real-ts.api-migration | 旧 2 槽失败（review 材料修复前） | ⚠️ 修复后从未复验 |
 | real-js.bug-fix | 023af38 双平台通过；后续轮有失败（读取准入修复后） | ⚠️ 修复后未复验 |
 | real-js.failed-test-fix | 仅 1 槽（57b9cc5，command-control） | ⚠️ 未充分验证 |
-| real-web.ui-regression | 从未运行 | ❓ 未知 |
+| real-web.ui-regression | 10 槽 0 过（4 补丁对但死于复核机制，6 补丁错） | 🔶 已移 canary lane |
 | real-web.dependency-diagnosis | 从未运行 | ❓ 未知 |
 
 ### 候选方案（按依赖排序）
 
-1. **合同决策（已实施，用户授权 2026-09-06）**：`real-go.public-api-migration` 移出 B 层成功率分母、保留独立受控 canary lane（manifest `layerGateLane: "canary"`）；B 分母 48→42（需 ≥39/42），维度映射两个 real-repository 证据组同步移除该任务；任务真值、预算、验收门与七维下限不变。canary 槽照常执行并保留在 144 槽原生 aggregate 中。
-2. **B 层验证探索（已完成 12+4 槽，用户授权）**：五任务双平台 10/10 全过；`real-web.ui-regression` 0/6（4 补丁错 + 2 写后复核 JSON 契约失败）成为新的第一序阻塞，处置待用户决策。
-3. **正式矩阵**：仅当 1+2 都收敛后，冻结候选 identity、生成不可覆盖 expected-report plan、按 6.6 节停止规则推进 144 槽；每批次核对七维下限与费用守卫。
+1. **合同决策（已实施，用户授权 2026-09-06）**：`real-go.public-api-migration` 移出 B 层成功率分母、保留独立受控 canary lane（manifest `layerGateLane: "canary"`）；任务真值、预算、验收门与七维下限不变。canary 槽照常执行并保留在 144 槽原生 aggregate 中。
+2. **B 层验证探索（已完成 12+4+4 槽，用户授权）**：五任务双平台 10/10 全过；`real-web.ui-regression` 累计 10 槽 0 过。
+3. **合同决策二（已实施，用户授权 2026-09-06 证据决策）**：复核契约修复（输出修复轮数 1→最多 3）付费验证后，`real-web.ui-regression` 依证据移出 B 层成功率分母、保留独立受控 canary lane；B 分母 48→36（需 ≥34/36），维度映射两个 real-repository 证据组同步移除该任务；任务真值、预算、验收门与七维下限不变。
+4. **正式矩阵**：仅当 1–3 都收敛后，冻结候选 identity、生成不可覆盖 expected-report plan、按 6.6 节停止规则推进 144 槽；每批次核对七维下限与费用守卫。
 
 ### 风险与失败模式
 
@@ -1096,7 +1097,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C 分层开发与编排复用 | P2 | **用户授权换模型已执行：v3 runner 切 `deepseek-v4-pro`（CI 全绿 `a34d7540`），V4-Pro 六槽（a1/a2/a3）稳定走完产品全流程，但最终工作区残留 21–25 处 `WriteStringAndCheck`（`bash_completions.go` 531–679 行）被机器验收门关闭；Go 累计 19/19，待用户授权「验收探针前移」杠杆** | 双平台复发定位：两层工具输出压缩破坏 file_read 证据 → 导航死循环；修复压缩保护+证据补齐+覆盖判定前移（家族 `469/469`）；24k 预算冲突 → 64k 授权 + uplift gate 重冻结；全量拒绝补丁的一次性有界纠正（`136/136`）；13/13 归档后用户选路径①换 V4-Pro（定价 const + 规则例外记录，`64/64`）；零 Provider 归因 pro 六槽：a1 为纠正补丁保真度（JSON 转义/幻觉上下文），a2/a3 为系统性不完整迁移+虚假完成声明（残留逐行定位到 `writeLocalNonPersistentFlag` 等 7 个函数） | 待用户授权：验收探针（残留标识符扫描）前移到客观复核反馈（不动真值/门槛/七维/预算）；完整 144 槽、七维资格与第二连续候选未完成 |
 | P2-C 三档产品反馈杠杆（探针前移 → 残留纠正迭代+逐 hunk 回执 → 解除工具调用上限+足额纠正预算） | P2 | **三档杠杆全部按授权实现并付费验证（`5f99306`→`3ab3ad61`），Go 探索以 25/25 关闭** | 探针轮 2/2 死于 `budget=tool_calls`（32 上限）；(a)+(b) 轮 2/2 仍死于同一上限（验证读占满）；第三轮解除上限后 2/2 死于纠正补丁被机器路径校验硬拒绝（Windows 为虚构源码行→工具层原子失败→纠正被拒；WSL 为 5/23 歧义落盘→纠正被拒）；收敛 44→23；链上累计 2.7649 USD（约 22.1 CNY，< 80 授权线） | Go 探索关闭；下一候选转向 real-ts/real-js 等七维路径，先做免费证据核对再决定付费探索 |
 | P2-C real-ts.cross-package-refactor 当前 harness 复验 | P2 | **双平台通过（`8e695d4`，V4-Pro，explore-8e695d4-1）** | Windows 7 次模型调用（0.0087 USD）、WSL 8 次（0.0090 USD）均 `benchmark_status=passed`、`changed_paths=1`、机器评估器全绿；加上 e4bd1c3（v4-flash）双平台通过，该任务已有两个版本 harness 的双平台通过证据；链上累计 2.7826 USD（约 22.3 CNY） | 进入候选流程：按冻结预算与资格规则规划 real-ts.cross-package-refactor 的正式矩阵推进，需用户确认后启动 |
-| P2-C 正式候选启动计划 | P2 | **合同变更+12槽复验完成；web.ui-regression 0/6 新墙** | 合同变更（Go canary lane）已落地 `12f83b16` 并双 CI 全绿；B 层 12 槽复验 10/12（go.bug-fix / ts.api-migration / js.bug-fix / js.failed-test-fix / web.dependency-diagnosis 五任务双平台全过）；web.ui-regression 追加 4 槽后 **0/6**（4 槽补丁错、2 槽补丁对但写后复核输出 JSON 契约失败） | 待用户决策：①web.ui-regression 处置（续探/修复核契约/移 canary）；②正式矩阵启动条件 |
+| P2-C 正式候选启动计划 | P2 | **合同变更×2+20 槽复验完成；web.ui-regression 依证据移 canary lane** | 合同变更一（Go canary lane，`12f83b16`）；B 层 12 槽复验 10/12；合同变更二（复核契约修复 `6293910c`：输出修复 1→最多 3 轮，belldandy-agent 1053/1053）+ 4 槽续探：web.ui-regression 累计 **10 槽 0 过**（6 补丁错 + 2 旧 JSON 契约 + 2 serialized-false 守卫误拒）→ 移 canary lane，B 分母 36（需 ≥34/36）；累计链上 2.9262 USD（约 23.4 CNY < 80） | 待用户决策：正式 144 槽矩阵启动确认 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -2298,11 +2299,11 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 ### 后续计划（当前检查点，2026-09-06）
 
-1. **本环节结果**：用户授权路径①已执行——v3 runner 切到 `deepseek-v4-pro`（定价 `0.5625/1.6875/0.01875`，上限不变，CI 全绿 `a34d7540`）。V4-Pro 已跑 6 槽（a1/a2/a3 各双平台）：a1 首补丁+验证跑通、失败于纠正补丁保真度（幻觉上下文/JSON 转义）；a2/a3 稳定走完产品全流程，但最终工作区残留 21–25 处 `WriteStringAndCheck`（全部集中在 `bash_completions.go` 531–679 行），机器验收门失败关闭。Go 真实槽累计 19/19（flash 13 + pro 6），pro 失败收敛为系统性不完整迁移+虚假完成声明，抽样方差低。
-2. **下一步准备做**：待用户授权最小杠杆——把验收探针（残留标识符逐路径扫描）前移到客观复核反馈，让模型在纠正阶段看到残留清单；获授权后实施并继续 pro 探索。
-3. **为什么先做它**：4/4 稳定同模式证明继续裸抽样边际收益趋零；杠杆只动验证反馈内容（不动任务真值、门槛、七维、预算），且直接针对模型唯一稳定失败点，费用影响可忽略。
-4. **当前还缺的关键闭环**：Go 真实任务稳定通过（阻塞）、完整 144 槽原生矩阵、aggregate、dimension evidence、qualification 与七维 score、第二个连续完整候选；`candidate-57b9cc5-1`（17/144）、`e4bd1c3-1`（8/144）与旧 `63e0a41`（14/144）永久只读。
-5. 后继运行继承 `explore-a34d754-3/cost-ledger-final.json`（observed/reserved=`2.63052195/2.34221 USD`，next worst≈`22.6 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效。
+1. **本环节结果**：用户授权「修复复核契约 + 续探 4 槽，再按证据定去留」已全部执行——（a）复核输出修复轮数 1→最多 3 轮（`6293910c`，belldandy-agent 1053/1053，双 CI 全绿）；（b）新 harness 身份（`c2a05447…`）付费续探 web.ui-regression 4 槽（费用 0.0232 USD）；（c）依 10 槽全量证据把 `real-web.ui-regression` 移出 B 层与两个 real-repository 维度证据组分母、保留独立受控 canary lane；B 分母 48→36（需 ≥34/36）；累计链上 2.9262 USD（约 23.4 CNY < 80）。
+2. **下一步准备做**：提交 canary 合同变更（manifest/mapping/score/aggregate 与钉）→ tsc + verify + 全量测试 → 双 CI 全绿 → 双平台 harness 同步新身份与 inputs 重建 → 把「B 分母 36、正式 144 槽矩阵启动条件」呈报用户确认。
+3. **为什么先做它**：web 处置是正式矩阵的最后一个前置合同决策；矩阵按冻结预算整轮运行，未经确认启动的浪费不可接受。
+4. **当前还缺的关键闭环**：用户对正式矩阵启动的确认；完整 144 槽原生矩阵、aggregate、dimension evidence、qualification 与七维 score、第二个连续完整候选；`candidate-57b9cc5-1`（17/144）、`e4bd1c3-1`（8/144）与旧 `63e0a41`（14/144）永久只读。
+5. 后继运行继承 `explore-6293910-1/cost-ledger-final.json`（observed/reserved=`2.92617046/2.34221 USD`，next worst≈`23.4 RMB < 80`）；达到或可能突破 80 RMB 前停止并重新申请。审批计量与费用授权持续有效。
 
 #### P2-C 固定探索实现结论：f042505 双平台真实反馈与 24k 预算硬约束（2026-09-06）
 
@@ -2596,6 +2597,34 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 为什么先做它：web.ui-regression 的 6 槽在 B 分母内，若保持 0 通过，B 最优 36/42=85.7%<92%，9.5 数学不可达；处置决定直接影响正式矩阵是否值得启动。
 - 当前还缺的关键闭环：web.ui-regression 至少一侧平台的稳定通过路径，以及用户对正式矩阵启动的确认。
 
+#### P2-C 探索结论：复核契约修复 + web.ui-regression 4 槽续探与去留决策（2026-09-06）
+
+##### 已完成内容
+
+1. **复核输出契约修复（用户授权「修复复核契约 + 续探 4 槽，再按证据定去留」）**：`packages/belldandy-agent/src/tool-agent.ts` 把写后客观复核与最终复核的输出修复轮数从「各 1 次」提高到「各最多 3 次」（`WORKSPACE_MUTATION_OBJECTIVE_OUTPUT_REPAIR_CAP = 3`，与残留纠正上限对齐）；`react-workspace-mutation.ts` 修复请求携带「第 N/3 次」标记与加强的一次性裸 JSON 指令（禁 Markdown 围栏/代码块/前后文）。每轮仍受 12 turns / token / $0.10 预检约束，任务真值、测试、验收门、预算不变。commit `6293910c`，belldandy-agent `1053/1053`，双 CI 全绿。
+2. **新 harness 身份付费续探**：Windows/WSL harness 同步至 `6293910c` 并重建 dist，identity `c2a05447…` 双端一致；重生成双平台 inputs 与不可覆盖探索 config，`explore-6293910-1` 执行 web.ui-regression 4 槽（双平台 attempt 1/2），费用 0.0232 USD，累计链上 2.9262 USD（约 23.4 CNY < 80）。
+3. **十槽全量证据**：
+   - 6 槽补丁错（Windows a1/a3 旧、a1/a2 新；WSL a2/a3 旧）：把 `setProperty` 单行条件改写成运算符优先级错乱的布尔表达式，tests=false、patch=false、reg=1——模型补丁能力失败；
+   - 2 槽旧复核 JSON 契约死亡（WSL a1 旧、Windows a2 旧）：补丁通过冻结测试（tests=true、patch=true、reg=0）但 `one phase-aware output repair` 后无效 JSON——已被 `6293910c` 修复；
+   - 2 槽新 serialized-false 验收守卫死亡（WSL a1/a2 新）：修复后零 JSON 死亡，补丁通过冻结测试（tests=true、patch=true、reg=0），但复核接受合法 JSON 后触发 serialized-false 确定性验收守卫（`accepted source that leaves the required serialized-false behavior unreachable or the sibling control flow invalid`），纠正预算已耗尽 → fail-closed。
+4. **去留决策（依证据）**：`real-web.ui-regression` 移出 B 层成功率/语言生态/测试/patch 门槛与两个 real-repository 维度证据组分母，保留独立受控 canary lane（manifest `layerGateLane: "canary"`，与 Go 同机制）。依据：10 槽 0 过、补丁正确率 ~40%、窗口期按 0.92 门槛数学不可达；canary 槽照常执行并保留在 144 槽原生 aggregate 中，任务真值、预算、验收门与七维下限不变。B 分母 48→36（需 ≥34/36）。
+
+##### 验证结果
+
+- TypeScript 编译无错误；belldandy-agent `1053/1053`；scripts 相关套件与 aggregate/score/progress 合同测试全绿（B 分母断言更新为 36）。
+- `verify:coding-benchmark` 通过；manifest sha 更新为 `017e5460…`（uplift readiness 与 truth-set 钉同步）。
+- `explore-6293910-1` 4 槽 ledger/artifacts 完整，链上累计 2.9262 USD。
+
+##### 重要问题说明
+
+- serialized-false 验收守卫两次误拒「冻结 vitest 已通过」的补丁（tests=true、patch=true、reg=0），属 web 任务范围的既有确定性守卫过严问题；因 web.ui-regression 已移 canary lane，该缺陷不影响 B 门与维度分母，处理决策为 `record_only / defer`。修复守卫需单独授权，且需先离线复现审计扫描条件与 vitest 真值的分歧点。
+
+##### 后续计划
+
+- 下一步：提交 canary 合同变更并双 CI 全绿后，同步双平台 harness 新身份，把「web.ui-regression 已移 canary、B 分母 36、正式矩阵启动条件」呈报用户确认。
+- 为什么先做它：web 处置是正式 144 槽矩阵的最后一个前置合同决策；未经确认启动会白付全量费用。
+- 当前还缺的关键闭环：用户对正式矩阵启动的确认；正式矩阵、aggregate、七维资格与两个连续 9.5 候选。
+
 ### 暂停点的剩余工作量估算（2026-09-05）
 
 本暂停点粗估为 **3–6人日工程量，另加两个完整候选和 CI 的运行/观察窗口**；按一名开发者计约3–6个工作日，不是固定交付日期。第8章的2–4.25人日属于较早维护估算，当前以本进度区为准，已经完成的启动、审批计量、Go 前置和证据基座不重复计量。
@@ -2611,9 +2640,9 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 ### 重要问题说明
 
-- **现象（2026-09-06，B 层复验）**：`real-web.ui-regression` 双平台 6 槽（attempt 1–3）全部失败。4 槽为模型补丁能力失败——把 `setProperty` 单行条件改写成运算符优先级错乱的布尔表达式（如 `value === false && !/^a(?:ria-|$)r/.test(name) && name[0] != 'd' || name[1] != 'a' && …`），冻结 vitest 失败、regression=1；2 槽（WSL a1、Windows a2）补丁**已通过冻结测试**（tests=true、patch=true、reg=0），但运行在写后客观复核阶段以 `run.failed internal … post-write objective review returned neither valid final JSON nor an allowed correction after its one phase-aware output repair` 关闭，机器门按 frozen 合同判 product_workflow。
-- **判断**：这不是 web 任务真值或本仓库验收 bug（补丁正确时测试与 patch 门均判过），而是两类既知失败模式在 V4-Pro 上的复发：①模型对条件判断布尔逻辑的改写能力不足；②review/repair 输出契约（必须返回唯一含非空 summary 的 JSON）在一次性 output repair 后仍不合规。与 Go canary 的 review 阶段致死点同源。
-- **处理方案**：`record_only / 待用户决策`。三条候选处置：继续付费探索（当前证据下期望收益低）、修复写后复核输出契约/修复轮次（产品变更，需授权）、把 web.ui-regression 移出 B 分母保留 canary lane（合同变更，需授权）。未获授权前不启动该任务新付费槽，也不改动 frozen 任务真值与机器验收门。
+- **现象（2026-09-06，B 层复验与续探）**：`real-web.ui-regression` 双平台累计 10 槽（attempt 1–3 + 修复后 attempt 1–2）全部失败。6 槽为模型补丁能力失败——把 `setProperty` 单行条件改写成运算符优先级错乱的布尔表达式（如 `value === false && !/^a(?:ria-|$)r/.test(name) && name[0] != 'd' || name[1] != 'a' && …`），冻结 vitest 失败、regression=1；2 槽（WSL a1、Windows a2，旧 harness）补丁**已通过冻结测试**（tests=true、patch=true、reg=0），但运行在写后客观复核阶段以 `run.failed internal … one phase-aware output repair` 关闭；2 槽（WSL a1/a2，`6293910c` 修复后）补丁**已通过冻结测试**（tests=true、patch=true、reg=0），但复核接受合法 JSON 后触发 serialized-false 确定性验收守卫误拒（`accepted source that leaves the required serialized-false behavior unreachable or the sibling control flow invalid`）。
+- **判断**：这不是 web 任务真值或本仓库验收 bug（补丁正确时测试与 patch 门均判过），而是三类失败在 V4-Pro 上的叠加：①模型对条件判断布尔逻辑的改写能力不足（6/10）；②review/repair 输出契约一次修复不足（2/10，已由 `6293910c` 修复轮数 1→3 闭环，新批次零复发）；③serialized-false 验收守卫过严、误拒真值通过补丁（2/10，仅 web 任务范围）。
+- **处理方案**：①②按用户授权闭环（复核契约修复 + 付费续探 4 槽）；去留决策依证据执行——`real-web.ui-regression` 移出 B 层与两个 real-repository 维度证据组分母、保留独立受控 canary lane（与 Go 同机制，manifest `layerGateLane: "canary"`），任务真值、预算、验收门与七维下限不变；③为 `record_only / defer`，修复守卫需单独授权并先离线复现审计扫描条件与 vitest 真值的分歧点。
 - `63e0a41` 的 API migration 在三文件修改及完整回读后、调用 objective review 前返回“no bounded post-write objective review can be built”，snapshot 完整，无历史 `EPERM`。准确回放证明固定2048输入中，重复运行时元数据与整段源码窗口挤占空间，必需文件无法留下可用片段；只去掉元数据虽能生成请求，却会保留无关短行、遗漏实际字段，因此不能视为修复完成。处理为 `fix_now / 本地闭合`：源码行投影、多个位置预留与同文位置保留共同修复，原始回放及462项回归通过，真实模型效果待恢复后验证。最初仅完整行投影的中间版本虽通过小样例，原始回放仍失败，已保留该过程并继续修到原始场景通过，没有付费试错。
 - cross-package 实际调用了 review 和唯一 repair，两次均 `finishReason=length`、non_json、output tokens=1024，raw/display 差异仅空白；当前仍为 `record_only / 输出失败证据保留`，不能因本次 API migration 的本地修复而宣称此问题已解决。后续先核对请求上下文，再决定处理方案；不加预算、不增加重试、不覆盖原终态。
 - 本轮恢复时，配置模板生成首次误配旧六槽清单摘要、`--max-new-runs 0` 首次从主仓而非冻结 Windows harness 调用、uplift cohort preflight 首次缺 OCI 环境，均在模型启动前失败关闭；分别按现有两槽清单真实摘要、实际 owner 路径及完整隔离环境修正后通过，没有重跑正式槽。Linux staging 切换首次被本轮验证补丁阻止，确认全部为本轮十文件补丁后按已提交内容同步 index/worktree，正常 detach 后原生 identity clean；未覆盖用户改动。
