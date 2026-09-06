@@ -1055,6 +1055,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
 | P2-C 分层开发与编排复用 | P2 | **用户授权换模型已执行：v3 runner 切 `deepseek-v4-pro`（CI 全绿 `a34d7540`），V4-Pro 六槽（a1/a2/a3）稳定走完产品全流程，但最终工作区残留 21–25 处 `WriteStringAndCheck`（`bash_completions.go` 531–679 行）被机器验收门关闭；Go 累计 19/19，待用户授权「验收探针前移」杠杆** | 双平台复发定位：两层工具输出压缩破坏 file_read 证据 → 导航死循环；修复压缩保护+证据补齐+覆盖判定前移（家族 `469/469`）；24k 预算冲突 → 64k 授权 + uplift gate 重冻结；全量拒绝补丁的一次性有界纠正（`136/136`）；13/13 归档后用户选路径①换 V4-Pro（定价 const + 规则例外记录，`64/64`）；零 Provider 归因 pro 六槽：a1 为纠正补丁保真度（JSON 转义/幻觉上下文），a2/a3 为系统性不完整迁移+虚假完成声明（残留逐行定位到 `writeLocalNonPersistentFlag` 等 7 个函数） | 待用户授权：验收探针（残留标识符扫描）前移到客观复核反馈（不动真值/门槛/七维/预算）；完整 144 槽、七维资格与第二连续候选未完成 |
 | P2-C 三档产品反馈杠杆（探针前移 → 残留纠正迭代+逐 hunk 回执 → 解除工具调用上限+足额纠正预算） | P2 | **三档杠杆全部按授权实现并付费验证（`5f99306`→`3ab3ad61`），Go 探索以 25/25 关闭** | 探针轮 2/2 死于 `budget=tool_calls`（32 上限）；(a)+(b) 轮 2/2 仍死于同一上限（验证读占满）；第三轮解除上限后 2/2 死于纠正补丁被机器路径校验硬拒绝（Windows 为虚构源码行→工具层原子失败→纠正被拒；WSL 为 5/23 歧义落盘→纠正被拒）；收敛 44→23；链上累计 2.7649 USD（约 22.1 CNY，< 80 授权线） | Go 探索关闭；下一候选转向 real-ts/real-js 等七维路径，先做免费证据核对再决定付费探索 |
+| P2-C real-ts.cross-package-refactor 当前 harness 复验 | P2 | **双平台通过（`8e695d4`，V4-Pro，explore-8e695d4-1）** | Windows 7 次模型调用（0.0087 USD）、WSL 8 次（0.0090 USD）均 `benchmark_status=passed`、`changed_paths=1`、机器评估器全绿；加上 e4bd1c3（v4-flash）双平台通过，该任务已有两个版本 harness 的双平台通过证据；链上累计 2.7826 USD（约 22.3 CNY） | 进入候选流程：按冻结预算与资格规则规划 real-ts.cross-package-refactor 的正式矩阵推进，需用户确认后启动 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -2514,6 +2515,25 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 下一步：关闭 Go 探索，按计划核对 real-ts / real-js 等七维候选的既有证据并选择下一候选路径（核对与材料准备为免费步骤），再决定是否启动新的付费探索。
 - 为什么先做它：Go 已 25/25 且致死点已收敛为「模型无法在冻结预算内产出满足合同的纠正补丁」，继续投入只重复同一证据；候选切换是 9.5 累积路径上唯一还能改变胜率的方向。
 - 当前还缺的关键闭环：两个连续 9.5 候选的正式验收证据仍为空；下一候选必须先完成双平台免费证据核对，再经用户确认后付费探索。
+
+#### P2-C 探索结论：real-ts.cross-package-refactor 当前 harness 双平台复验（2026-09-06）
+
+##### 证据
+
+- 免费核对：`e4bd1c3`（v4-flash）双平台 `benchmark_status=passed`（各 ~0.001 USD）——原始 review/repair 失败（finishReason=length、non_json）确认为**信息遗漏**而非模型能力，复核材料修复后便宜模型即通过；`real-js.bug-fix` 亦曾在 `023af38` 双平台通过。
+- 付费复验 `explore-8e695d4-1`（当前 harness `8e695d48` + V4-Pro）：Windows 7 次模型调用 / 12,942 in / 1,044 out / 0.00869 USD、WSL 8 次 / 14,701 in / 2,051 out / 0.00895 USD，双平台均 `benchmark_status=passed`、`changed_paths=1`、机器评估器全绿。
+- 累计费用：链上报告 2.7826 USD（约 22.3 CNY），仍低于 80 CNY 授权线。
+
+##### 结论
+
+- `real-ts.cross-package-refactor` 是当前唯一在两个 harness 版本、两个模型（v4-flash / V4-Pro）下都双平台通过的 real 任务，作为下一个 9.5 候选路径证据最充分。
+- Go 探索正式关闭（25/25）；产品反馈三档杠杆保留为通用能力，不改变任何任务冻结合同。
+
+##### 后续计划
+
+- 下一步：按《自动化持续开发规则》与计划书规划 real-ts.cross-package-refactor 的正式候选流程（矩阵范围、预算、资格规则与验收门），经用户确认后启动。
+- 为什么先做它：正式矩阵是 9.5 评分的唯一来源，探索通过只证明任务-模型-harness 可行，不能替代正式成绩。
+- 当前还缺的关键闭环：尚未有任何一个完整 144 槽正式矩阵的资格分数；正式矩阵的预算与推进节奏需用户确认。
 
 ### 暂停点的剩余工作量估算（2026-09-05）
 
