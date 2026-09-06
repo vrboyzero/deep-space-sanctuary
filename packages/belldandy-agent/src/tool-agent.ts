@@ -168,6 +168,7 @@ import {
   buildWorkspaceMutationObjectiveReviewRequest,
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationVerificationRequest,
+  buildWorkspaceMutationVerificationRepairRequest,
   coalesceWorkspaceMutationApplyPatchEnvelopes,
   coalesceWorkspaceMutationApplyPatchToolCalls,
   formatWorkspaceMutationPatchHunkDiagnostics,
@@ -2509,6 +2510,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let workspaceMutationVerificationPending = false;
     let workspaceMutationVerificationAttempts = 0;
     let workspaceMutationVerificationCompletedReadCount = 0;
+    // 读后验证参数被机器契约拒绝时允许的一次有界修复轮：
+    // 仅对首次验证构建（attempts === 1）生效，构建修复请求时即消费该标记，
+    // 与 REQUIRED_RESIDUAL_CORRECTION_CYCLE_CAP / 输出修复上限相互独立，
+    // 由 12 turns / token / 费用预检共同约束，不改变任何任务冻结合同。
+    let workspaceMutationVerificationRepairPending = false;
     // 残留驱动纠正上限：残留标识符未清零时允许的额外纠正轮数；
     // 与单次纠正额度（workspaceMutationObjectiveCorrectionAttempted）相互独立，
     // 每轮消耗一次模型调用与随后的读后验证，受 12 turns / 64k tokens 预算约束。
@@ -3265,13 +3271,23 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 - finalizationOutputTokens,
             ) / REACT_FINALIZATION_INPUT_SAFETY_FACTOR),
           );
-          const candidate = buildWorkspaceMutationVerificationRequest({
-            messages: mutationRecoverySourceMessages,
-            tools: verificationTools,
-            maxInputTokens: remainingVerificationInputTokens,
-            requiredChangedPaths,
-            tokenEstimateContext: dispatchTokenEstimateContext,
-          });
+          const repairVerificationRequest = workspaceMutationVerificationRepairPending;
+          const candidate = repairVerificationRequest
+            ? buildWorkspaceMutationVerificationRepairRequest({
+                messages: mutationRecoverySourceMessages,
+                tools: verificationTools,
+                maxInputTokens: remainingVerificationInputTokens,
+                requiredChangedPaths,
+                tokenEstimateContext: dispatchTokenEstimateContext,
+              })
+            : buildWorkspaceMutationVerificationRequest({
+                messages: mutationRecoverySourceMessages,
+                tools: verificationTools,
+                maxInputTokens: remainingVerificationInputTokens,
+                requiredChangedPaths,
+                tokenEstimateContext: dispatchTokenEstimateContext,
+              });
+          workspaceMutationVerificationRepairPending = false;
           if (!candidate) {
             yield* emitWorkspaceMutationFailure(
               "the mutation succeeded, but no bounded read-after-write request can be built from the allowed tools and remaining token budget.",
@@ -3316,6 +3332,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             verificationInputTokens: candidate.estimatedInputTokens,
             verificationOutputTokens: mutationVerificationOutputTokens,
             requiredPathCount: candidate.requiredVerificationPaths.length,
+            repairCall: repairVerificationRequest,
             conversationId: input.conversationId,
             agentId: resolvedAgentId,
           });
@@ -4533,6 +4550,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
               // 重新武装读后验证：每一轮残留纠正写盘后都必须有新鲜 file_read 证据，
               // 否则下一轮扫描会沿用旧证据，无法收敛（验证次数上限随每轮重新计数）。
               workspaceMutationVerificationAttempts = 0;
+              workspaceMutationVerificationRepairPending = false;
               lastToolCallFingerprint = undefined;
               lastToolCallName = undefined;
               consecutiveDuplicateToolCalls = 0;
@@ -4772,6 +4790,26 @@ export class ToolEnabledAgent implements BelldandyAgent {
             workspaceMutationVerificationRequest?.maxFileReadCalls ?? 0,
           );
           if (!requiredToolCalls) {
+            // 首次验证构建被机器契约拒绝（锚点对象 / 非零 offset / cursor /
+            // 多余字段 / 错误路径等）时，给一次有界修复轮：以修复指令重建验证
+            // 请求。第二次仍被拒绝则维持既有 fail-closed 行为。
+            if (workspaceMutationVerificationAttempts === 1
+              && !workspaceMutationVerificationRepairPending) {
+              workspaceMutationVerificationRepairPending = true;
+              workspaceMutationVerificationPending = true;
+              lastToolCallFingerprint = undefined;
+              lastToolCallName = undefined;
+              consecutiveDuplicateToolCalls = 0;
+              recentToolCallTraces.length = 0;
+              lastSuccessfulToolResult = undefined;
+              logWarn("[workspace-mutation] rejected read-after-write request; scheduling one bounded verification repair", {
+                requiredPathCount: workspaceMutationVerificationRequest?.requiredVerificationPaths.length,
+                requestedToolCallCount: toolCalls.length,
+                conversationId: input.conversationId,
+                agentId: resolvedAgentId,
+              });
+              continue;
+            }
             yield* emitWorkspaceMutationFailure(
               "the bounded read-after-write model call must request one valid bounded full-file file_read for every required path, with no omissions, duplicates, or extra calls.",
             );

@@ -13,6 +13,7 @@ import {
   buildWorkspaceMutationRecoveryPlan,
   buildWorkspaceMutationRecoveryRequest,
   buildWorkspaceMutationVerificationRequest,
+  buildWorkspaceMutationVerificationRepairRequest,
   canPreserveContextOnlyWorkspaceMutationPatchHunks,
   coalesceWorkspaceMutationApplyPatchEnvelopes,
   coalesceWorkspaceMutationApplyPatchToolCalls,
@@ -2061,6 +2062,31 @@ describe("ReAct workspace mutation recovery", () => {
     expect(request?.messages[1]?.content).toContain("Trusted required paths to verify after mutation");
   });
 
+  it("builds one bounded read-after-write repair request with a corrective instruction", () => {
+    const definitions = [toolDefinition("file_read"), toolDefinition("apply_patch")];
+    const readTools = selectWorkspaceMutationNavigationToolDefinitions(definitions, (name) => (
+      name === "file_read" ? { isReadOnly: true } : { isReadOnly: false }
+    ));
+
+    const request = buildWorkspaceMutationVerificationRepairRequest({
+      messages: [{ role: "user", content: "Remove the deprecated public API." }],
+      tools: readTools,
+      maxInputTokens: 700,
+      requiredChangedPaths: ["src/api.ts"],
+      tokenEstimateContext: { model: "deepseek-v4-flash" },
+    });
+
+    expect(request).toMatchObject({
+      maxFileReadCalls: 1,
+      requiredVerificationPaths: ["src/api.ts"],
+      tools: [expect.objectContaining({ function: expect.objectContaining({ name: "file_read" }) })],
+    });
+    expect(request?.messages[0]?.content).toContain("Post-mutation verification repair");
+    expect(request?.messages[0]?.content).toContain("only a path argument");
+    expect(request?.messages[0]?.content).toContain("Do not include anchor, offset, cursor, limit, maxBytes");
+    expect(request?.messages[1]?.content).toContain("Trusted required paths to verify after mutation");
+  });
+
   it("normalizes anchored verification reads to bounded full-file reads", () => {
     const apiRead = fileReadToolCall("read-api", "src/api.ts");
     apiRead.function.arguments = JSON.stringify({
@@ -2103,8 +2129,28 @@ describe("ReAct workspace mutation recovery", () => {
     ]);
   });
 
+  it("normalizes object-anchored verification reads to bounded full-file reads", () => {
+    const apiRead = fileReadToolCall("read-api", "src/api.ts");
+    apiRead.function.arguments = JSON.stringify({
+      path: "src/api.ts",
+      anchor: { startLine: 1, endLine: 3 },
+    });
+
+    const selected = selectRequiredWorkspaceMutationVerificationToolCalls(
+      [apiRead],
+      ["src/api.ts"],
+      ["file_read"],
+      1,
+    );
+
+    expect(selected?.map((call) => JSON.parse(call.function.arguments))).toEqual([
+      { path: "src/api.ts", limit: 1_048_576 },
+    ]);
+  });
+
   it.each([
     { name: "uses an empty anchor", arguments: { path: "src/api.ts", anchor: "" } },
+    { name: "uses an empty object anchor", arguments: { path: "src/api.ts", anchor: {} } },
     { name: "uses a positive offset with an anchor", arguments: { path: "src/api.ts", anchor: "TraceValue", offset: 1 } },
     { name: "uses a cursor without an anchor", arguments: { path: "src/api.ts", cursor: "next" } },
   ])("fails closed when verification $name", ({ arguments: readArguments }) => {

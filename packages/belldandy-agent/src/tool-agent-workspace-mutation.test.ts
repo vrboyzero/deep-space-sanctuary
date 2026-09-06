@@ -357,6 +357,153 @@ describe("ToolEnabledAgent required workspace mutation", () => {
     expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
   });
 
+  it("repairs one rejected read-after-write request before completing", async () => {
+    const requiredChangedPaths = ["src/api.ts"];
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, any>);
+      if (requests.length === 1) {
+        return response(modelToolCall("patch-api", "apply_patch", { input: "patch api" }, 300, 60));
+      }
+      if (requests.length === 2) {
+        // 首次验证读使用非零 offset → 机器契约拒绝，触发一次有界修复轮
+        return response(modelToolCall("verify-bad", "file_read", {
+          path: requiredChangedPaths[0],
+          offset: 1,
+        }, 400, 80));
+      }
+      if (requests.length === 3) {
+        return response(modelVerificationReads(requiredChangedPaths));
+      }
+      return response({
+        choices: [{ finish_reason: "stop", message: { content: "verified" } }],
+        usage: { prompt_tokens: 200, completion_tokens: 30 },
+      });
+    });
+    const execute = vi.fn(async (request: { id: string; name: string; arguments?: Record<string, unknown> }) => {
+      if (request.name === "file_read") {
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: JSON.stringify({
+            path: request.arguments?.path,
+            truncated: false,
+            content: "post-mutation content",
+          }),
+          durationMs: 1,
+        };
+      }
+      return {
+        id: request.id,
+        name: request.name,
+        success: true,
+        output: "Patch applied successfully",
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+        },
+        durationMs: 1,
+      };
+    });
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 1 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-verification-repair",
+      text: "Migrate src/api.ts.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 1,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(4);
+    expect(requests[2]?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "system",
+        content: expect.stringContaining("Post-mutation verification repair"),
+      }),
+    ]));
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual([
+      "apply_patch",
+      "file_read",
+    ]);
+    expect(execute.mock.calls[1]?.[0]?.arguments).toEqual({ path: "src/api.ts", limit: 1_048_576 });
+    expect(items).toContainEqual({ type: "final", text: "verified" });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("fails closed when the read-after-write repair is rejected a second time", async () => {
+    const requiredChangedPaths = ["src/api.ts"];
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, any>);
+      if (requests.length === 1) {
+        return response(modelToolCall("patch-api", "apply_patch", { input: "patch api" }, 300, 60));
+      }
+      // 首次验证读与修复轮均携带非零 offset → 一次修复后维持 fail-closed
+      return response(modelToolCall(`verify-bad-${requests.length}`, "file_read", {
+        path: requiredChangedPaths[0],
+        offset: 1,
+      }, 400, 80));
+    });
+    const execute = vi.fn(async (request: { id: string; name: string; arguments?: Record<string, unknown> }) => (
+      request.name === "apply_patch"
+        ? {
+            id: request.id,
+            name: request.name,
+            success: true,
+            output: "Patch applied successfully",
+            metadata: {
+              workspaceMutation: { schemaVersion: 1, changedPaths: requiredChangedPaths },
+            },
+            durationMs: 1,
+          }
+        : {
+            id: request.id,
+            name: request.name,
+            success: true,
+            output: JSON.stringify({
+              path: request.arguments?.path,
+              truncated: false,
+              content: "post-mutation content",
+            }),
+            durationMs: 1,
+          }
+    ));
+    const agent = createAgent({ execute, maxTotalTokens: 24_000, toolLoopIterationBudget: 1 });
+
+    const items = await collect(agent.run({
+      conversationId: "conv-required-mutation-verification-repair-exhausted",
+      text: "Migrate src/api.ts.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths,
+          toolLoopIterationBudget: 1,
+        },
+      },
+    }));
+
+    expect(requests).toHaveLength(3);
+    expect(requests[2]?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "system",
+        content: expect.stringContaining("Post-mutation verification repair"),
+      }),
+    ]));
+    expect(execute.mock.calls.map(([request]) => request.name)).toEqual(["apply_patch"]);
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "final",
+      text: expect.stringContaining("must request one valid bounded full-file file_read"),
+    }));
+    expect(items.at(-1)).toMatchObject({ type: "status", status: "error" });
+  });
+
   it("re-verifies one post-verification correction before tool-free finalization", async () => {
     const requiredChangedPaths = ["src/api.ts"];
     const requests: Array<Record<string, any>> = [];
