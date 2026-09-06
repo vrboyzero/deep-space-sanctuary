@@ -2401,6 +2401,25 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 新增 `react-workspace-mutation-residual-scan.test.ts`（5 用例：计数+行号、JSON 转义证据、clean 回显、未配置时缺省、纠正请求回显）全绿；CLI/能力门/合同/门禁/真值测试共 **199/199** 通过。
 - 未验证风险：真实 Provider 下残留清单对模型纠正行为的实际改善需付费探索确认。
 
+#### P2-C 探索结论：验收探针前移首轮（2026-09-06）
+
+##### 证据
+
+- 首轮 eb6de8f 两槽事后核实为**探针未启用**（ci runner 未解析旗标，见「重要问题说明」），不计入探针结论；`d3fd646a` 补接线后重跑两槽（成本 `0.0148 + 0.0147 USD`，累计 provider 成本 `2.6622 USD`，预留不变 `2.34221`）。
+- **Windows**：探针实际生效——prompt 快照确认纠正请求含 `Post-write residual scan ... bash_completions.go: WriteStringAndCheck: 22 处；首次出现在行 529、531、562、590、594、606、616、622 等`；模型最终 summary 明确承认「22 occurrences remain ... correction did not satisfy」。逐行对比证明：基线 44 处 → 首次补丁清 22 处（37-553 区段）→ 纠正补丁 6 个 hunk 中 3 个落盘（`must_have_one_flag+=`@609、`BASH_VERSION`@636、`flags=()`@~550），另 3 个（`"\n"`@590、`format,name`@529/531）未落盘，apply 工具整体仍返回 success；终态 22 处残留 → 机器验收 `testsPassed=false / regressionCount=1`。
+- **WSL**：`cli_exit_code=4`、`changed_paths=0`、`result.json=null`，「Go task result must contain exactly one non-empty summary」——输出合同失败，探针未进入有效纠正循环。
+- 输入 tokens 仅 25.5k / 19.0k，模型在单次纠正额度内停止（写入+复核+一次纠正+终局），没有持续迭代到残留清零。
+
+##### 结论
+
+- 探针本身工作正常：残留计数与首行号都准确回显给了模型，模型从「虚假宣称全部迁移」转变为「诚实承认残留并尝试定向纠正」；机器验收门与任务真值未被触碰。
+- 但**单次纠正额度 + 模型纠正不完整（6 改 3 落盘）**使探针未能转化为任务成功；Go 累计 **21/21**（flash 13 + pro 6 + 探针轮 2）。杠杆 ② 单独不足以达标，属于模型在残留密集区（bash_completions.go 44 处）的多步精确编辑能力边界，不是反馈信息缺口。
+- 两槽均为真实失败样本，永久冻结；不在同一配置上无新证据重试。
+
+##### 后续计划
+
+向用户呈报探针轮证据与 21/21 现状，并把「纠正不完整」分解为两个可选最小杠杆：(a) 残留扫描随纠正请求**允许有界迭代**（残留未清零且额度未耗尽时再次复核，不改变任务真值/门槛/预算）；(b) 探针轮观察到模型 hunk 半数未落盘而 apply 工具仍报 success，补 apply 工具**逐 hunk 落盘回执**（哪个 hunk 匹配到哪行、哪些未匹配），让模型在下一轮纠正拿到精确失败信息。二者都属产品反馈内容而非验收标准变更；待用户选择授权后再实施，不在同证据上继续付费抽样。
+
 ### 暂停点的剩余工作量估算（2026-09-05）
 
 本暂停点粗估为 **3–6人日工程量，另加两个完整候选和 CI 的运行/观察窗口**；按一名开发者计约3–6个工作日，不是固定交付日期。第8章的2–4.25人日属于较早维护估算，当前以本进度区为准，已经完成的启动、审批计量、Go 前置和证据基座不重复计量。
@@ -2484,6 +2503,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - canary 的结构化 8 目标不存在探针首次在嵌套 `GetFullPath(Split-Path(...))` 表达式少一个右括号，PowerShell 在读取 plan 前即解析失败，没有创建或修改目标；改为先计算两个 artifact 路径再构造固定 8 项数组后全部 absent，处理决策为 `fix_now completed`。
 - `8f794af` Windows batch 01 的 t03 `bug.reproducible-fix` 在 patch、测试及 evaluator 均通过后仍以 `product_workflow` failed 结束：post-write objective review 未返回有效 JSON，随后 phase-aware output repair 消费唯一代码纠正额度，最终复核仍未完成输出合同。零 Provider 固定响应序列已稳定复现该通用状态机缺口；处理决策由 `split_task` 闭合为 `fix_now completed`：`6ce85bd` 在纠正后只允许一次无工具 JSON repair，持续无效仍失败关闭，旧候选终态保持冻结。
 - `6ce85bd` staging 前的首个 Windows 多目标只读探针再次因 `foreach` 结果直接接管道在 PowerShell 解析期失败，首个 WSL 循环探针也因外层展开导致循环变量为空；后续一次合并的 WSL mode/hash 探针因 `awk` 转义失败。三次均未创建或修改目标；改为先收集数组和逐路径/逐命令字面调用后确认所有目标 absent、blob/mode 可复算，处理决策为 `fix_now completed`。
+- eb6de8f 验收探针前移（`requiredResidualIdentifiers`）的首次真实探索两槽均实际失败，但事后核对发现该轮探索**未启用探针**：`run-coding-agent-benchmark.mjs` 虽把 `--required-residual-identifiers` 传给 coding-ci 子进程，`run-coding-agent-ci.mjs` 却从未解析该旗标，Flag 静默丢弃，`agent run` 拿不到 `requiredResidualIdentifiers`，复核/纠正请求自然不含残留扫描块。处理决策为 `fix_now completed`：`d3fd646a` 补齐 ci runner 的旗标解析、`buildAgentRunArgs` 透传与正/负测试（73/73 通过）；eb6de8f 两槽按真实终态保留为「探针未启用的无效对照」，不计入探针有效性结论，探针结论须用 d3fd646a 及之后身份重跑。
 - Windows 首次离线安装超过 30 秒观察窗口，原并行调用未保留最终 exit code；确认唯一任务进程 PID、父进程和候选命令行后持续观察至退出，再以相同冻结离线命令幂等确认 `Already up to date`、exit=`0`。未重启并发安装、未进入 Provider，处理决策为 `fix_now completed`。
 - WSL npm cache 首次类型探针把含 `|` 的 `stat -c` 格式字符串交给 PowerShell，宿主将其解析为管道并在只读命令中失败；改用逗号分隔格式的直接 argv 后确认 source/target 均为非 symlink `755 directory`，复制后字节与目录内容一致。未影响 cache 或 inputs，处理决策为 `fix_now completed`。
 - WSL material Gate 先由 production resolver 正确返回 `benchmarks/coding-agent/v3/task-manifest.json`，随后人工哈希命令仍误用猜测的 `manifest.json` 而失败；改为读取 resolver 的真实路径，并同时核对 raw/contract SHA 后通过。该只读失败发生在 producer 前，未创建 output，处理决策为 `fix_now completed`。
