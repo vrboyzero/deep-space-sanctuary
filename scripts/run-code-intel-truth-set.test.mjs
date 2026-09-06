@@ -43,7 +43,7 @@ describe("CodeIntel truth set", () => {
       },
     });
     expect(hashCanonicalText(currentTaskManifest.toString("utf-8"))).toBe(
-      "8c8b249e3647c10124f2198d06ee59e1a3656f56c0322cf9639e6baaa9c876f3",
+      "aed0bcd54af52560fc16fb2fd2ddd07e49cd8c338e86f52ab1a6d6e4731006dd",
     );
     expect(hashCanonicalText(currentTaskManifest.toString("utf-8"))).not.toBe(
       gate.sourceIdentity.taskManifest.sha256,

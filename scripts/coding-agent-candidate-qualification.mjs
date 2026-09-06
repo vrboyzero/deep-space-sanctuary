@@ -407,7 +407,13 @@ export async function qualifyCodingAgentBenchmarkCandidate(input) {
     };
   }
 
-  const bRuns = report.runs.filter((run) => manifestTasksById.get(run.taskId)?.layer === "B");
+  // 用户授权的独立受控 canary lane（manifest.task.layerGateLane === "canary"）：
+  // 结果照常保留，但不进入 B 层成功率、语言生态、测试与 patch 门槛分母。
+  const isLayerGateCanaryTask = (task) => task?.layerGateLane === "canary";
+  const bRuns = report.runs.filter((run) => {
+    const task = manifestTasksById.get(run.taskId);
+    return task?.layer === "B" && !isLayerGateCanaryTask(task);
+  });
   const passedBRunCount = bRuns.filter((run) => run.status === "passed").length;
   const bSuccessRate = bRuns.length === 0 ? 0 : passedBRunCount / bRuns.length;
   if (bSuccessRate < scorecard.layerGates.B.successRateMinimum) {

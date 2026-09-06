@@ -232,6 +232,7 @@
       "properties": {
         "id": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*\\.[a-z][a-z0-9_-]*$", "maxLength": 100 },
         "layer": { "enum": ["A", "B", "C"] },
+        "layerGateLane": { "enum": ["canary"] },
         "repositoryId": { "enum": ["express", "preact", "spf13-cobra", "vscode-languageserver-node"] },
         "category": {
           "enum": [

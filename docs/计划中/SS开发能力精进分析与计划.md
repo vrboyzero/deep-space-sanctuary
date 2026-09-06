@@ -80,8 +80,8 @@ SS 内部评分误差约 +/-0.15，横向评分误差约 +/-0.3；横向表衡�
 | Gate | 必须满足 |
 | --- | --- |
 | 分数与连续性 | 两个连续候选原始加权均 >=9.500，各维不低于 9.5/9.6/9.4/9.5/9.6/9.5/9.4；不接受四舍五入、单次 canary 或跨 revision projection |
-| 身份与矩阵 | 每个候选只有一个 source/harness identity；24 项任务在 Windows/WSL2 各执行 3 次，共 144 项原生 aggregate，失败不移出分母 |
-| A/B/C | A 72/72；B 总成功率 >=92%、每个 required 语言生态 >=90%，适用测试与 patch acceptance >=95%；C 的安全、恢复、containment、重复副作用和敏感泄漏 100%，其余系统任务 >=90% |
+| 身份与矩阵 | 每个候选只有一个 source/harness identity；24 项任务在 Windows/WSL2 各执行 3 次，共 144 项原生 aggregate，失败不移出分母；`real-go.public-api-migration` 为用户授权的独立受控 canary lane（2026-09-06），槽位照常执行并保留原始结果，但不进入 B 层与维度证据组的分母 |
+| A/B/C | A 72/72；B（不含 canary lane）总成功率 >=92%、每个 required 语言生态 >=90%，适用测试与 patch acceptance >=95%；C 的安全、恢复、containment、重复副作用和敏感泄漏 100%，其余系统任务 >=90% |
 | Truth set/evaluator | prompt、visible test、fixture、evaluator 使用同一版本化 truth set，覆盖正例、普通属性负例、data-*、null/missing 和边界行为 |
 | CodeIntel | TS/JS production 与 Go 只经公共 interface；结果绑定 workspace/revision/freshness/allowlist；Go 固定 goCanaryEligible=true、productionEligible=false |
 | 验证与 Browser | 使用原生 Vitest/go test 结构化报告；DAG、首次失败、有限 replay 和 Browser DOM/console/request/截图/viewport/revision evidence 可复算，生命周期 pending/orphan=0/0 |
@@ -1059,8 +1059,8 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 ### 候选方案（按依赖排序）
 
-1. **合同决策（用户）**：Go-in-B 数学墙的处置——推荐把 `real-go.public-api-migration` 从 B 层成功率分母移出、保留为独立受控 canary lane（与 1.4 节「Go 受控 canary、productionEligible=false」表述一致）；或用户指定其他处置（放宽容许值/换任务真值/放预算）。任何选择都需显式授权并同步 scorecard/mapping/完成定义与回归合同。
-2. **B 层验证探索（付费小样本）**：对未验证的 6 个 B 任务做双平台各 1 槽复验（12 槽，按当前费率粗估 **~0.10–0.30 USD**，V4-Pro、冻结预算、formal=false），拿到 B 层真实成功率后再决定正式矩阵是否值得启动。
+1. **合同决策（已实施，用户授权 2026-09-06）**：`real-go.public-api-migration` 移出 B 层成功率分母、保留独立受控 canary lane（manifest `layerGateLane: "canary"`）；B 分母 48→42（需 ≥39/42），维度映射两个 real-repository 证据组同步移除该任务；任务真值、预算、验收门与七维下限不变。canary 槽照常执行并保留在 144 槽原生 aggregate 中。
+2. **B 层验证探索（用户已授权 12 槽）**：对未验证的 6 个 B 任务做双平台各 1 槽复验（12 槽，粗估 ~0.10–0.30 USD，V4-Pro、冻结预算、formal=false），拿到 B 层真实成功率后再决定正式矩阵是否值得启动。
 3. **正式矩阵**：仅当 1+2 都收敛后，冻结候选 identity、生成不可覆盖 expected-report plan、按 6.6 节停止规则推进 144 槽；每批次核对七维下限与费用守卫。
 
 ### 风险与失败模式
@@ -1096,7 +1096,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C 分层开发与编排复用 | P2 | **用户授权换模型已执行：v3 runner 切 `deepseek-v4-pro`（CI 全绿 `a34d7540`），V4-Pro 六槽（a1/a2/a3）稳定走完产品全流程，但最终工作区残留 21–25 处 `WriteStringAndCheck`（`bash_completions.go` 531–679 行）被机器验收门关闭；Go 累计 19/19，待用户授权「验收探针前移」杠杆** | 双平台复发定位：两层工具输出压缩破坏 file_read 证据 → 导航死循环；修复压缩保护+证据补齐+覆盖判定前移（家族 `469/469`）；24k 预算冲突 → 64k 授权 + uplift gate 重冻结；全量拒绝补丁的一次性有界纠正（`136/136`）；13/13 归档后用户选路径①换 V4-Pro（定价 const + 规则例外记录，`64/64`）；零 Provider 归因 pro 六槽：a1 为纠正补丁保真度（JSON 转义/幻觉上下文），a2/a3 为系统性不完整迁移+虚假完成声明（残留逐行定位到 `writeLocalNonPersistentFlag` 等 7 个函数） | 待用户授权：验收探针（残留标识符扫描）前移到客观复核反馈（不动真值/门槛/七维/预算）；完整 144 槽、七维资格与第二连续候选未完成 |
 | P2-C 三档产品反馈杠杆（探针前移 → 残留纠正迭代+逐 hunk 回执 → 解除工具调用上限+足额纠正预算） | P2 | **三档杠杆全部按授权实现并付费验证（`5f99306`→`3ab3ad61`），Go 探索以 25/25 关闭** | 探针轮 2/2 死于 `budget=tool_calls`（32 上限）；(a)+(b) 轮 2/2 仍死于同一上限（验证读占满）；第三轮解除上限后 2/2 死于纠正补丁被机器路径校验硬拒绝（Windows 为虚构源码行→工具层原子失败→纠正被拒；WSL 为 5/23 歧义落盘→纠正被拒）；收敛 44→23；链上累计 2.7649 USD（约 22.1 CNY，< 80 授权线） | Go 探索关闭；下一候选转向 real-ts/real-js 等七维路径，先做免费证据核对再决定付费探索 |
 | P2-C real-ts.cross-package-refactor 当前 harness 复验 | P2 | **双平台通过（`8e695d4`，V4-Pro，explore-8e695d4-1）** | Windows 7 次模型调用（0.0087 USD）、WSL 8 次（0.0090 USD）均 `benchmark_status=passed`、`changed_paths=1`、机器评估器全绿；加上 e4bd1c3（v4-flash）双平台通过，该任务已有两个版本 harness 的双平台通过证据；链上累计 2.7826 USD（约 22.3 CNY） | 进入候选流程：按冻结预算与资格规则规划 real-ts.cross-package-refactor 的正式矩阵推进，需用户确认后启动 |
-| P2-C 正式候选启动计划 | P2 | **计划已落盘；等用户合同决策** | B 层 48 槽需 ≥45 通过；`real-go.public-api-migration` 6 槽 25/25 失败 → 最高 42/48=87.5%<92%，9.5 数学不可达；B 层另有 6 个任务当前 harness 未复验（含 2 个从未运行的 web 任务） | 待用户：①Go-in-B 合同决策（推荐移出 B 分母保留 canary）；②授权 B 层 12 槽验证探索（粗估 0.10–0.30 USD） |
+| P2-C 正式候选启动计划 | P2 | **合同变更已实施并授权 12 槽复验；复验材料准备中** | 用户授权：`real-go.public-api-migration` 移出 B 分母保留 canary lane（manifest `layerGateLane` + 映射 + evaluator/qualification/progress 三处分母 + 回归合同，已 tsc/verify/101 项定向测试通过）；B 分母 42、需 ≥39/42 | 待：全量脚本回归 → 提交推送 → 重建双平台 harness → 12 槽 B 层复验（6 任务 × 双平台，粗估 0.10–0.30 USD） |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）

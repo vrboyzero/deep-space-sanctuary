@@ -1090,19 +1090,19 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
       .resolves.toMatchObject({ decision: qualification });
   });
 
-  it("enforces the B success rate over exactly the 48 layer-B executions", async () => {
+  it("enforces the B success rate over exactly the 42 non-canary layer-B executions", async () => {
     const { outputRoot } = await createCompleteQualificationBaseline((runs) => {
-      const failedEcosystems = new Set();
+      // canary lane（real-go.public-api-migration）不进入 B 层成功率分母；
+      // 这里使 4 个非 canary B 槽失败，令成功率跌破 0.92。
+      let failedRunCount = 0;
       for (const run of runs) {
         const task = manifestV3.tasks.find((candidate) => candidate.id === run.taskId);
-        if (task?.layer !== "B") continue;
-        const ecosystem = manifestV3.repositories.find((repository) => {
-          return repository.id === task.repositoryId;
-        })?.languageEcosystem;
-        if (failedEcosystems.has(ecosystem)) continue;
-        failedEcosystems.add(ecosystem);
+        if (task?.layer !== "B" || task.layerGateLane === "canary") continue;
+        if (failedRunCount === 4) break;
         run.status = "failed";
         run.failureCategory = "product_workflow";
+        run.evaluation.taskCompleted = false;
+        failedRunCount += 1;
       }
     });
 
@@ -1115,9 +1115,9 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
         failedGates: [{
           layer: "B",
           id: "successRateMinimum",
-          numerator: 44,
-          denominator: 48,
-          observed: 44 / 48,
+          numerator: 38,
+          denominator: 42,
+          observed: 38 / 42,
           minimum: 0.92,
         }],
       }],
@@ -1164,12 +1164,12 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
       .resolves.toMatchObject({ decision: qualification });
   });
 
-  it("enforces the B test pass rate over only applicable layer-B evaluations", async () => {
+  it("enforces the B test pass rate over only applicable non-canary layer-B evaluations", async () => {
     const { outputRoot } = await createCompleteQualificationBaseline((runs) => {
       let failedTestCount = 0;
       for (const run of runs) {
         const task = manifestV3.tasks.find((candidate) => candidate.id === run.taskId);
-        if (task?.layer !== "B" || failedTestCount === 3) continue;
+        if (task?.layer !== "B" || task.layerGateLane === "canary" || failedTestCount === 3) continue;
         run.evaluation.testsPassed = false;
         failedTestCount += 1;
       }
@@ -1184,9 +1184,9 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
         failedGates: [{
           layer: "B",
           id: "testPassRateMinimum",
-          numerator: 45,
-          denominator: 48,
-          observed: 0.9375,
+          numerator: 39,
+          denominator: 42,
+          observed: 39 / 42,
           minimum: 0.95,
         }],
       }],
@@ -1197,11 +1197,13 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
       .resolves.toMatchObject({ decision: qualification });
   });
 
-  it("enforces the B patch acceptance rate over only applicable mutation evaluations", async () => {
+  it("enforces the B patch acceptance rate over only applicable non-canary mutation evaluations", async () => {
     const { outputRoot } = await createCompleteQualificationBaseline((runs) => {
       let rejectedPatchCount = 0;
       for (const run of runs) {
         if (run.evaluation.patchAccepted === null || rejectedPatchCount === 2) continue;
+        const task = manifestV3.tasks.find((candidate) => candidate.id === run.taskId);
+        if (task?.layerGateLane === "canary") continue;
         run.evaluation.patchAccepted = false;
         rejectedPatchCount += 1;
       }
@@ -1216,9 +1218,9 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
         failedGates: [{
           layer: "B",
           id: "patchAcceptanceRateMinimum",
-          numerator: 34,
-          denominator: 36,
-          observed: 34 / 36,
+          numerator: 28,
+          denominator: 30,
+          observed: 28 / 30,
           minimum: 0.95,
         }],
       }],

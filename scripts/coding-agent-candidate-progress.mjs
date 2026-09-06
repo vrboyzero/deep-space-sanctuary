@@ -60,9 +60,16 @@ export function evaluateCodingAgentCandidateProgress(input) {
     const reasons = [];
     const slotsFor = (selectedTasks) => selectedTasks.reduce((sum, task) =>
       sum + task.platforms.length * manifest.suite.sampleRuns, 0);
+    // 用户授权的独立受控 canary lane（当前为 real-go.public-api-migration）：
+    // 槽位照常执行并计入 processed，但不进入 B 层成功率/语言生态等门槛分母。
+    const isLayerGateCanary = (task) => task?.layerGateLane === "canary";
     const layer = (name) => {
-      const selectedTasks = manifest.tasks.filter((task) => task.layer === name);
-      const selected = runs.filter((run) => tasks.get(run.taskId).layer === name);
+      const selectedTasks = manifest.tasks.filter((task) =>
+        task.layer === name && !isLayerGateCanary(task));
+      const selected = runs.filter((run) => {
+        const task = tasks.get(run.taskId);
+        return task?.layer === name && !isLayerGateCanary(task);
+      });
       return { selected, remaining: slotsFor(selectedTasks) - selected.length };
     };
     const a = layer("A");
@@ -74,7 +81,8 @@ export function evaluateCodingAgentCandidateProgress(input) {
       scorecard.layerGates.B.successRateMinimum);
     for (const ecosystem of new Set(manifest.repositories.map((repo) => repo.languageEcosystem))) {
       const repositoryIds = new Set(manifest.repositories.filter((repo) => repo.languageEcosystem === ecosystem).map((repo) => repo.id));
-      const selectedTasks = manifest.tasks.filter((task) => task.layer === "B" && repositoryIds.has(task.repositoryId));
+      const selectedTasks = manifest.tasks.filter((task) =>
+        task.layer === "B" && !isLayerGateCanary(task) && repositoryIds.has(task.repositoryId));
       const selectedIds = new Set(selectedTasks.map((task) => task.id));
       const selected = b.selected.filter((run) => selectedIds.has(run.taskId));
       checkRate(reasons, `B.requiredLanguageSuccessRateMinimum:${ecosystem}`,

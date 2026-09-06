@@ -79,6 +79,37 @@ describe("coding agent candidate progress", () => {
     expect(result.reasons).not.toContain("B.successRateMinimum");
   });
 
+  it("keeps canary lane executions out of every B gate denominator", () => {
+    // real-go.public-api-migration 是 layerGateLane=canary 的独立受控 lane：
+    // 其失败既不影响 B.successRateMinimum，也不进入 go 语言生态门槛。
+    const failures = [
+      productFailure("real-go.public-api-migration", 1),
+      productFailure("real-go.public-api-migration", 2),
+      productFailure("real-go.public-api-migration", 3),
+    ];
+    const result = evaluate(failures);
+    expect(result.status).toBe("continue");
+    expect(result.reasons).not.toContain("B.successRateMinimum");
+    expect(result.reasons).not.toContain("B.requiredLanguageSuccessRateMinimum:go");
+    expect(result.processed).toBe(3);
+  });
+
+  it("counts canary lane slots as processed without changing matrix completion", () => {
+    const items = manifest.tasks.flatMap((task) => task.platforms.flatMap((platform) =>
+      Array.from({ length: manifest.suite.sampleRuns }, (_, index) => {
+        const item = observation(task.id, index + 1, platform);
+        if (task.id === "real-go.public-api-migration") {
+          item.run.status = "failed";
+          item.run.failureCategory = "product_workflow";
+          item.run.evaluation.taskCompleted = false;
+        }
+        return item;
+      })));
+    expect(evaluate(items)).toEqual({
+      status: "complete", reasons: [], processed: 144, remaining: 0, qualification: "unscored",
+    });
+  });
+
   it("stops when a dimension subgroup is unreachable despite otherwise healthy layer rates", () => {
     const failure = productFailure("system.parallel-read-isolation");
     const result = evaluate([failure]);

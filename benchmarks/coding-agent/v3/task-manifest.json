@@ -460,6 +460,7 @@
     {
       "id": "real-go.public-api-migration",
       "layer": "B",
+      "layerGateLane": "canary",
       "repositoryId": "spf13-cobra",
       "category": "cross_file_feature",
       "title": "Migrate a Go public API across packages",

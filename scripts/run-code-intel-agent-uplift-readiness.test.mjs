@@ -334,7 +334,10 @@ function buildHistoricalTaskManifestText(currentText) {
     )
     .replace('"real-web-ui-regression-v2"', '"real-web-ui-regression-v1"')
     .replace(/      "truthSet": \{\n[\s\S]*?      \},\n/u, "");
-  const result = `${historicalBase.slice(0, start)}${frozenBlock}${historicalBase.slice(end)}`;
+  const result = `${historicalBase.slice(0, start)}${frozenBlock}${historicalBase.slice(end)}`
+    // 2026-09-06 用户授权的 Go canary lane（layerGateLane）在冻结 uplift 输入之后才加入，
+    // 重建历史快照时剥离该行，使冻结输入摘要保持 9039313b 不变。
+    .replace(/^      "layerGateLane": "canary",\n/gmu, "");
   const expectedHash = "9039313b6b193cd12ae63bbb92aa55a79db76c07e2f68953c146a9629a67c1ea";
   if (hashCanonicalText(result) !== expectedHash) {
     throw new Error("Historical v3 task manifest fixture drifted from the frozen uplift input.");

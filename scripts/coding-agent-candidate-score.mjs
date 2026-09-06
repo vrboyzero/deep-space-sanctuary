@@ -416,12 +416,13 @@ const EXPECTED_CONTEXT_TASK_IDS = Object.freeze({
     "rules.nested-precedence",
     "navigation.large-repository",
   ]),
+  // real-go.public-api-migration 为用户授权的独立受控 canary lane：
+  // 在矩阵中照常执行并保留原始结果，但不进入本组的任务完成率分母。
   real_repository_context: Object.freeze([
     "real-ts.api-migration",
     "real-ts.cross-package-refactor",
     "real-js.bug-fix",
     "real-js.failed-test-fix",
-    "real-go.public-api-migration",
     "real-go.bug-fix",
     "real-web.ui-regression",
     "real-web.dependency-diagnosis",
