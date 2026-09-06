@@ -2420,6 +2420,33 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 向用户呈报探针轮证据与 21/21 现状，并把「纠正不完整」分解为两个可选最小杠杆：(a) 残留扫描随纠正请求**允许有界迭代**（残留未清零且额度未耗尽时再次复核，不改变任务真值/门槛/预算）；(b) 探针轮观察到模型 hunk 半数未落盘而 apply 工具仍报 success，补 apply 工具**逐 hunk 落盘回执**（哪个 hunk 匹配到哪行、哪些未匹配），让模型在下一轮纠正拿到精确失败信息。二者都属产品反馈内容而非验收标准变更；待用户选择授权后再实施，不在同证据上继续付费抽样。
 
+#### P2-C 实现结论：残留驱动纠正迭代 + 逐 hunk 落盘回执（2026-09-06）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/builtin/apply-patch/match.ts` 扩展**：
+   - `seekSequence` 返回命中行与匹配级别（1 精确 / 2 去行尾空白 / 3 去首尾空白 / 4 标点归一）；
+   - 新增 `countExactCandidates` 统计同一模式在文件中的精确候选数；
+   - `applyUpdateChunksToContent` / `applyUpdateChunks` 返回 `chunkMatches`（chunk 序号、匹配行、级别、候选数、旧行首行）。
+2. **`packages/belldandy-skills/src/builtin/apply-patch/index.ts` 接入**：
+   - 成功输出 JSON 增加 `hunks` 数组（file/chunk/matchedLine/matchLevel/exactCandidates/oldFirstLine），多 section 同文件合并并保持 chunk 序号连续；`summary`/`details` 不变，向后兼容。
+3. **`packages/belldandy-agent/src/react-workspace-mutation.ts` 扩展**：
+   - 纠正原因新增 `residual_identifier_requires_removal` 及对应指令（残留清单是权威剩余工作量、部分清除不算完成、同文多处以唯一上下文锚定 hunk）；
+   - 导出零 Provider `computeLatestRequiredResidualHits`（每 required path 取最新 file_read 证据，同口径计数+首行号）。
+4. **`packages/belldandy-agent/src/tool-agent.ts` 状态机扩展**：
+   - 新增 `REQUIRED_RESIDUAL_CORRECTION_CYCLE_CAP = 3` 与 `workspaceMutationResidualCorrectionCycles` 计数；
+   - 客观复核返回有效输出后，若残留扫描仍命中且轮数未达上限，再调度一轮输入纠正；每轮重置读后验证武装（`workspaceMutationVerificationAttempts = 0`），保证下一轮扫描基于新鲜证据收敛；轮数耗尽或预算不足时按原路径失败关闭。
+5. **效果**：
+   - 模型每次 apply_patch 后都能看到每个 hunk 实际落在哪一行、匹配级别与候选数，不再把「匹配到 456 行」误认为「修好了 529 行」；
+   - 残留未清零时自动进入下一轮纠正（最多 3 轮），每轮基于最新读后验证证据重新扫描，直至清零或预算耗尽；
+   - 任务真值、七维、门槛、`$0.10`/run、12 turns、机器验收门均未变化，仅扩展产品反馈内容与纠正节奏。
+
+##### 验证结果
+
+- TypeScript 编译无错误；`verify:coding-benchmark` 通过。
+- 新增/更新测试 **224/224** 通过：apply-patch 逐 hunk 回执 2 例（相同候选 + 降级匹配）、`computeLatestRequiredResidualHits` 2 例、残留纠正原因指令 1 例、残留驱动循环状态机 1 例（4 处残留 → 三轮纠正 → 验证 → 最终复核 → done），其余为既有回归。
+- 未验证风险：真实 Provider 下「有界迭代 + 逐 hunk 回执」对 Go 任务的转化率需付费探索确认。
+
 ### 暂停点的剩余工作量估算（2026-09-05）
 
 本暂停点粗估为 **3–6人日工程量，另加两个完整候选和 CI 的运行/观察窗口**；按一名开发者计约3–6个工作日，不是固定交付日期。第8章的2–4.25人日属于较早维护估算，当前以本进度区为准，已经完成的启动、审批计量、Go 前置和证据基座不重复计量。

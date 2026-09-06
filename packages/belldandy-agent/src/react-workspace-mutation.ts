@@ -125,7 +125,8 @@ export type WorkspaceMutationObjectiveInputCorrectionReason =
   | "serialized_false_parent_guard_requires_reachability"
   | "serialized_false_sibling_requires_data_coverage"
   | "serialized_false_nullish_serialization_requires_atomic_repair"
-  | "serialized_false_removal_requires_atomic_repair";
+  | "serialized_false_removal_requires_atomic_repair"
+  | "residual_identifier_requires_removal";
 
 export type WorkspaceMutationRecoveryPlan = WorkspaceMutationRecoveryRequest & {
   outputTokens: number;
@@ -235,6 +236,7 @@ const MUTATION_OBJECTIVE_INPUT_CORRECTION_REASON_INSTRUCTIONS: Record<
   serialized_false_sibling_requires_data_coverage: "Local validation rejected the current source because the owned false sibling serializes aria-* but does not preserve data-*. Preserve the sibling body and every adjacent branch byte-for-byte. Replace only its condition `value === false && (name.charCodeAt(0) & 31) == 1` with the frozen source contract `value === false && name[4] == '-'`. Do not add another branch, change setAttribute/removeAttribute statements, or alter ordinary false, null, or undefined behavior.",
   serialized_false_nullish_serialization_requires_atomic_repair: "Local validation rejected the preceding review because the complete current source proves that the aria/data subset branch serializes null or undefined instead of removing the attribute. Repair only that existing branch atomically: replace its condition with `value === false && name[4] == '-'`, then replace its setAttribute statement with exactly `dom.setAttribute(name, 'false');`. Preserve the new explanatory comments and every sibling branch byte-for-byte. Do not refactor or rewrite the surrounding chain.",
   serialized_false_removal_requires_atomic_repair: "Local validation rejected the preceding review because the complete current source proves that the null/undefined and ordinary-false removal branch has no executable removal statement, and its subset predicate references an identifier that the complete source does not declare. Repair that existing branch atomically: replace only its invalid condition with `value == NULL || (value === false && name[4] != '-')`, then add exactly `dom.removeAttribute(name);` inside the branch. This is the smallest condition that removes null/undefined and ordinary false while leaving aria-* and data-* false for the following serialization branch. Preserve every comment, sibling branch, and other statement as unchanged context. Do not refactor or rewrite the surrounding chain.",
+  residual_identifier_requires_removal: "The runner-computed post-write residual scan found forbidden identifiers still present in required paths. Treat the per-path counts and first line numbers in the residual scan as the authoritative remaining-work list. Use apply_patch to remove or migrate every listed occurrence until the scan reports zero; a partial removal is not completion. Prefer exact evidence lines as hunk anchors, and when the same line appears multiple times use unique surrounding context so each hunk lands on the intended occurrence.",
 };
 
 const MUTATION_FINAL_OBJECTIVE_REVIEW_INSTRUCTION = [
@@ -3790,6 +3792,76 @@ function buildRequiredResidualScanBlock(input: {
 function countTextOccurrences(value: string, needle: string): number {
   if (!needle) return 0;
   return value.split(needle).length - 1;
+}
+
+export type RequiredResidualScanHit = {
+  path: string;
+  identifiers: Array<{
+    identifier: string;
+    count: number;
+    firstLines: number[];
+  }>;
+};
+
+/**
+ * 零 Provider 残留扫描：对每个 required path 取最新一次 file_read 证据，
+ * 统计必需残留标识符的出现次数与首次行号。用于判断是否还需要继续纠正，
+ * 与复核/纠正请求里回显给模型的扫描块使用同一证据来源与计数口径。
+ */
+export function computeLatestRequiredResidualHits(
+  messages: WorkspaceMutationSourceMessage[],
+  requiredPaths: readonly string[],
+  identifiers: readonly string[],
+): RequiredResidualScanHit[] {
+  if (requiredPaths.length === 0 || identifiers.length === 0) return [];
+  const toolNames = collectToolNames(messages);
+  const availableEvidence = messages
+    .filter((message) => message.role === "tool" && typeof message.content === "string")
+    .map((message) => ({
+      toolName: toolNames.get(String(message.tool_call_id ?? "")) || "unknown",
+      content: String(message.content),
+    }));
+  const remainingPaths = new Map(
+    requiredPaths.map((requiredPath) => [normalizeSourcePath(requiredPath), requiredPath]),
+  );
+  const perPath: Array<{ path: string; content: string }> = [];
+  for (let index = availableEvidence.length - 1; index >= 0 && remainingPaths.size > 0; index--) {
+    const item = availableEvidence[index]!;
+    if (item.toolName !== "file_read") continue;
+    const evidencePath = readMutationReadySourceEvidencePaths(item.toolName, item.content)[0];
+    if (!evidencePath) continue;
+    const normalizedEvidencePath = normalizeSourcePath(evidencePath);
+    const requiredIdentity = [...remainingPaths.keys()].find((candidate) => (
+      normalizedEvidencePath === candidate
+      || normalizedEvidencePath.endsWith(`/${candidate}`)
+    ));
+    if (!requiredIdentity) continue;
+    perPath.push({
+      path: remainingPaths.get(requiredIdentity) ?? requiredIdentity,
+      content: item.content,
+    });
+    remainingPaths.delete(requiredIdentity);
+  }
+  const hits: RequiredResidualScanHit[] = [];
+  for (const { path, content } of perPath) {
+    const sourceText = readFileReadEvidenceSourceText(content);
+    const pathHits: RequiredResidualScanHit["identifiers"] = [];
+    for (const identifier of identifiers) {
+      const count = countTextOccurrences(sourceText, identifier);
+      if (count <= 0) continue;
+      pathHits.push({
+        identifier,
+        count,
+        firstLines: firstOccurrenceLines(
+          sourceText,
+          identifier,
+          REQUIRED_RESIDUAL_SCAN_MAX_LINES_PER_PATH,
+        ),
+      });
+    }
+    if (pathHits.length > 0) hits.push({ path, identifiers: pathHits });
+  }
+  return hits;
 }
 
 /**

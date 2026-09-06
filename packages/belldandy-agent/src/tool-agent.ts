@@ -205,6 +205,7 @@ import {
   selectRequiredWorkspaceMutationNavigationToolCalls,
   selectRequiredWorkspaceMutationVerificationToolCalls,
   selectWorkspaceMutationToolDefinitions,
+  computeLatestRequiredResidualHits,
   WORKSPACE_MUTATION_NAVIGATION_INPUT_TOKEN_LIMIT,
   WORKSPACE_MUTATION_NAVIGATION_OUTPUT_TOKEN_RESERVE,
   WORKSPACE_MUTATION_NAVIGATION_MAX_FILE_READ_CALLS,
@@ -214,6 +215,7 @@ import {
   type WorkspaceMutationObjectiveInputCorrectionReason,
   type WorkspaceMutationRecoveryPlan,
   type WorkspaceMutationRecoveryRequest,
+  type WorkspaceMutationSourceMessage,
   type WorkspaceMutationVerificationRequest,
 } from "./react-workspace-mutation.js";
 import {
@@ -2491,11 +2493,16 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let workspaceMutationVerificationPending = false;
     let workspaceMutationVerificationAttempts = 0;
     let workspaceMutationVerificationCompletedReadCount = 0;
+    // 残留驱动纠正上限：残留标识符未清零时允许的额外纠正轮数；
+    // 与单次纠正额度（workspaceMutationObjectiveCorrectionAttempted）相互独立，
+    // 每轮消耗一次模型调用与随后的读后验证，受 12 turns / 64k tokens 预算约束。
+    const REQUIRED_RESIDUAL_CORRECTION_CYCLE_CAP = 3;
     let workspaceMutationObjectiveReviewPending = false;
     let workspaceMutationObjectiveReviewAttempts = 0;
     let workspaceMutationObjectiveCorrectionAttempted = false;
     let workspaceMutationObjectiveInputCorrectionPending = false;
     let workspaceMutationObjectiveInputCorrectionAttempted = false;
+    let workspaceMutationResidualCorrectionCycles = 0;
     let workspaceMutationObjectiveInputCorrectionReason: WorkspaceMutationObjectiveInputCorrectionReason | undefined;
     let workspaceMutationObjectiveOutputRepairPending = false;
     let workspaceMutationObjectiveOutputRepairAttempted = false;
@@ -4474,6 +4481,49 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
           const objectiveReviewReturnedFinalOutput = workspaceMutationObjectiveReviewCall
             && (!input.structuredOutput || workspaceMutationObjectiveOutputText !== undefined);
+          // 验收探针前移：复核返回有效输出后，零 Provider 检查最新 file_read 证据里
+          // 是否仍残留必需消除的标识符。有残留且纠正轮数未达上限时，再调度一轮
+          // 输入纠正（每次纠正后读后验证都会产生新证据，扫描随之收敛）。
+          if (objectiveReviewReturnedFinalOutput
+            && !workspaceMutationObjectiveInputCorrectionCall
+            && !workspaceMutationObjectiveOutputRepairPending
+            && requiredResidualIdentifiers.length > 0
+            && workspaceMutationResidualCorrectionCycles < REQUIRED_RESIDUAL_CORRECTION_CYCLE_CAP) {
+            const residualHits = computeLatestRequiredResidualHits(
+              mutationRecoverySourceMessages as WorkspaceMutationSourceMessage[],
+              requiredChangedPaths,
+              requiredResidualIdentifiers,
+            );
+            if (residualHits.length > 0) {
+              workspaceMutationResidualCorrectionCycles += 1;
+              workspaceMutationObjectiveReviewPending = true;
+              workspaceMutationObjectiveInputCorrectionPending = true;
+              workspaceMutationObjectiveInputCorrectionReason = "residual_identifier_requires_removal";
+              workspaceMutationObjectiveOutputRepairPending = false;
+              // 重新武装读后验证：每一轮残留纠正写盘后都必须有新鲜 file_read 证据，
+              // 否则下一轮扫描会沿用旧证据，无法收敛（验证次数上限随每轮重新计数）。
+              workspaceMutationVerificationAttempts = 0;
+              lastToolCallFingerprint = undefined;
+              lastToolCallName = undefined;
+              consecutiveDuplicateToolCalls = 0;
+              recentToolCallTraces.length = 0;
+              lastSuccessfulToolResult = undefined;
+              logWarn("[workspace-mutation] residual scan found remaining forbidden identifiers; scheduling one bounded correction cycle", {
+                requiredPathCount: requiredChangedPaths.length,
+                residualCycles: workspaceMutationResidualCorrectionCycles,
+                residualHits: residualHits.map((hit) => ({
+                  path: hit.path,
+                  identifiers: hit.identifiers.map((entry) => ({
+                    identifier: entry.identifier,
+                    count: entry.count,
+                  })),
+                })),
+                conversationId: input.conversationId,
+                agentId: resolvedAgentId,
+              });
+              continue;
+            }
+          }
           if (objectiveReviewReturnedFinalOutput
             && !workspaceMutationObjectiveInputCorrectionCall
             && (noopSerializedFalseRemovalBranch

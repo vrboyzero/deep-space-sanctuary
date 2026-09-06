@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildWorkspaceMutationObjectiveInputCorrectionRequest,
   buildWorkspaceMutationObjectiveReviewRequest,
+  computeLatestRequiredResidualHits,
 } from "./react-workspace-mutation.js";
 
 function toolDefinition(name: string) {
@@ -168,5 +169,99 @@ describe("workspace mutation objective review residual scan", () => {
 
     expect(request).toBeDefined();
     expect(request?.messages[1]?.content ?? "").toContain("WriteStringAndCheck: 1 处");
+  });
+
+  it("instructs complete removal when the correction reason is a residual scan", () => {
+    const request = buildWorkspaceMutationObjectiveInputCorrectionRequest({
+      maxInputTokens: 2_000,
+      tools: [toolDefinition("apply_patch"), toolDefinition("file_read")],
+      requiredChangedPaths: ["bash_completions.go"],
+      requiredResidualIdentifiers: ["WriteStringAndCheck"],
+      correctionReason: "residual_identifier_requires_removal",
+      tokenEstimateContext: { model: "deepseek-v4-pro" },
+      messages: [
+        {
+          role: "user",
+          content: "Migrate the Go public API and remove every forbidden identifier.",
+        },
+        ...sourceEvidenceMessages("bash_completions.go", "\tWriteStringAndCheck(buf, \"\\n\")\n"),
+      ],
+    });
+
+    expect(request).toBeDefined();
+    const userText = request?.messages[0]?.content ?? "";
+    expect(userText).toContain("authoritative remaining-work list");
+    expect(userText).toContain("a partial removal is not completion");
+  });
+});
+
+describe("computeLatestRequiredResidualHits", () => {
+  it("uses the latest file_read per required path and reports counts with line numbers", () => {
+    const messages = [
+      {
+        role: "assistant",
+        tool_calls: [fileReadToolCall("read-1", "bash_completions.go")],
+      },
+      {
+        role: "tool",
+        tool_call_id: "read-1",
+        content: JSON.stringify({
+          path: "bash_completions.go",
+          truncated: false,
+          content: "WriteStringAndCheck(a)\nWriteStringAndCheck(b)\nWriteStringAndCheck(c)\n",
+        }),
+      },
+      {
+        role: "assistant",
+        tool_calls: [fileReadToolCall("read-2", "bash_completions.go")],
+      },
+      {
+        role: "tool",
+        tool_call_id: "read-2",
+        content: JSON.stringify({
+          path: "bash_completions.go",
+          truncated: false,
+          content: "WriteStringAndCheck(d)\n",
+        }),
+      },
+    ];
+
+    const hits = computeLatestRequiredResidualHits(
+      messages,
+      ["bash_completions.go"],
+      ["WriteStringAndCheck"],
+    );
+    expect(hits).toEqual([{
+      path: "bash_completions.go",
+      identifiers: [{
+        identifier: "WriteStringAndCheck",
+        count: 1,
+        firstLines: [1],
+      }],
+    }]);
+  });
+
+  it("returns no hits when every required path is clean", () => {
+    const messages = [
+      {
+        role: "assistant",
+        tool_calls: [fileReadToolCall("read-1", "bash_completions.go")],
+      },
+      {
+        role: "tool",
+        tool_call_id: "read-1",
+        content: JSON.stringify({
+          path: "bash_completions.go",
+          truncated: false,
+          content: "WriteString(buf, \"clean\\n\")\n",
+        }),
+      },
+    ];
+
+    expect(computeLatestRequiredResidualHits(
+      messages,
+      ["bash_completions.go"],
+      ["WriteStringAndCheck"],
+    )).toEqual([]);
   });
 });

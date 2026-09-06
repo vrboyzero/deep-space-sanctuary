@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { Tool, ToolCallResult, ToolContext } from "../../types.js";
 import { parsePatchText } from "./dsl.js";
-import { ApplyPatchMatchError, applyUpdateChunks, applyUpdateChunksToContent } from "./match.js";
+import { ApplyPatchMatchError, applyUpdateChunks, applyUpdateChunksToContent, type ApplyPatchChunkMatch } from "./match.js";
 import { withToolContract } from "../../tool-contract.js";
 import { resolveRuntimeFilesystemScope } from "../../runtime-policy.js";
 import { readAbortReason, throwIfAborted } from "../../abort-utils.js";
@@ -132,7 +132,14 @@ async function ensureDir(filePath: string) {
 type PreparedPatchOperation =
     | { kind: "add"; absolute: string; relative: string; contents: string }
     | { kind: "delete"; absolute: string; relative: string }
-    | { kind: "update"; absolute: string; relative: string; newContent: string; move?: { absolute: string; relative: string } };
+    | {
+        kind: "update";
+        absolute: string;
+        relative: string;
+        newContent: string;
+        move?: { absolute: string; relative: string };
+        chunkMatches: ApplyPatchChunkMatch[];
+    };
 
 type PreparedUpdateOperation = Extract<PreparedPatchOperation, { kind: "update" }>;
 
@@ -348,7 +355,7 @@ export const applyPatchTool: Tool = withToolContract({
                                 buildApplyPatchInputRepairMetadata(),
                             );
                         }
-                        const { originalContent, newContent } = applyUpdateChunksToContent(
+                        const { originalContent, newContent, chunkMatches } = applyUpdateChunksToContent(
                             absolute,
                             existingUpdate.newContent,
                             hunk.chunks,
@@ -361,10 +368,14 @@ export const applyPatchTool: Tool = withToolContract({
                             );
                         }
                         existingUpdate.newContent = newContent;
+                        existingUpdate.chunkMatches = [
+                            ...(existingUpdate.chunkMatches ?? []),
+                            ...chunkMatches.map((match) => ({ ...match, chunkIndex: (existingUpdate.chunkMatches?.length ?? 0) + match.chunkIndex })),
+                        ];
                         continue;
                     }
 
-                    const { originalContent, newContent } = await applyUpdateChunks(absolute, hunk.chunks);
+                    const { originalContent, newContent, chunkMatches } = await applyUpdateChunks(absolute, hunk.chunks);
 
                     if (hunk.movePath) {
                         const moveCheck = validateWritablePath(hunk.movePath, context);
@@ -382,6 +393,7 @@ export const applyPatchTool: Tool = withToolContract({
                                 absolute,
                                 relative,
                                 newContent,
+                                chunkMatches,
                             };
                             operations.push(operation);
                             updateOperations.set(absolute, operation);
@@ -396,6 +408,7 @@ export const applyPatchTool: Tool = withToolContract({
                                 absolute: moveCheck.absolute,
                                 relative: moveCheck.relative,
                             },
+                            chunkMatches,
                         };
                         operations.push(operation);
                         updateOperations.set(absolute, operation);
@@ -412,6 +425,7 @@ export const applyPatchTool: Tool = withToolContract({
                             absolute,
                             relative,
                             newContent,
+                            chunkMatches,
                         };
                         operations.push(operation);
                         updateOperations.set(absolute, operation);
@@ -475,6 +489,18 @@ export const applyPatchTool: Tool = withToolContract({
                 output: JSON.stringify({
                     summary,
                     details: "Patch applied successfully",
+                    hunks: operations.flatMap((operation) => (
+                        operation.kind === "update"
+                            ? operation.chunkMatches.map((match) => ({
+                                file: operation.relative,
+                                chunk: match.chunkIndex + 1,
+                                matchedLine: match.matchedLine,
+                                matchLevel: match.matchLevel,
+                                exactCandidates: match.exactCandidateCount,
+                                oldFirstLine: match.oldFirstLine.slice(0, 120),
+                            }))
+                            : []
+                    )),
                 }),
                 metadata: mutationMetadata,
                 durationMs: Date.now() - start,

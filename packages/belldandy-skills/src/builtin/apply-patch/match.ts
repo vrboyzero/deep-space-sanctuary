@@ -65,14 +65,22 @@ function linesMatch(
     return true;
 }
 
-// 寻找序列（支持 4 级降级匹配）
+export type ApplyPatchChunkMatch = {
+    chunkIndex: number;
+    matchedLine: number;
+    matchLevel: 1 | 2 | 3 | 4;
+    exactCandidateCount: number;
+    oldFirstLine: string;
+};
+
+// 寻找序列（支持 4 级降级匹配），返回命中行与匹配级别
 function seekSequence(
     lines: string[],
     pattern: string[],
     start: number,
     eof: boolean
-): number | null {
-    if (pattern.length === 0) return start;
+): { index: number; level: 1 | 2 | 3 | 4 } | null {
+    if (pattern.length === 0) return { index: start, level: 1 };
     if (pattern.length > lines.length) return null;
 
     const maxStart = lines.length - pattern.length;
@@ -83,27 +91,39 @@ function seekSequence(
 
     // Level 1: 精确匹配 (Exact match)
     for (let i = searchStart; i <= maxStart; i += 1) {
-        if (linesMatch(lines, pattern, i, (value) => value)) return i;
+        if (linesMatch(lines, pattern, i, (value) => value)) return { index: i, level: 1 };
     }
 
     // Level 2: 忽略行尾空白 (Trim End)
     for (let i = searchStart; i <= maxStart; i += 1) {
-        if (linesMatch(lines, pattern, i, (value) => value.trimEnd())) return i;
+        if (linesMatch(lines, pattern, i, (value) => value.trimEnd())) return { index: i, level: 2 };
     }
 
     // Level 3: 忽略首尾空白 (Trim)
     for (let i = searchStart; i <= maxStart; i += 1) {
-        if (linesMatch(lines, pattern, i, (value) => value.trim())) return i;
+        if (linesMatch(lines, pattern, i, (value) => value.trim())) return { index: i, level: 3 };
     }
 
     // Level 4: 规范化标点符号 (Normalize Punctuation)
     for (let i = searchStart; i <= maxStart; i += 1) {
         if (linesMatch(lines, pattern, i, (value) => normalizePunctuation(value.trim()))) {
-            return i;
+            return { index: i, level: 4 };
         }
     }
 
     return null;
+}
+
+// 统计精确匹配候选数量：同一模式在文件中多处相同时，
+// 回显给模型可提示它 hunk 落盘的并不是它预期的位置。
+function countExactCandidates(lines: string[], pattern: string[]): number {
+    if (pattern.length === 0) return 0;
+    let count = 0;
+    const maxStart = lines.length - pattern.length;
+    for (let i = 0; i <= maxStart; i += 1) {
+        if (linesMatch(lines, pattern, i, (value) => value)) count += 1;
+    }
+    return count;
 }
 
 function stripEscapedCarriageReturn(value: string): string {
@@ -141,18 +161,20 @@ function computeReplacements(
     originalLines: string[],
     filePath: string,
     chunks: UpdateFileChunk[]
-): Array<[number, number, string[]]> {
+): { replacements: Array<[number, number, string[]]>; chunkMatches: ApplyPatchChunkMatch[] } {
     const replacements: Array<[number, number, string[]]> = [];
+    const chunkMatches: ApplyPatchChunkMatch[] = [];
     let lineIndex = 0;
 
-    for (const chunk of chunks) {
+    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
+        const chunk = chunks[chunkIndex]!;
         // 1. 如果有 changeContext，先定位上下文
         if (chunk.changeContext) {
-            const ctxIndex = seekSequence(originalLines, [chunk.changeContext], lineIndex, false);
-            if (ctxIndex === null) {
+            const ctxFound = seekSequence(originalLines, [chunk.changeContext], lineIndex, false);
+            if (ctxFound === null) {
                 throw new ApplyPatchMatchError(`Failed to find context '${chunk.changeContext}' in ${filePath}`);
             }
-            lineIndex = ctxIndex + 1;
+            lineIndex = ctxFound.index + 1;
         }
 
         // 2. 如果 oldLines 为空，说明是插入操作
@@ -162,6 +184,13 @@ function computeReplacements(
                     ? originalLines.length - 1
                     : originalLines.length;
             replacements.push([insertionIndex, 0, chunk.newLines]);
+            chunkMatches.push({
+                chunkIndex,
+                matchedLine: insertionIndex + 1,
+                matchLevel: 1,
+                exactCandidateCount: 0,
+                oldFirstLine: "",
+            });
             continue;
         }
 
@@ -186,13 +215,20 @@ function computeReplacements(
             );
         }
 
-        replacements.push([found, pattern.length, newSlice]);
-        lineIndex = found + pattern.length;
+        replacements.push([found.index, pattern.length, newSlice]);
+        lineIndex = found.index + pattern.length;
+        chunkMatches.push({
+            chunkIndex,
+            matchedLine: found.index + 1,
+            matchLevel: found.level,
+            exactCandidateCount: countExactCandidates(originalLines, pattern),
+            oldFirstLine: pattern[0] ?? "",
+        });
     }
 
     // 按起始位置排序，确保替换顺序
     replacements.sort((a, b) => a[0] - b[0]);
-    return replacements;
+    return { replacements, chunkMatches };
 }
 
 // 应用替换并生成最终内容
@@ -219,7 +255,7 @@ function applyReplacements(
 export async function applyUpdateChunks(
     filePath: string,
     chunks: UpdateFileChunk[]
-): Promise<{ originalContent: string; newContent: string }> {
+): Promise<{ originalContent: string; newContent: string; chunkMatches: ApplyPatchChunkMatch[] }> {
     const originalContents = await fs.readFile(filePath, "utf8").catch((err) => {
         throw new Error(`Failed to read file to update ${filePath}: ${err}`);
     });
@@ -230,7 +266,7 @@ export function applyUpdateChunksToContent(
     filePath: string,
     originalContents: string,
     chunks: UpdateFileChunk[],
-): { originalContent: string; newContent: string } {
+): { originalContent: string; newContent: string; chunkMatches: ApplyPatchChunkMatch[] } {
     const newline = originalContents.includes("\r\n") ? "\r\n" : "\n";
 
     const originalLines = originalContents.split(/\r?\n/);
@@ -242,7 +278,7 @@ export function applyUpdateChunksToContent(
     const normalizedChunks = newline === "\r\n"
         ? chunks.map((chunk) => normalizeModelEscapedCarriageReturns(originalLines, chunk))
         : chunks;
-    const replacements = computeReplacements(originalLines, filePath, normalizedChunks);
+    const { replacements, chunkMatches } = computeReplacements(originalLines, filePath, normalizedChunks);
     let newLines = applyReplacements(originalLines, replacements);
 
     // 确保文件以换行符结尾（POSIX 标准）
@@ -253,5 +289,6 @@ export function applyUpdateChunksToContent(
     return {
         originalContent: originalContents,
         newContent: newLines.join(newline),
+        chunkMatches,
     };
 }

@@ -82,6 +82,87 @@ describe("apply_patch tool", () => {
     });
   });
 
+  it("reports per-hunk landing receipts including matched line and identical candidates", async () => {
+    await fs.writeFile(
+      path.join(tempDir, "bash_completions.go"),
+      [
+        "package cobra",
+        "func writeA(buf io.StringWriter) {",
+        "\tWriteStringAndCheck(buf, \"\\n\")",
+        "}",
+        "func writeB(buf io.StringWriter) {",
+        "\tWriteStringAndCheck(buf, \"\\n\")",
+        "}",
+        "func writeC(buf io.StringWriter) {",
+        "\tWriteStringAndCheck(buf, \"\\n\")",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const result = await applyPatchTool.execute(
+      {
+        input: [
+          "*** Begin Patch",
+          "*** Update File: bash_completions.go",
+          "@@",
+          "-\tWriteStringAndCheck(buf, \"\\n\")",
+          "+\tWriteString(buf, \"\\n\")",
+          "*** End Patch",
+        ].join("\n"),
+      },
+      baseContext,
+    );
+
+    expect(result.success).toBe(true);
+    const output = JSON.parse(String(result.output));
+    expect(output.details).toBe("Patch applied successfully");
+    expect(output.hunks).toEqual([{
+      file: "bash_completions.go",
+      chunk: 1,
+      matchedLine: 3,
+      matchLevel: 1,
+      exactCandidates: 3,
+      oldFirstLine: "\tWriteStringAndCheck(buf, \"\\n\")",
+    }]);
+  });
+
+  it("reports the degraded match level when a hunk only matches after trimming", async () => {
+    await fs.writeFile(
+      path.join(tempDir, "props.js"),
+      [
+        "function serialize(value) {",
+        "\treturn String(value);  ",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const result = await applyPatchTool.execute(
+      {
+        input: [
+          "*** Begin Patch",
+          "*** Update File: props.js",
+          "@@",
+          "-\treturn String(value);",
+          "+\treturn String(value) ?? \"\";",
+          "*** End Patch",
+        ].join("\n"),
+      },
+      baseContext,
+    );
+
+    expect(result.success).toBe(true);
+    const output = JSON.parse(String(result.output));
+    expect(output.hunks[0]).toMatchObject({
+      file: "props.js",
+      matchedLine: 2,
+      matchLevel: 2,
+    });
+  });
+
   it("applies repeated Update File sections for one path as one mutation", async () => {
     const connectionPath = "jsonrpc/src/common/connection.ts";
     const apiPath = "jsonrpc/src/common/api.ts";
