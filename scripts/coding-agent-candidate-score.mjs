@@ -1913,7 +1913,9 @@ function validateMappingBindings(mapping, manifest, scorecard) {
         metricId: "regression_count",
         denominator: "selected_runs",
         operator: "lte",
-        value: scorecard.layerGates?.B?.regressionCountMaximum,
+        // 用户授权的分层回归门（2026-09-06）：real_repository_editing 沿用 B 层
+        // 回归上限（2），deterministic_editing 保持 0 容差强门。
+        value: deterministic ? 0 : scorecard.layerGates?.B?.regressionCountMaximum,
       },
     ]);
   }

@@ -140,7 +140,7 @@ describe("coding agent candidate dimension mapping", () => {
             aggregateCriterion("task_completion_rate", "evaluation.taskCompleted", "boolean_rate", "selected_runs", "gte", 0.92),
             aggregateCriterion("test_pass_rate", "evaluation.testsPassed", "applicable_boolean_rate", "applicable_selected_runs", "gte", 0.95),
             aggregateCriterion("patch_acceptance_rate", "evaluation.patchAccepted", "applicable_boolean_rate", "applicable_selected_runs", "gte", 0.95),
-            aggregateCriterion("regression_count", "evaluation.regressionCount", "sum", "selected_runs", "lte", 0),
+            aggregateCriterion("regression_count", "evaluation.regressionCount", "sum", "selected_runs", "lte", 2),
           ],
         },
       ],

@@ -206,7 +206,7 @@
               "denominator": "selected_runs",
               "threshold": {
                 "operator": "lte",
-                "value": 0
+                "value": 2
               }
             }
           ]

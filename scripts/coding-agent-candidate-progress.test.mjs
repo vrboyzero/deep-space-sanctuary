@@ -145,10 +145,17 @@ describe("coding agent candidate progress", () => {
     expect(evaluate(items).reasons).toContain("B.testPassRateMinimum");
   });
 
-  it("stops on a regression without waiting to exhaust the matrix", () => {
-    const item = observation("real-ts.api-migration");
-    item.run.evaluation.regressionCount = 1;
-    expect(evaluate([item]).reasons).toContain("B.regressionCountMaximum");
+  it("absorbs up to two B regressions and stops on the third", () => {
+    // 用户授权的分层回归门：B.regressionCountMaximum=2（sum 口径）。
+    const one = observation("real-ts.api-migration");
+    one.run.evaluation.regressionCount = 1;
+    expect(evaluate([one]).reasons).not.toContain("B.regressionCountMaximum");
+    const two = observation("real-js.bug-fix");
+    two.run.evaluation.regressionCount = 1;
+    expect(evaluate([one, two]).reasons).not.toContain("B.regressionCountMaximum");
+    const three = observation("real-js.failed-test-fix");
+    three.run.evaluation.regressionCount = 1;
+    expect(evaluate([one, two, three]).reasons).toContain("B.regressionCountMaximum");
   });
 
   it("preserves frozen candidates and unreported infrastructure as terminal stops", () => {

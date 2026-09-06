@@ -1231,12 +1231,15 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
       .resolves.toMatchObject({ decision: qualification });
   });
 
-  it("rejects any retained layer-B regression even when all B rates pass", async () => {
+  it("rejects retained layer-B regressions beyond the authorized budget even when all B rates pass", async () => {
     const { outputRoot } = await createCompleteQualificationBaseline((runs) => {
-      const run = runs.find((candidate) => {
-        return manifestV3.tasks.find((task) => task.id === candidate.taskId)?.layer === "B";
-      });
-      run.evaluation.regressionCount = 1;
+      let marked = 0;
+      for (const run of runs) {
+        const task = manifestV3.tasks.find((candidate) => candidate.id === run.taskId);
+        if (task?.layer !== "B" || task.layerGateLane === "canary" || marked === 3) continue;
+        run.evaluation.regressionCount = 1;
+        marked += 1;
+      }
     });
 
     const qualification = await qualifyCodingAgentBenchmarkCandidate({ aggregateRoot: outputRoot });
@@ -1248,8 +1251,8 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
         failedGates: [{
           layer: "B",
           id: "regressionCountMaximum",
-          observed: 1,
-          maximum: 0,
+          observed: 3,
+          maximum: 2,
         }],
       }],
     });
