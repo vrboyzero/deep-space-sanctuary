@@ -1097,7 +1097,9 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C 分层开发与编排复用 | P2 | **用户授权换模型已执行：v3 runner 切 `deepseek-v4-pro`（CI 全绿 `a34d7540`），V4-Pro 六槽（a1/a2/a3）稳定走完产品全流程，但最终工作区残留 21–25 处 `WriteStringAndCheck`（`bash_completions.go` 531–679 行）被机器验收门关闭；Go 累计 19/19，待用户授权「验收探针前移」杠杆** | 双平台复发定位：两层工具输出压缩破坏 file_read 证据 → 导航死循环；修复压缩保护+证据补齐+覆盖判定前移（家族 `469/469`）；24k 预算冲突 → 64k 授权 + uplift gate 重冻结；全量拒绝补丁的一次性有界纠正（`136/136`）；13/13 归档后用户选路径①换 V4-Pro（定价 const + 规则例外记录，`64/64`）；零 Provider 归因 pro 六槽：a1 为纠正补丁保真度（JSON 转义/幻觉上下文），a2/a3 为系统性不完整迁移+虚假完成声明（残留逐行定位到 `writeLocalNonPersistentFlag` 等 7 个函数） | 待用户授权：验收探针（残留标识符扫描）前移到客观复核反馈（不动真值/门槛/七维/预算）；完整 144 槽、七维资格与第二连续候选未完成 |
 | P2-C 三档产品反馈杠杆（探针前移 → 残留纠正迭代+逐 hunk 回执 → 解除工具调用上限+足额纠正预算） | P2 | **三档杠杆全部按授权实现并付费验证（`5f99306`→`3ab3ad61`），Go 探索以 25/25 关闭** | 探针轮 2/2 死于 `budget=tool_calls`（32 上限）；(a)+(b) 轮 2/2 仍死于同一上限（验证读占满）；第三轮解除上限后 2/2 死于纠正补丁被机器路径校验硬拒绝（Windows 为虚构源码行→工具层原子失败→纠正被拒；WSL 为 5/23 歧义落盘→纠正被拒）；收敛 44→23；链上累计 2.7649 USD（约 22.1 CNY，< 80 授权线） | Go 探索关闭；下一候选转向 real-ts/real-js 等七维路径，先做免费证据核对再决定付费探索 |
 | P2-C real-ts.cross-package-refactor 当前 harness 复验 | P2 | **双平台通过（`8e695d4`，V4-Pro，explore-8e695d4-1）** | Windows 7 次模型调用（0.0087 USD）、WSL 8 次（0.0090 USD）均 `benchmark_status=passed`、`changed_paths=1`、机器评估器全绿；加上 e4bd1c3（v4-flash）双平台通过，该任务已有两个版本 harness 的双平台通过证据；链上累计 2.7826 USD（约 22.3 CNY） | 进入候选流程：按冻结预算与资格规则规划 real-ts.cross-package-refactor 的正式矩阵推进，需用户确认后启动 |
-| P2-C 正式候选启动计划 | P2 | **合同变更×2+20 槽复验完成；web.ui-regression 依证据移 canary lane** | 合同变更一（Go canary lane，`12f83b16`）；B 层 12 槽复验 10/12；合同变更二（复核契约修复 `6293910c`：输出修复 1→最多 3 轮，belldandy-agent 1053/1053）+ 4 槽续探：web.ui-regression 累计 **10 槽 0 过**（6 补丁错 + 2 旧 JSON 契约 + 2 serialized-false 守卫误拒）→ 移 canary lane，B 分母 36（需 ≥34/36）；累计链上 2.9262 USD（约 23.4 CNY < 80） | 待用户决策：正式 144 槽矩阵启动确认 |
+| P2-C 正式候选启动计划 | P2 | **已按 6.6 节启动（feb91746 / candidate-feb9174-1），32/144 冻结** | 合同变更×2 + 20 槽复验 + web.ui-regression 依证据移 canary（B 分母 36）；首槽 canary 通过后分批执行 | 冻结证据永久只读；以修复后新 identity 重跑 |
+| P2-C candidate-feb9174-1 | P2 | **32/144 冻结（29 passed + 2 canary 预期失败 + 1 C 层 infra）** | 唯一 infra 失败为 `gateway.disconnect-recovery/windows/a2`（`fault_harness_failed`）；C 层恢复 100% 硬门数学不可达 → 按 6.6 冻结；链上 observed 3.0767 USD（约 24.6 CNY < 80） | 禁止重跑/reconcile；证据只读，供修复归因 |
+| P2-C disconnect-recovery 验证参数修复 | P2 | **Fix Mode 完成并验证，待推送 private/main** | 零 Provider 重放定位 a2=验证 file_read 参数被机器契约拒绝（非断连竞态）；对象 anchor 丢弃兼容 + 首次拒绝一次有界修复轮；全仓 `6816/6816`、`tsc -b` 与 benchmark verifier 全绿；网关级重放 offset/anchor-object 各 3/3 完成 | 推送后同步双平台 harness 新 identity，重建 inputs/plan/config 重跑完整 144 槽 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -2625,6 +2627,36 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 为什么先做它：web 处置是正式 144 槽矩阵的最后一个前置合同决策；未经确认启动会白付全量费用。
 - 当前还缺的关键闭环：用户对正式矩阵启动的确认；正式矩阵、aggregate、七维资格与两个连续 9.5 候选。
 
+#### P2-C 修复实现结论：disconnect-recovery 读后验证参数兼容 + 一次有界修复（2026-09-06）
+
+##### 已完成内容
+
+1. **零 Provider 重放定位（`tmp/p2c-layered-development/replay-disconnect-race.mjs`，disposable，不入库）**：
+   - mock OpenAI + 真实网关/断连代理/续跑订阅 + 冻结 harness dist：脚本化「合法验证读」10/10 `run.completed`，排除断连竞态；
+   - `anchor-object` 验证参数变体 100% 复现 a2 完整签名（续跑事件序列 `run.usage run.status run.failed`、无工具事件、error=`internal` + 「…must request one valid bounded full-file file_read for every required path…」）；
+   - 结论：断开恢复机制本身工作正常（服务端对话跨断开继续、验证调用被调度并返回、续跑订阅成功重读终态），a2 失败为模型的验证 `file_read` 参数被机器契约拒绝。
+
+2. **`packages/belldandy-agent/src/react-workspace-mutation.ts` 扩展**：
+   - `normalizeRequiredWorkspaceMutationFileReadArguments` 接受非空对象型 anchor（如 `{startLine, endLine}`）并丢弃，与既有字符串 anchor 丢弃语义一致，兑现冻结验证指令「runtime will discard any supplied non-empty anchor」；空字符串 / 空对象 / 非对象非字符串 anchor 仍 fail-closed；
+   - 新增 `MUTATION_VERIFICATION_REPAIR_INSTRUCTION` 与 `buildWorkspaceMutationVerificationRepairRequest`（修复指令明确只允许 `path` 字段、逐项禁止 anchor/offset/cursor/limit/maxBytes）。
+
+3. **`packages/belldandy-agent/src/tool-agent.ts` 接入**：
+   - 首次读后验证请求被机器契约拒绝时（`workspaceMutationVerificationAttempts === 1` 且未调度修复），调度一次有界修复轮（以修复指令重建验证请求）；第二次仍被拒绝维持既有 fail-closed；
+   - 修复标记在构建时消费、残留纠正重置时清零；12 turns / token / $0.10 预检约束不变。
+
+4. **回归测试**：`react-workspace-mutation.test.ts`（对象 anchor 归一化、空对象 anchor fail-closed、修复请求指令断言）；`tool-agent-workspace-mutation.test.ts`（一次修复后完成 + 二次拒绝仍 fail-closed）。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`tsc -b`）；全仓 `6816 passed / 3 skipped`（1021 文件），受影响两套件 `169/169`，相关套件（structured-output / frozen-recoveries / final-output-repair / tool-agent）`125/125`；`verify:coding-benchmark` 通过（冻结合同未动）。
+- 网关级零 Provider 端到端（本地新 dist）：`offset` 变体 3/3 `run.completed`，日志确认 `rejected read-after-write request → scheduling one bounded verification repair → repairCall:true → 修复读执行`；`anchor-object` 变体 3/3 `run.completed`（锚点被丢弃，无需修复轮）。
+
+##### 后续计划
+
+- 下一步：提交并推送 private/main → 双平台 harness 同步新身份 → 重建 inputs/plan/config（候选号 -1，predecessor ledger 取 `formal-feb9174-1/cost-ledger-final.json`）→ 按 6.6 节渐进启动新 144 槽正式矩阵（Windows 首槽 canary → 分批）。
+- 为什么先做它：修复已过全量验证与冻结基准验证，只有进入新 identity 才能验证真实模型路径并继续两个连续 9.5 目标；旧候选 32/144 永久只读。
+- 当前还缺的关键闭环：两个连续完整候选的七维下限与 raw weighted ≥9.500；费用守卫（链上 observed 3.0767 USD，约 24.6 CNY < 80）。
+
 ### 暂停点的剩余工作量估算（2026-09-05）
 
 本暂停点粗估为 **3–6人日工程量，另加两个完整候选和 CI 的运行/观察窗口**；按一名开发者计约3–6个工作日，不是固定交付日期。第8章的2–4.25人日属于较早维护估算，当前以本进度区为准，已经完成的启动、审批计量、Go 前置和证据基座不重复计量。
@@ -2751,3 +2783,4 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 用户于 2026-09-06 选择归档「9.5 暂不可达」正式结论（《SS开发9.5候选可达性结论-2026-09-06》），目标状态置为 blocked；同日用户随即行使结论中的重启条件①：授权更换更强模型 `deepseek-v4-pro` 重跑 Go 探索槽。处理决策为 `fix_now completed / 用户授权合同变更`：v3 candidate runner `modelId` const → `deepseek-v4-pro`、三项定价 const → `0.5625/1.6875/0.01875` USD/1M（用户提供价目 4.5/13.5/0.15 元每百万 tokens × 8 CNY/USD）；`自动化持续开发规则.md` 第 2 条记录例外（只覆盖 v3 candidate runner，v1/v2 与 navigation/code-intel 冻结合同不动）；`$0.10`/run、12 turns、Go 64k、retry=0、总额守卫不变。同时记录存量风险：原 flash 定价 const（0.125/0.25/0.0025）系 2026-08-17 调价前旧值（调研文档已标记），本轮不顺手改。
 - `explore-a34d754-1` V4-Pro 双平台 Go 两槽失败（Go 真实槽累计 **15/15**），但阶段显著前进：Windows 首补丁 8 文件 26-hunk 成功应用、8 路径读后验证全部执行，失败于客观复核派发的纠正补丁——其 hunk 上下文为幻觉行（`must_have_one_flag=()` 文件中不存在）；WSL 首补丁把 file_read 的 **JSON 转义文本**（`\"`、`\\n`）原样抄进 hunk 上下文（`doc/man_docs.go` 的 `%% \"%s\"...\\n`）→ 与文件永不匹配，续跑补丁同样失败。零 Provider 复现（`replay-a34d754-hunks.mjs`）确认两类失败均为模型补丁保真度，不是产品缺陷：冻结源全 CRLF 但首补丁 LF 上下文可成功应用，apply 换行容错正常。**结论更新：V4-Pro 稳定通过 flash 从未走通的前半程（首补丁+8 路径验证），剩余失败集中在纠正/续跑补丁的保真度（JSON 转义抄写、幻觉上下文），与 flash 同族但落在更后阶段**。处理决策为 `record_only / pro 首轮样本呈报`：新增 Provider cost=`0.03281188 USD`，累计 observed=`2.55101653 USD`，next worst≈`21.2 RMB < 80`；下一步（继续 pro 抽样 / 补丁保真度产品杠杆 / 复评目标口径）待用户决策。
 - `explore-a34d754-2` 与 `explore-a34d754-3` 追加 V4-Pro 四槽（Go 真实槽累计 **19/19**）：4/4 稳定走完产品全流程（`changed_paths=8`、无 run.failed），但最终工作区残留 `WriteStringAndCheck` 21–25 处（全部集中在 `bash_completions.go` 531–679 行的 7 个函数），机器验收门 `benchmark_v3_api_migration_test.go` 以 `testsPassed=false / regressionCount=1` 关闭；模型在 result.json 里声称「all call sites migrated」与实际残留矛盾。**结论更新：V4-Pro 失败模式收敛为系统性不完整迁移 + 虚假完成声明（尾部覆盖与自查缺陷），抽样方差低（4/4 同模式），继续裸抽样边际收益趋零**。处理决策为 `record_only / 待用户授权验收探针前移`：新增 Provider cost=`0.07950542 USD`，累计 observed=`2.63052195 USD`，next worst≈`22.6 RMB < 80`；未获授权前不再同证据抽样。
+- candidate-feb9174-1 于 32/144 冻结：唯一 infra 槽为 gateway.disconnect-recovery/windows/a2（status.txt cli_exit_code=4、usage_complete=false、fault.status=failed、reconnectCount=0）。零 Provider 重放证实非断连竞态——网关侧对话跨断开继续、验证调用被调度并返回、续跑订阅成功重读；a2 的模型验证 file_read 携带机器契约拒绝的参数（对象型 anchor 等），按冻结合并合同计为 fault_harness_failed → infrastructure_error，C 层恢复 100% 硬门在该任务失败时本就数学不可达，候选按 6.6 冻结正确且不可改写。模型验证参数的具体形态未落盘（事件不持久化），修复以双保险覆盖：对象 anchor 丢弃兼容（兑现冻结验证指令）+ 首次拒绝一次有界修复轮（覆盖 offset/cursor/错误路径等其余拒因）。处理决策为 fix_now completed；candidate-feb9174-1 永久只读，新 identity 重跑 144 槽。
