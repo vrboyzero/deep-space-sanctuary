@@ -1060,7 +1060,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 ### 候选方案（按依赖排序）
 
 1. **合同决策（已实施，用户授权 2026-09-06）**：`real-go.public-api-migration` 移出 B 层成功率分母、保留独立受控 canary lane（manifest `layerGateLane: "canary"`）；B 分母 48→42（需 ≥39/42），维度映射两个 real-repository 证据组同步移除该任务；任务真值、预算、验收门与七维下限不变。canary 槽照常执行并保留在 144 槽原生 aggregate 中。
-2. **B 层验证探索（用户已授权 12 槽）**：对未验证的 6 个 B 任务做双平台各 1 槽复验（12 槽，粗估 ~0.10–0.30 USD，V4-Pro、冻结预算、formal=false），拿到 B 层真实成功率后再决定正式矩阵是否值得启动。
+2. **B 层验证探索（已完成 12+4 槽，用户授权）**：五任务双平台 10/10 全过；`real-web.ui-regression` 0/6（4 补丁错 + 2 写后复核 JSON 契约失败）成为新的第一序阻塞，处置待用户决策。
 3. **正式矩阵**：仅当 1+2 都收敛后，冻结候选 identity、生成不可覆盖 expected-report plan、按 6.6 节停止规则推进 144 槽；每批次核对七维下限与费用守卫。
 
 ### 风险与失败模式
@@ -1096,7 +1096,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C 分层开发与编排复用 | P2 | **用户授权换模型已执行：v3 runner 切 `deepseek-v4-pro`（CI 全绿 `a34d7540`），V4-Pro 六槽（a1/a2/a3）稳定走完产品全流程，但最终工作区残留 21–25 处 `WriteStringAndCheck`（`bash_completions.go` 531–679 行）被机器验收门关闭；Go 累计 19/19，待用户授权「验收探针前移」杠杆** | 双平台复发定位：两层工具输出压缩破坏 file_read 证据 → 导航死循环；修复压缩保护+证据补齐+覆盖判定前移（家族 `469/469`）；24k 预算冲突 → 64k 授权 + uplift gate 重冻结；全量拒绝补丁的一次性有界纠正（`136/136`）；13/13 归档后用户选路径①换 V4-Pro（定价 const + 规则例外记录，`64/64`）；零 Provider 归因 pro 六槽：a1 为纠正补丁保真度（JSON 转义/幻觉上下文），a2/a3 为系统性不完整迁移+虚假完成声明（残留逐行定位到 `writeLocalNonPersistentFlag` 等 7 个函数） | 待用户授权：验收探针（残留标识符扫描）前移到客观复核反馈（不动真值/门槛/七维/预算）；完整 144 槽、七维资格与第二连续候选未完成 |
 | P2-C 三档产品反馈杠杆（探针前移 → 残留纠正迭代+逐 hunk 回执 → 解除工具调用上限+足额纠正预算） | P2 | **三档杠杆全部按授权实现并付费验证（`5f99306`→`3ab3ad61`），Go 探索以 25/25 关闭** | 探针轮 2/2 死于 `budget=tool_calls`（32 上限）；(a)+(b) 轮 2/2 仍死于同一上限（验证读占满）；第三轮解除上限后 2/2 死于纠正补丁被机器路径校验硬拒绝（Windows 为虚构源码行→工具层原子失败→纠正被拒；WSL 为 5/23 歧义落盘→纠正被拒）；收敛 44→23；链上累计 2.7649 USD（约 22.1 CNY，< 80 授权线） | Go 探索关闭；下一候选转向 real-ts/real-js 等七维路径，先做免费证据核对再决定付费探索 |
 | P2-C real-ts.cross-package-refactor 当前 harness 复验 | P2 | **双平台通过（`8e695d4`，V4-Pro，explore-8e695d4-1）** | Windows 7 次模型调用（0.0087 USD）、WSL 8 次（0.0090 USD）均 `benchmark_status=passed`、`changed_paths=1`、机器评估器全绿；加上 e4bd1c3（v4-flash）双平台通过，该任务已有两个版本 harness 的双平台通过证据；链上累计 2.7826 USD（约 22.3 CNY） | 进入候选流程：按冻结预算与资格规则规划 real-ts.cross-package-refactor 的正式矩阵推进，需用户确认后启动 |
-| P2-C 正式候选启动计划 | P2 | **合同变更已实施并授权 12 槽复验；复验材料准备中** | 用户授权：`real-go.public-api-migration` 移出 B 分母保留 canary lane（manifest `layerGateLane` + 映射 + evaluator/qualification/progress 三处分母 + 回归合同，已 tsc/verify/101 项定向测试通过）；B 分母 42、需 ≥39/42 | 待：全量脚本回归 → 提交推送 → 重建双平台 harness → 12 槽 B 层复验（6 任务 × 双平台，粗估 0.10–0.30 USD） |
+| P2-C 正式候选启动计划 | P2 | **合同变更+12槽复验完成；web.ui-regression 0/6 新墙** | 合同变更（Go canary lane）已落地 `12f83b16` 并双 CI 全绿；B 层 12 槽复验 10/12（go.bug-fix / ts.api-migration / js.bug-fix / js.failed-test-fix / web.dependency-diagnosis 五任务双平台全过）；web.ui-regression 追加 4 槽后 **0/6**（4 槽补丁错、2 槽补丁对但写后复核输出 JSON 契约失败） | 待用户决策：①web.ui-regression 处置（续探/修复核契约/移 canary）；②正式矩阵启动条件 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -2576,6 +2576,26 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 为什么先做它：正式矩阵是 9.5 评分的唯一来源，探索通过只证明任务-模型-harness 可行，不能替代正式成绩。
 - 当前还缺的关键闭环：尚未有任何一个完整 144 槽正式矩阵的资格分数；正式矩阵的预算与推进节奏需用户确认。
 
+#### P2-C 探索结论：B 层 12+4 槽复验（2026-09-06）
+
+##### 证据
+
+- 合同变更 `12f83b16`（Go canary lane）tsc + verify + scripts 全量 915/915 + 双 CI 全绿；Windows/WSL harness 同步至 `12f83b16`、identity `a38685dd…` 一致。
+- `explore-12f83b1-1`（12 槽，V4-Pro，冻结预算）：五任务双平台全过（`real-go.bug-fix`、`real-ts.api-migration`、`real-js.bug-fix`、`real-js.failed-test-fix`、`real-web.dependency-diagnosis`）；`real-web.ui-regression` 双平台均失败（Windows 补丁布尔逻辑错乱→测试失败；WSL 补丁正确、测试通过但写后复核输出契约失败）。本轮费用 0.0945 USD。
+- `explore-12f83b1-2`（追加 4 槽：web.ui-regression 双平台 attempt 2/3）：全部失败（1 槽补丁正确但同款复核 JSON 契约失败；3 槽补丁错）。费用 0.0259 USD。
+- 累计链上报告 2.9030 USD（约 23.2 CNY），低于 80 CNY 授权线。
+
+##### 结论
+
+- B 层 6 个待验任务中 5 个在当前 harness + V4-Pro 下双平台 10/10 全过，B 层数学墙（≥39/42）在这些任务上成立。
+- `real-web.ui-regression` 0/6 成为新的第一序阻塞：4/6 为模型补丁能力失败（把单行条件改写成逻辑错乱的布尔表达式），2/6 为**补丁已通过冻结测试、但写后客观复核未产出有效最终 JSON**（`run.failed internal … post-write objective review returned neither valid final JSON nor an allowed correction after its one phase-aware output repair`），属既有 review/repair 输出契约问题在 V4-Pro 上的复发，不是 web 任务真值或本仓库侧验收 bug。
+
+##### 后续计划
+
+- 下一步：把 0/6 证据与三种处置（续探、修复写后复核输出契约、移出 B 分母）呈报用户决策；未获授权前不再为 web.ui-regression 启动付费槽。
+- 为什么先做它：web.ui-regression 的 6 槽在 B 分母内，若保持 0 通过，B 最优 36/42=85.7%<92%，9.5 数学不可达；处置决定直接影响正式矩阵是否值得启动。
+- 当前还缺的关键闭环：web.ui-regression 至少一侧平台的稳定通过路径，以及用户对正式矩阵启动的确认。
+
 ### 暂停点的剩余工作量估算（2026-09-05）
 
 本暂停点粗估为 **3–6人日工程量，另加两个完整候选和 CI 的运行/观察窗口**；按一名开发者计约3–6个工作日，不是固定交付日期。第8章的2–4.25人日属于较早维护估算，当前以本进度区为准，已经完成的启动、审批计量、Go 前置和证据基座不重复计量。
@@ -2591,6 +2611,9 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 ### 重要问题说明
 
+- **现象（2026-09-06，B 层复验）**：`real-web.ui-regression` 双平台 6 槽（attempt 1–3）全部失败。4 槽为模型补丁能力失败——把 `setProperty` 单行条件改写成运算符优先级错乱的布尔表达式（如 `value === false && !/^a(?:ria-|$)r/.test(name) && name[0] != 'd' || name[1] != 'a' && …`），冻结 vitest 失败、regression=1；2 槽（WSL a1、Windows a2）补丁**已通过冻结测试**（tests=true、patch=true、reg=0），但运行在写后客观复核阶段以 `run.failed internal … post-write objective review returned neither valid final JSON nor an allowed correction after its one phase-aware output repair` 关闭，机器门按 frozen 合同判 product_workflow。
+- **判断**：这不是 web 任务真值或本仓库验收 bug（补丁正确时测试与 patch 门均判过），而是两类既知失败模式在 V4-Pro 上的复发：①模型对条件判断布尔逻辑的改写能力不足；②review/repair 输出契约（必须返回唯一含非空 summary 的 JSON）在一次性 output repair 后仍不合规。与 Go canary 的 review 阶段致死点同源。
+- **处理方案**：`record_only / 待用户决策`。三条候选处置：继续付费探索（当前证据下期望收益低）、修复写后复核输出契约/修复轮次（产品变更，需授权）、把 web.ui-regression 移出 B 分母保留 canary lane（合同变更，需授权）。未获授权前不启动该任务新付费槽，也不改动 frozen 任务真值与机器验收门。
 - `63e0a41` 的 API migration 在三文件修改及完整回读后、调用 objective review 前返回“no bounded post-write objective review can be built”，snapshot 完整，无历史 `EPERM`。准确回放证明固定2048输入中，重复运行时元数据与整段源码窗口挤占空间，必需文件无法留下可用片段；只去掉元数据虽能生成请求，却会保留无关短行、遗漏实际字段，因此不能视为修复完成。处理为 `fix_now / 本地闭合`：源码行投影、多个位置预留与同文位置保留共同修复，原始回放及462项回归通过，真实模型效果待恢复后验证。最初仅完整行投影的中间版本虽通过小样例，原始回放仍失败，已保留该过程并继续修到原始场景通过，没有付费试错。
 - cross-package 实际调用了 review 和唯一 repair，两次均 `finishReason=length`、non_json、output tokens=1024，raw/display 差异仅空白；当前仍为 `record_only / 输出失败证据保留`，不能因本次 API migration 的本地修复而宣称此问题已解决。后续先核对请求上下文，再决定处理方案；不加预算、不增加重试、不覆盖原终态。
 - 本轮恢复时，配置模板生成首次误配旧六槽清单摘要、`--max-new-runs 0` 首次从主仓而非冻结 Windows harness 调用、uplift cohort preflight 首次缺 OCI 环境，均在模型启动前失败关闭；分别按现有两槽清单真实摘要、实际 owner 路径及完整隔离环境修正后通过，没有重跑正式槽。Linux staging 切换首次被本轮验证补丁阻止，确认全部为本轮十文件补丁后按已提交内容同步 index/worktree，正常 detach 后原生 identity clean；未覆盖用户改动。
