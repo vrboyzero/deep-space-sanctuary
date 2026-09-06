@@ -1054,6 +1054,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C 6ce85bd/candidate-1 | P2 | **首槽 readiness 基础设施失败，永久冻结；进入零 Provider 诊断** | 最终 inputs/plan/8 目标/资源/费用 Gate 通过后，唯一 Windows canary 在 `60055ms` 超时；report/fixture 未生成，resume=`processed 0 / remaining 144 / unreportedInfrastructure 1`；candidate cost=`0`、reserve=`2.24221000 USD`；env/资源清理闭合 | 禁止重跑或启动 WSL；先建立同冻结构建的独立零 Provider readiness 反馈回路，验证根因后才决定新修复与 candidate identity |
 | P2-C Gateway 启动阶段诊断 | P2 | **诊断与工程回归通过；宿主冷启动原因保留** | 有界 IPC 定向=`47/47`（新增 7 项）；`9b5e4ba` build 与完整工程回归=`6623 passed / 0 failed / 8 skipped`；两轮探索未出现 readiness 失败 | 冷缓存/宿主占用来源仍为 record_only，不将热缓存和 SSD 结果表述为冷启动根因已修复 |
 | P2-C 分层开发与编排复用 | P2 | **用户授权换模型已执行：v3 runner 切 `deepseek-v4-pro`（CI 全绿 `a34d7540`），V4-Pro 六槽（a1/a2/a3）稳定走完产品全流程，但最终工作区残留 21–25 处 `WriteStringAndCheck`（`bash_completions.go` 531–679 行）被机器验收门关闭；Go 累计 19/19，待用户授权「验收探针前移」杠杆** | 双平台复发定位：两层工具输出压缩破坏 file_read 证据 → 导航死循环；修复压缩保护+证据补齐+覆盖判定前移（家族 `469/469`）；24k 预算冲突 → 64k 授权 + uplift gate 重冻结；全量拒绝补丁的一次性有界纠正（`136/136`）；13/13 归档后用户选路径①换 V4-Pro（定价 const + 规则例外记录，`64/64`）；零 Provider 归因 pro 六槽：a1 为纠正补丁保真度（JSON 转义/幻觉上下文），a2/a3 为系统性不完整迁移+虚假完成声明（残留逐行定位到 `writeLocalNonPersistentFlag` 等 7 个函数） | 待用户授权：验收探针（残留标识符扫描）前移到客观复核反馈（不动真值/门槛/七维/预算）；完整 144 槽、七维资格与第二连续候选未完成 |
+| P2-C 三档产品反馈杠杆（探针前移 → 残留纠正迭代+逐 hunk 回执 → 解除工具调用上限+足额纠正预算） | P2 | **三档杠杆全部按授权实现并付费验证（`5f99306`→`3ab3ad61`），Go 探索以 25/25 关闭** | 探针轮 2/2 死于 `budget=tool_calls`（32 上限）；(a)+(b) 轮 2/2 仍死于同一上限（验证读占满）；第三轮解除上限后 2/2 死于纠正补丁被机器路径校验硬拒绝（Windows 为虚构源码行→工具层原子失败→纠正被拒；WSL 为 5/23 歧义落盘→纠正被拒）；收敛 44→23；链上累计 2.7649 USD（约 22.1 CNY，< 80 授权线） | Go 探索关闭；下一候选转向 real-ts/real-js 等七维路径，先做免费证据核对再决定付费探索 |
 | 两个连续 9.5 候选 | P2 | **未完成** | 尚无完整资格和数值 score | 两个候选均须完整矩阵、七维下限、raw weighted >=9.500 和全部 hard Gate |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
@@ -2493,13 +2494,26 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 - TypeScript 编译无错误；`verify:coding-benchmark` 通过。
 - 受影响全量回归 **4066/4066** 通过（belldandy-agent/core/skills 三包 + coding-ci 脚本），新增用例：launchSpec `maxToolCalls` 归一化、工具调用上限解除（launchSpec 0 时多次调用不再触发 budget_exhausted）、CLI `--max-tool-calls` 解析（"0"/"7"/"abc"/"-1"）、ci-runner 透传与 parallel-write 取反。
-- 未验证风险：真实 Provider 下「不限制工具调用 + 足额纠正证据 + 一次清完指令」能否把 44 处残留压到 0，需本轮付费双槽确认。
+
+##### 付费探索结论（explore-3ab3ad6-1，V4-Pro，双平台各 1 槽）
+
+- 双槽均失败（Go 探索累计 **25/25**）。本轮杠杆全部按设计生效：**不再出现 `budget=tool_calls` 预算致死**；Windows/WSL 分别执行 20/28 次工具调用、7/9 次模型调用，纠正请求输入分别达到 8,413/8,016 tokens（足额预算生效）。
+- 新致死点前移到**写后纠正补丁的机器路径校验**：两槽最后一枚纠正补丁都在执行前被 `hasOnlyWorkspaceMutationPatchPaths` 拒绝（`the post-write objective correction patch targeted an unlisted path or did not contain a valid required-path file section`），单次输入纠正机会耗尽后硬失败。
+- Windows 槽：review 阶段补丁在工具层原子失败（`ApplyPatchMatchError`：模型虚构了一行 `must_have_one_flag+=(\\"--%s"+cbn` 的不存在源码行，错误经逐 hunk 回执机制回传后，纠正补丁仍未通过路径校验）。
+- WSL 槽：review 阶段补丁真实落盘 5 个 hunk（第 1 个 hunk 有 5 个相同候选行、只替换了第一处），残留扫描 `bash_completions.go ×23`；纠正请求（8,016 tokens）产出的补丁在执行前被同一路径校验拒绝。
+- 收敛曲线：44 → 23（bash_completions.go 仅剩 23 处，其余 7 文件已清零）。费用：本轮 0.0363 USD，探索链累计报告 2.7649 USD（约 22.1 CNY），仍在 80 CNY 授权线内。
+
+##### 重要问题说明
+
+- **现象**：不限制工具调用后，两槽的致死点从预算耗尽前移为「纠正补丁被机器路径校验硬拒绝」。该拒绝发生在补丁执行前，模型只有一次输入纠正机会（`workspaceMutationObjectiveInputCorrectionAttempted` 耗尽后不再重试），因此即使证据充足也没有第二次生成机会。
+- **判断**：被拒补丁的完整内容未被持久化（bare 自动化不落盘 assistant 工具调用），但从可回放证据看：Windows 槽上一枚补丁是模型虚构源码行导致的工具层失败，WSL 槽上一枚补丁存在「同文多行只替换第一处」的歧义落盘；两槽的最终纠正补丁要么包含未授权路径、要么没有可执行的 hunk。机器门按设计拒绝，**未发现本仓库侧 bug**，是模型在 12 turns/64k/$0.10 冻结预算下无法产出满足合同的一次清完补丁。
+- **处理方案**：`record_only / Go 探索关闭证据保留`。不再为 Go 槽追加产品反馈杠杆（三档杠杆均已验证），按计划转向其他七维候选路径；相关实现（maxToolCalls 解除、足额纠正预算、逐 hunk 回执）保留为通用能力，不改变 v1/v2 与其他任务的冻结合同。
 
 ##### 后续计划
 
-- 下一步：提交并推送后重建双平台 harness、重生成 inputs、验证配置，跑付费双槽（explore-<revision>-1）。
-- 为什么先做它：这是本轮授权的直接产出，且每槽费用约 0.02 USD，风险收益比最高。
-- 当前还缺的关键闭环：若本轮仍不能「残留清零 + 输出契约通过」，Go 探索以 ≥25/25 证据关闭并转向其他七维候选路径。
+- 下一步：关闭 Go 探索，按计划核对 real-ts / real-js 等七维候选的既有证据并选择下一候选路径（核对与材料准备为免费步骤），再决定是否启动新的付费探索。
+- 为什么先做它：Go 已 25/25 且致死点已收敛为「模型无法在冻结预算内产出满足合同的纠正补丁」，继续投入只重复同一证据；候选切换是 9.5 累积路径上唯一还能改变胜率的方向。
+- 当前还缺的关键闭环：两个连续 9.5 候选的正式验收证据仍为空；下一候选必须先完成双平台免费证据核对，再经用户确认后付费探索。
 
 ### 暂停点的剩余工作量估算（2026-09-05）
 
