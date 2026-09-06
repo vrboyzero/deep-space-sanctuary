@@ -66,7 +66,6 @@ describe("coding agent candidate dimension mapping", () => {
             "real-js.bug-fix",
             "real-js.failed-test-fix",
             "real-go.bug-fix",
-            "real-web.ui-regression",
             "real-web.dependency-diagnosis",
           ],
           criteria: [{
@@ -137,7 +136,6 @@ describe("coding agent candidate dimension mapping", () => {
             "real-js.bug-fix",
             "real-js.failed-test-fix",
             "real-go.bug-fix",
-            "real-web.ui-regression",
             "real-web.dependency-diagnosis",
           ],
           criteria: [

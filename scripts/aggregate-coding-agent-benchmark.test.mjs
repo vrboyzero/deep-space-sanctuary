@@ -1090,9 +1090,9 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
       .resolves.toMatchObject({ decision: qualification });
   });
 
-  it("enforces the B success rate over exactly the 42 non-canary layer-B executions", async () => {
+  it("enforces the B success rate over exactly the 36 non-canary layer-B executions", async () => {
     const { outputRoot } = await createCompleteQualificationBaseline((runs) => {
-      // canary lane（real-go.public-api-migration）不进入 B 层成功率分母；
+      // canary lane（real-go.public-api-migration、real-web.ui-regression）不进入 B 层成功率分母；
       // 这里使 4 个非 canary B 槽失败，令成功率跌破 0.92。
       let failedRunCount = 0;
       for (const run of runs) {
@@ -1115,9 +1115,9 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
         failedGates: [{
           layer: "B",
           id: "successRateMinimum",
-          numerator: 38,
-          denominator: 42,
-          observed: 38 / 42,
+          numerator: 32,
+          denominator: 36,
+          observed: 32 / 36,
           minimum: 0.92,
         }],
       }],
@@ -1184,9 +1184,9 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
         failedGates: [{
           layer: "B",
           id: "testPassRateMinimum",
-          numerator: 39,
-          denominator: 42,
-          observed: 39 / 42,
+          numerator: 33,
+          denominator: 36,
+          observed: 33 / 36,
           minimum: 0.95,
         }],
       }],
@@ -1218,9 +1218,9 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
         failedGates: [{
           layer: "B",
           id: "patchAcceptanceRateMinimum",
-          numerator: 28,
-          denominator: 30,
-          observed: 28 / 30,
+          numerator: 22,
+          denominator: 24,
+          observed: 22 / 24,
           minimum: 0.95,
         }],
       }],

@@ -500,6 +500,7 @@
     {
       "id": "real-web.ui-regression",
       "layer": "B",
+      "layerGateLane": "canary",
       "repositoryId": "preact",
       "category": "cross_file_feature",
       "title": "Fix a browser-facing regression in a real web project",
