@@ -58,21 +58,22 @@ describe("coding agent candidate progress", () => {
     });
   });
 
-  it("stops when a single javascript B failure makes its 6-slot ecosystem gate unreachable", () => {
-    // real-js.bug-fix 移入 canary lane 后，javascript 非 canary B 池仅剩
-    // real-js.failed-test-fix 的 6 槽：单次失败最好可达 5/6 = 0.833 < 0.9。
+  it("continues when a single javascript B failure keeps its 6-slot ecosystem above 0.8", () => {
+    // 用户授权的分层生态门：requiredLanguageSuccessRateMinimum=0.8。
+    // javascript 非 canary B 池仅剩 real-js.failed-test-fix 的 6 槽：
+    // 单次失败最好可达 5/6 = 0.833 >= 0.8，B 总 23/24 >= 0.92，保持 continue。
     const result = evaluate([productFailure("real-js.failed-test-fix")]);
-    expect(result.status).toBe("stop");
-    expect(result.reasons).toContain("B.requiredLanguageSuccessRateMinimum:javascript");
+    expect(result.status).toBe("continue");
+    expect(result.reasons).not.toContain("B.requiredLanguageSuccessRateMinimum:javascript");
     expect(result.reasons).not.toContain("B.successRateMinimum");
   });
 
-  it("stops when a single typescript B failure makes its 0.9 ecosystem gate unreachable", () => {
-    // real-ts.cross-package-refactor 移入 canary lane 后，typescript 非 canary B 池
-    // 仅剩 real-ts.api-migration 的 6 槽：单次失败最好可达 5/6 = 0.833 < 0.9。
+  it("continues when a single typescript B failure keeps its 6-slot ecosystem above 0.8", () => {
+    // typescript 非 canary B 池仅剩 real-ts.api-migration 的 6 槽：
+    // 单次失败最好可达 5/6 = 0.833 >= 0.8，保持 continue。
     const result = evaluate([productFailure("real-ts.api-migration")]);
-    expect(result.status).toBe("stop");
-    expect(result.reasons).toContain("B.requiredLanguageSuccessRateMinimum:typescript");
+    expect(result.status).toBe("continue");
+    expect(result.reasons).not.toContain("B.requiredLanguageSuccessRateMinimum:typescript");
     expect(result.reasons).not.toContain("B.successRateMinimum");
   });
 
@@ -82,13 +83,14 @@ describe("coding agent candidate progress", () => {
     });
   });
 
-  it("stops a language ecosystem even when the total B rate could still pass", () => {
-    // 单个 go 槽失败：go 生态 5/6 < 0.9 → stop；B 总成功率最好 23/24 >= 0.92 仍可通过。
-    const failures = [productFailure("real-go.bug-fix", 1)];
+  it("lets two same-pool B failures trip the total B rate before the 0.8 ecosystem gate", () => {
+    // 生态门 0.8 下 6 槽池 2 败 = 4/6 = 0.667 < 0.8，但 B 总成功率
+    // 22/24 = 0.917 < 0.92 先一步不可达，冻结理由为 B 总门。
+    const failures = [productFailure("real-go.bug-fix", 1), productFailure("real-go.bug-fix", 2)];
     const result = evaluate(failures);
     expect(result.status).toBe("stop");
+    expect(result.reasons).toContain("B.successRateMinimum");
     expect(result.reasons).toContain("B.requiredLanguageSuccessRateMinimum:go");
-    expect(result.reasons).not.toContain("B.successRateMinimum");
   });
 
   it("keeps canary lane executions out of every B gate denominator", () => {

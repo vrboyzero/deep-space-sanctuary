@@ -311,7 +311,7 @@ describe("coding agent benchmark v3 contract", () => {
       A: { requiredPassedExecutions: 72 },
       B: {
         successRateMinimum: 0.92,
-        requiredLanguageSuccessRateMinimum: 0.90,
+        requiredLanguageSuccessRateMinimum: 0.80,
         testPassRateMinimum: 0.95,
         patchAcceptanceRateMinimum: 0.95,
         regressionCountMaximum: 2,

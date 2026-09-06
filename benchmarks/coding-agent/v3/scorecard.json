@@ -35,7 +35,7 @@
     },
     "B": {
       "successRateMinimum": 0.92,
-      "requiredLanguageSuccessRateMinimum": 0.9,
+      "requiredLanguageSuccessRateMinimum": 0.8,
       "testPassRateMinimum": 0.95,
       "patchAcceptanceRateMinimum": 0.95,
       "regressionCountMaximum": 2

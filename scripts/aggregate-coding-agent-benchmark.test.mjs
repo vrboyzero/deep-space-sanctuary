@@ -1129,15 +1129,41 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
       .resolves.toMatchObject({ decision: qualification });
   });
 
-  it("enforces the B success rate independently for every required language ecosystem", async () => {
+  it("lets a single non-canary B failure pass every layer gate under the 0.8 ecosystem gate", async () => {
     const { outputRoot } = await createCompleteQualificationBaseline((runs) => {
-      // 单个 typescript 槽失败即可跌破 6 槽池的 0.9 生态门槛（5/6 < 0.9），
-      // 而 B 总成功率最好 23/24 >= 0.92 仍可通过。
+      // 用户授权的分层生态门（0.8）：单个 typescript 槽失败后
+      // 生态 5/6 = 0.833 >= 0.8、B 总 23/24 >= 0.92，全部层级门仍可通过；
+      // 本基线不含 expected-report 维度证据，qualification 应停在
+      // qualification_contract_incomplete 而非任何 layer gate 失败。
       let failedRunCount = 0;
       for (const run of runs) {
         const task = manifestV3.tasks.find((candidate) => candidate.id === run.taskId);
         const repository = manifestV3.repositories.find((candidate) => candidate.id === task?.repositoryId);
         if (repository?.languageEcosystem !== "typescript" || failedRunCount === 1) continue;
+        run.status = "failed";
+        run.failureCategory = "product_workflow";
+        failedRunCount += 1;
+      }
+    });
+
+    const qualification = await qualifyCodingAgentBenchmarkCandidate({ aggregateRoot: outputRoot });
+    expect(qualification.status).toBe("not_eligible");
+    expect(qualification.blockingReasons[0].code).toBe("qualification_contract_incomplete");
+    await expect(writeCodingAgentCandidateQualificationReport({ aggregateRoot: outputRoot }))
+      .resolves.toMatchObject({ decision: qualification });
+    await expect(verifyCodingAgentCandidateQualificationReport({ aggregateRoot: outputRoot }))
+      .resolves.toMatchObject({ decision: qualification });
+  });
+
+  it("enforces the B success rate before the 0.8 ecosystem gate when two non-canary B runs fail", async () => {
+    const { outputRoot } = await createCompleteQualificationBaseline((runs) => {
+      // 两个 typescript 槽失败：生态 4/6 = 0.667 < 0.8，但 B 总成功率
+      // 22/24 = 0.917 < 0.92 先触发，qualification 返回 B 总门。
+      let failedRunCount = 0;
+      for (const run of runs) {
+        const task = manifestV3.tasks.find((candidate) => candidate.id === run.taskId);
+        const repository = manifestV3.repositories.find((candidate) => candidate.id === task?.repositoryId);
+        if (repository?.languageEcosystem !== "typescript" || failedRunCount === 2) continue;
         run.status = "failed";
         run.failureCategory = "product_workflow";
         failedRunCount += 1;
@@ -1152,12 +1178,11 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
         code: "candidate_layer_gate_failed",
         failedGates: [{
           layer: "B",
-          id: "requiredLanguageSuccessRateMinimum",
-          ecosystem: "typescript",
-          numerator: 5,
-          denominator: 6,
-          observed: 5 / 6,
-          minimum: 0.9,
+          id: "successRateMinimum",
+          numerator: 22,
+          denominator: 24,
+          observed: 22 / 24,
+          minimum: 0.92,
         }],
       }],
     });
