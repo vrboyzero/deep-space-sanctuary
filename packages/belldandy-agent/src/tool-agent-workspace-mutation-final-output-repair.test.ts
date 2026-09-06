@@ -33,21 +33,24 @@ describe("ToolEnabledAgent post-correction final output repair", () => {
     expect(scenario.items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
-  it("fails closed when the one tool-free final JSON repair is still invalid", async () => {
+  it("fails closed when the bounded tool-free final JSON repairs remain invalid", async () => {
     const scenario = await runScenario("The source is fixed, but this is not JSON.");
 
-    expect(scenario.requests).toHaveLength(7);
+    expect(scenario.requests).toHaveLength(9);
     expect(scenario.requests[6]?.messages[0]?.content).toContain(
       "Post-mutation final objective output repair phase",
     );
     expect(scenario.requests[6]).not.toHaveProperty("tools");
+    expect(scenario.requests[6]?.messages[0]?.content).toContain("This is output repair attempt 1 of 3");
+    expect(scenario.requests[7]?.messages[0]?.content).toContain("This is output repair attempt 2 of 3");
+    expect(scenario.requests[8]?.messages[0]?.content).toContain("This is output repair attempt 3 of 3");
     expect(scenario.executedPatches).toEqual([
       scenario.initialPatch,
       scenario.correctionPatch,
     ]);
     expect(scenario.items.at(-2)).toEqual({
       type: "final",
-      text: "required workspace mutation was not completed: the post-write final objective review returned invalid JSON after its one tool-free output repair.",
+      text: "required workspace mutation was not completed: the post-write final objective review returned invalid JSON after its 3 tool-free output repairs.",
     });
     expect(scenario.items.at(-1)).toEqual({ type: "status", status: "error" });
   });

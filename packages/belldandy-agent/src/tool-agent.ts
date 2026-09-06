@@ -2521,8 +2521,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let workspaceMutationResidualCorrectionCycles = 0;
     let workspaceMutationObjectiveInputCorrectionReason: WorkspaceMutationObjectiveInputCorrectionReason | undefined;
     let workspaceMutationObjectiveOutputRepairPending = false;
-    let workspaceMutationObjectiveOutputRepairAttempted = false;
-    let workspaceMutationFinalObjectiveOutputRepairAttempted = false;
+    // 输出修复轮数上限：复核/最终复核输出违反结构化 JSON 契约时允许的最多修复轮数。
+    // 与 REQUIRED_RESIDUAL_CORRECTION_CYCLE_CAP 对齐为 3；每轮消耗一次模型调用，
+    // 由 12 turns / token / 费用预检共同约束，不改变任何任务冻结合同。
+    const WORKSPACE_MUTATION_OBJECTIVE_OUTPUT_REPAIR_CAP = 3;
+    let workspaceMutationObjectiveOutputRepairAttempts = 0;
+    let workspaceMutationFinalObjectiveOutputRepairAttempts = 0;
     let workspaceMutationObjectiveOutputRepairValidationMessage: string | undefined;
     let workspaceMutationFinalizationPending = false;
     const successfulWorkspaceMutationPatchInputs: string[] = [];
@@ -3369,6 +3373,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 structuredOutputSchema: input.structuredOutput?.schema,
                 validationMessage: workspaceMutationObjectiveOutputRepairValidationMessage ?? "Final output is invalid.",
                 correctionAllowed: !workspaceMutationObjectiveCorrectionAttempted,
+                repairAttempt: (workspaceMutationFinalObjectiveOutputRepairCall
+                  ? workspaceMutationFinalObjectiveOutputRepairAttempts
+                  : workspaceMutationObjectiveOutputRepairAttempts) + 1,
+                repairAttemptCap: WORKSPACE_MUTATION_OBJECTIVE_OUTPUT_REPAIR_CAP,
                 tokenEstimateContext: dispatchTokenEstimateContext,
               })
             : buildWorkspaceMutationObjectiveReviewRequest({
@@ -3425,9 +3433,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
           if (workspaceMutationObjectiveOutputRepairCall) {
             workspaceMutationObjectiveOutputRepairPending = false;
             if (workspaceMutationFinalObjectiveOutputRepairCall) {
-              workspaceMutationFinalObjectiveOutputRepairAttempted = true;
+              workspaceMutationFinalObjectiveOutputRepairAttempts++;
             } else {
-              workspaceMutationObjectiveOutputRepairAttempted = true;
+              workspaceMutationObjectiveOutputRepairAttempts++;
             }
             workspaceMutationObjectiveOutputRepairValidationMessage = undefined;
           }
@@ -4437,12 +4445,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 });
                 continue;
               }
-              const canRepairObjectiveOutput = !workspaceMutationObjectiveOutputRepairCall
-                && !workspaceMutationObjectiveOutputRepairAttempted
+              const canRepairObjectiveOutput = workspaceMutationObjectiveOutputRepairAttempts < WORKSPACE_MUTATION_OBJECTIVE_OUTPUT_REPAIR_CAP
                 && !workspaceMutationObjectiveCorrectionAttempted;
-              const canRepairFinalObjectiveOutput = !workspaceMutationObjectiveOutputRepairCall
-                && workspaceMutationObjectiveCorrectionAttempted
-                && !workspaceMutationFinalObjectiveOutputRepairAttempted;
+              const canRepairFinalObjectiveOutput = workspaceMutationObjectiveCorrectionAttempted
+                && workspaceMutationFinalObjectiveOutputRepairAttempts < WORKSPACE_MUTATION_OBJECTIVE_OUTPUT_REPAIR_CAP;
               if (canRepairObjectiveOutput || canRepairFinalObjectiveOutput) {
                 workspaceMutationObjectiveReviewPending = true;
                 workspaceMutationObjectiveOutputRepairPending = true;
@@ -4453,8 +4459,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 recentToolCallTraces.length = 0;
                 lastSuccessfulToolResult = undefined;
                 logWarn(canRepairFinalObjectiveOutput
-                  ? "[workspace-mutation] final objective review returned invalid output; scheduling one tool-free JSON repair"
-                  : "[workspace-mutation] objective review returned invalid final output; scheduling one phase-aware output repair", {
+                  ? `[workspace-mutation] final objective review returned invalid output; scheduling bounded tool-free JSON repair ${workspaceMutationFinalObjectiveOutputRepairAttempts + 1}/${WORKSPACE_MUTATION_OBJECTIVE_OUTPUT_REPAIR_CAP}`
+                  : `[workspace-mutation] objective review returned invalid final output; scheduling bounded phase-aware output repair ${workspaceMutationObjectiveOutputRepairAttempts + 1}/${WORKSPACE_MUTATION_OBJECTIVE_OUTPUT_REPAIR_CAP}`, {
                   requiredPathCount: requiredChangedPaths.length,
                   conversationId: input.conversationId,
                   agentId: resolvedAgentId,
@@ -4483,10 +4489,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 ? undefined
                 : input.structuredOutput.validateOutput(recoveredOutput);
               if (!recoveredValidation?.ok) {
+                const repairCount = workspaceMutationFinalObjectiveOutputRepairCall
+                  ? workspaceMutationFinalObjectiveOutputRepairAttempts
+                  : workspaceMutationObjectiveOutputRepairAttempts;
                 yield* emitWorkspaceMutationFailure(
                   workspaceMutationFinalObjectiveOutputRepairCall
-                    ? "the post-write final objective review returned invalid JSON after its one tool-free output repair."
-                    : "the post-write objective review returned neither valid final JSON nor an allowed correction after its one phase-aware output repair.",
+                    ? `the post-write final objective review returned invalid JSON after its ${repairCount} tool-free output repair${repairCount === 1 ? "" : "s"}.`
+                    : `the post-write objective review returned neither valid final JSON nor an allowed correction after its ${repairCount} phase-aware output repair${repairCount === 1 ? "" : "s"}.`,
                 );
                 return;
               }

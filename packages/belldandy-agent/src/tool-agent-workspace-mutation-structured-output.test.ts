@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 describe("ToolEnabledAgent post-mutation structured output", () => {
-  it("requests JSON mode before failing closed on two full-length prose reviews", async () => {
+  it("requests JSON mode before failing closed on repeated full-length prose reviews", async () => {
     const requiredPath = "src/diff/props.js";
     const requests: Array<Record<string, any>> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
@@ -81,7 +81,7 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
         _agentLaunchSpec: {
           workspaceMutationRequirement: "required",
           requiredChangedPaths: [requiredPath],
-          toolLoopIterationBudget: 6,
+          toolLoopIterationBudget: 12,
         },
       },
       structuredOutput: {
@@ -92,16 +92,20 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
       },
     } as any));
 
-    expect(requests).toHaveLength(4);
+    expect(requests).toHaveLength(6);
     expect(debug.mock.calls.filter(([, message, data]) => message === "[model-call] response_extracted"
       && data.modelCallIndex >= 3).map(([, , data]) => data)).toEqual([
       expect.objectContaining({ modelCallIndex: 3, finishReason: "length" }),
       expect.objectContaining({ modelCallIndex: 4, finishReason: "length" }),
+      expect.objectContaining({ modelCallIndex: 5, finishReason: "length" }),
+      expect.objectContaining({ modelCallIndex: 6, finishReason: "length" }),
     ]);
     const diagnostics = warn.mock.calls.filter(([, message]) => message === "[workspace-mutation] invalid objective output diagnostics");
     expect(diagnostics.map(([, , data]) => data)).toEqual([
       expect.objectContaining({ modelCallIndex: 3, phase: "objective_review", rawJsonKind: "non_json", rawSchemaValid: false, displaySchemaValid: false }),
       expect.objectContaining({ modelCallIndex: 4, phase: "output_repair", rawJsonKind: "non_json", rawSchemaValid: false, displaySchemaValid: false }),
+      expect.objectContaining({ modelCallIndex: 5, phase: "output_repair", rawJsonKind: "non_json", rawSchemaValid: false, displaySchemaValid: false }),
+      expect.objectContaining({ modelCallIndex: 6, phase: "output_repair", rawJsonKind: "non_json", rawSchemaValid: false, displaySchemaValid: false }),
     ]);
     expect(JSON.stringify(diagnostics)).not.toContain("The post-write evidence requires further review.");
     expect(requests[2]?.response_format).toEqual({ type: "json_object" });
@@ -116,6 +120,9 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
     expect(requests[2]?.messages[0]?.content).toContain('"required":["summary"]');
     expect(requests[2]?.tools?.map((tool: any) => tool.function.name)).toEqual(["apply_patch"]);
     expect(requests[3]?.tools?.map((tool: any) => tool.function.name)).toEqual(["apply_patch"]);
+    expect(requests[3]?.messages[0]?.content).toContain("This is output repair attempt 1 of 3");
+    expect(requests[4]?.messages[0]?.content).toContain("This is output repair attempt 2 of 3");
+    expect(requests[5]?.messages[0]?.content).toContain("This is output repair attempt 3 of 3");
     expect(requests[2]?.max_tokens).toBe(1_024);
     expect(requests[3]?.max_tokens).toBe(1_024);
     expect(requests[2]?.thinking).toEqual({ type: "disabled" });
@@ -126,9 +133,100 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
     ]);
     expect(items.at(-2)).toEqual({
       type: "final",
-      text: "required workspace mutation was not completed: the post-write objective review returned neither valid final JSON nor an allowed correction after its one phase-aware output repair.",
+      text: "required workspace mutation was not completed: the post-write objective review returned neither valid final JSON nor an allowed correction after its 3 phase-aware output repairs.",
     });
     expect(items.at(-1)).toEqual({ type: "status", status: "error" });
+  });
+
+  it("succeeds when a later bounded output repair returns the required JSON", async () => {
+    const requiredPath = "src/diff/props.js";
+    const requests: Array<Record<string, any>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, any>;
+      requests.push(body);
+      if (requests.length === 1) {
+        return jsonResponse(modelToolCall("patch-broad", "apply_patch", {
+          input: [
+            "*** Begin Patch",
+            `*** Update File: ${requiredPath}`,
+            "@@",
+            "-\t\t} else if (value != NULL && value !== false) {",
+            "+\t\t} else if (value != NULL) {",
+            "*** End Patch",
+          ].join("\n"),
+        }, 500, 100));
+      }
+      if (requests.length === 2) {
+        return jsonResponse(modelToolCall("read-broad", "file_read", {
+          path: requiredPath,
+          limit: 1_048_576,
+        }, 500, 100));
+      }
+      // 复核与第一轮修复仍返回无效输出，第二轮修复才收敛为合法最终 JSON。
+      if (requests.length <= 4) {
+        return jsonResponse({
+          choices: [{
+            finish_reason: "length",
+            message: { content: "The post-write evidence requires further review. ".repeat(96) },
+          }],
+          usage: { prompt_tokens: 1_700, completion_tokens: 1_024 },
+        });
+      }
+      return jsonResponse({
+        choices: [{ finish_reason: "stop", message: { content: '{"summary":"corrected and verified"}' } }],
+        usage: { prompt_tokens: 1_700, completion_tokens: 30 },
+      });
+    });
+
+    const execute = vi.fn(async (request: {
+      id: string;
+      name: string;
+    }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: request.name === "file_read"
+        ? JSON.stringify({
+            path: requiredPath,
+            truncated: false,
+            content: "\t\t} else if (value != NULL) {",
+          })
+        : "Patch applied successfully",
+      ...(request.name === "apply_patch" ? {
+        metadata: {
+          workspaceMutation: { schemaVersion: 1, changedPaths: [requiredPath] },
+        },
+      } : {}),
+      durationMs: 1,
+    }));
+    const agent = createAgent(execute);
+
+    const items = await collect(agent.run({
+      conversationId: "conv-post-mutation-objective-repair-converges",
+      text: "Restore false aria-* attribute serialization with the smallest change while preserving ordinary false attribute behavior.",
+      automationProfile: "bare",
+      meta: {
+        _agentLaunchSpec: {
+          workspaceMutationRequirement: "required",
+          requiredChangedPaths: [requiredPath],
+          toolLoopIterationBudget: 12,
+        },
+      },
+      structuredOutput: {
+        schema: { type: "object", required: ["summary"] },
+        validateOutput: (text: string) => text === '{"summary":"corrected and verified"}'
+          ? { ok: true as const, outputText: text }
+          : { ok: false as const, message: "summary is required" },
+      },
+    } as any));
+
+    expect(requests).toHaveLength(5);
+    expect(requests[4]?.messages[0]?.content).toContain("This is output repair attempt 2 of 3");
+    expect(items.at(-2)).toEqual({
+      type: "final",
+      text: '{"summary":"corrected and verified"}',
+    });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
   it("routes a full-length review of a no-op removal branch to one bounded correction", async () => {
@@ -776,7 +874,7 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
         _agentLaunchSpec: {
           workspaceMutationRequirement: "required",
           requiredChangedPaths: [requiredPath],
-          toolLoopIterationBudget: 6,
+          toolLoopIterationBudget: 12,
         },
       },
       structuredOutput: {
@@ -787,7 +885,7 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
       },
     } as any));
 
-    expect(requests).toHaveLength(4);
+    expect(requests).toHaveLength(6);
     expect(requests[2]?.messages[0]?.content).toContain("Post-mutation objective review phase");
     expect(requests[3]?.messages[0]?.content).toContain(
       "Post-mutation objective review output repair phase",
@@ -802,7 +900,7 @@ describe("ToolEnabledAgent post-mutation structured output", () => {
     ]);
     expect(items.at(-2)).toEqual({
       type: "final",
-      text: "required workspace mutation was not completed: the post-write objective review returned neither valid final JSON nor an allowed correction after its one phase-aware output repair.",
+      text: "required workspace mutation was not completed: the post-write objective review returned neither valid final JSON nor an allowed correction after its 3 phase-aware output repairs.",
     });
     expect(items.at(-1)).toEqual({ type: "status", status: "error" });
   });

@@ -90,7 +90,7 @@ describe("ToolEnabledAgent frozen product-failure recoveries", () => {
     expect(result.executedPatches).toEqual([scenario.initialPatch]);
     expect(result.items.at(-2)).toEqual({
       type: "final",
-      text: "required workspace mutation was not completed: the post-write objective review returned neither valid final JSON nor an allowed correction after its one phase-aware output repair.",
+      text: "required workspace mutation was not completed: the post-write objective review returned neither valid final JSON nor an allowed correction after its 3 phase-aware output repairs.",
     });
     expect(result.items.at(-1)).toEqual({ type: "status", status: "error" });
   });
@@ -180,7 +180,7 @@ describe("ToolEnabledAgent frozen product-failure recoveries", () => {
     expect(result.executedPatches).toEqual([scenario.initialPatch]);
     expect(result.items.at(-2)).toEqual({
       type: "final",
-      text: "required workspace mutation was not completed: the post-write objective review returned neither valid final JSON nor an allowed correction after its one phase-aware output repair.",
+      text: "required workspace mutation was not completed: the post-write objective review returned neither valid final JSON nor an allowed correction after its 3 phase-aware output repairs.",
     });
     expect(result.items.at(-1)).toEqual({ type: "status", status: "error" });
   });

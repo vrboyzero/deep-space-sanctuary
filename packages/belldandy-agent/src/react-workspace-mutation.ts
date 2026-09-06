@@ -190,6 +190,7 @@ const MUTATION_OBJECTIVE_OUTPUT_REPAIR_INSTRUCTION = [
   "Post-mutation objective review output repair phase: the preceding review returned neither valid final JSON nor one correction tool call.",
   "Compare every task requirement against the bounded complete post-write source evidence again.",
   "If any requirement remains unmet or the evidence contradicts completion, make exactly one apply_patch call to correct only the trusted required paths. Otherwise return exactly one complete raw JSON value that satisfies the final-output contract data below.",
+  "The entire response must be exactly one raw JSON value: no Markdown fences, no code block delimiters, no labels, no commentary before or after it.",
   "Do not turn an incomplete or uncertain review into a success summary, and do not return analysis or Markdown.",
   WORKSPACE_MUTATION_SOURCE_VERIFICATION_INSTRUCTION,
   MUTATION_SUBSET_BEHAVIOR_PRESERVATION_INSTRUCTION,
@@ -202,6 +203,7 @@ const MUTATION_OBJECTIVE_OUTPUT_REPAIR_INSTRUCTION = [
 const MUTATION_FINAL_OBJECTIVE_OUTPUT_REPAIR_INSTRUCTION = [
   "Post-mutation final objective output repair phase: the preceding tool-free final review returned invalid final JSON after the one allowed correction was completed.",
   "Return exactly one complete raw JSON value that satisfies the final-output contract data below.",
+  "The entire response must be exactly one raw JSON value: no Markdown fences, no code block delimiters, no labels, no commentary before or after it.",
   "Do not claim success when the bounded complete post-correction source evidence does not prove every task requirement.",
   WORKSPACE_MUTATION_SOURCE_VERIFICATION_INSTRUCTION,
   "Do not request tools, make another correction, run commands, steer, load deferred tools, or return analysis or Markdown.",
@@ -3011,6 +3013,8 @@ export function buildWorkspaceMutationObjectiveOutputRepairRequest(input: {
   structuredOutputSchema: unknown;
   validationMessage: string;
   correctionAllowed?: boolean;
+  repairAttempt?: number;
+  repairAttemptCap?: number;
   tokenEstimateContext?: TokenEstimateOptions;
 }): WorkspaceMutationRecoveryRequest | undefined {
   const requiredCorrectionPaths = [...input.requiredChangedPaths];
@@ -3028,9 +3032,27 @@ export function buildWorkspaceMutationObjectiveOutputRepairRequest(input: {
     return undefined;
   }
   if (!finalOutputContract) return undefined;
-  const instruction = input.correctionAllowed === false
+  const repairAttempt = Number.isSafeInteger(input.repairAttempt) && (input.repairAttempt ?? 0) > 0
+    ? input.repairAttempt
+    : undefined;
+  const repairAttemptCap = Number.isSafeInteger(input.repairAttemptCap) && (input.repairAttemptCap ?? 0) > 0
+    ? input.repairAttemptCap
+    : undefined;
+  const attemptClause = repairAttempt && repairAttemptCap
+    ? `This is output repair attempt ${repairAttempt} of ${repairAttemptCap}; the preceding repair still returned invalid output.`
+    : "The preceding review still returned invalid output.";
+  const baseInstruction = input.correctionAllowed === false
     ? MUTATION_FINAL_OBJECTIVE_OUTPUT_REPAIR_INSTRUCTION
     : MUTATION_OBJECTIVE_OUTPUT_REPAIR_INSTRUCTION;
+  const instruction = input.correctionAllowed === false
+    ? `${baseInstruction.replace(
+      "after the one allowed correction was completed.",
+      `after the one allowed correction was completed. ${attemptClause} Do not repeat the previous invalid output shape.`,
+    )}`
+    : `${baseInstruction.replace(
+      "the preceding review returned neither valid final JSON nor one correction tool call.",
+      `${attemptClause} Do not repeat the previous invalid output shape.`,
+    )}`;
   const request = buildBoundedWorkspaceMutationRequest({
     ...input,
     tools: input.correctionAllowed === false ? [] : input.tools,
