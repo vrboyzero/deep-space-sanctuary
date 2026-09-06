@@ -35,6 +35,9 @@ const SUPPORTED_TASK_MANIFEST_SHA256 = new Set([
   // 2026-09-06 用户授权的合同变更：real-go.public-api-migration 增加 layerGateLane=canary；
   // 对照四任务与仓库真值未变，仅重核对新增完整摘要。
   "017e54600116102cf2d0b1302064ebc3e6cc148ef4804b11a9a4b7f1e9aa6a03",
+  // 2026-09-06 用户授权的合同变更：real-ts.cross-package-refactor 移入 canary lane
+  // （对照任务真值未变，仅新增 layerGateLane 标记）。
+  "e30fe1b007dce2e21b01e6e7f76aee8c6e2cf5dccc69cda7a3b343f6107539b8",
 ]);
 const SOURCE_IDENTITY_PATHS = Object.freeze([
   "scripts/run-code-intel-agent-uplift-readiness.mjs",

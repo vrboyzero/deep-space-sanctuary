@@ -110,7 +110,9 @@ describe("CodeIntel Agent uplift readiness", () => {
     const historical = JSON.parse(buildHistoricalTaskManifestText(currentText));
     const selectedTasks = (manifest) => manifest.tasks
       .filter((task) => CODE_INTEL_AGENT_UPLIFT_TASK_IDS.includes(task.id))
-      .map(({ modelExecution, ...task }) => task);
+      // layerGateLane 为冻结 uplift 输入之后的合同层标记（Go/web/real-ts canary lane），
+      // 不影响 uplift 任务真值；对比时与历史快照一致地剥离。
+      .map(({ modelExecution, layerGateLane, ...task }) => task);
     expect(selectedTasks(current)).toEqual(selectedTasks(historical));
     expect(current.repositories).toEqual(historical.repositories);
     expect(current.tasks.filter((task) => CODE_INTEL_AGENT_UPLIFT_TASK_IDS.includes(task.id))

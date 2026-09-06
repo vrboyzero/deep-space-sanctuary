@@ -59,10 +59,21 @@ describe("coding agent candidate progress", () => {
   });
 
   it("retains one ordinary B failure and continues only unexecuted slots", () => {
-    const failure = productFailure("real-ts.api-migration");
+    // javascript 池（real-js.bug-fix、real-js.failed-test-fix、real-web.dependency-diagnosis）
+    // 共 18 槽：单次失败后最好可达 17/18 >= 0.9，保持 continue。
+    const failure = productFailure("real-js.bug-fix");
     const before = structuredClone(failure);
     expect(evaluate([failure])).toMatchObject({ status: "continue", processed: 1, remaining: 143 });
     expect(failure).toEqual(before);
+  });
+
+  it("stops when a single typescript B failure makes its 0.9 ecosystem gate unreachable", () => {
+    // real-ts.cross-package-refactor 移入 canary lane 后，typescript 非 canary B 池
+    // 仅剩 real-ts.api-migration 的 6 槽：单次失败最好可达 5/6 = 0.833 < 0.9。
+    const result = evaluate([productFailure("real-ts.api-migration")]);
+    expect(result.status).toBe("stop");
+    expect(result.reasons).toContain("B.requiredLanguageSuccessRateMinimum:typescript");
+    expect(result.reasons).not.toContain("B.successRateMinimum");
   });
 
   it("stops immediately when an A execution makes its required total unreachable", () => {

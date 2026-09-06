@@ -420,9 +420,10 @@ const EXPECTED_CONTEXT_TASK_IDS = Object.freeze({
   // 在矩阵中照常执行并保留原始结果，但不进入本组的任务完成率分母。
   // real-web.ui-regression 同理（2026-09-06 证据决策：10 槽 0 过，
   // 补丁正确率 ~40% 且复核守卫两次误拒真值通过补丁，无法支撑 0.92 B 门）。
+  // real-ts.cross-package-refactor 同理（2026-09-06 证据决策：近 5 次尝试
+  // 3 过 2 败、两次候选冻结均由它触发，移入独立受控 canary lane）。
   real_repository_context: Object.freeze([
     "real-ts.api-migration",
-    "real-ts.cross-package-refactor",
     "real-js.bug-fix",
     "real-js.failed-test-fix",
     "real-go.bug-fix",

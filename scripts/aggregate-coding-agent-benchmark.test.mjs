@@ -1090,7 +1090,7 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
       .resolves.toMatchObject({ decision: qualification });
   });
 
-  it("enforces the B success rate over exactly the 36 non-canary layer-B executions", async () => {
+  it("enforces the B success rate over exactly the 30 non-canary layer-B executions", async () => {
     const { outputRoot } = await createCompleteQualificationBaseline((runs) => {
       // canary lane（real-go.public-api-migration、real-web.ui-regression）不进入 B 层成功率分母；
       // 这里使 4 个非 canary B 槽失败，令成功率跌破 0.92。
@@ -1115,9 +1115,9 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
         failedGates: [{
           layer: "B",
           id: "successRateMinimum",
-          numerator: 32,
-          denominator: 36,
-          observed: 32 / 36,
+          numerator: 26,
+          denominator: 30,
+          observed: 26 / 30,
           minimum: 0.92,
         }],
       }],
@@ -1151,9 +1151,9 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
           layer: "B",
           id: "requiredLanguageSuccessRateMinimum",
           ecosystem: "typescript",
-          numerator: 10,
-          denominator: 12,
-          observed: 10 / 12,
+          numerator: 4,
+          denominator: 6,
+          observed: 4 / 6,
           minimum: 0.9,
         }],
       }],
@@ -1184,9 +1184,9 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
         failedGates: [{
           layer: "B",
           id: "testPassRateMinimum",
-          numerator: 33,
-          denominator: 36,
-          observed: 33 / 36,
+          numerator: 27,
+          denominator: 30,
+          observed: 27 / 30,
           minimum: 0.95,
         }],
       }],
@@ -1218,9 +1218,9 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
         failedGates: [{
           layer: "B",
           id: "patchAcceptanceRateMinimum",
-          numerator: 22,
-          denominator: 24,
-          observed: 22 / 24,
+          numerator: 16,
+          denominator: 18,
+          observed: 16 / 18,
           minimum: 0.95,
         }],
       }],

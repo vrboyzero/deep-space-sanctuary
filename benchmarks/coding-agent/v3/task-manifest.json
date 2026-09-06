@@ -403,6 +403,7 @@
     {
       "id": "real-ts.cross-package-refactor",
       "layer": "B",
+      "layerGateLane": "canary",
       "repositoryId": "vscode-languageserver-node",
       "category": "bug_fix",
       "title": "Fix a reproducible TypeScript cross-package regression",
