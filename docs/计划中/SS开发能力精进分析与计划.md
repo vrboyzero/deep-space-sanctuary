@@ -2377,6 +2377,30 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 
 向用户呈报 a2/a3 的系统性不完整迁移证据，并提出最小杠杆方案：把验收探针（残留标识符扫描）前移到客观复核/读后验证的反馈里，让模型在纠正阶段就看到「bash_completions.go 仍有 21 处 WriteStringAndCheck」而不是等机器门禁一票否决；该方案属合同变更，待用户授权后再实施，不再同证据上继续抽样。
 
+#### P2-C 实现结论：验收探针前移（2026-09-06）
+
+##### 已完成内容
+
+1. **`packages/belldandy-protocol/src/index.ts` / `packages/belldandy-skills/src/types.ts` / `packages/belldandy-agent/src/index.ts`**：`CodingRunOptions` 与 `ToolRuntimeLaunchSpec` 新增 `requiredResidualIdentifiers?: string[]`；`CodingRunCapabilities` 新增 `requiredResidualIdentifiers?: boolean`。
+2. **`packages/belldandy-core/src/coding-run/required-residual-identifiers.ts` 新建**：解析器（非空数组、单条 ≤256 字符、无控制字符、去重、上限 32）。
+3. **`packages/belldandy-core/src/cli/commands/agent/run.ts` / `server.ts` / `query-runtime-message-send.ts`**：CLI 新增 `--required-residual-identifiers`（要求 `--require-workspace-mutation`）；server `parseCodingRunOptions` 白名单+校验+透传；capability gate 与 `buildCodingRunLaunchSpec` 同步。
+4. **`packages/belldandy-agent/src/react-workspace-mutation.ts`**：`buildWorkspaceMutationObjectiveReviewRequest` / `InputCorrectionRequest` / `OutputRepairRequest` 新增 `requiredResidualIdentifiers`；共享 builder 在最新 file_read 证据上做**零 Provider 逐路径残留扫描**（`buildRequiredResidualScanBlock`：JSON 证据还原 `content` 字段后计数 + 首次行号，上限 8 行/路径、480 tokens），以 `Post-write residual scan` 块回显在复核/纠正请求中；无残留时回显 clean 结论。
+5. **`packages/belldandy-agent/src/tool-agent.ts`**：capabilities 声明 + launchSpec 读取 + 三个复核请求构建点透传。
+6. **`scripts/run-coding-agent-benchmark.mjs` / `benchmarks/coding-agent/v3/task-manifest.json` + `task-manifest.schema.json` / `scripts/coding-agent-benchmark-v3-contract.mjs`**：runner 从 `task.acceptance.requiredResidualIdentifiers` 透传 CLI 参数；Go 任务 acceptance 增加 `["WriteStringAndCheck"]`；schema 增加可选数组字段；v3 合同 Go acceptance 同步。
+7. **重冻结**：`agent-uplift-gate.json` 的 `sourceIdentity.taskManifest.sha256` → 新历史 fixture hash `9039313b…`；`CODE_INTEL_AGENT_UPLIFT_GATE_SHA256` → `ce6eede2…`；`SUPPORTED_TASK_MANIFEST_SHA256` 追加历史 fixture 与当前 manifest 两个新摘要；truth-set/readiness 测试期望同步。
+
+##### 效果
+
+- 模型在客观复核/纠正阶段直接看到逐路径残留清单（次数+首次行号），无需自行 grep 即可定位未迁移区域；
+- 扫描纯零 Provider、基于已有 file_read 证据、不触碰工作区，机器验收门与任务真值不变；
+- 修复了 V4-Pro 六槽暴露的「模型自查缺失导致残留 21–25 处仍声明完成」的反馈缺口。
+
+##### 验证结果
+
+- TypeScript 编译无错误；`verify:coding-benchmark` 通过。
+- 新增 `react-workspace-mutation-residual-scan.test.ts`（5 用例：计数+行号、JSON 转义证据、clean 回显、未配置时缺省、纠正请求回显）全绿；CLI/能力门/合同/门禁/真值测试共 **199/199** 通过。
+- 未验证风险：真实 Provider 下残留清单对模型纠正行为的实际改善需付费探索确认。
+
 ### 暂停点的剩余工作量估算（2026-09-05）
 
 本暂停点粗估为 **3–6人日工程量，另加两个完整候选和 CI 的运行/观察窗口**；按一名开发者计约3–6个工作日，不是固定交付日期。第8章的2–4.25人日属于较早维护估算，当前以本进度区为准，已经完成的启动、审批计量、Go 前置和证据基座不重复计量。

@@ -223,6 +223,10 @@ describe("coding agent CI runner", () => {
         "jsonrpc/src/common/connection.ts",
         "protocol/src/common/protocol.ts",
       ],
+      requiredResidualIdentifiers: [
+        "LegacyAlias",
+        "DeprecatedCall",
+      ],
     });
 
     expect(args).toEqual([
@@ -239,6 +243,10 @@ describe("coding agent CI runner", () => {
         "jsonrpc/src/common/api.ts",
         "jsonrpc/src/common/connection.ts",
         "protocol/src/common/protocol.ts",
+      ]),
+      "--required-residual-identifiers", JSON.stringify([
+        "LegacyAlias",
+        "DeprecatedCall",
       ]),
       "--permission-mode", "accept-edits",
       "--tool-allow", "file_read,list_files,file_edit,apply_patch,file_write,file_delete",
@@ -261,10 +269,12 @@ describe("coding agent CI runner", () => {
       manifestRevision: "v3",
       taskId: "system.parallel-write-fan-in",
       requiredChangedPaths: ["src/worker-a.ts", "src/worker-b.ts"],
+      requiredResidualIdentifiers: ["LegacyAlias"],
     });
 
     expect(args).not.toContain("--require-workspace-mutation");
     expect(args).not.toContain("--required-changed-paths");
+    expect(args).not.toContain("--required-residual-identifiers");
   });
 
   it("uses the Gateway-visible cwd while keeping the local workspace for change snapshots", () => {

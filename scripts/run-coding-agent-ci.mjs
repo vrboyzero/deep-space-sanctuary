@@ -154,6 +154,9 @@ export function buildAgentRunArgs(input) {
     ...(!delegatesWorkspaceMutationToSystemHarness && input.requiredChangedPaths?.length
       ? ["--required-changed-paths", JSON.stringify(input.requiredChangedPaths)]
       : []),
+    ...(!delegatesWorkspaceMutationToSystemHarness && input.requiredResidualIdentifiers?.length
+      ? ["--required-residual-identifiers", JSON.stringify(input.requiredResidualIdentifiers)]
+      : []),
     "--permission-mode", input.profile.permissionMode === "acceptEdits" ? "accept-edits" : input.profile.permissionMode,
     "--tool-allow", input.profile.toolAllow.join(","),
     "--tool-deny", (input.profile.toolDeny ?? (input.profile.toolAllow.includes("run_command")
@@ -634,6 +637,7 @@ function resolveMainOptions(argv) {
     modelId: values.get("model-id"),
     maxCostUsd: resolveOptionalPositiveNumber(values, "max-cost-usd"),
     requiredChangedPaths: resolveOptionalRequiredChangedPaths(values),
+    requiredResidualIdentifiers: resolveOptionalRequiredResidualIdentifiers(values),
     outputSchemaPath: path.resolve(
       values.get("output-schema") ?? path.join(workspaceRoot, "examples", "ci", "review-output.schema.json"),
     ),
@@ -718,6 +722,23 @@ function resolveOptionalRequiredChangedPaths(values) {
     typeof value !== "string" || !value.trim()
   ))) {
     throw new Error("--required-changed-paths must be a non-empty JSON string array.");
+  }
+  return parsed;
+}
+
+function resolveOptionalRequiredResidualIdentifiers(values) {
+  if (!values.has("required-residual-identifiers")) return undefined;
+  const raw = requireValue(values, "required-residual-identifiers");
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("--required-residual-identifiers must be a valid JSON array.");
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0 || parsed.some((value) => (
+    typeof value !== "string" || !value.trim()
+  ))) {
+    throw new Error("--required-residual-identifiers must be a non-empty JSON string array.");
   }
   return parsed;
 }
