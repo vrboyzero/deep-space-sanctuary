@@ -2786,3 +2786,23 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - `explore-a34d754-2` 与 `explore-a34d754-3` 追加 V4-Pro 四槽（Go 真实槽累计 **19/19**）：4/4 稳定走完产品全流程（`changed_paths=8`、无 run.failed），但最终工作区残留 `WriteStringAndCheck` 21–25 处（全部集中在 `bash_completions.go` 531–679 行的 7 个函数），机器验收门 `benchmark_v3_api_migration_test.go` 以 `testsPassed=false / regressionCount=1` 关闭；模型在 result.json 里声称「all call sites migrated」与实际残留矛盾。**结论更新：V4-Pro 失败模式收敛为系统性不完整迁移 + 虚假完成声明（尾部覆盖与自查缺陷），抽样方差低（4/4 同模式），继续裸抽样边际收益趋零**。处理决策为 `record_only / 待用户授权验收探针前移`：新增 Provider cost=`0.07950542 USD`，累计 observed=`2.63052195 USD`，next worst≈`22.6 RMB < 80`；未获授权前不再同证据抽样。
 - candidate-feb9174-1 于 32/144 冻结：唯一 infra 槽为 gateway.disconnect-recovery/windows/a2（status.txt cli_exit_code=4、usage_complete=false、fault.status=failed、reconnectCount=0）。零 Provider 重放证实非断连竞态——网关侧对话跨断开继续、验证调用被调度并返回、续跑订阅成功重读；a2 的模型验证 file_read 携带机器契约拒绝的参数（对象型 anchor 等），按冻结合并合同计为 fault_harness_failed → infrastructure_error，C 层恢复 100% 硬门在该任务失败时本就数学不可达，候选按 6.6 冻结正确且不可改写。模型验证参数的具体形态未落盘（事件不持久化），修复以双保险覆盖：对象 anchor 丢弃兼容（兑现冻结验证指令）+ 首次拒绝一次有界修复轮（覆盖 offset/cursor/错误路径等其余拒因）。处理决策为 fix_now completed；candidate-feb9174-1 永久只读，新 identity 重跑 144 槽。
 - candidate-3d85bf5-1 于 14/144 冻结：第 14 槽 real-ts.cross-package-refactor/windows/a1 以 product_workflow 失败（testsPassed=false、patchAccepted=false、regressionCount=1），触发冻结硬门 B.regressionCountMaximum=0 与 dimension:editing_testing/real_repository_editing/regression_count<=0（数学不可达，按 6.6 冻结，130 槽未执行）。证据：run 正常完成（run.completed、cli_exit_code=0、changed_paths=1、7 次工具调用、usage 完整），模型把回归方向判反——冻结回归是 protocol.workspaceFolder.ts 的 type 行上多余的 | undefined（正确修法=删除该 undefined，feb9174 同槽通过补丁即为一行删除），模型却重排为 | undefined | null 并给 HandlerSignature/MiddlewareSignature 追加 | undefined，冻结 verifier 拒绝。判断：非产品缺陷（机器管线、验证、预检全部按合同执行），是 V4-Pro 对该任务回归方向的模型理解方差——该任务此前三槽全过（8e695d4 双平台、feb9174 windows a1），本次失败与 Go/web 同类（模型补丁正确性方差）。处理决策为 record_only / 待用户决策：任何 B 层任务的单次回归都会触发该冻结门（0 容差），继续完整矩阵需要用户授权新 identity 重跑或对冻结门/任务去留的合同变更；禁止在授权前自动重跑。链上 observed 3.1167 USD（约 24.9 CNY < 80），130 槽保留未执行。
+
+#### P2-C 零 Provider 回放诊断结论：real-ts.cross-package-refactor a1 冻结归因（2026-09-06）
+
+##### 已完成内容
+
+1. **`tmp/p2c-layered-development/replay-realts-3d85bf5.mjs` 新建（disposable）**：A) 重新物化 fixture 确认真值集注入方向；B) 对工作区分别应用「冻结模型补丁」与「feb9174 正确补丁」并跑同一机器评估器；C) mock OpenAI 逐字节重放冻结 8 次模型响应，经真实网关/BDD CLI 复跑完整对话。
+2. **真值集**：fixture 只把 type 行注入为 `WorkspaceFolder[] | null | undefined`（handler 两行未注入），baseline `f26b47eb`——回归方向 = type 行多出的 `| undefined`，正确修法 = 删除它。
+3. **评估器确定性**：冻结模型补丁 → verdict `failed/product_workflow`（tests=false、patch=false、reg=1），与冻结 report 逐字段一致；正确补丁 → `passed`（tests=true、patch=true、reg=0）。
+4. **对话回放**：run.completed、8 次模型调用、7 个工具调用全部执行、工作区终态与冻结 run 字节一致；同一评估器复核 → 同一 failed 判定。
+
+##### 验证结果
+
+- 零 Provider、零费用：三轴结论为「机器管线完全合规且确定性，冻结归因 = 模型把回归方向判反（保留并扩散 `| undefined` 而非删除）」；与断开恢复、Go、web 同类（模型输出方差），非产品缺陷。
+- 冻结 report 的 `product_workflow` 判定与 `B.regressionCountMaximum=0` 硬门冻结均按冻结合同正确执行，不可改写。
+
+##### 后续计划
+
+- 下一步：待用户决策——新 identity 重跑 144 槽（~1.3–2.5 USD）/ 授权合同变更 / 暂停。
+- 为什么先做它：诊断已把「机器缺陷」从候选空间中排除，剩余决策纯属目标策略（继续烧预算重试 vs 调整冻结门 vs 暂停）。
+- 当前还缺的关键闭环：两个连续 9.5 候选；完整 144 槽资格与七维 score。
