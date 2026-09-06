@@ -29,6 +29,11 @@ export type AgentLaunchSpec = {
   maxTotalTokens?: number;
   maxCostUsd?: number;
   maxHighRiskToolCalls?: number;
+  /**
+   * 单次运行的工具调用次数上限；0 表示不限制（编码运行专用，
+   * 由 12 turns / 64k tokens / 成本上限继续约束，防止无限循环）。
+   */
+  maxToolCalls?: number;
   policySummary?: string;
   delegationProtocol?: DelegationProtocol;
   bridgeSubtask?: BridgeSubtaskSemantics;
@@ -57,6 +62,7 @@ export type AgentLaunchSpecInput = {
   maxTotalTokens?: number;
   maxCostUsd?: number;
   maxHighRiskToolCalls?: number;
+  maxToolCalls?: number;
   policySummary?: string;
   delegationProtocol?: DelegationProtocol;
   bridgeSubtask?: BridgeSubtaskSemantics;
@@ -364,6 +370,8 @@ export function normalizeAgentLaunchSpec(
     maxCostUsd: normalizePositiveNumber(input.maxCostUsd) ?? normalizePositiveNumber(defaults.maxCostUsd),
     maxHighRiskToolCalls: normalizeNonNegativeInteger(input.maxHighRiskToolCalls)
       ?? normalizeNonNegativeInteger(defaults.maxHighRiskToolCalls),
+    maxToolCalls: normalizeNonNegativeInteger(input.maxToolCalls)
+      ?? normalizeNonNegativeInteger(defaults.maxToolCalls),
     policySummary: normalizeOptionalString(input.policySummary) ?? normalizeOptionalString(defaults.policySummary),
     delegationProtocol: normalizeDelegationProtocol(input.delegationProtocol)
       ?? normalizeDelegationProtocol(defaults.delegationProtocol),

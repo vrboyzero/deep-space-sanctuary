@@ -965,6 +965,64 @@ describe("before_agent_start system prompt overrides", () => {
     expect(items[items.length - 1]).toEqual({ type: "status", status: "error" });
   });
 
+  it("disables the tool-call limit when the coding run requests maxToolCalls 0", async () => {
+    const execute = vi.fn(async (request: { id: string; name: string }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: "ok",
+      durationMs: 0,
+    }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(createJsonResponse({
+      choices: [{
+        message: {
+          content: "",
+          tool_calls: [
+            {
+              id: "call-1",
+              type: "function",
+              function: { name: "echo", arguments: "{}" },
+            },
+            {
+              id: "call-2",
+              type: "function",
+              function: { name: "echo", arguments: "{}" },
+            },
+          ],
+        },
+      }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    }));
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      toolLoopIterationBudget: 0,
+      maxToolCalls: 32,
+      toolExecutor: createToolExecutor({
+        getDefinitions: () => [{
+          type: "function" as const,
+          function: {
+            name: "echo",
+            description: "echo",
+            parameters: { type: "object", properties: {} },
+          },
+        }],
+        execute,
+      }),
+      logger: { error: vi.fn() },
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-tool-call-budget-unlimited",
+      text: "use tools",
+      meta: { _agentLaunchSpec: { maxToolCalls: 0 } },
+    } as any));
+
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(items.some((item) => item.type === "budget_exhausted" && item.budget === "tool_calls")).toBe(false);
+  });
+
   it("stops a cost-containment run before dispatching its fifth model call", async () => {
     let responseIndex = 0;
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {

@@ -63,6 +63,7 @@ export type AgentRunCliOptionsInput = {
   maxTurns?: unknown;
   maxTokens?: unknown;
   maxCostUsd?: unknown;
+  maxToolCalls?: unknown;
   requireCapability?: unknown;
   requireTool?: unknown;
   requireMcpServer?: unknown;
@@ -175,6 +176,8 @@ export function resolveAgentRunCliOptions(
   if (!maxTokens.ok) return maxTokens;
   const maxCostUsd = parsePositiveNumberOption(input.maxCostUsd, "--max-cost-usd");
   if (!maxCostUsd.ok) return maxCostUsd;
+  const maxToolCalls = parseNonNegativeIntegerOption(input.maxToolCalls, "--max-tool-calls");
+  if (!maxToolCalls.ok) return maxToolCalls;
   const requiredCapabilities = parseRequiredCapabilitiesOptions(input);
   if (!requiredCapabilities.ok) return requiredCapabilities;
 
@@ -196,6 +199,7 @@ export function resolveAgentRunCliOptions(
     ...(maxTurns.value === undefined ? {} : { maxTurns: maxTurns.value }),
     ...(maxTokens.value === undefined ? {} : { maxTokens: maxTokens.value }),
     ...(maxCostUsd.value === undefined ? {} : { maxCostUsd: maxCostUsd.value }),
+    ...(maxToolCalls.value === undefined ? {} : { maxToolCalls: maxToolCalls.value }),
     ...(requiredCapabilities.value ? { requiredCapabilities: requiredCapabilities.value } : {}),
   };
   return {
@@ -696,6 +700,21 @@ function parsePositiveIntegerOption(
   return { ok: true, value: parsed };
 }
 
+function parseNonNegativeIntegerOption(
+  value: unknown,
+  flag: "--max-tool-calls",
+): { ok: true; value?: number } | { ok: false; message: string } {
+  if (value === undefined) return { ok: true };
+  if (typeof value !== "string" || !/^\d+$/.test(value)) {
+    return { ok: false, message: `${flag} must be a non-negative integer; 0 disables the limit.` };
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    return { ok: false, message: `${flag} must be a non-negative integer; 0 disables the limit.` };
+  }
+  return { ok: true, value: parsed };
+}
+
 function parsePositiveNumberOption(
   value: unknown,
   flag: "--max-cost-usd",
@@ -750,6 +769,7 @@ export default defineCommand({
     "max-turns": { type: "string", description: "Maximum model-call turns for this run" },
     "max-tokens": { type: "string", description: "Maximum cumulative tokens for this run" },
     "max-cost-usd": { type: "string", description: "Maximum priced model cost in USD for this run" },
+    "max-tool-calls": { type: "string", description: "Maximum tool calls for this run; 0 disables the limit" },
     "require-capability": { type: "string", description: "Comma-separated required capability categories" },
     "require-tool": { type: "string", description: "Comma-separated exact required tool names" },
     "require-mcp-server": { type: "string", description: "Comma-separated exact required MCP server ids" },
@@ -782,6 +802,7 @@ export default defineCommand({
       maxTurns: args["max-turns"],
       maxTokens: args["max-tokens"],
       maxCostUsd: args["max-cost-usd"],
+      maxToolCalls: args["max-tool-calls"],
       requireCapability: args["require-capability"],
       requireTool: args["require-tool"],
       requireMcpServer: args["require-mcp-server"],

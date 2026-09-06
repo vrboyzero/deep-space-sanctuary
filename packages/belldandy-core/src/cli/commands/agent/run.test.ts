@@ -61,6 +61,7 @@ describe("bdd agent run", () => {
       maxTurns: "3",
       maxTokens: "1200",
       maxCostUsd: "0.25",
+      maxToolCalls: "0",
       expectedResolvedModelId: "deepseek-v4-flash",
       requireWorkspaceMutation: true,
       requiredChangedPaths: JSON.stringify([
@@ -92,6 +93,7 @@ describe("bdd agent run", () => {
         maxTurns: 3,
         maxTokens: 1200,
         maxCostUsd: 0.25,
+        maxToolCalls: 0,
         expectedResolvedModelId: "deepseek-v4-flash",
         workspaceMutationRequirement: "required",
         requiredChangedPaths: [
@@ -131,6 +133,18 @@ describe("bdd agent run", () => {
     expect(resolveAgentRunCliOptions({ modelLoopBudgetPolicy: "unknown" })).toMatchObject({
       ok: false,
       message: expect.stringContaining("model-loop-budget-policy"),
+    });
+    expect(resolveAgentRunCliOptions({ maxToolCalls: "abc" })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("max-tool-calls"),
+    });
+    expect(resolveAgentRunCliOptions({ maxToolCalls: "-1" })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("max-tool-calls"),
+    });
+    expect(resolveAgentRunCliOptions({ maxToolCalls: "7" })).toMatchObject({
+      ok: true,
+      codingRun: { maxToolCalls: 7 },
     });
     expect(resolveAgentRunCliOptions({
       requiredChangedPaths: JSON.stringify(["src/api.ts"]),

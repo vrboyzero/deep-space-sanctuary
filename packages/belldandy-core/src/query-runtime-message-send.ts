@@ -1050,6 +1050,11 @@ function assertCodingRunCapabilities(
       "This Agent cannot enforce the required residual-identifier review contract.",
     );
   }
+  if (codingRun?.maxToolCalls !== undefined && capabilities?.maxToolCalls !== true) {
+    throw new CodingRunCapabilityError(
+      "This Agent cannot enforce the requested tool-call limit.",
+    );
+  }
 }
 
 async function assertTaskCapabilityClosure(input: {
@@ -1120,6 +1125,7 @@ function buildCodingRunLaunchSpec(
     ...(codingRun.maxTurns ? { toolLoopIterationBudget: codingRun.maxTurns } : {}),
     ...(codingRun.maxTokens ? { maxTotalTokens: codingRun.maxTokens } : {}),
     ...(codingRun.maxCostUsd ? { maxCostUsd: codingRun.maxCostUsd } : {}),
+    ...(codingRun.maxToolCalls === undefined ? {} : { maxToolCalls: codingRun.maxToolCalls }),
   };
   return Object.keys(launchSpec).length > 0 ? launchSpec : undefined;
 }

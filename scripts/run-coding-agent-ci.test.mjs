@@ -248,6 +248,7 @@ describe("coding agent CI runner", () => {
         "LegacyAlias",
         "DeprecatedCall",
       ]),
+      "--max-tool-calls", "0",
       "--permission-mode", "accept-edits",
       "--tool-allow", "file_read,list_files,file_edit,apply_patch,file_write,file_delete",
       "--tool-deny", "run_command,spawn_subagent",
@@ -275,6 +276,7 @@ describe("coding agent CI runner", () => {
     expect(args).not.toContain("--require-workspace-mutation");
     expect(args).not.toContain("--required-changed-paths");
     expect(args).not.toContain("--required-residual-identifiers");
+    expect(args).not.toContain("--max-tool-calls");
   });
 
   it("uses the Gateway-visible cwd while keeping the local workspace for change snapshots", () => {

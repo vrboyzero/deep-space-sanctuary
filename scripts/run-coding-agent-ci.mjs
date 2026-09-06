@@ -157,6 +157,12 @@ export function buildAgentRunArgs(input) {
     ...(!delegatesWorkspaceMutationToSystemHarness && input.requiredResidualIdentifiers?.length
       ? ["--required-residual-identifiers", JSON.stringify(input.requiredResidualIdentifiers)]
       : []),
+    // 残留驱动纠正迭代任务（当前为 real-go.public-api-migration）解除机器默认的
+    // 32 次工具调用上限；冻结的 max-turns / max-tokens / max-cost-usd 继续约束。
+    // 其余任务与 v1/v2 冻结合同不受影响。
+    ...(!delegatesWorkspaceMutationToSystemHarness && input.requiredResidualIdentifiers?.length
+      ? ["--max-tool-calls", "0"]
+      : []),
     "--permission-mode", input.profile.permissionMode === "acceptEdits" ? "accept-edits" : input.profile.permissionMode,
     "--tool-allow", input.profile.toolAllow.join(","),
     "--tool-deny", (input.profile.toolDeny ?? (input.profile.toolAllow.includes("run_command")

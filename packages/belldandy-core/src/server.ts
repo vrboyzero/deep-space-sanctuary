@@ -2605,6 +2605,7 @@ function parseCodingRunOptions(
     "maxTurns",
     "maxTokens",
     "maxCostUsd",
+    "maxToolCalls",
     "requiredCapabilities",
     "outputSchema",
   ]);
@@ -2741,6 +2742,17 @@ function parseCodingRunOptions(
     }
     maxCostUsd = value.maxCostUsd;
   }
+  let maxToolCalls: number | undefined;
+  if (value.maxToolCalls !== undefined) {
+    if (
+      typeof value.maxToolCalls !== "number"
+      || !Number.isSafeInteger(value.maxToolCalls)
+      || value.maxToolCalls < 0
+    ) {
+      return { ok: false, message: "codingRun.maxToolCalls must be a non-negative safe integer; 0 disables the limit" };
+    }
+    maxToolCalls = value.maxToolCalls;
+  }
   if (value.outputSchema !== undefined) {
     const compiledOutputSchema = compileOutputSchema(value.outputSchema);
     if (!compiledOutputSchema.ok) return compiledOutputSchema;
@@ -2766,6 +2778,7 @@ function parseCodingRunOptions(
       ...(maxTurns.value ? { maxTurns: maxTurns.value } : {}),
       ...(maxTokens.value ? { maxTokens: maxTokens.value } : {}),
       ...(maxCostUsd === undefined ? {} : { maxCostUsd }),
+      ...(maxToolCalls === undefined ? {} : { maxToolCalls }),
       ...(requiredCapabilities?.value ? { requiredCapabilities: requiredCapabilities.value } : {}),
       ...(value.outputSchema === undefined ? {} : { outputSchema: value.outputSchema }),
     },

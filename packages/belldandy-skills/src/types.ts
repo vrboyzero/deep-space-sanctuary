@@ -316,6 +316,8 @@ export type ToolRuntimeLaunchSpec = {
   maxCostUsd?: number;
   /** 0 沿用 ReAct 的不限次数语义；Supervisor team lane 使用正整数收紧。 */
   maxHighRiskToolCalls?: number;
+  /** 单次运行工具调用次数上限；0 表示不限制（由 turns/tokens/成本上限继续约束）。 */
+  maxToolCalls?: number;
   parentTaskId?: string;
   role?: "default" | "commander" | "coder" | "researcher" | "verifier";
   allowedToolFamilies?: string[];

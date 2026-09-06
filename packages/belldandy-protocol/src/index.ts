@@ -204,6 +204,8 @@ export type CodingRunOptions = {
   maxTurns?: number;
   maxTokens?: number;
   maxCostUsd?: number;
+  /** 单次运行工具调用次数上限；0 表示不限制（由 maxTurns/maxTokens/maxCostUsd 继续约束）。 */
+  maxToolCalls?: number;
   /** 启动前必须由 authoritative runtime 证明的能力；不接受 prompt、参数或文件正文。 */
   requiredCapabilities?: CodingRunCapabilityRequirements;
   /** Headless structured-output contract; Gateway validates it before trusted Agent injection. */

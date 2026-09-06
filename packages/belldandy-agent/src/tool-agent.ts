@@ -1176,17 +1176,29 @@ function restrictHighRiskToolCallLimit(configured: number, requested: unknown): 
   return Math.min(configured, requestedLimit);
 }
 
+// 工具调用上限合并：请求 0 表示明确解除限制（编码运行由 turns/tokens/成本继续约束）；
+// 否则取配置与请求的较小值，保持默认安全上限生效。
+function restrictToolCallLimit(configured: number, requested: unknown): number {
+  const requestedLimit = Number(requested);
+  if (!Number.isSafeInteger(requestedLimit) || requestedLimit < 0) return configured;
+  if (requestedLimit === 0) return 0;
+  if (configured === 0) return requestedLimit;
+  return Math.min(configured, requestedLimit);
+}
+
 function resolveRunBudgets(input: {
   launchSpec?: ToolExecutionRuntimeContext["launchSpec"];
   maxRunWallTimeMs: number;
   maxTotalTokens: number;
   toolLoopIterationBudget: number;
   maxHighRiskToolCalls: number;
+  maxToolCalls: number;
 }): {
   maxRunWallTimeMs: number;
   maxTotalTokens: number;
   toolLoopIterationBudget: number;
   maxHighRiskToolCalls: number;
+  maxToolCalls: number;
   maxCostUsd?: number;
 } {
   return {
@@ -1197,6 +1209,7 @@ function resolveRunBudgets(input: {
       input.maxHighRiskToolCalls,
       input.launchSpec?.maxHighRiskToolCalls,
     ),
+    maxToolCalls: restrictToolCallLimit(input.maxToolCalls, input.launchSpec?.maxToolCalls),
     ...(normalizePositiveCostUsd(input.launchSpec?.maxCostUsd) !== undefined
       ? { maxCostUsd: normalizePositiveCostUsd(input.launchSpec?.maxCostUsd) }
       : {}),
@@ -2140,6 +2153,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     workspaceMutationRequirement: true;
     requiredChangedPaths: true;
     requiredResidualIdentifiers: true;
+    maxToolCalls: true;
     steerAtModelBoundary: true;
   } {
     return {
@@ -2147,6 +2161,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
       workspaceMutationRequirement: true,
       requiredChangedPaths: true,
       requiredResidualIdentifiers: true,
+      maxToolCalls: true,
       steerAtModelBoundary: true,
     };
   }
@@ -2163,6 +2178,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
       maxTotalTokens: this.opts.maxTotalTokens,
       toolLoopIterationBudget: this.opts.toolLoopIterationBudget,
       maxHighRiskToolCalls: this.opts.maxHighRiskToolCalls,
+      maxToolCalls: this.opts.maxToolCalls,
     });
     if (runBudgets.maxCostUsd !== undefined && !hasUsagePricing(this.opts.usagePricing)) {
       throw new Error("This coding run requested maxCostUsd, but the selected Agent profile has no valid usage pricing.");
@@ -3308,10 +3324,15 @@ export class ToolEnabledAgent implements BelldandyAgent {
           // 复核/纠正/修复的输入上限按 required path 数量有界缩放：1–3 路径保持冻结的
           // 2048 token 上限不变；4–6 路径 ×2、7–8 路径 ×3，使读后复核扩展（3→8）后的
           // 多文件新鲜证据能进入复核请求。
-          const reviewInputTokenLimit = WORKSPACE_MUTATION_NAVIGATION_INPUT_TOKEN_LIMIT * Math.max(
-            1,
-            Math.ceil(requiredChangedPaths.length / WORKSPACE_MUTATION_NAVIGATION_MAX_FILE_READ_CALLS),
-          );
+          // 输入纠正请求（模型在此写补丁）例外：每路径 2048 token 足额供给，
+          // 使残留清单对应的全部候选上下文进入纠正证据，单轮清量最大化；
+          // 最终仍受 remainingReviewInputTokens 与总预算的 min 约束。
+          const reviewInputTokenLimit = workspaceMutationObjectiveInputCorrectionPending
+            ? WORKSPACE_MUTATION_NAVIGATION_INPUT_TOKEN_LIMIT * Math.max(1, requiredChangedPaths.length)
+            : WORKSPACE_MUTATION_NAVIGATION_INPUT_TOKEN_LIMIT * Math.max(
+              1,
+              Math.ceil(requiredChangedPaths.length / WORKSPACE_MUTATION_NAVIGATION_MAX_FILE_READ_CALLS),
+            );
           const remainingReviewInputTokens = Math.min(
             reviewInputTokenLimit,
             Math.floor(Math.max(
@@ -5495,14 +5516,14 @@ export class ToolEnabledAgent implements BelldandyAgent {
         }
         logDebug("[tool-check] tool calls detected", { names: toolCalls.map(tc => tc.function.name) });
 
-        // 防止无限循环
+        // 防止无限循环；maxToolCalls 为 0 时由 turns/tokens/成本预算约束。
         toolCallCount += toolCalls.length;
-        if (toolCallCount > this.opts.maxToolCalls) {
+        if (runBudgets.maxToolCalls > 0 && toolCallCount > runBudgets.maxToolCalls) {
           yield* emitBudgetExhausted(
             "tool_calls",
-            this.opts.maxToolCalls,
+            runBudgets.maxToolCalls,
             toolCallCount,
-            `工具调用次数超限（最大 ${this.opts.maxToolCalls} 次）`,
+            `工具调用次数超限（最大 ${runBudgets.maxToolCalls} 次）`,
           );
           return;
         }

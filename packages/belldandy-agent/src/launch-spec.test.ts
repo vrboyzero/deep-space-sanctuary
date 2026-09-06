@@ -12,6 +12,7 @@ describe("normalizeAgentLaunchSpec", () => {
       maxTotalTokens: 9_000.7,
       maxCostUsd: 0.42,
       maxHighRiskToolCalls: 0,
+      maxToolCalls: 0,
     });
 
     expect(spec).toMatchObject({
@@ -20,6 +21,7 @@ describe("normalizeAgentLaunchSpec", () => {
       maxTotalTokens: 9_000,
       maxCostUsd: 0.42,
       maxHighRiskToolCalls: 0,
+      maxToolCalls: 0,
     });
   });
 

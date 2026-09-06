@@ -2469,6 +2469,38 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 为什么先做它：工具调用上限与纠正证据预算都属于产品反馈边界，未经授权不擅自改动；组合方案 (iii) 有最高预期价值（每轮费用仅 ~0.02 USD/槽）。
 - 当前还缺的关键闭环：Go 槽从未出现「残留清零 + 输出契约通过」的完整闭环；若 (iii) 仍失败，则以 23-25/23-25 证据关闭 Go 探索，转向双平台 real-js / real-ts 等其他七维候选的 9.5 累积路径。
 
+#### P2-C 实现结论：解除工具调用上限 + 纠正证据足额预算（2026-09-06）
+
+用户在上述 (i)-(iv) 中授权了自定义组合：「工具调用上限改为不限制，冻结的 12 turns / 64k / $0.10 不变 + 纠正证据预算提高并强化一次清完指令，再跑一轮双槽付费探索」。
+
+##### 已完成内容
+
+1. **`packages/belldandy-agent/src/tool-agent.ts`**：
+   - 新增 `restrictToolCallLimit` 与 `resolveRunBudgets.maxToolCalls`：launchSpec 请求 `0` 时解除工具调用上限（turns/tokens/成本继续约束），否则取配置与请求较小值；
+   - 工具循环守卫改为读 `runBudgets.maxToolCalls`，为 0 时跳过 `tool_calls` 预算判定；
+   - `getCodingRunCapabilities` 增加 `maxToolCalls: true`。
+2. **`packages/belldandy-agent/src/launch-spec.ts`**：`AgentLaunchSpec` / `AgentLaunchSpecInput` 增加 `maxToolCalls`（非负整数归一化，0 = 不限制）。
+3. **`packages/belldandy-agent/src/index.ts`、`packages/belldandy-skills/src/types.ts`、`packages/belldandy-protocol/src/index.ts`**：能力类型、`ToolRuntimeLaunchSpec` 与 `CodingRunOptions` 同步增加 `maxToolCalls`。
+4. **`packages/belldandy-core/src/server.ts` + `query-runtime-message-send.ts` + `cli/commands/agent/run.ts`**：
+   - `codingRun.maxToolCalls` 白名单、非负整数解析与能力门（capability 缺失时失败关闭）；
+   - launchSpec 透传 `maxToolCalls`；CLI 新增 `--max-tool-calls`（非负整数，0 = 不限制）。
+5. **纠正证据预算与指令强化**：
+   - `tool-agent.ts`：输入纠正请求（模型写补丁的阶段）的证据预算从有界缩放改为**每 required path 2048 token 足额供给**（8 路径 16,384），复核请求保持原冻结缩放；仍受剩余总预算 min 约束；
+   - `react-workspace-mutation.ts`：`residual_identifier_requires_removal` 指令强化为「exactly ONE apply_patch，一次清完所有残留，每个残留一个 hunk、同文多处以唯一上下文锚定」。
+6. **`scripts/run-coding-agent-ci.mjs`**：仅对带 `requiredResidualIdentifiers` 的 v3 运行透传 `--max-tool-calls 0`；其余任务与 v1/v2 冻结合同不变。
+
+##### 验证结果
+
+- TypeScript 编译无错误；`verify:coding-benchmark` 通过。
+- 受影响全量回归 **4066/4066** 通过（belldandy-agent/core/skills 三包 + coding-ci 脚本），新增用例：launchSpec `maxToolCalls` 归一化、工具调用上限解除（launchSpec 0 时多次调用不再触发 budget_exhausted）、CLI `--max-tool-calls` 解析（"0"/"7"/"abc"/"-1"）、ci-runner 透传与 parallel-write 取反。
+- 未验证风险：真实 Provider 下「不限制工具调用 + 足额纠正证据 + 一次清完指令」能否把 44 处残留压到 0，需本轮付费双槽确认。
+
+##### 后续计划
+
+- 下一步：提交并推送后重建双平台 harness、重生成 inputs、验证配置，跑付费双槽（explore-<revision>-1）。
+- 为什么先做它：这是本轮授权的直接产出，且每槽费用约 0.02 USD，风险收益比最高。
+- 当前还缺的关键闭环：若本轮仍不能「残留清零 + 输出契约通过」，Go 探索以 ≥25/25 证据关闭并转向其他七维候选路径。
+
 ### 暂停点的剩余工作量估算（2026-09-05）
 
 本暂停点粗估为 **3–6人日工程量，另加两个完整候选和 CI 的运行/观察窗口**；按一名开发者计约3–6个工作日，不是固定交付日期。第8章的2–4.25人日属于较早维护估算，当前以本进度区为准，已经完成的启动、审批计量、Go 前置和证据基座不重复计量。
