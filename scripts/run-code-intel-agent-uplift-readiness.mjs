@@ -38,6 +38,8 @@ const SUPPORTED_TASK_MANIFEST_SHA256 = new Set([
   // 2026-09-06 用户授权的合同变更：real-ts.cross-package-refactor 移入 canary lane
   // （对照任务真值未变，仅新增 layerGateLane 标记）。
   "e30fe1b007dce2e21b01e6e7f76aee8c6e2cf5dccc69cda7a3b343f6107539b8",
+  // 2026-09-06 用户授权的合同变更：real-js.bug-fix 移入 canary lane（同上）。
+  "1d3e5292455e2d710448669901f233e61baa04eaaaa92d83aaf757cd18fc52d4",
 ]);
 const SOURCE_IDENTITY_PATHS = Object.freeze([
   "scripts/run-code-intel-agent-uplift-readiness.mjs",

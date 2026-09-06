@@ -62,7 +62,6 @@ describe("coding agent candidate dimension mapping", () => {
           id: "real_repository_context",
           taskIds: [
             "real-ts.api-migration",
-            "real-js.bug-fix",
             "real-js.failed-test-fix",
             "real-go.bug-fix",
             "real-web.dependency-diagnosis",
@@ -131,7 +130,6 @@ describe("coding agent candidate dimension mapping", () => {
           id: "real_repository_editing",
           taskIds: [
             "real-ts.api-migration",
-            "real-js.bug-fix",
             "real-js.failed-test-fix",
             "real-go.bug-fix",
             "real-web.dependency-diagnosis",

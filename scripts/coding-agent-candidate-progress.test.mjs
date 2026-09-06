@@ -58,13 +58,13 @@ describe("coding agent candidate progress", () => {
     });
   });
 
-  it("retains one ordinary B failure and continues only unexecuted slots", () => {
-    // javascript 池（real-js.bug-fix、real-js.failed-test-fix、real-web.dependency-diagnosis）
-    // 共 18 槽：单次失败后最好可达 17/18 >= 0.9，保持 continue。
-    const failure = productFailure("real-js.bug-fix");
-    const before = structuredClone(failure);
-    expect(evaluate([failure])).toMatchObject({ status: "continue", processed: 1, remaining: 143 });
-    expect(failure).toEqual(before);
+  it("stops when a single javascript B failure makes its 6-slot ecosystem gate unreachable", () => {
+    // real-js.bug-fix 移入 canary lane 后，javascript 非 canary B 池仅剩
+    // real-js.failed-test-fix 的 6 槽：单次失败最好可达 5/6 = 0.833 < 0.9。
+    const result = evaluate([productFailure("real-js.failed-test-fix")]);
+    expect(result.status).toBe("stop");
+    expect(result.reasons).toContain("B.requiredLanguageSuccessRateMinimum:javascript");
+    expect(result.reasons).not.toContain("B.successRateMinimum");
   });
 
   it("stops when a single typescript B failure makes its 0.9 ecosystem gate unreachable", () => {
@@ -83,7 +83,8 @@ describe("coding agent candidate progress", () => {
   });
 
   it("stops a language ecosystem even when the total B rate could still pass", () => {
-    const failures = [productFailure("real-go.bug-fix", 1), productFailure("real-go.bug-fix", 2)];
+    // 单个 go 槽失败：go 生态 5/6 < 0.9 → stop；B 总成功率最好 23/24 >= 0.92 仍可通过。
+    const failures = [productFailure("real-go.bug-fix", 1)];
     const result = evaluate(failures);
     expect(result.status).toBe("stop");
     expect(result.reasons).toContain("B.requiredLanguageSuccessRateMinimum:go");
@@ -146,14 +147,14 @@ describe("coding agent candidate progress", () => {
   });
 
   it("absorbs up to two B regressions and stops on the third", () => {
-    // 用户授权的分层回归门：B.regressionCountMaximum=2（sum 口径）。
+    // 用户授权的分层回归门：B.regressionCountMaximum=2（sum 口径，仅非 canary B）。
     const one = observation("real-ts.api-migration");
     one.run.evaluation.regressionCount = 1;
     expect(evaluate([one]).reasons).not.toContain("B.regressionCountMaximum");
-    const two = observation("real-js.bug-fix");
+    const two = observation("real-js.failed-test-fix");
     two.run.evaluation.regressionCount = 1;
     expect(evaluate([one, two]).reasons).not.toContain("B.regressionCountMaximum");
-    const three = observation("real-js.failed-test-fix");
+    const three = observation("real-go.bug-fix");
     three.run.evaluation.regressionCount = 1;
     expect(evaluate([one, two, three]).reasons).toContain("B.regressionCountMaximum");
   });

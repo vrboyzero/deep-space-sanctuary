@@ -423,6 +423,7 @@
     {
       "id": "real-js.bug-fix",
       "layer": "B",
+      "layerGateLane": "canary",
       "repositoryId": "express",
       "category": "bug_fix",
       "title": "Fix a reproducible JavaScript framework regression",

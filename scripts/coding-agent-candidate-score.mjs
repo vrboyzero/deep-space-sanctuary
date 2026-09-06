@@ -422,9 +422,10 @@ const EXPECTED_CONTEXT_TASK_IDS = Object.freeze({
   // 补丁正确率 ~40% 且复核守卫两次误拒真值通过补丁，无法支撑 0.92 B 门）。
   // real-ts.cross-package-refactor 同理（2026-09-06 证据决策：近 5 次尝试
   // 3 过 2 败、两次候选冻结均由它触发，移入独立受控 canary lane）。
+  // real-js.bug-fix 同理（2026-09-06 证据决策：近 14 次尝试 3 败，连续两候选
+  // 由它的 a3 槽回归/补丁拒绝触发冻结，移入独立受控 canary lane）。
   real_repository_context: Object.freeze([
     "real-ts.api-migration",
-    "real-js.bug-fix",
     "real-js.failed-test-fix",
     "real-go.bug-fix",
     "real-web.dependency-diagnosis",

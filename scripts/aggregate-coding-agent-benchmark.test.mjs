@@ -1090,9 +1090,10 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
       .resolves.toMatchObject({ decision: qualification });
   });
 
-  it("enforces the B success rate over exactly the 30 non-canary layer-B executions", async () => {
+  it("enforces the B success rate over exactly the 24 non-canary layer-B executions", async () => {
     const { outputRoot } = await createCompleteQualificationBaseline((runs) => {
-      // canary lane（real-go.public-api-migration、real-web.ui-regression）不进入 B 层成功率分母；
+      // canary lane（real-go.public-api-migration、real-web.ui-regression、
+      // real-ts.cross-package-refactor、real-js.bug-fix）不进入 B 层成功率分母；
       // 这里使 4 个非 canary B 槽失败，令成功率跌破 0.92。
       let failedRunCount = 0;
       for (const run of runs) {
@@ -1115,9 +1116,9 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
         failedGates: [{
           layer: "B",
           id: "successRateMinimum",
-          numerator: 26,
-          denominator: 30,
-          observed: 26 / 30,
+          numerator: 20,
+          denominator: 24,
+          observed: 20 / 24,
           minimum: 0.92,
         }],
       }],
@@ -1130,11 +1131,13 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
 
   it("enforces the B success rate independently for every required language ecosystem", async () => {
     const { outputRoot } = await createCompleteQualificationBaseline((runs) => {
+      // 单个 typescript 槽失败即可跌破 6 槽池的 0.9 生态门槛（5/6 < 0.9），
+      // 而 B 总成功率最好 23/24 >= 0.92 仍可通过。
       let failedRunCount = 0;
       for (const run of runs) {
         const task = manifestV3.tasks.find((candidate) => candidate.id === run.taskId);
         const repository = manifestV3.repositories.find((candidate) => candidate.id === task?.repositoryId);
-        if (repository?.languageEcosystem !== "typescript" || failedRunCount === 2) continue;
+        if (repository?.languageEcosystem !== "typescript" || failedRunCount === 1) continue;
         run.status = "failed";
         run.failureCategory = "product_workflow";
         failedRunCount += 1;
@@ -1151,9 +1154,9 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
           layer: "B",
           id: "requiredLanguageSuccessRateMinimum",
           ecosystem: "typescript",
-          numerator: 4,
+          numerator: 5,
           denominator: 6,
-          observed: 4 / 6,
+          observed: 5 / 6,
           minimum: 0.9,
         }],
       }],
@@ -1184,9 +1187,9 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
         failedGates: [{
           layer: "B",
           id: "testPassRateMinimum",
-          numerator: 27,
-          denominator: 30,
-          observed: 27 / 30,
+          numerator: 21,
+          denominator: 24,
+          observed: 21 / 24,
           minimum: 0.95,
         }],
       }],
@@ -1218,9 +1221,9 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
         failedGates: [{
           layer: "B",
           id: "patchAcceptanceRateMinimum",
-          numerator: 16,
-          denominator: 18,
-          observed: 16 / 18,
+          numerator: 10,
+          denominator: 12,
+          observed: 10 / 12,
           minimum: 0.95,
         }],
       }],
