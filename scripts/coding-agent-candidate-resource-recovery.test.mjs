@@ -9,7 +9,7 @@ import { verifyCandidateResourceRecovery, writeCandidateResourceRecovery } from 
 
 const roots = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true }))); });
-async function fixture() {
+async function scaffold() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "candidate-resource-recovery-")); roots.push(root);
   const schema = JSON.parse(await fs.readFile(new URL("../benchmarks/coding-agent/v3/candidate-runner-config.schema.json", import.meta.url), "utf8"));
   const reference = { path: path.join(root, "input.json"), sha256: "e".repeat(64) };
@@ -29,18 +29,22 @@ async function fixture() {
   const configPath = path.join(root, "config.json");
   await fs.writeFile(configPath, JSON.stringify(config));
   await fs.writeFile(config.providerEnvPath, "BELLDANDY_OPENAI_API_KEY=fixture-private-key");
-  await claimCandidateSlot(context, context.slots[0]);
-  await completeCandidateSlot(context, context.slots[0], { status: "unreported", reportSha256: null, artifactHashes: {},
-    providerReportedCostUsd: 0, reservedUnknownCostUsd: 0.1, runnerExit: 1, resourcesClosed: false });
-  const costBaseline = await closeCandidateSession(context, { lifecycle: "frozen", reasons: ["resources_uncertain"] });
   const stateRoot = path.join(config.roots.state, "w/a1/t01");
-  await fs.mkdir(stateRoot, { recursive: true });
-  await fs.writeFile(path.join(context.ledgerRoot, "slots", candidateSlotKey(context.slots[0]), "env-cleanup.json"),
-    JSON.stringify({ stateRoot, status: "recycled", remaining: 0, action: "send_to_windows_recycle_bin" }));
   const dependencies = { checkResources: async () => ({ status: "passed", wslChecked: false, counts: [0, 0, 0, 0] }) };
-  return { config, configPath, context, costBaseline, stateRoot, dependencies,
-    verify: () => verifyCandidateResourceRecovery({ ledgerRoot: context.ledgerRoot, configSha256: context.configSha256,
-      ledgerSha256: costBaseline.sha256 }, dependencies) };
+  return { config, configPath, context, stateRoot, dependencies };
+}
+async function fixture() {
+  const s = await scaffold();
+  await claimCandidateSlot(s.context, s.context.slots[0]);
+  await completeCandidateSlot(s.context, s.context.slots[0], { status: "unreported", reportSha256: null, artifactHashes: {},
+    providerReportedCostUsd: 0, reservedUnknownCostUsd: 0.1, runnerExit: 1, resourcesClosed: false });
+  const costBaseline = await closeCandidateSession(s.context, { lifecycle: "frozen", reasons: ["resources_uncertain"] });
+  await fs.mkdir(s.stateRoot, { recursive: true });
+  await fs.writeFile(path.join(s.context.ledgerRoot, "slots", candidateSlotKey(s.context.slots[0]), "env-cleanup.json"),
+    JSON.stringify({ stateRoot: s.stateRoot, status: "recycled", remaining: 0, action: "send_to_windows_recycle_bin" }));
+  return { ...s, costBaseline,
+    verify: () => verifyCandidateResourceRecovery({ ledgerRoot: s.context.ledgerRoot, configSha256: s.context.configSha256,
+      ledgerSha256: costBaseline.sha256 }, s.dependencies) };
 }
 
 describe("append-only candidate resource recovery", () => {
@@ -75,5 +79,25 @@ describe("append-only candidate resource recovery", () => {
     if (kind === "config") await fs.writeFile(f.configPath, JSON.stringify({ ...f.config, id: "changed" }));
     if (kind === "missing") await fs.rename(receipt.path, `${receipt.path}.retained`);
     await expect(f.verify()).rejects.toThrow();
+  });
+  it("admits a frozen ledger with a pending slot when its cleanup evidence verifies (修订⑤)", async () => {
+    const s = await scaffold();
+    await claimCandidateSlot(s.context, s.context.slots[0]);
+    const costBaseline = await closeCandidateSession(s.context, { lifecycle: "frozen", reasons: ["unreported_execution"] });
+    const original = JSON.parse(await fs.readFile(costBaseline.path, "utf8"));
+    expect(original).toMatchObject({ pending: 1, processed: 0, unreported: 0, resourceCleanupComplete: false });
+    await fs.mkdir(s.stateRoot, { recursive: true });
+    await fs.writeFile(path.join(s.context.ledgerRoot, "slots", candidateSlotKey(s.context.slots[0]), "env-cleanup.json"),
+      JSON.stringify({ stateRoot: s.stateRoot, status: "recycled", remaining: 0, action: "send_to_windows_recycle_bin" }));
+    await writeCandidateResourceRecovery(s.configPath, s.dependencies);
+    expect(await verifyCandidateResourceRecovery({ ledgerRoot: s.context.ledgerRoot, configSha256: s.context.configSha256,
+      ledgerSha256: costBaseline.sha256 }, s.dependencies)).toMatchObject({ status: "verified" });
+    expect(await fs.readFile(costBaseline.path, "utf8")).toEqual(`${JSON.stringify(original, null, 2)}\n`);
+  });
+  it("rejects a frozen ledger with a pending slot when cleanup evidence is missing (修订⑤)", async () => {
+    const s = await scaffold();
+    await claimCandidateSlot(s.context, s.context.slots[0]);
+    await closeCandidateSession(s.context, { lifecycle: "frozen", reasons: ["unreported_execution"] });
+    await expect(writeCandidateResourceRecovery(s.configPath, s.dependencies)).rejects.toThrow();
   });
 });

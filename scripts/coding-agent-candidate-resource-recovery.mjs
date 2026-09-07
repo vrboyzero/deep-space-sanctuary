@@ -21,7 +21,6 @@ async function collectRecovery(configPath, dependencies = {}) {
   assert.equal(ledger.configSha256, configSha256);
   assert.equal(ledger.lifecycle, "frozen");
   assert.equal(ledger.resourceCleanupComplete, false);
-  assert.equal(ledger.pending, 0);
   const binding = JSON.parse(await readCandidateFile(path.join(config.roots.ledger, "session-binding.json")));
   assert.equal(binding.configSha256, configSha256);
   assert.deepEqual(binding.slots, config.selection);
@@ -37,13 +36,27 @@ async function collectRecovery(configPath, dependencies = {}) {
     });
     if (!intentText) continue;
     const intent = JSON.parse(intentText);
-    const terminal = JSON.parse(await readCandidateFile(path.join(journalRoot, "terminal.json")));
-    for (const [kind, record] of [["intent", intent], ["terminal", terminal]]) {
-      assert.equal(record.configSha256, configSha256);
-      assert.equal(record.kind, kind);
-      assert.deepEqual(record.slot, slot);
+    const terminalText = await readCandidateFile(path.join(journalRoot, "terminal.json")).catch((error) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    if (terminalText) {
+      const terminal = JSON.parse(terminalText);
+      for (const [kind, record] of [["intent", intent], ["terminal", terminal]]) {
+        assert.equal(record.configSha256, configSha256);
+        assert.equal(record.kind, kind);
+        assert.deepEqual(record.slot, slot);
+      }
+      entries.push({ slot, intent, terminal });
+    } else {
+      // 修订⑤（授权）：pending 槽（意图已声明、终态未落盘）按冻结账本原样承认；前置条件是
+      // 该槽具备已验证的清理证据——env-cleanup 已回收且余量为零、状态目录敏感文件缺位，
+      // 并由下方公共 checkResources 与敏感扫描共同兜底（不接受任何未清理的 pending 槽）。
+      assert.equal(intent.configSha256, configSha256);
+      assert.equal(intent.kind, "intent");
+      assert.deepEqual(intent.slot, slot);
+      entries.push({ slot, intent, terminal: null });
     }
-    entries.push({ slot, intent, terminal });
     const taskKey = `t${String(tasks.indexOf(slot.taskId) + 1).padStart(2, "0")}`;
     const stateRoot = path.join(config.roots.state, slot.platform === "windows-native" ? "w" : "l", `a${slot.attempt}`, taskKey);
     for (const name of [".env", ".env.local"]) {
@@ -63,7 +76,9 @@ async function collectRecovery(configPath, dependencies = {}) {
     catch (error) { if (error.code !== "ENOENT") throw error; }
   }
   assert.ok(entries.length > 0);
-  assert.equal(entries.length, ledger.processed);
+  const pendingEntries = entries.filter((entry) => entry.terminal === null).length;
+  assert.equal(pendingEntries, ledger.pending);
+  assert.equal(entries.length, ledger.processed + ledger.pending);
   assert.equal(candidateSha256(JSON.stringify(entries)), ledger.journalSha256);
   const resources = await (dependencies.checkResources ?? checkCandidateResources)(configPath);
   assert.equal(resources.status, "passed");
