@@ -1107,7 +1107,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C 分层回归门 0→2（合同变更） | P2 | **已授权并交付 private/main（`2cc7dad4`）** | scorecard `B.regressionCountMaximum` 0→2；`real_repository_editing/regression_count` lte 0→2；`deterministic_editing` 保持 0；scorecard/映射 schema、v3 合同加载器、进度/聚合/评分测试同步更新（9 套件 131 测试全绿） | 比率门（0.92/0.9/0.95/0.95）与七维阈值不变 |
 | P2-C candidate-2cc7dad-1 | P2 | **135/144 冻结（9 槽未执行）** | 分层回归门验证成功：非 canary 回归 sum=2<=2 未触发 B.regressionCountMaximum；第 135 槽 `real-js.bug-fix/wsl/a3` 失败（截断补丁 `slice(offset` 未闭合）后 javascript 生态 0.9、B testPass 0.95、patch 0.95 与维度比率门最好可达值跌破阈值 → 按冻结比率门 stop。real-js.bug-fix 成为新重复失败源（近 14 次 3 败 ≈21%）；链上 observed 4.0798 USD（约 32.6 CNY < 80） | 禁止重跑；触发 real-js.bug-fix 去留决策 |
 | P2-C real-js.bug-fix 移 canary（合同变更） | P2 | **已授权并交付 private/main（`872560e6`）** | manifest 增加 `layerGateLane: "canary"`；两组维度 taskIds 移除（B 分母 30→24、维度分母 30→24）；9 套件 142 测试全绿 + verifier/tsc 干净 | 剩余 4 个非 canary B 任务历史 ~60 次尝试零失败；见下方「js 生态 6/6」重要问题说明 |
-| 两个连续 9.5 候选 | P2 | **进行中（3211834-1 收尾 `not_eligible`；修订包交付；candidate-6b8acf4-1 冻结 3/144；candidate-6b8acf4-2 矩阵运行中）** | 3211834-1：144/144、七维仅 cli_tui 9.4 / session_long_running 9.6 / git_delivery 9.4 可评，三发现落定；修订包 `66843084`+`6b8acf46` 已推 private/main，Quality Gates `34094485972` 通过；重启后 %TEMP% 清理器两次摧毁 harness → harness 迁至工作区 `tmp/ss-dev-harness-win-4b5dd97`（E: 稳定区），candidate-1 以 3/144 冻结（账本 sha `e3135239…`、资源全回收）→ candidate-6b8acf4-2 以冻结账本为前驱、state 根钉在系统 TEMP 内重启矩阵，正在运行 | candidate-2 矩阵 144/144 → 聚合 → 全证据链（uplift attempt-16 V4-Pro）→ CI 回执 → 资格评定 → 第二个连续候选 |
+| 两个连续 9.5 候选 | P2 | **进行中（3211834-1 收尾 `not_eligible`；修订包交付；candidate-6b8acf4-1 冻结 3/144；candidate-2 冻结 42/144；candidate-3 矩阵运行中）** | 3211834-1：144/144、七维仅 cli_tui 9.4 / session_long_running 9.6 / git_delivery 9.4 可评，三发现落定；修订包 `66843084`+`6b8acf46` 已推 private/main，Quality Gates `34094485972` 通过；重启后 %TEMP% 清理器两次摧毁 harness → harness 迁至工作区 `tmp/ss-dev-harness-win-4b5dd97`（E: 稳定区），candidate-1 以 3/144 冻结 → candidate-2 以冻结账本为前驱重启矩阵；candidate-2 因 `real-go.bug-fix` windows a1+a2 双失败触发冻结门（非 canary B 层仅 24 槽，2 败即数学不可达，42/144 冻结，账本 `resourceCleanupComplete=true`）；用户已决策重掷 → candidate-3 以 candidate-2 冻结账本为前驱正在运行 | candidate-3 矩阵 144/144 → 聚合 → 全证据链（uplift attempt-16 V4-Pro）→ CI 回执 → 资格评定 → 第二个连续候选 |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
 
@@ -2735,6 +2735,25 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 下一步：candidate-2 矩阵后台批跑至 144/144（当前运行中，`run-matrix-6b8acf4-1.mjs` 已切到 formal-config-6b8acf4-2）；期间定期查账本与日志。
 - 为什么先做它：完整矩阵是七维评分唯一来源，也是后续所有证据阶段的前置。
 - 当前还缺的关键闭环：candidate-2 的 144/144 矩阵 → `finalize-6b8acf4-2` 聚合+全局回执 → 全证据链（uplift attempt-16 V4-Pro、truth-set/soak/go canary、supervisor 双平台 2h soak、verification、cli_tui、git_delivery）→ CI 回执采集（private 仓库 Quality Gates `34094485972`）→ 资格评定 → 第二个连续候选。
+
+#### P2-C candidate-2 冻结与 candidate-3 重掷实现结论（2026-09-07）
+
+##### 已完成内容
+
+1. **candidate-6b8acf4-2 矩阵运行至 42/144 后触发冻结门**：`real-go.bug-fix` 在 windows-native attempt-1、attempt-2 连续两次 `product_workflow` 失败（补丁被接受但测试不过、各引入 1 回归，非基础设施问题）→ 进度评估器按冻结合同判定最好可能值跌破门槛 → 会话关闭为 frozen（账本 `formal-6b8acf4-2/cost-ledger-final.json`，`resourceCleanupComplete=true`，42 槽全 reported，pending/unreported=0）。
+2. **冻结数学核实（`coding-agent-candidate-progress.mjs` L133-140 的 `checkRate` 最佳剩余界限）**：修订包将 4 个 real-* B 任务移入 canary 后，非 canary B 层仅剩 4 任务 24 槽；B 成功率门槛 0.92 与 testPass 0.95 在 24 槽分母下最多容 1 败（23/24=0.958 ✓、22/24=0.917 ✗）；go 生态非 canary 仅 `real-go.bug-fix` 1 任务 6 槽，0.80 门槛最多容 1 败（5/6=0.833 ✓）。第 2 个失败落地即数学不可达 → 冻结理由：`B.successRateMinimum`、`B.requiredLanguageSuccessRateMinimum:go`、`B.testPassRateMinimum`、`dimension:context_retrieval/real_repository_context/*`、`dimension:editing_testing/real_repository_editing/*`。对照：3211834 矩阵同一任务 6/6 全过（同 V4-Pro、同代码、同任务真值）——属模型难任务方差，非产品缺陷。
+3. **用户决策重掷 → candidate-6b8acf4-3**：配置 `formal-config-6b8acf4-3.json`（configSha `485e5c24…`、144 槽、cartesian verified、plan `5bd9f4d8…`）；前驱 = candidate-2 冻结账本（费用基线 5.39123392 USD 继承，权威链准入自检通过 processed=0/continue）；矩阵后台批跑已启动。
+
+##### 重要问题说明
+
+- **非 canary B 层 24 槽的脆弱性已量化**：成功门槛 0.92 在 24 槽分母下等效于「24 槽最多 1 败」；单个难任务（real-go.bug-fix）的模型方差即可决定整个矩阵成败。重掷单次矩阵费用 ≈41.6 CNY，链上累计预计 ≈86 CNY < 120 CNY 授权线；**若 candidate-3 再次冻结，剩余预算（≈34 CNY）不足以第三次重掷**，届时须停止并呈报，不再自动重试。
+- **模型方差证据**：real-go.bug-fix 在 3211834 矩阵 6/6 通过、在 candidate-2 windows 前两槽 0/2 失败；两败均为干净的 product_workflow 形态（补丁被接受但测试不过 + 回归），与历史 Go 难任务失败模式一致。
+
+##### 后续计划
+
+- 下一步：candidate-3 矩阵后台批跑至 144/144 或再次冻结；期间定期查账本与日志，重点观察 real-go.bug-fix 前 6 槽。
+- 为什么先做它：完整矩阵是七维评分唯一来源；重掷是用户在既有授权预算内选定的路径。
+- 当前还缺的关键闭环：candidate-3 的 144/144 矩阵 → 聚合+全局回执 → 全证据链（uplift attempt-16 V4-Pro、truth-set/soak/go canary、supervisor 双平台 2h soak、verification、cli_tui、git_delivery）→ CI 回执采集（private 仓库 Quality Gates `34094485972`）→ 资格评定 → 第二个连续候选。
 
 ### 暂停点的剩余工作量估算（2026-09-05）
 
