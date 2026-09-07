@@ -1035,14 +1035,17 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
     const runs = manifestV3.tasks.flatMap((task) => task.platforms.flatMap((platform) => {
       return [1, 2, 3].map((attempt) => createV3Run(task, platform, attempt));
     }));
-    const failedRun = runs.find((run) => {
-      return manifestV3.tasks.find((task) => task.id === run.taskId)?.layer === "A";
-    });
-    failedRun.status = "failed";
-    failedRun.failureCategory = "product_workflow";
-    failedRun.evaluation.taskCompleted = false;
-    failedRun.evaluation.testsPassed = false;
-    failedRun.evaluation.regressionCount = 1;
+    // 用户授权的确定性组容差修订（2026-09-07）：A 门 72→70（容 2 个 A 败）；
+    // 此处令 3 个 A 运行失败（69 < 70）以验证 A 执行数门槛仍生效。
+    const failedRuns = runs.filter((run) =>
+      manifestV3.tasks.find((task) => task.id === run.taskId)?.layer === "A").slice(0, 3);
+    for (const failedRun of failedRuns) {
+      failedRun.status = "failed";
+      failedRun.failureCategory = "product_workflow";
+      failedRun.evaluation.taskCompleted = false;
+      failedRun.evaluation.testsPassed = false;
+      failedRun.evaluation.regressionCount = 1;
+    }
     const reportPath = await writeV3SourceReport(path.join(root, "source"), runs, {}, {
       artifactTextFor({ run, artifactKey }) {
         if (artifactKey === "events") return createRunEventsJsonl(run, "complete");
@@ -1077,10 +1080,10 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
         failedGates: [{
           layer: "A",
           id: "requiredPassedExecutions",
-          numerator: 71,
+          numerator: 69,
           denominator: 72,
-          observed: 71,
-          minimum: 72,
+          observed: 69,
+          minimum: 70,
         }],
       }],
     });
@@ -1229,7 +1232,7 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
     const { outputRoot } = await createCompleteQualificationBaseline((runs) => {
       let rejectedPatchCount = 0;
       for (const run of runs) {
-        if (run.evaluation.patchAccepted === null || rejectedPatchCount === 2) continue;
+        if (run.evaluation.patchAccepted === null || rejectedPatchCount === 3) continue;
         const task = manifestV3.tasks.find((candidate) => candidate.id === run.taskId);
         if (task?.layerGateLane === "canary") continue;
         run.evaluation.patchAccepted = false;
@@ -1246,10 +1249,10 @@ describe("coding agent candidate qualification", { timeout: 15_000 }, () => {
         failedGates: [{
           layer: "B",
           id: "patchAcceptanceRateMinimum",
-          numerator: 10,
+          numerator: 9,
           denominator: 12,
-          observed: 10 / 12,
-          minimum: 0.95,
+          observed: 9 / 12,
+          minimum: 0.8,
         }],
       }],
     });

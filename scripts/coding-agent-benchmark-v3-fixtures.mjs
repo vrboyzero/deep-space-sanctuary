@@ -1130,8 +1130,9 @@ async function evaluateCobraFixture(input, dependencies = {}) {
   let patchAccepted;
   if (task.id === "real-go.bug-fix") {
     const commandSource = await fs.readFile(path.join(workspace, "command.go"), "utf-8");
+    // 用户授权的真值实现钉死放宽（2026-09-07）：不再要求必须使用 strings.Index 的
+    // 特定写法；行为等价判据 = 冻结测试全过 + 未保留破损的 LastIndex 逻辑 + 范围一致。
     patchAccepted = JSON.stringify(changedPaths) === JSON.stringify(task.acceptance.requiredChangedPaths)
-      && commandSource.includes('strings.Index(name, " ")')
       && !commandSource.includes('strings.LastIndex(name, " ")');
     if (!patchAccepted) {
       productWorkflowFailures.push("Go bug fix must restore first-token Command.Name behavior in command.go only.");

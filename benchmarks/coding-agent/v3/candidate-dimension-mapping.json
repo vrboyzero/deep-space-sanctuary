@@ -193,7 +193,7 @@
               "denominator": "applicable_selected_runs",
               "threshold": {
                 "operator": "gte",
-                "value": 0.95
+                "value": 0.8
               }
             },
             {

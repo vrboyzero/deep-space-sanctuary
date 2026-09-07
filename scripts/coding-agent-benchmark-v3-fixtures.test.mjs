@@ -1392,6 +1392,36 @@ describe("coding agent benchmark v3 fixture providers", () => {
       status: "passed",
       evaluation: { taskCompleted: true, testsPassed: true, patchAccepted: true },
     });
+    // 真值实现钉死放宽（2026-09-07）：行为等价的非 strings.Index 实现（SplitN）
+    // 在冻结测试全过、未保留 LastIndex 破损逻辑、范围一致时同样接受。
+    await fs.writeFile(
+      path.join(bugFixture.workspace, "command.go"),
+      [
+        "package cobra",
+        "",
+        "import \"strings\"",
+        "",
+        "type Command struct { Use string }",
+        "",
+        "func (c *Command) Name() string {",
+        "\treturn strings.SplitN(c.Use, \" \", 2)[0]",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+    const splitEvaluation = await bugProvider.evaluate({
+      task: bugFixture.task,
+      workspace: bugFixture.workspace,
+      runnerExitCode: 0,
+      result: { summary: "Restored first-token command names." },
+    }, {
+      runTestCommands: async () => [{ command: "go test -mod=readonly .", exitCode: 0 }],
+    });
+    expect(splitEvaluation).toMatchObject({
+      status: "passed",
+      evaluation: { taskCompleted: true, testsPassed: true, patchAccepted: true },
+    });
 
     const migrationProvider = resolveCodingAgentBenchmarkV3FixtureProvider(
       manifest,

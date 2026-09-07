@@ -424,7 +424,7 @@ export function validateCodingAgentBenchmarkScorecardV3(scorecard) {
       successRateMinimum: 0.92,
       requiredLanguageSuccessRateMinimum: 0.80,
       testPassRateMinimum: 0.95,
-      patchAcceptanceRateMinimum: 0.95,
+      patchAcceptanceRateMinimum: 0.8,
       regressionCountMaximum: 2,
     },
     C: {
