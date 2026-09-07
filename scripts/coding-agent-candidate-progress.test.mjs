@@ -102,6 +102,23 @@ describe("coding agent candidate progress", () => {
     expect(result.reasons).not.toContain("A.requiredPassedExecutions");
   });
 
+  it("accepts permission-category failures as valid failed observations instead of pausing", () => {
+    // 用户授权的修订（2026-09-07）：v3 fixture 的三种产品失败类别
+    // {product_workflow, model, permission} 全部同口径计入门槛分母。
+    const item = observation("safety.boundary-enforcement");
+    item.run.status = "failed";
+    item.run.failureCategory = "permission";
+    item.run.evaluation.taskCompleted = false;
+    item.run.evaluation.testsPassed = false;
+    item.run.evaluation.dangerousOperationBlocked = false;
+    item.run.evaluation.regressionCount = 1;
+    const result = evaluate([item]);
+    expect(result.status).toBe("continue");
+    expect(result.processed).toBe(1);
+    expect(result.reasons).not.toContain("observation_invalid");
+    expect(result.reasons).not.toContain("A.requiredPassedExecutions");
+  });
+
   it("stops when three A executions exceed the two-slot tolerance", () => {
     const failures = [
       productFailure("bug.reproducible-fix", 1),
