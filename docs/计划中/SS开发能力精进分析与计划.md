@@ -1107,7 +1107,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C 分层回归门 0→2（合同变更） | P2 | **已授权并交付 private/main（`2cc7dad4`）** | scorecard `B.regressionCountMaximum` 0→2；`real_repository_editing/regression_count` lte 0→2；`deterministic_editing` 保持 0；scorecard/映射 schema、v3 合同加载器、进度/聚合/评分测试同步更新（9 套件 131 测试全绿） | 比率门（0.92/0.9/0.95/0.95）与七维阈值不变 |
 | P2-C candidate-2cc7dad-1 | P2 | **135/144 冻结（9 槽未执行）** | 分层回归门验证成功：非 canary 回归 sum=2<=2 未触发 B.regressionCountMaximum；第 135 槽 `real-js.bug-fix/wsl/a3` 失败（截断补丁 `slice(offset` 未闭合）后 javascript 生态 0.9、B testPass 0.95、patch 0.95 与维度比率门最好可达值跌破阈值 → 按冻结比率门 stop。real-js.bug-fix 成为新重复失败源（近 14 次 3 败 ≈21%）；链上 observed 4.0798 USD（约 32.6 CNY < 80） | 禁止重跑；触发 real-js.bug-fix 去留决策 |
 | P2-C real-js.bug-fix 移 canary（合同变更） | P2 | **已授权并交付 private/main（`872560e6`）** | manifest 增加 `layerGateLane: "canary"`；两组维度 taskIds 移除（B 分母 30→24、维度分母 30→24）；9 套件 142 测试全绿 + verifier/tsc 干净 | 剩余 4 个非 canary B 任务历史 ~60 次尝试零失败；见下方「js 生态 6/6」重要问题说明 |
-| 两个连续 9.5 候选 | P2 | **进行中（3211834-1 收尾 `not_eligible`；修订包交付；candidate-6b8acf4-1 冻结 3/144；candidate-2 冻结 42/144；candidate-3 矩阵运行中）** | 3211834-1：144/144、七维仅 cli_tui 9.4 / session_long_running 9.6 / git_delivery 9.4 可评，三发现落定；修订包 `66843084`+`6b8acf46` 已推 private/main，Quality Gates `34094485972` 通过；重启后 %TEMP% 清理器两次摧毁 harness → harness 迁至工作区 `tmp/ss-dev-harness-win-4b5dd97`（E: 稳定区），candidate-1 以 3/144 冻结 → candidate-2 以冻结账本为前驱重启矩阵；candidate-2 因 `real-go.bug-fix` windows a1+a2 双失败触发冻结门（非 canary B 层仅 24 槽，2 败即数学不可达，42/144 冻结，账本 `resourceCleanupComplete=true`）；用户已决策重掷 → candidate-3 以 candidate-2 冻结账本为前驱正在运行 | candidate-3 矩阵 144/144 → 聚合 → 全证据链（uplift attempt-16 V4-Pro）→ CI 回执 → 资格评定 → 第二个连续候选 |
+| 两个连续 9.5 候选 | P2 | **进行中（3211834-1 收尾 `not_eligible`；修订包×2 交付；candidate-1/2/3 均冻结收账；candidate-8b10fe0-1 矩阵运行中＝最后一掷）** | 3211834-1：144/144、七维仅 cli_tui 9.4 / session_long_running 9.6 / git_delivery 9.4 可评，三发现落定；修订包一 `66843084`+`6b8acf46` 已推 private/main，Quality Gates `34094485972` 通过；重启后 %TEMP% 清理器两次摧毁 harness → harness 迁至工作区 `tmp/ss-dev-harness-win-4b5dd97`（E: 稳定区）；candidate-1 冻结 3/144 → candidate-2 因 `real-go.bug-fix` windows a1+a2 双失败触发 B 门冻结（42/144）→ candidate-3 因 `bug.reproducible-fix`（历史 11/11）model 类别失败 pause（3/144）→ 用户授权修订包二 `34879c28`（①接受 model 类别失败 ②A 门 72→70 ③7 个确定性维度组 100% 判据→0.8/0.85、sum 0→2）+ 规则记录 `8b10fe0f` 已推 private/main（新身份 `8b10fe0f…` / worktree `10ee89b4…` 双 harness 一致）；输入在新身份下重新制备；**candidate-8b10fe0-1 矩阵运行中（120 CNY 线内最后一次掷 ≈41.6 CNY，链上已花 ≈44.6 CNY）** | 矩阵 144/144 或冻结 → 聚合 → 全证据链（uplift attempt-16 V4-Pro）→ CI 回执（private 仓库 Quality Gates @ `8b10fe0f`）→ 资格评定 → 第二个连续候选或 blocked 呈报 |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
 
@@ -2754,6 +2754,30 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 下一步：candidate-3 矩阵后台批跑至 144/144 或再次冻结；期间定期查账本与日志，重点观察 real-go.bug-fix 前 6 槽。
 - 为什么先做它：完整矩阵是七维评分唯一来源；重掷是用户在既有授权预算内选定的路径。
 - 当前还缺的关键闭环：candidate-3 的 144/144 矩阵 → 聚合+全局回执 → 全证据链（uplift attempt-16 V4-Pro、truth-set/soak/go canary、supervisor 双平台 2h soak、verification、cli_tui、git_delivery）→ CI 回执采集（private 仓库 Quality Gates `34094485972`）→ 资格评定 → 第二个连续候选。
+
+#### P2-C 确定性组容差修订包与最后一掷实现结论（2026-09-07）
+
+##### 已完成内容
+
+1. **candidate-3 事件定性与收账**：candidate-3 第 3 槽 `bug.reproducible-fix`（历史 11/11 全过）失败，根因=模型补丁与自身总结自相矛盾（总结写对、补丁多乘 10）；失败类别被基准标为 `model`，冻结评估器仅接受 `product_workflow` → observation_invalid → pause（3/144，3 槽全 reported、资源全回收）。已主动关闭为 frozen（reasons: `observation_invalid` + `superseded_by_revision`，账本 sha `70e0f954…`）。
+2. **修订包二（用户授权，commit `34879c28` + 规则记录 `8b10fe0f`，只推 private/main）**：
+   - ① `scripts/coding-agent-candidate-progress.mjs`：failed 运行接受 `failureCategory ∈ {product_workflow, model}`（同口径计入门槛分母，不再 pause）。
+   - ② `benchmarks/coding-agent/v3/scorecard.json` + `scorecard.schema.json` + `coding-agent-benchmark-v3-contract.mjs` 漂移检查：A 门 `requiredPassedExecutions` 72→70。
+   - ③ `candidate-dimension-mapping.json`（21 个判据）+ `coding-agent-candidate-score.mjs` 校验器期望：7 个确定性维度组 100% 判据 → 6 槽组 0.8 / 12 槽组 0.8 / 18 槽组 0.85，回归/人工干预 sum 0→2（deterministic_context、deterministic_editing、interactive_cli、safety_boundary、disconnect_recovery、session_control、local_git_boundaries）。
+   - 测试同步：progress 测试（新增 model 类别接受 + 单败容差 + 三败冻结用例）、preflight 测试（真实记分卡下 0 冲突、假设 72 门恢复证明）、score 测试夹具、v3 测试；6 套件 74 测试全绿 + `verify:coding-benchmark` 通过 + `pnpm build` 通过。
+3. **新身份 `8b10fe0f338a9c1d00da572637bcb4aaede853d3` 落地**：双 harness（Windows E: 稳定区 + WSL `/var/tmp`）均已 checkout 新头、clean、worktreeContentSha256 `10ee89b4…` 一致；双平台 repository 输入在新身份下重新制备（windows `c3b0d948…` / wsl `b4d1fd0e…`，任务真值不变）；`formal-config-8b10fe0-1.json`（id `candidate-8b10fe0-1`、configSha `7e1a348d…`、144 槽、plan `e36e8610…`）前驱=candidate-3 冻结账本（基线 5.39742726 USD），准入自检 processed=0/continue；矩阵后台批跑已启动。
+
+##### 重要问题说明
+
+- **修订包二的第一版方案曾被纠正**：最初以为 A 门是冻结约束，核查维度映射后发现 7 个确定性维度组的 100% 判据才是 A 失败的真正绑定约束（candidate-3 的失败会同时触发 deterministic_editing 4 个判据）——只改 A 门对本次事件无效；经用户确认后扩围为含确定性组容差的完整修订。
+- **残留风险（用户已知悉）**：6 槽确定性组（0.8）仍只能容 1 败，两次失败落在同一 6 槽组仍冻结；B 非 canary 24 槽仍只容 1 败（0.92）；C 层与其余 100% 判据组未动。本次为 120 CNY 线内最后一次矩阵掷（≈41.6 CNY，链上已花 ≈44.6 CNY），若再冻结则目标 blocked 呈报。
+- **contract-preflight 语义变化**：A 层 fixture 矛盾证明在真实记分卡（A=70）下空转（0 冲突），测试改为在假设 72 门时验证检查逻辑仍有效——是容差修订的结构性后果，已记录于规则 item 14。
+
+##### 后续计划
+
+- 下一步：candidate-8b10fe0-1 矩阵后台批跑至 144/144 或冻结；期间定期查账本与日志。
+- 为什么先做它：这是最后一次预算内掷，矩阵结果决定「第二个连续候选」是否可达。
+- 当前还缺的关键闭环：144/144 矩阵 → 聚合+全局回执 → 全证据链（uplift attempt-16 V4-Pro、truth-set/soak/go canary、supervisor 双平台 2h soak、verification、cli_tui、git_delivery）→ CI 回执采集（private 仓库 Quality Gates @ `8b10fe0f`）→ 资格评定 → 第二个连续候选。
 
 ### 暂停点的剩余工作量估算（2026-09-05）
 
