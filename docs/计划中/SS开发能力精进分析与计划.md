@@ -1107,7 +1107,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C 分层回归门 0→2（合同变更） | P2 | **已授权并交付 private/main（`2cc7dad4`）** | scorecard `B.regressionCountMaximum` 0→2；`real_repository_editing/regression_count` lte 0→2；`deterministic_editing` 保持 0；scorecard/映射 schema、v3 合同加载器、进度/聚合/评分测试同步更新（9 套件 131 测试全绿） | 比率门（0.92/0.9/0.95/0.95）与七维阈值不变 |
 | P2-C candidate-2cc7dad-1 | P2 | **135/144 冻结（9 槽未执行）** | 分层回归门验证成功：非 canary 回归 sum=2<=2 未触发 B.regressionCountMaximum；第 135 槽 `real-js.bug-fix/wsl/a3` 失败（截断补丁 `slice(offset` 未闭合）后 javascript 生态 0.9、B testPass 0.95、patch 0.95 与维度比率门最好可达值跌破阈值 → 按冻结比率门 stop。real-js.bug-fix 成为新重复失败源（近 14 次 3 败 ≈21%）；链上 observed 4.0798 USD（约 32.6 CNY < 80） | 禁止重跑；触发 real-js.bug-fix 去留决策 |
 | P2-C real-js.bug-fix 移 canary（合同变更） | P2 | **已授权并交付 private/main（`872560e6`）** | manifest 增加 `layerGateLane: "canary"`；两组维度 taskIds 移除（B 分母 30→24、维度分母 30→24）；9 套件 142 测试全绿 + verifier/tsc 干净 | 剩余 4 个非 canary B 任务历史 ~60 次尝试零失败；见下方「js 生态 6/6」重要问题说明 |
-| 两个连续 9.5 候选 | P2 | **进行中（3211834-1 收尾 `not_eligible`；修订包×4 交付；五候选冻结收账；candidate-bcbbd5f-1 矩阵运行中＝①+② 修订后最后一掷，败则 ④ 收尾）** | 3211834-1：144/144、七维仅 cli_tui 9.4 / session_long_running 9.6 / git_delivery 9.4 可评，三发现落定；修订包一 `66843084`+`6b8acf46`、二 `34879c28`+`8b10fe0f`、三 `de204368`+`482fc5e3`、四 `448d0cfa`+`bcbbd5f2` 均已推 private/main；candidate-1 冻结 3/144 → candidate-2 B 门冻结 42/144 → candidate-3 pause 3/144 → candidate-8b10fe0-1 pause 55/144 → candidate-482fc5e-1 冻结 64/144（B patch 接受率：canary lane 6 拒收不碰门，go.bug-fix 语义正确实现被 `strings.Index` 钉死拒收 → 用户授权 ①patch 0.95→0.8 ②行为等价判据）→ **candidate-bcbbd5f-1 矩阵运行中（≈41.6 CNY，链上预计 ≈89.5 CNY）** | 矩阵 144/144 或冻结 → 聚合 → 全证据链（uplift attempt-16 V4-Pro）→ CI 回执（private 仓库 Quality Gates @ `bcbbd5f2`）→ 资格评定 → 第二个连续候选；若冻结/类别外失败 → ④ 接受单一候选收尾 |
+| 两个连续 9.5 候选 | P2 | **已收尾（④ 用户授权：candidate-bcbbd5f-1 以 104/144 冻结于基础设施硬门，接受单一候选收尾）** | 3211834-1：144/144、七维仅 cli_tui 9.4 / session_long_running 9.6 / git_delivery 9.4 可评，三发现落定；修订包一 `66843084`+`6b8acf46`、二 `34879c28`+`8b10fe0f`、三 `de204368`+`482fc5e3`、四 `448d0cfa`+`bcbbd5f2` 均已推 private/main；六候选链：candidate-1 冻结 3/144、candidate-2 冻结 42/144、candidate-3 pause 3/144、candidate-8b10fe0-1 pause 55/144、candidate-482fc5e-1 冻结 64/144、candidate-bcbbd5f-1 冻结 104/144（95 过/8 败/1 infra；①+② 生效：go.bug-fix 本轮通过、B 门全程未触发，唯 `gateway.disconnect-recovery.wsl2-linux.a2` 基础设施错误触发硬门）；**按用户授权「基础设施失败→④」接受单一候选收尾** | ④ 收尾交付：证据保全清单 + 单一候选（3211834-1）结论 + 失败根因总结；不再追求第二个连续候选 |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
 
@@ -2842,6 +2842,25 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 下一步：candidate-bcbbd5f-1 矩阵后台批跑至 144/144 或冻结；期间定期查账本与日志。
 - 为什么先做它：这是 ①+② 修订后唯一一次掷，直接决定「第二个连续候选」或 ④ 收尾。
 - 当前还缺的关键闭环：144/144 矩阵 → 聚合+全局回执 → 全证据链（uplift attempt-16 V4-Pro）→ CI 回执采集（private 仓库 Quality Gates @ `bcbbd5f2`）→ 资格评定 → 第二个连续候选或 ④ 单一候选收尾。
+
+#### P2-C 最终掷冻结与 ④ 单一候选收尾结论（2026-09-07）
+
+##### 已完成内容
+
+1. **candidate-bcbbd5f-1 矩阵运行与冻结收账**：104/144 冻结（reasons: `infrastructure_failure`；104 槽全 terminal、资源全回收、候选花费 0.38543822 USD、链上 ≈50.7 CNY）。104 槽中 95 过 / 8 产品·模型败（7 个在 canary lane、1 个 A 层 model 类别）/ 1 个 `gateway.disconnect-recovery.wsl2-linux.a2` 基础设施错误（WSL 侧生命周期任务，硬门 `selectedInfrastructureErrorCountMaximum: 0`）。
+2. **①+② 修订包四的效果确认**：`real-go.bug-fix` 本轮全部通过（行为等价判据生效，无补丁拒收）；非 canary B 层零失败；至 104 槽冻结点 B 门/维度门全程未触发——修订本身成功，冻结纯粹由基础设施硬门导致。
+3. **④ 单一候选收尾（用户授权）**：目标「两个连续 9.5 候选」按用户决策收口为「接受单一候选」。单一候选 = 3211834-1（144/144 完整矩阵；七维中 cli_tui 9.4 / session_long_running 9.6 / git_delivery 9.4 低于最低分 → `not_eligible`；其余四维达标；三发现已落定）。六候选链全部冻结/收账（candidate-1 3/144、candidate-2 42/144、candidate-3 3/144、candidate-8b10fe0-1 55/144、candidate-482fc5e-1 64/144、candidate-bcbbd5f-1 104/144），四版修订记录（规则 items 13/14/15/17 + 本次 item 18）齐全；private/main 停在 `bcbbd5f2`，后续文档仅本地提交。
+
+##### 重要问题说明
+
+- **基础设施脆弱性是最终冻结的直接原因**：WSL 侧 disconnect-recovery a2 触发基础设施错误（此前 %TEMP% 清理器两度摧毁 harness、Docker 服务重启后偶发 flapping 均属同一类环境脆弱性）；该硬门按冻结契约不可豁免、不可重试（retries=0）。候选链六掷无一到达 144/144，其中三次死于环境/类别/真值错配（candidate-1、candidate-3、candidate-bcbbd5f-1），两次死于真实任务失败（candidate-2、candidate-482fc5e-1）。
+- **模型在真实仓库任务上的波动是长期约束**：canary lane 观测显示 real-repo 层 windows 侧成功率波动大（本轮 8 个产品·模型失败中 7 个在 canary），3211834 全过不具备可重复性；此结论应纳入后续能力精进计划的输入。
+
+##### 后续计划
+
+- 下一步：收尾交付——把单一候选（3211834-1）结论、六候选链账本清单、四版修订与预算账作为本目标的最终交付物整理归档（文档已回写，本地提交 `bcbbd5f2` 之后不再推送）。
+- 为什么先做它：④ 是用户对最终路径的授权，收尾交付即目标闭环。
+- 当前还缺的关键闭环：无——目标已按 ④ 收口；后续若用户希望重启「连续双候选」，需以本收尾为基线重新授权（新预算、新身份）。
 
 ### 暂停点的剩余工作量估算（2026-09-05）
 
