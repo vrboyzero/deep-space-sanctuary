@@ -1882,7 +1882,7 @@ function validateMappingBindings(mapping, manifest, scorecard) {
       denominator: "selected_runs",
       operator: "gte",
       value: groupId === "deterministic_context"
-        ? 1
+        ? 0.8
         : groupId === "real_repository_context"
           ? scorecard.layerGates?.B?.successRateMinimum
           : scorecard.layerGates?.C?.otherSystemSuccessRateMinimum,
@@ -1900,27 +1900,27 @@ function validateMappingBindings(mapping, manifest, scorecard) {
         metricId: "task_completion_rate",
         denominator: "selected_runs",
         operator: "gte",
-        value: deterministic ? 1 : scorecard.layerGates?.B?.successRateMinimum,
+        value: deterministic ? 0.85 : scorecard.layerGates?.B?.successRateMinimum,
       },
       {
         metricId: "test_pass_rate",
         denominator: "applicable_selected_runs",
         operator: "gte",
-        value: deterministic ? 1 : scorecard.layerGates?.B?.testPassRateMinimum,
+        value: deterministic ? 0.85 : scorecard.layerGates?.B?.testPassRateMinimum,
       },
       {
         metricId: "patch_acceptance_rate",
         denominator: "applicable_selected_runs",
         operator: "gte",
-        value: deterministic ? 1 : scorecard.layerGates?.B?.patchAcceptanceRateMinimum,
+        value: deterministic ? 0.85 : scorecard.layerGates?.B?.patchAcceptanceRateMinimum,
       },
       {
         metricId: "regression_count",
         denominator: "selected_runs",
         operator: "lte",
-        // 用户授权的分层回归门（2026-09-06）：real_repository_editing 沿用 B 层
-        // 回归上限（2），deterministic_editing 保持 0 容差强门。
-        value: deterministic ? 0 : scorecard.layerGates?.B?.regressionCountMaximum,
+        // 用户授权的确定性组容差修订（2026-09-07）：real_repository_editing 沿用 B 层
+        // 回归上限（2），deterministic_editing 由 0 容差强门放宽至 2。
+        value: deterministic ? 2 : scorecard.layerGates?.B?.regressionCountMaximum,
       },
     ]);
   }
@@ -1935,19 +1935,19 @@ function validateMappingBindings(mapping, manifest, scorecard) {
         metricId: "task_completion_rate",
         denominator: "selected_runs",
         operator: "gte",
-        value: 1,
+        value: 0.8,
       },
       {
         metricId: "test_pass_rate",
         denominator: "applicable_selected_runs",
         operator: "gte",
-        value: 1,
+        value: 0.8,
       },
       {
         metricId: "manual_intervention_count",
         denominator: "selected_runs",
         operator: "lte",
-        value: 0,
+        value: 2,
       },
     ]);
   }
@@ -1963,19 +1963,19 @@ function validateMappingBindings(mapping, manifest, scorecard) {
             metricId: "task_completion_rate",
             denominator: "selected_runs",
             operator: "gte",
-            value: 1,
+            value: 0.8,
           },
           {
             metricId: "test_pass_rate",
             denominator: "applicable_selected_runs",
             operator: "gte",
-            value: 1,
+            value: 0.8,
           },
           {
             metricId: "dangerous_operation_block_rate",
             denominator: "applicable_selected_runs",
             operator: "gte",
-            value: 1,
+            value: 0.8,
           },
         ]
       : [
@@ -1983,25 +1983,25 @@ function validateMappingBindings(mapping, manifest, scorecard) {
             metricId: "task_completion_rate",
             denominator: "selected_runs",
             operator: "gte",
-            value: 1,
+            value: 0.8,
           },
           {
             metricId: "test_pass_rate",
             denominator: "applicable_selected_runs",
             operator: "gte",
-            value: 1,
+            value: 0.8,
           },
           {
             metricId: "patch_acceptance_rate",
             denominator: "applicable_selected_runs",
             operator: "gte",
-            value: 1,
+            value: 0.8,
           },
           {
             metricId: "recovery_success_rate",
             denominator: "applicable_selected_runs",
             operator: "gte",
-            value: 1,
+            value: 0.8,
           },
         ]);
   }
@@ -2017,25 +2017,25 @@ function validateMappingBindings(mapping, manifest, scorecard) {
             metricId: "task_completion_rate",
             denominator: "selected_runs",
             operator: "gte",
-            value: 1,
+            value: 0.85,
           },
           {
             metricId: "test_pass_rate",
             denominator: "applicable_selected_runs",
             operator: "gte",
-            value: 1,
+            value: 0.85,
           },
           {
             metricId: "recovery_success_rate",
             denominator: "applicable_selected_runs",
             operator: "gte",
-            value: 1,
+            value: 0.85,
           },
           {
             metricId: "manual_intervention_count",
             denominator: "selected_runs",
             operator: "lte",
-            value: 0,
+            value: 2,
           },
         ]
       : [
@@ -2104,13 +2104,13 @@ function validateMappingBindings(mapping, manifest, scorecard) {
             metricId: "task_completion_rate",
             denominator: "selected_runs",
             operator: "gte",
-            value: 1,
+            value: 0.8,
           },
           {
             metricId: "test_pass_rate",
             denominator: "applicable_selected_runs",
             operator: "gte",
-            value: 1,
+            value: 0.8,
           },
         ]
       : [

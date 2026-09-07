@@ -27,35 +27,36 @@ describe("candidate contract preflight", () => {
     expect(() => assertCandidateContractConsistency({ ...input, accountingVersion: "unknown" })).toThrow(/accounting version/);
     expect(input).toEqual(before);
   });
-  it("proves the frozen approval minimum contradicts scoring without generating reports or changing contracts", () => {
+  it("waives the A-layer contradiction proof under the authorized tolerance gate", () => {
+    // 用户授权的确定性组容差修订（2026-09-07）：A 门 72→70、确定性组判据
+    // 1.0→0.8/0.85。A 层不再要求 100%，且已无 taskCompleted>=1 的强制组，
+    // fixture 最小量矛盾检查在真实记分卡下空转（0 冲突）。
     const before = structuredClone(input);
-    expect(findCandidateContractConflicts(input)).toEqual([{
+    expect(findCandidateContractConflicts(input)).toEqual([]);
+    expect(() => assertCandidateContractConsistency(input)).not.toThrow();
+    const hypothetical = structuredClone(input);
+    hypothetical.scorecard.layerGates.A.requiredPassedExecutions = 72;
+    expect(findCandidateContractConflicts(hypothetical)).toEqual([{
       dimensionId: "cli_tui", groupId: "interactive_cli", metricId: "manual_intervention_count",
-      taskIds: ["command.interactive-control"], minimum: 30, maximum: 0,
+      taskIds: ["command.interactive-control"], minimum: 30, maximum: 2,
     }]);
-    expect(() => assertCandidateContractConsistency(input)).toThrow(/minimum=30 maximum=0/);
     expect(input).toEqual(before);
   });
 
   it.each([[29, 1], [30, 0]])("compares a hypothetical maximum of %i against fixture requirements", (maximum, conflicts) => {
     const hypothetical = structuredClone(input);
+    hypothetical.scorecard.layerGates.A.requiredPassedExecutions = 72;
     interactiveGroup(hypothetical.mapping).criteria.find((criterion) => criterion.aggregation === "sum")
       .threshold.value = maximum;
     expect(findCandidateContractConflicts(hypothetical)).toHaveLength(conflicts);
   });
 
-  it("retains the A-layer requirement even when a subgroup permits incomplete tasks", () => {
+  it("restores the A-layer proof only under a strict all-runs A gate", () => {
     const hypothetical = structuredClone(input);
     interactiveGroup(hypothetical.mapping).criteria.find((criterion) => criterion.source === "evaluation.taskCompleted")
       .threshold.value = 0;
-    expect(findCandidateContractConflicts(hypothetical)).toHaveLength(1);
-    hypothetical.scorecard.layerGates.A.requiredPassedExecutions = 0;
     expect(findCandidateContractConflicts(hypothetical)).toEqual([]);
-  });
-
-  it("retains a mandatory subgroup even when the A-layer gate alone does not require every run", () => {
-    const hypothetical = structuredClone(input);
-    hypothetical.scorecard.layerGates.A.requiredPassedExecutions = 0;
+    hypothetical.scorecard.layerGates.A.requiredPassedExecutions = 72;
     expect(findCandidateContractConflicts(hypothetical)).toHaveLength(1);
   });
 

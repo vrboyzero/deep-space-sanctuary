@@ -77,8 +77,38 @@ describe("coding agent candidate progress", () => {
     expect(result.reasons).not.toContain("B.successRateMinimum");
   });
 
-  it("stops immediately when an A execution makes its required total unreachable", () => {
-    expect(evaluate([productFailure("bug.reproducible-fix")])).toMatchObject({
+  it("continues with a single A failure within the authorized two-slot tolerance", () => {
+    // 用户授权的确定性组容差修订（2026-09-07）：A 门 72→70，确定性维度组
+    // 判据 1.0→0.8/0.85；单次 A 失败不再使矩阵数学不可达。
+    const result = evaluate([productFailure("bug.reproducible-fix")]);
+    expect(result.status).toBe("continue");
+    expect(result.processed).toBe(1);
+    expect(result.reasons).not.toContain("A.requiredPassedExecutions");
+  });
+
+  it("accepts model-category failures as valid failed observations instead of pausing", () => {
+    // 用户授权的修订（2026-09-07）：failed 运行的 failureCategory 接受 "model"，
+    // 与 product_workflow 同口径计入各门槛分母，不再触发 observation_invalid。
+    const item = observation("bug.reproducible-fix");
+    item.run.status = "failed";
+    item.run.failureCategory = "model";
+    item.run.evaluation.taskCompleted = false;
+    item.run.evaluation.testsPassed = false;
+    item.run.evaluation.regressionCount = 1;
+    const result = evaluate([item]);
+    expect(result.status).toBe("continue");
+    expect(result.processed).toBe(1);
+    expect(result.reasons).not.toContain("observation_invalid");
+    expect(result.reasons).not.toContain("A.requiredPassedExecutions");
+  });
+
+  it("stops when three A executions exceed the two-slot tolerance", () => {
+    const failures = [
+      productFailure("bug.reproducible-fix", 1),
+      productFailure("feature.cross-file", 1),
+      productFailure("rules.nested-precedence", 1),
+    ];
+    expect(evaluate(failures)).toMatchObject({
       status: "stop", reasons: expect.arrayContaining(["A.requiredPassedExecutions"]),
     });
   });

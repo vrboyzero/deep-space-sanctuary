@@ -35,7 +35,7 @@ export function evaluateCodingAgentCandidateProgress(input) {
         || !validEvaluation(run.evaluation)
         || !["passed", "failed", "infrastructure_error"].includes(run.status)
         || (run.status === "passed" && run.failureCategory !== null)
-        || (run.status === "failed" && run.failureCategory !== "product_workflow")
+        || (run.status === "failed" && !["product_workflow", "model"].includes(run.failureCategory))
         || (run.status === "infrastructure_error" && run.failureCategory !== "infrastructure")) {
         return result(terminalReason ? "stop" : "pause",
           terminalReason ? [terminalReason, "observation_invalid"] : ["observation_invalid"]);

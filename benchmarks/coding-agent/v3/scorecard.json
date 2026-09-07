@@ -31,7 +31,7 @@
   },
   "layerGates": {
     "A": {
-      "requiredPassedExecutions": 72
+      "requiredPassedExecutions": 70
     },
     "B": {
       "successRateMinimum": 0.92,

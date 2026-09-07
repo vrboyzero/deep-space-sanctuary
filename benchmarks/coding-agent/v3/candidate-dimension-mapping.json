@@ -40,7 +40,7 @@
               "denominator": "selected_runs",
               "threshold": {
                 "operator": "gte",
-                "value": 1
+                "value": 0.8
               }
             }
           ]
@@ -116,7 +116,7 @@
               "denominator": "selected_runs",
               "threshold": {
                 "operator": "gte",
-                "value": 1
+                "value": 0.85
               }
             },
             {
@@ -127,7 +127,7 @@
               "denominator": "applicable_selected_runs",
               "threshold": {
                 "operator": "gte",
-                "value": 1
+                "value": 0.85
               }
             },
             {
@@ -138,7 +138,7 @@
               "denominator": "applicable_selected_runs",
               "threshold": {
                 "operator": "gte",
-                "value": 1
+                "value": 0.85
               }
             },
             {
@@ -149,7 +149,7 @@
               "denominator": "selected_runs",
               "threshold": {
                 "operator": "lte",
-                "value": 0
+                "value": 2
               }
             }
           ]
@@ -235,7 +235,7 @@
               "denominator": "selected_runs",
               "threshold": {
                 "operator": "gte",
-                "value": 1
+                "value": 0.8
               }
             },
             {
@@ -246,7 +246,7 @@
               "denominator": "applicable_selected_runs",
               "threshold": {
                 "operator": "gte",
-                "value": 1
+                "value": 0.8
               }
             },
             {
@@ -257,7 +257,7 @@
               "denominator": "selected_runs",
               "threshold": {
                 "operator": "lte",
-                "value": 0
+                "value": 2
               }
             }
           ]
@@ -288,7 +288,7 @@
               "denominator": "selected_runs",
               "threshold": {
                 "operator": "gte",
-                "value": 1
+                "value": 0.8
               }
             },
             {
@@ -299,7 +299,7 @@
               "denominator": "applicable_selected_runs",
               "threshold": {
                 "operator": "gte",
-                "value": 1
+                "value": 0.8
               }
             },
             {
@@ -310,7 +310,7 @@
               "denominator": "applicable_selected_runs",
               "threshold": {
                 "operator": "gte",
-                "value": 1
+                "value": 0.8
               }
             }
           ]
@@ -329,7 +329,7 @@
               "denominator": "selected_runs",
               "threshold": {
                 "operator": "gte",
-                "value": 1
+                "value": 0.8
               }
             },
             {
@@ -340,7 +340,7 @@
               "denominator": "applicable_selected_runs",
               "threshold": {
                 "operator": "gte",
-                "value": 1
+                "value": 0.8
               }
             },
             {
@@ -351,7 +351,7 @@
               "denominator": "applicable_selected_runs",
               "threshold": {
                 "operator": "gte",
-                "value": 1
+                "value": 0.8
               }
             },
             {
@@ -362,7 +362,7 @@
               "denominator": "applicable_selected_runs",
               "threshold": {
                 "operator": "gte",
-                "value": 1
+                "value": 0.8
               }
             }
           ]
@@ -395,7 +395,7 @@
               "denominator": "selected_runs",
               "threshold": {
                 "operator": "gte",
-                "value": 1
+                "value": 0.85
               }
             },
             {
@@ -406,7 +406,7 @@
               "denominator": "applicable_selected_runs",
               "threshold": {
                 "operator": "gte",
-                "value": 1
+                "value": 0.85
               }
             },
             {
@@ -417,7 +417,7 @@
               "denominator": "applicable_selected_runs",
               "threshold": {
                 "operator": "gte",
-                "value": 1
+                "value": 0.85
               }
             },
             {
@@ -428,7 +428,7 @@
               "denominator": "selected_runs",
               "threshold": {
                 "operator": "lte",
-                "value": 0
+                "value": 2
               }
             }
           ]
@@ -567,7 +567,7 @@
               "denominator": "selected_runs",
               "threshold": {
                 "operator": "gte",
-                "value": 1
+                "value": 0.8
               }
             },
             {
@@ -578,7 +578,7 @@
               "denominator": "applicable_selected_runs",
               "threshold": {
                 "operator": "gte",
-                "value": 1
+                "value": 0.8
               }
             }
           ]

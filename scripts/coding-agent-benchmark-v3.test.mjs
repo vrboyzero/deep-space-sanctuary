@@ -308,7 +308,7 @@ describe("coding agent benchmark v3 contract", () => {
       orphanResourceCountMaximum: 0,
     });
     expect(scorecard.layerGates).toEqual({
-      A: { requiredPassedExecutions: 72 },
+      A: { requiredPassedExecutions: 70 },
       B: {
         successRateMinimum: 0.92,
         requiredLanguageSuccessRateMinimum: 0.80,

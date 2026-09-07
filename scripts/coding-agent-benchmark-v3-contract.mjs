@@ -419,7 +419,7 @@ export function validateCodingAgentBenchmarkScorecardV3(scorecard) {
     throw new Error("Coding benchmark v3 scorecard hard gates drifted.");
   }
   if (JSON.stringify(scorecard.layerGates) !== JSON.stringify({
-    A: { requiredPassedExecutions: 72 },
+    A: { requiredPassedExecutions: 70 },
     B: {
       successRateMinimum: 0.92,
       requiredLanguageSuccessRateMinimum: 0.80,
