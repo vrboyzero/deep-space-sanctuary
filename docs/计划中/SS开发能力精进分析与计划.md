@@ -1107,7 +1107,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 | P2-C 分层回归门 0→2（合同变更） | P2 | **已授权并交付 private/main（`2cc7dad4`）** | scorecard `B.regressionCountMaximum` 0→2；`real_repository_editing/regression_count` lte 0→2；`deterministic_editing` 保持 0；scorecard/映射 schema、v3 合同加载器、进度/聚合/评分测试同步更新（9 套件 131 测试全绿） | 比率门（0.92/0.9/0.95/0.95）与七维阈值不变 |
 | P2-C candidate-2cc7dad-1 | P2 | **135/144 冻结（9 槽未执行）** | 分层回归门验证成功：非 canary 回归 sum=2<=2 未触发 B.regressionCountMaximum；第 135 槽 `real-js.bug-fix/wsl/a3` 失败（截断补丁 `slice(offset` 未闭合）后 javascript 生态 0.9、B testPass 0.95、patch 0.95 与维度比率门最好可达值跌破阈值 → 按冻结比率门 stop。real-js.bug-fix 成为新重复失败源（近 14 次 3 败 ≈21%）；链上 observed 4.0798 USD（约 32.6 CNY < 80） | 禁止重跑；触发 real-js.bug-fix 去留决策 |
 | P2-C real-js.bug-fix 移 canary（合同变更） | P2 | **已授权并交付 private/main（`872560e6`）** | manifest 增加 `layerGateLane: "canary"`；两组维度 taskIds 移除（B 分母 30→24、维度分母 30→24）；9 套件 142 测试全绿 + verifier/tsc 干净 | 剩余 4 个非 canary B 任务历史 ~60 次尝试零失败；见下方「js 生态 6/6」重要问题说明 |
-| 两个连续 9.5 候选 | P2 | **未完成（candidate-3211834-1 已 144/144 完整矩阵，资格收尾进行中）** | 首个完整 144/144 候选：aggregate + candidate-global 回执已生成（敏感扫描 0 发现、双平台资源清扫 0 孤儿）；CodeIntel 证据 8/9 组已刷新（truth-set 双平台 14/14、resource-soak 通过、context-inspector 通过、Go native 10/10、Go OCI 10/10+RSS+零残留、comparator 通过）；CI 回执目标=Quality Gates `34056106938`（3211834，success）。唯一阻塞：frozen uplift r12 平台/聚合报告与当前源码 identity 碰撞，需付费重跑（用户已授权，见重要问题说明） | 完成 uplift 重跑与其余本地证据 stage（verification/supervisor/CLI-TUI/Git delivery/coding-run-client）→ qualification → 七维 score；之后第二个连续 144 槽候选 |
+| 两个连续 9.5 候选 | P2 | **进行中（candidate-3211834-1 收尾 `not_eligible`；合同修订包已交付；candidate-6b8acf4-1 矩阵 2/144，电脑重启暂停）** | 3211834-1：144/144、七维仅 cli_tui 9.4 / session_long_running 9.6 / git_delivery 9.4 可评，code_intel 冻结门不可达、审计组数口径与公开仓库 CI 回执三发现落定；修订包 `66843084`（①public CI 回执 ②审计组数口径 ③uplift V4-Pro）+ `6b8acf46`（预算守卫 120 CNY）已推 private/main，Quality Gates `34094485972` 通过；新身份 `6b8acf46` / worktree `e54ed479…` 双 harness 一致，candidate-6b8acf4-1 配置 + 144 槽计划就绪，矩阵 2/144 后按用户要求暂停（电脑重启） | 重启后：重建 Windows harness → 身份/账本复核 → 后台续跑矩阵 → 聚合 → 全证据链（uplift attempt-16 V4-Pro）→ CI 回执 → 资格评定 → 第二个连续候选 |
 
 #### P2-C 新候选计划实现结论：6ce85bd expected-report plan（2026-09-05）
 
@@ -2688,6 +2688,32 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - 下一步：实现修订包 → 本地全测 → 推 origin/main → CI Quality Gates → 双 harness 更新解析新身份 → 准备新候选输入（fixture 冻结复用，cache-pointers）→ 新 144 矩阵（≈41.6 CNY，V4-Pro 同配置）→ 聚合 + 全证据链（uplift attempt-16 V4-Pro ≈1.2-1.5 CNY、supervisor soak 2h、verification、cli_tui、git_delivery）→ CI 回执采集（公开仓库按真实可见性记录）→ 资格评定 → 文档收尾与聚合根备份回工作区 tmp。
 - 为什么先做它：三发现的根因（环境/合同/模型）都已决策，修订包是新候选能诚实出分的前提；旧候选 3211834f 证据按「单一身份来源 / 禁止跨修订投影」不跨身份复用，全量重跑不可避免且已获预算授权。
 - 当前还缺的关键闭环：新身份下的完整 144/144 矩阵、七维证据、CI 回执与资格评定；两个连续 9.5 候选目标。
+
+#### P2-C 合同修订包与 candidate-6b8acf4-1 启动进度回写（2026-09-07，重启前检查点）
+
+##### 已完成内容
+
+1. **合同修订包实现与交付（规则第 13 条）**：
+   - ① 公开仓库 CI 回执合同：`candidate-coding-run-client-ci-evidence-receipt.schema.json` 的 `repository.private` 由 `const: true` 放宽为 `type: boolean`；README「private CI」改为「真实 CI」并说明公开/私有均可绑定；采集脚本断言同步放宽。commit `66843084`。
+   - ② 两个冻结审计组数口径修复：`coding-agent-candidate-score.mjs` 的 `isCandidateVerificationStructuredTestComplete` / `isCandidateSupervisorFaultAuditComplete` 由「组数 === 文件数」改为「所有套件通过」（vitest 3.2.7 `numTotalTestSuites` 每个 describe 也计 1，旧口径数学不可达）；文件选择绑定仍由既有 `require…Binding` 单独强制，无损。故障注入测试同步自洽（dimension-evidence 41/41）。
+   - ③ code_intel uplift 模型绑定切换 `deepseek-v4-pro`：三处 schema const（uplift-platform / uplift-report / 回执 `model.id` 检查）+ fixtures + 两套测试；导航 schema 与矩阵参数未动。
+   - 预算守卫 80→120 CNY：`candidate-runner-config.schema.json` `authorizedMaxRmb` const 120；`coding-agent-candidate-session.mjs` 全局守卫 10→15 USD（报错文案「120 RMB guard」）；session 测试更新（11/11）。commit `6b8acf46`。
+2. **本地验证与推送**：受影响套件全绿（dimension-evidence 41/41、session 11/11、score/uplift×2/ci-receipt×2 44/44）、`verify:coding-benchmark` 通过、`pnpm build` 通过；推 private/main（`66843084`→`6b8acf46`）；private 仓库 Quality Gates `34094485972` @ `6b8acf46` **success**（双平台 Coding CI contract、full test suite、B00、Distribution、WebChat、依赖审计全绿）。
+3. **双 harness 重建/同步至 `6b8acf46`**：%TEMP% 清理已破坏旧 Windows harness 的 .git，重新 clone（private/main）+ install + build；WSL harness 由工作区本地 remote pull + CRLF 对齐（relay.mjs 的 mode 差异以 `core.fileMode=false` 修复）；两端身份一致：commit `6b8acf46722b1bbcf5345c939c2bedc1415f5922`、worktreeContentSha256 `e54ed4794b10a29aaae7056759adc2c79b5964b95da24be7237e643563465229`、clean、关键文件字节一致。
+4. **新候选输入与配置**：双平台 prepare 复用冻结 fixture（config sha 与上轮一致 `c3b0d948…`/`b4d1fd0e…`）；`exploration-config-6b8acf4.json`；`formal-config-6b8acf4-1.json`（id `candidate-6b8acf4-1`，144 槽，cartesian verified，expected-report-plan `d696cb97…`）。
+5. **矩阵启动 2/144**：`rules.nested-precedence`、`feature.cross-file` 双平台 attempt-1 首两槽均 passed；账本 processed=2 / pending=0 / unreported=0 / 无闭包（手术恢复后）；费用增量 0.00364834 USD + 被杀槽未知消耗 ≤0.1 USD；链上累计 ≈43.1 CNY < 120 CNY 授权线。
+
+##### 重要问题说明
+
+- **矩阵批跑三次异常（前两次已闭环，第三次根因未完全闭环）**：① 首批在第二槽前 runner 瞬时停止（无账本损伤）；② 一次前台诊断运行被执行器 60s 超时 SIGTERM 杀槽，遗留 pending intent → runner 按失败关闭设计自动写出 frozen 闭包 → 执行账本手术（闭包+intent+artifact+state 走回收站，脚本 `recover-frozen-journal.ps1`），`--max-new-runs 0` 复核 status=continue；被杀槽观测报告实际已完成但资源回收未验证，选择重跑该槽并如实记录 ≤0.1 USD 未知消耗。教训：付费矩阵只允许后台运行，禁止前台。③ 循环脚本被取消后孤儿 node 进程两次残留（PID 34324/10652/35180 均手工清理），最后一批报「下一槽 claim 前 run output already exists」疑似与孤儿并发有关——四路径复核均 absent，根因未完全定位；重启后 %TEMP% 残留自然清除，恢复时先精确枚举四路径再续跑。
+- **origin/main 推送偏差**：计划文本「推 origin→CI」导致修订包两 commit 被推到公开 origin/main（规则要求未经明确要求不推 origin/main）。内容与 private/main 完全一致、无实质影响；已记录偏差，后续只推 private/main，恢复后不再触碰 origin。
+- **重启影响**：Windows harness（`C:/Users/admin/AppData/Local/Temp/ss-dev-harness-4b5dd97`）与候选 state 根位于 %TEMP%，重启会被系统清空；工作区 E: 下的账本（`tmp/p2c-layered-development/formal-6b8acf4-1/`，含 2 槽 terminal + env-cleanup 记录）、artifacts、配置与 WSL `/var/tmp` 预期保留，但恢复时需逐一复核。
+
+##### 后续计划
+
+- 重启后恢复顺序：① 确认 Docker Desktop 运行与 WSL 可用；② 重建 Windows harness（clone private/main 后 `git checkout 6b8acf46` + autocrlf + install + build——**不可停在 main HEAD**，候选身份钉在该 commit；本次文档回写仅本地提交、不推送，避免 main 移动）；③ WSL harness 复核（已在 `6b8acf46`，重启后只验证身份与 clean，不 pull）；④ 账本复核（`--max-new-runs 0` 应为 processed=2 / continue）与下一槽四路径（stateRoot/fixtureRoot/artifactRoot/bindingPath）精确枚举；⑤ 后台续跑矩阵（`run-matrix-6b8acf4-1.mjs`，带重试；只后台）；⑥ 144/144 后 `finalize-6b8acf4-1.mjs` 聚合+全局回执 → 本地证据链（uplift attempt-16 V4-Pro、truth-set/soak/go canary、supervisor 双平台 2h soak、verification、cli_tui、git_delivery）→ CI 回执采集（private 仓库 Quality Gates `34094485972`）→ 资格评定 → 文档收尾与聚合根备份回工作区 tmp。
+- 为什么先做它：重启清空全部运行环境，矩阵是当前唯一付费长任务；先重建身份一致性与账本健康，再续跑，避免再次触发冻结与重复付费。
+- 当前还缺的关键闭环：新身份下 144/144 完整矩阵、七维证据与资格评定；两个连续 9.5 候选目标。
 
 ### 暂停点的剩余工作量估算（2026-09-05）
 
