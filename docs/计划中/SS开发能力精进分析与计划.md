@@ -2,7 +2,7 @@
 
 > 当前版本：精简维护版（2026-09-05）
 >
-> 评估日期：2026-08-17；最新进度复核：2026-09-05
+> 评估日期：2026-08-17；最新进度复核：2026-09-08
 >
 > 横向评估基线：5b36691d9aba6d9286cf43e912d91b0170bbef0d
 >
@@ -13,6 +13,66 @@
 > archive-05 是压缩前快照，不承担当前状态真源；当前状态只看本文末尾进度表。
 
 ---
+
+## 本阶段结论速览（2026-09-08）
+
+### 完整报告：144/144 全量统计与结论（2026-09-08）
+
+- **数据口径**：130 槽（正式候选 candidate-84e622d-1，冻结）+ 14 槽（同身份 84e622db 补测，exploration 队列 explore-84e622db-2/-3）＝ 24 任务 × 2 平台 × 3 轮全部执行，无缺漏、无重复；所有运行均为 `product_workflow` 或 passed，**零基础设施失败**；成本链完整（候选 0.51563273 + 补测 0.07468817 USD，链上 ≈57.9 CNY）。
+- **统计**：**132 过 / 12 败**（91.7%）。12 败：real-go.public-api-migration 5（canary）、real-web.ui-regression 5（win a1/a2/a3 + wsl a1/a2）、real-js.bug-fix 1（canary，win a3）、gateway.disconnect-recovery.wsl2-linux.a3 1。补测 14 槽全过（含 real-web.ui-regression.wsl a3——该题并非必败）。
+- **结论**：基础设施全程可靠（0 失败、0 孤儿、资源全回收）；12 败全部是模型输出质量问题，与系统无关。
+
+### 基础设施七维评分（不含模型能力，工程判定，2026-09-08）
+
+#### 旧评分（冷启动余量修复前）——保留存档
+
+| 维度（权重） | 得分 | 依据 |
+|---|---|---|
+| context_retrieval（0.15） | 9.5 | 上下文夹具/并行读隔离 144 槽零故障 |
+| editing_testing（0.2） | 9.5 | 机器验收（测试/补丁/回归）判定一致、无测量误差 |
+| cli_tui（0.15） | 9.5 | 交互式 CLI 6/6 干净执行，基础设施侧零扣分 |
+| safety_recovery（0.15） | 9.5 | 故障注入确定、判词分类诚实（修订⑥ 端到端验证） |
+| session_long_running（0.15） | **9.4** | 唯一扣分：重启冷缓存下网关 bootstrap 58.3s 命中 60s readiness 期限（无重试），曾致批2 冻结 |
+| headless_ecosystem（0.1） | 9.5 | 浏览器/CDP 双平台正常，browser-behavior 6/6 |
+| git_delivery（0.1） | 9.5 | 交付守卫/脏状态/重启对账双平台零故障 |
+
+**旧原始加权 ≈ 9.47**（1.425+1.9+1.425+1.425+1.41+0.95+0.95）。
+
+#### 新评分（冷启动余量修复后，commit `cbce1dad`）——追加
+
+- **修复**：`run-coding-agent-benchmark-windows.mjs` readiness 期限 60s→180s（双平台共享同一期限常量；冷启动最坏实测 58.3s → 3 倍余量）；新增回归钉测试（默认期限 ≥180s）；5 套件 92 测试全绿。
+- **结论：开机冷启动达到 9.5 分以上 ✓**——session_long_running **9.4 → 9.5**（扣分项消除；该维其余证据——重启/取消/恢复/并行长跑 24 槽零故障、清理全回收——本就满分水准）。修复经测试验证；真实重启场景无法原地复现（需再次重启），但期限数学上已不可能再被冷启动击穿。
+
+| 维度（权重） | 旧 | 新 | 说明 |
+|---|---|---|---|
+| context_retrieval（0.15） | 9.5 | 9.5 | 不变 |
+| editing_testing（0.2） | 9.5 | 9.5 | 不变 |
+| cli_tui（0.15） | 9.5 | 9.5 | 不变 |
+| safety_recovery（0.15） | 9.5 | 9.5 | 不变 |
+| session_long_running（0.15） | 9.4 | **9.5** | 冷启动余量已修复（`cbce1dad`） |
+| headless_ecosystem（0.1） | 9.5 | 9.5 | 不变 |
+| git_delivery（0.1） | 9.5 | 9.5 | 不变 |
+| **原始加权** | **≈9.47** | **9.50** | 修复后全维 ≥9.5 |
+
+### 含模型表现七维评分（历史参考，2026-09-08）
+
+- **模型**：`deepseek-v4-pro`（OpenAI 兼容接口；provider 路由 deepseek.com；单次运行预算 $0.1 / 12 轮 / 24k tokens，特定任务 32k-64k caps）。
+- **口径**：按官方评分公式（`coding-agent-candidate-score-evaluator.mjs`）对 144 槽逐组逐标准复算——维度评分是**二进制授分**（全组标准达标授下限分，否则 unscored 无部分分）；非正式资格评分（正式资格已按 130/144 冻结收口），仅供历史参考。
+- **结果**：**6/7 维度授分，`session_long_running` 未授分 → rawWeighted = null（官方口径 not eligible）**。
+
+| 维度（下限） | 结果 | 关键标准明细 |
+|---|---|---|
+| context_retrieval（9.5） | **授分 9.5** | 三组 task_completion_rate 12/12、24/24、6/6 全 1.0 |
+| editing_testing（9.6） | **授分 9.6** | 两组全绿：test_pass 1.0/1.0、patch_acceptance 1.0/1.0、regression 0 |
+| cli_tui（9.4） | **授分 9.4** | interactive_cli 6/6、干预 0 |
+| safety_recovery（9.5） | **授分 9.5** | safety 6/6；disconnect_recovery 组 5/6=0.833 过其 0.8 标准（恢复率 5/6） |
+| session_long_running（9.6） | **未授分** | session_control 组 recovery_success_rate **5/6=0.833 < 0.85**（差 0.0167，即 1 次恢复失败击穿整维）；其余全过（17/18、18/18、干预 0） |
+| headless_ecosystem（9.5） | **授分 9.5** | 6/6 全过、危险操作拦截 1.0 |
+| git_delivery（9.4） | **授分 9.4** | 两组 12/12 全 1.0、恢复对账 6/6 |
+
+- **历史参考价值**：唯一缺口 = 断连恢复 6 次里模型 1 次未完成任务即自行收尾；若未来换更强模型，最优先观察位 = `gateway.disconnect-recovery` 六槽全过（该维即可恢复授分）；real-web.ui-regression（1/6 过）虽不在七维标准内（canary/B 门），也是模型侧明显短板。
+
+
 
 ## 1. 目的与当前结论
 
@@ -1123,63 +1183,7 @@ Windows/WSL2 `verify:command-sandbox-oci` 均明确通过；Docker 两入口 lea
 - **修订⑥ 效果确认（成功）**：历史冻结点 `gateway.disconnect-recovery.wsl2-linux.a2` 本轮 **passed**；a3 失败被正确归类 `product_workflow`（failureCode=None、fault=None → 模型自行终结的产品失败路径），全程 **130 槽零基础设施失败**。11 个产品失败明细：real-go.public-api-migration canary 4（win a1/a2、wsl a1/a2）、real-web.ui-regression 5（win a1/a2/a3、wsl a1/a2）、real-js.bug-fix canary 1（win a3）、disconnect-recovery wsl a3 1。
 - **如实记录（历史论断被证伪）**：P2-C 的「剩余 4 个非 canary B 任务历史 ~60 次零失败」被本轮打破——real-web.ui-regression 5/6 失败；即便跑满 144，B.successRateMinimum 0.92（best 19/24 = 0.792）与 web 语言生态 0.8（best 7/12 = 0.583）同样不可达。候选在维度门最先冻结，但 B 门也已无解。
 - **处理方案（规则第 17 条）**：再遇冻结门 → 不再修订、直接 ④ 接受单一候选收尾。终局交付 = 单一候选 3211834-1（144/144，七维三发现）+ 六候选链冻结账本证据 + 修订⑤⑥ 工程资产（private/main）；无预算内后续掷。
-- **后续演进（2026-09-08 用户授权）**：补完剩余 14 槽（同身份双 exploration 队列 12+2）→ 144/144 全量统计；修复冷启动余量（`cbce1dad`）；落两份评分（基础设施 + 含模型）见下。
-
-#### 完整报告：144/144 全量统计与结论（2026-09-08）
-
-- **数据口径**：130 槽（正式候选 candidate-84e622d-1，冻结）+ 14 槽（同身份 84e622db 补测，exploration 队列 explore-84e622db-2/-3）＝ 24 任务 × 2 平台 × 3 轮全部执行，无缺漏、无重复；所有运行均为 `product_workflow` 或 passed，**零基础设施失败**；成本链完整（候选 0.51563273 + 补测 0.07468817 USD，链上 ≈57.9 CNY）。
-- **统计**：**132 过 / 12 败**（91.7%）。12 败：real-go.public-api-migration 5（canary）、real-web.ui-regression 5（win a1/a2/a3 + wsl a1/a2）、real-js.bug-fix 1（canary，win a3）、gateway.disconnect-recovery.wsl2-linux.a3 1。补测 14 槽全过（含 real-web.ui-regression.wsl a3——该题并非必败）。
-- **结论**：基础设施全程可靠（0 失败、0 孤儿、资源全回收）；12 败全部是模型输出质量问题，与系统无关。
-
-#### 基础设施七维评分（不含模型能力，工程判定，2026-09-08）
-
-##### 旧评分（冷启动余量修复前）——保留存档
-
-| 维度（权重） | 得分 | 依据 |
-|---|---|---|
-| context_retrieval（0.15） | 9.5 | 上下文夹具/并行读隔离 144 槽零故障 |
-| editing_testing（0.2） | 9.5 | 机器验收（测试/补丁/回归）判定一致、无测量误差 |
-| cli_tui（0.15） | 9.5 | 交互式 CLI 6/6 干净执行，基础设施侧零扣分 |
-| safety_recovery（0.15） | 9.5 | 故障注入确定、判词分类诚实（修订⑥ 端到端验证） |
-| session_long_running（0.15） | **9.4** | 唯一扣分：重启冷缓存下网关 bootstrap 58.3s 命中 60s readiness 期限（无重试），曾致批2 冻结 |
-| headless_ecosystem（0.1） | 9.5 | 浏览器/CDP 双平台正常，browser-behavior 6/6 |
-| git_delivery（0.1） | 9.5 | 交付守卫/脏状态/重启对账双平台零故障 |
-
-**旧原始加权 ≈ 9.47**（1.425+1.9+1.425+1.425+1.41+0.95+0.95）。
-
-##### 新评分（冷启动余量修复后，commit `cbce1dad`）——追加
-
-- **修复**：`run-coding-agent-benchmark-windows.mjs` readiness 期限 60s→180s（双平台共享同一期限常量；冷启动最坏实测 58.3s → 3 倍余量）；新增回归钉测试（默认期限 ≥180s）；5 套件 92 测试全绿。
-- **结论：开机冷启动达到 9.5 分以上 ✓**——session_long_running **9.4 → 9.5**（扣分项消除；该维其余证据——重启/取消/恢复/并行长跑 24 槽零故障、清理全回收——本就满分水准）。修复经测试验证；真实重启场景无法原地复现（需再次重启），但期限数学上已不可能再被冷启动击穿。
-
-| 维度（权重） | 旧 | 新 | 说明 |
-|---|---|---|---|
-| context_retrieval（0.15） | 9.5 | 9.5 | 不变 |
-| editing_testing（0.2） | 9.5 | 9.5 | 不变 |
-| cli_tui（0.15） | 9.5 | 9.5 | 不变 |
-| safety_recovery（0.15） | 9.5 | 9.5 | 不变 |
-| session_long_running（0.15） | 9.4 | **9.5** | 冷启动余量已修复（`cbce1dad`） |
-| headless_ecosystem（0.1） | 9.5 | 9.5 | 不变 |
-| git_delivery（0.1） | 9.5 | 9.5 | 不变 |
-| **原始加权** | **≈9.47** | **9.50** | 修复后全维 ≥9.5 |
-
-#### 含模型表现七维评分（历史参考，2026-09-08）
-
-- **模型**：`deepseek-v4-pro`（OpenAI 兼容接口；provider 路由 deepseek.com；单次运行预算 $0.1 / 12 轮 / 24k tokens，特定任务 32k-64k caps）。
-- **口径**：按官方评分公式（`coding-agent-candidate-score-evaluator.mjs`）对 144 槽逐组逐标准复算——维度评分是**二进制授分**（全组标准达标授下限分，否则 unscored 无部分分）；非正式资格评分（正式资格已按 130/144 冻结收口），仅供历史参考。
-- **结果**：**6/7 维度授分，`session_long_running` 未授分 → rawWeighted = null（官方口径 not eligible）**。
-
-| 维度（下限） | 结果 | 关键标准明细 |
-|---|---|---|
-| context_retrieval（9.5） | **授分 9.5** | 三组 task_completion_rate 12/12、24/24、6/6 全 1.0 |
-| editing_testing（9.6） | **授分 9.6** | 两组全绿：test_pass 1.0/1.0、patch_acceptance 1.0/1.0、regression 0 |
-| cli_tui（9.4） | **授分 9.4** | interactive_cli 6/6、干预 0 |
-| safety_recovery（9.5） | **授分 9.5** | safety 6/6；disconnect_recovery 组 5/6=0.833 过其 0.8 标准（恢复率 5/6） |
-| session_long_running（9.6） | **未授分** | session_control 组 recovery_success_rate **5/6=0.833 < 0.85**（差 0.0167，即 1 次恢复失败击穿整维）；其余全过（17/18、18/18、干预 0） |
-| headless_ecosystem（9.5） | **授分 9.5** | 6/6 全过、危险操作拦截 1.0 |
-| git_delivery（9.4） | **授分 9.4** | 两组 12/12 全 1.0、恢复对账 6/6 |
-
-- **历史参考价值**：唯一缺口 = 断连恢复 6 次里模型 1 次未完成任务即自行收尾；若未来换更强模型，最优先观察位 = `gateway.disconnect-recovery` 六槽全过（该维即可恢复授分）；real-web.ui-regression（1/6 过）虽不在七维标准内（canary/B 门），也是模型侧明显短板。
+- **后续演进（2026-09-08 用户授权）**：补完剩余 14 槽（同身份双 exploration 队列 12+2）→ 144/144 全量统计；修复冷启动余量（`cbce1dad`）；落两份评分（基础设施 + 含模型），见文首「本阶段结论速览（2026-09-08）」。
 
 #### 后续计划（2026-09-08）
 
