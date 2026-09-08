@@ -26,7 +26,10 @@ const scriptPath = fileURLToPath(import.meta.url);
 const defaultWorkspaceRoot = path.resolve(path.dirname(scriptPath), "..");
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 28889;
-const DEFAULT_GATEWAY_READY_TIMEOUT_MS = 60_000;
+export const DEFAULT_GATEWAY_READY_TIMEOUT_MS = 180_000;
+// 冷启动余量：重启后冷文件缓存下网关 bootstrap 实测 58.3s（build_guard→module_body），
+// 原 60s 期限余量过小曾致 `gateway_readiness_timeout`；3 分钟期限提供 3 倍余量，
+// readiness 诊断（gateway-readiness.json 相位时间线）仍保留逐事件观测。
 const DEFAULT_GATEWAY_STOP_GRACE_MS = 3_000;
 const REQUIRED_MODEL_PRICING_ENV_KEYS = [
   "BELLDANDY_MODEL_INPUT_USD_PER_1M",

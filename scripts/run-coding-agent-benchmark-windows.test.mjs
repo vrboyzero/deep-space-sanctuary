@@ -7,6 +7,7 @@ import {
   buildWindowsChildEnvironment,
   buildWindowsBenchmarkInvocation,
   classifyGatewayReadinessFailure,
+  DEFAULT_GATEWAY_READY_TIMEOUT_MS,
   loadWindowsProviderEnvironment,
   resolveWindowsBenchmarkSourceEnvironment,
   runWindowsBenchmark,
@@ -16,6 +17,12 @@ import {
 const workspaceRoot = "E:/project/star-sanctuary/.tmp/clean-harness";
 
 describe("coding agent benchmark Windows launcher", () => {
+  it("keeps the Gateway readiness deadline above the observed cold-boot worst case", () => {
+    // 重启后冷文件缓存下实测 bootstrap 58.3s；期限须保留充足余量，防止
+    // `gateway_readiness_timeout` 在冷启动场景误伤（2026-09-08 事故回归钉）。
+    expect(DEFAULT_GATEWAY_READY_TIMEOUT_MS).toBeGreaterThanOrEqual(180_000);
+  });
+
   it("rejects candidate plan drift before Provider loading, port checks, or Gateway spawn", async () => {
     const expectedError = new Error("candidate source identity drifted");
     const validateCandidateExpectedReportLaunch = vi.fn(async () => {
