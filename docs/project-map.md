@@ -181,7 +181,7 @@ star-sanctuary/
 - `scripts/run-tui-performance-benchmark.mjs` / `run-tui-performance-pty.py` / `tui-performance-contract.mjs`: `tui-performance-report/v1` 双平台真实 PTY 性能 Gate；Windows 复用仓内 `node-pty` ConPTY DLL，WSL2 使用 Unix PTY，分别记录 startup/resize/256 字符 input replay/exit 的原始样本、nearest-rank p50/p95/p99、固定抖动率、终端 mode 与零进程/state 残留；`verify-tui-performance-report.mjs` 从原始样本重算派生字段和历史退化结论，不读取或保存 ANSI 正文
 - `benchmarks/tui-performance/v1/baseline.json`: Windows native 与 WSL2 Linux 分平台固定历史 baseline、样本下限和 p99/抖动退化预算；Schema 位于同目录，校准 runner 只输出候选 artifact，绝不自动改写 baseline
 - `docs/Star Sanctuary使用手册.md`: 当前版用户手册，聚焦 Agent / 工具 / Agent Teams 的使用与配置说明
-- `docs/开发使用说明.md`: 开发侧使用说明，覆盖三条入口（WebChat / CLI TUI / 无头与桥接）、CLI 命令总览、TUI 标签与键位、`bdd agent run` 参数与退出码、MCP / NDJSON 集成、配置与环境变量要点及排障
+- `docs/开发使用说明.md`: 开发侧使用说明，覆盖三条入口（WebChat / CLI TUI / 无头与桥接）、CLI 命令总览、TUI 标签与键位、`bdd agent run` 参数与退出码、MCP / NDJSON 集成、WebChat→CLI 迁移对照清单、配置与环境变量要点及排障
 - `docs/指挥模式与动态工作流使用说明.md`: 指挥模式与动态工作流（DW）的使用说明、脚本编写、API 参考
 
 ### Gateway / CLI
