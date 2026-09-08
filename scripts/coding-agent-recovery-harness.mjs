@@ -206,6 +206,29 @@ export async function startGatewayDisconnectProxy(input) {
           projectedSeq = 1;
         }
       } else if (binding && isProjectedGatewayEvent(frame, binding)) {
+        // 修订⑥：确定性故障触发。会话在未完成工作区变更的情况下自行收敛到 chat.final
+        // （模型级失败，例如必变门拒绝的短会话）时，在转发终帧前注入断连，使故障协议
+        // 不再依赖模型变更时机；真正环境性中断（无终帧）仍保持原基础设施错误分类。
+        if (requireCompletedMutation && !fault && frame.event === "chat.final") {
+          fault = {
+            schemaVersion: "coding-agent-fault-injection/v1",
+            taskId: "gateway.disconnect-recovery",
+            fault: "gateway_disconnect",
+            status: "injected",
+            trigger: "model_terminal_without_mutation",
+            disconnectedAfterSeq: projectedSeq,
+            resumedFromSeq: null,
+            disconnectCount: 1,
+            reconnectCount: 0,
+            binding: { ...binding },
+          };
+          resolveFault(fault);
+          setTimeout(() => {
+            if (downstream.readyState === WebSocket.OPEN) downstream.close(1012, "Injected benchmark disconnect");
+            if (upstream.readyState === WebSocket.OPEN) upstream.close(1012, "Injected benchmark disconnect");
+          }, 20);
+          return;
+        }
         projectedSeq += 1;
       }
 

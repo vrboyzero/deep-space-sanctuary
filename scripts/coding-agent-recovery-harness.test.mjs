@@ -190,6 +190,79 @@ describe("coding agent recovery harness", () => {
     expect(fault.mutation.afterSha256).not.toBe(fault.mutation.beforeSha256);
   });
 
+  it("injects a deterministic disconnect when the bound session concludes without a completed mutation (修订⑥)", async () => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "coding-recovery-v2-model-terminal-"));
+    cleanups.push(async () => await fs.rm(workspace, { recursive: true, force: true }));
+    const targetPath = path.join(workspace, "src", "recovery-target.txt");
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await fs.writeFile(targetPath, "recovery-marker=initial\n", "utf-8");
+
+    const upstream = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    await once(upstream, "listening");
+    cleanups.push(async () => await closeWebSocketServer(upstream));
+    upstream.on("connection", (socket) => {
+      socket.send(JSON.stringify({ type: "connect.challenge" }));
+      socket.on("message", (data) => {
+        const frame = JSON.parse(data.toString("utf-8"));
+        if (frame.type === "connect") {
+          socket.send(JSON.stringify({ type: "hello-ok" }));
+          return;
+        }
+        if (frame.type !== "req" || frame.method !== "message.send") return;
+        socket.send(JSON.stringify({
+          type: "res",
+          id: frame.id,
+          ok: true,
+          payload: { conversationId: "conversation-terminal", runId: "run-terminal" },
+        }));
+        for (const gatewayFrame of [
+          {
+            event: "agent.status",
+            payload: { conversationId: "conversation-terminal", runId: "run-terminal", status: "running" },
+          },
+          {
+            event: "chat.final",
+            payload: { conversationId: "conversation-terminal", runId: "run-terminal", message: { role: "assistant", content: "done" } },
+          },
+        ]) {
+          socket.send(JSON.stringify({ type: "event", ...gatewayFrame }));
+        }
+      });
+    });
+
+    const proxy = await startGatewayDisconnectProxy({
+      upstreamHost: "127.0.0.1",
+      upstreamPort: upstream.address().port,
+      targetPath: "src/recovery-target.txt",
+      workspace,
+      requireCompletedMutation: true,
+    });
+    cleanups.push(async () => await proxy.close());
+    const client = new WebSocket(`ws://127.0.0.1:${proxy.port}`, { origin: "http://127.0.0.1" });
+    const receivedEvents = [];
+    client.on("message", (data) => {
+      const frame = JSON.parse(data.toString("utf-8"));
+      if (frame.event) receivedEvents.push(frame.event);
+      if (frame.type === "connect.challenge") client.send(JSON.stringify({ type: "connect", role: "cli" }));
+      if (frame.type === "hello-ok") {
+        client.send(JSON.stringify({ type: "req", id: "run-request-terminal", method: "message.send", params: {} }));
+      }
+    });
+
+    await once(client, "close");
+    const fault = await proxy.waitForFault();
+
+    expect(receivedEvents).toEqual(["agent.status"]);
+    expect(fault).toMatchObject({
+      status: "injected",
+      trigger: "model_terminal_without_mutation",
+      disconnectCount: 1,
+      disconnectedAfterSeq: 2,
+      binding: { conversationId: "conversation-terminal", agentRunId: "run-terminal" },
+    });
+    expect(fault.mutation).toBeUndefined();
+  });
+
   it("uses an explicit Gateway origin for strict upstream Origin policies", async () => {
     const upstream = new WebSocketServer({ host: "127.0.0.1", port: 0 });
     await once(upstream, "listening");

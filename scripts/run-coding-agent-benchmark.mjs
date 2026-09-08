@@ -588,8 +588,11 @@ export async function runStage0BTask(input, dependencies = {}) {
 
   let verdict;
   if (preflight?.status === "failed") {
-    verdict = createInfrastructurePreflightVerdict(preflight);
-  } else try {
+    // 修订⑥：模型自行终结（未完成必变）导致的故障检查失败，归类为产品失败而非基础设施错误。
+    const modelTerminalFault = await resolveModelTerminalFaultFailure({ preflight, artifactDir });
+    if (!modelTerminalFault) verdict = createInfrastructurePreflightVerdict(preflight);
+  }
+  if (!verdict) try {
     const result = isV3Task
       ? await readJson(path.join(artifactDir, "result.json")).catch(() => null)
       : undefined;
@@ -1355,6 +1358,21 @@ function createInfrastructurePreflightVerdict(preflight) {
     },
     diagnostics: [`Benchmark preflight failed: ${summarizeFailedPreflight(preflight)}.`],
   };
+}
+
+async function resolveModelTerminalFaultFailure(input) {
+  const failedChecks = Object.entries(input?.preflight?.checks ?? {})
+    .filter(([, check]) => check?.status === "failed");
+  if (failedChecks.length !== 1 || failedChecks[0][0] !== "fault") return false;
+  const fault = await readJson(path.join(input.artifactDir, "fault-injection.json"));
+  if (fault?.status === "failed" && fault.trigger === "model_terminal_without_mutation") return true;
+  if (fault?.status === "not_injected") {
+    // 仅模型自行终结为失败时降级为产品失败；run.completed 而无故障仍保持基础设施分类，
+    // 避免出现「通过但未执行故障协议」的判词。
+    const manifest = await readJson(path.join(input.artifactDir, "coding-ci-manifest.json"));
+    return manifest?.terminalType === "run.failed";
+  }
+  return false;
 }
 
 async function finalizeRuntimeFaultPreflight(input) {

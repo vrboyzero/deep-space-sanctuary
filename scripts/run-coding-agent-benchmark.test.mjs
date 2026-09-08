@@ -1466,6 +1466,148 @@ describe("coding agent benchmark stage 0B runner", () => {
     });
   });
 
+  windowsIt("classifies a model-terminal recovery fault as a product failure instead of infrastructure (修订⑥)", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-stage0c-recovery-model-terminal-"));
+    tempRoots.push(root);
+    const report = await runStage0BSuite({
+      platform: "windows-native",
+      manifestRevision: "v3",
+      sourceRoot: path.resolve("."),
+      taskIds: ["gateway.disconnect-recovery"],
+      fixtureRoot: path.join(root, "fixtures"),
+      artifactRoot: path.join(root, "artifacts"),
+      stateRoot: path.join(root, "state"),
+      attempt: 1,
+      runIds: { "gateway.disconnect-recovery": "recovery-model-terminal" },
+      model: { provider: "openai", id: "provider-model", credentialsConfigured: true },
+      childEnv: { BELLDANDY_OPENAI_API_KEY: "not-a-real-key" },
+      generatedAt: "2026-09-08T00:00:00.000Z",
+    }, {
+      runtime: { platform: "win32", osRelease: "Windows fixture", env: {} },
+      resolveRepositoryIdentity: async () => repositoryIdentity("f"),
+      createBenchmarkPreflightArtifact: async (input) => createPassedV3RuntimePreflight(input),
+      async executeRecoveryCodingCi(input) {
+        await fs.writeFile(path.join(input.artifactDir, "fault-injection.json"), `${JSON.stringify({
+          schemaVersion: "coding-agent-fault-injection/v1",
+          taskId: "gateway.disconnect-recovery",
+          fault: "gateway_disconnect",
+          status: "failed",
+          trigger: "model_terminal_without_mutation",
+          disconnectedAfterSeq: 1,
+          resumedFromSeq: null,
+          disconnectCount: 1,
+          reconnectCount: 0,
+          binding: { conversationId: "conversation-terminal", agentRunId: "run-terminal" },
+        }, null, 2)}\n`, "utf-8");
+        return { exitCode: 4, stdout: "", stderr: "Recovery harness failed: recovery continuation must end in exactly one completed terminal event." };
+      },
+    });
+
+    expect(report.runs).toHaveLength(1);
+    expect(report.runs[0]).toMatchObject({
+      taskId: "gateway.disconnect-recovery",
+      status: "failed",
+      failureCategory: "product_workflow",
+      evaluation: { taskCompleted: false, recoverySucceeded: false },
+    });
+  });
+
+  windowsIt("classifies a concluded session without any injected fault as a product failure (修订⑥)", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-stage0c-recovery-model-concluded-"));
+    tempRoots.push(root);
+    const report = await runStage0BSuite({
+      platform: "windows-native",
+      manifestRevision: "v3",
+      sourceRoot: path.resolve("."),
+      taskIds: ["gateway.disconnect-recovery"],
+      fixtureRoot: path.join(root, "fixtures"),
+      artifactRoot: path.join(root, "artifacts"),
+      stateRoot: path.join(root, "state"),
+      attempt: 1,
+      runIds: { "gateway.disconnect-recovery": "recovery-model-concluded" },
+      model: { provider: "openai", id: "provider-model", credentialsConfigured: true },
+      childEnv: { BELLDANDY_OPENAI_API_KEY: "not-a-real-key" },
+      generatedAt: "2026-09-08T00:00:00.000Z",
+    }, {
+      runtime: { platform: "win32", osRelease: "Windows fixture", env: {} },
+      resolveRepositoryIdentity: async () => repositoryIdentity("e"),
+      createBenchmarkPreflightArtifact: async (input) => createPassedV3RuntimePreflight(input),
+      async executeRecoveryCodingCi(input) {
+        await fs.writeFile(path.join(input.artifactDir, "fault-injection.json"), `${JSON.stringify({
+          schemaVersion: "coding-agent-fault-injection/v1",
+          taskId: "gateway.disconnect-recovery",
+          fault: "gateway_disconnect",
+          status: "not_injected",
+          disconnectedAfterSeq: null,
+          resumedFromSeq: null,
+          disconnectCount: 0,
+          reconnectCount: 0,
+          binding: null,
+        }, null, 2)}\n`, "utf-8");
+        await fs.writeFile(path.join(input.artifactDir, "manifest.json"), `${JSON.stringify({
+          mode: "recovery-control",
+          cliExitCode: 0,
+          terminalType: "run.failed",
+          changedPaths: [],
+          checks: { eventContract: true, artifactPolicy: true },
+        }, null, 2)}\n`, "utf-8");
+        return { exitCode: 4, stdout: "", stderr: "Recovery fault was not injected before the Headless run ended." };
+      },
+    });
+
+    expect(report.runs).toHaveLength(1);
+    expect(report.runs[0]).toMatchObject({
+      taskId: "gateway.disconnect-recovery",
+      status: "failed",
+      failureCategory: "product_workflow",
+      evaluation: { taskCompleted: false, recoverySucceeded: false },
+    });
+  });
+
+  windowsIt("keeps a plain recovery harness failure classified as infrastructure (修订⑥ guard)", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-stage0c-recovery-harness-failed-"));
+    tempRoots.push(root);
+    const report = await runStage0BSuite({
+      platform: "windows-native",
+      manifestRevision: "v3",
+      sourceRoot: path.resolve("."),
+      taskIds: ["gateway.disconnect-recovery"],
+      fixtureRoot: path.join(root, "fixtures"),
+      artifactRoot: path.join(root, "artifacts"),
+      stateRoot: path.join(root, "state"),
+      attempt: 1,
+      runIds: { "gateway.disconnect-recovery": "recovery-harness-failed" },
+      model: { provider: "openai", id: "provider-model", credentialsConfigured: true },
+      childEnv: { BELLDANDY_OPENAI_API_KEY: "not-a-real-key" },
+      generatedAt: "2026-09-08T00:00:00.000Z",
+    }, {
+      runtime: { platform: "win32", osRelease: "Windows fixture", env: {} },
+      resolveRepositoryIdentity: async () => repositoryIdentity("a"),
+      createBenchmarkPreflightArtifact: async (input) => createPassedV3RuntimePreflight(input),
+      async executeRecoveryCodingCi(input) {
+        await fs.writeFile(path.join(input.artifactDir, "fault-injection.json"), `${JSON.stringify({
+          schemaVersion: "coding-agent-fault-injection/v1",
+          taskId: "gateway.disconnect-recovery",
+          fault: "gateway_disconnect",
+          status: "failed",
+          disconnectedAfterSeq: null,
+          resumedFromSeq: null,
+          disconnectCount: 0,
+          reconnectCount: 0,
+          binding: null,
+        }, null, 2)}\n`, "utf-8");
+        return { exitCode: 4, stdout: "", stderr: "Recovery harness failed: gateway fault proxy upstream failed." };
+      },
+    });
+
+    expect(report.runs).toHaveLength(1);
+    expect(report.runs[0]).toMatchObject({
+      taskId: "gateway.disconnect-recovery",
+      status: "infrastructure_error",
+      failureCategory: "infrastructure",
+    });
+  });
+
   windowsIt("runs one explicitly selected stage 0C client cancellation task with exact cancel injection enabled", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-stage0c-cancel-"));
     tempRoots.push(root);
