@@ -909,7 +909,11 @@ D1 的 KEEP 集合精确为：`0e35c8b` staging/inputs/repaired cache、`4d3b4b2
 
 D1 冻结的 51 个路径按 manifest 逐条复核：**`35` 已移出 + `16` 仍存在**，与第 8.6 节记录一致；16 个残留当前仍在 `/var/tmp`（主要是 `*-inputs`、`*-inputs-rejected-*`、`candidate-df54f67`、`candidate-e05ddc4`、`candidate-f01f173`）。
 
+> **2026-09-09 20:30 复核修正（口径已变，务必以本段为准）**：本节及 9.4 表的 WSL 数字是当日 10:00 的只读盘点结果，之后 WSL 侧已完成一次删除（`/var/tmp` 的 144 个顶层目标 + 19 个 root 重试项，执行脚本 `execute-wsl-20260909.sh` / `execute-wsl-root-20260909.sh` 已在 P5 被回收）。**实测 `/var/tmp` 现仅 `1 MiB`（只剩 systemd 相关空目录），16 个 D1 残留已随之清空**；ext4 `df` 当时为 used `29 GB` / avail `927 GB`，`ext4.vhdx` 为 `53,514,076,160 bytes`（`49.84 GiB`）。**当日 21:17–21:18 已完成第二次停机压缩**：VHDX `53,514,076,160 → 14,571,012,096 bytes`（`49.84 → 13.57 GiB`，8 次采样稳定），D 盘可用 `25.10 → 61.37 GiB`；`/home/vrboyzero` 已从 `24,870 MiB` 降至 `5,143 MiB`，详见第 11 节。
+
 ### 9.4 可清理清单
+
+> **2026-09-09 20:30 状态修正**：下表是 09-09 10:00 的盘点口径。截至当日 `19:58`，A 表所列 E 盘项（`tmp`、`.tmp`、`.tmp-codex`、`artifacts` 可再生成部分、`E:\SS-cleanup-quarantine`、`E:\WSL-backups`）**已全部完成清理**（结果见第 10 节）；WSL `/var/tmp` 亦已清空（见 9.3 的修正段）。B 表"两个大件"已分别落地：`E:\WSL-backups` 已永久删除、`C:\Users\admin\.codex` 按用户决定保留。C 盘各项、WSL `/home/vrboyzero` 与 VHDX 压缩仍未处理，见第 11 节。
 
 #### A. 建议直接清理（可再生成，收益最大）
 
@@ -992,9 +996,132 @@ D1 冻结的 51 个路径按 manifest 逐条复核：**`35` 已移出 + `16` 仍
 - 所有采样均为只读命令（`Get-PSDrive`、`robocopy /L`、`du`、`git worktree list`、`df`）；未执行删除、移动、压缩、prune 或 cache 清理。
 - `tmp/.tmp` 未做全量扫描（E 盘为 HDD，全量遍历成本过高），其当前大小为基线反推的**估算值**，已在该节显式标注。
 
+## 10. 2026-09-09 全量清理执行结论：junction 安全删除器与分阶段批次（2026-09-09）
+
+### 10.1 执行方式（为什么这样做）
+
+事故（「重要问题说明」第 41 条）证明"跟随式递归删除"会越过目标边界，因此本轮清理器以"**永不跟随 reparse point**"为核心约束重做：
+
+- `remove-tree-safe6.ps1`：C# `EnumerateFileSystemInfos()` 单次遍历（约 30 万项/秒，attributes 已预填充），按属性区分普通文件 / 目录 / reparse point：
+  - reparse point **只作为链接删除**（`File.Delete`，失败回退 `Directory.Delete(link, false)`），**从不解析、从不跟随**目标；
+  - 普通文件仅在属性含 `ReadOnly` 时才改属性，其余直接 `File.Delete`（省掉每个文件一次元数据写）；
+  - 目录按路径长度倒序删除（深→浅），最后删目标根；
+  - 目标根命中保护路径或本身是 reparse point → 直接 `REFUSED`，不做任何删除；
+  - `-Parallel N` 只并行普通文件，链接与目录始终串行，保持"链接当链接删"的语义与顺序。
+- 受控演练 `drill-safe-delete-v6.ps1`：7 个用例全部通过——指向仓库根的 junction、指向外部 canary 的 junction、内部 junction、普通目录、保护路径（`REFUSED`）、并行模式 + 2400 文件 + 两个危险链接、并行模式 + 保护路径（`REFUSED`）；两次危险用例后仓库 `package.json`/`.git/HEAD` 与 canary 均完好。
+- 目标分流：**目录型 → 永久删除**（可再生成缓存）；**文件型（单个文件）→ Windows 回收站**（`remove-files-recycle.ps1`），符合既定"小项走回收站"口径。
+- `execute-cleanup-v5.ps1` 每删一个目标即校验仓库哨兵（`package.json`、`.git/HEAD`、`pnpm-workspace.yaml`、`AGENTS.md`），任一丢失立即中止；`run-cleanup-all.ps1` 按 P1→P5 串行，其中 P4 先跑一次只读 dry-run 再执行。
+
+### 10.2 分阶段结果
+
+| 阶段 | 内容 | 目标数 | 结果 | files | dirs | links | 逻辑字节 | 耗时 |
+| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| P0 | 最小 SAFE 目标验证批（删除器行为验证） | 20 选中 / 5 实删 | 行为符合预期，其余并入 P1 | — | — | — | — | 约 10 min |
+| P1 | SAFE（含 649 个文件型→回收站） | 1226 + 649 | 0 失败 | 6,406,462 | 906,113 | 109,486 | 143.16 GiB | 238 min |
+| P2 | OPAQUE_ONLY（含 WSL Linux symlink 的 fixture 树） | 72 | 0 失败 | 3,666,344 | 630,696 | 11,737 | 49.30 GiB | 71 min |
+| P3 | CROSS_TARGET（指向兄弟候选的 junction） | 7 | 0 失败 | 68,265 | 2,353 | 57 | 0.59 GiB | 24 s |
+| P4 | SUSPICIOUS 5 + DANGEROUS 1（含 14.9 GB 隔离区） | 6 | 0 失败 | 1,133,861 | 169,569 | 19,771 | 17.85 GiB | 28 min |
+| P5 | evidenceTrim（保留 ledger/binding/report JSON） | 168 + 318 | 0 失败 | 350,196 | 54,194 | 272 | 3.91 GiB | 4 min |
+| P6 | `git worktree prune` + 容量复测 | — | 0 条可清理登记 | — | — | — | — | — |
+
+P1–P5 合计：目录目标 `1479` 个 + 文件目标 `967` 个（回收站），删除 `files=11,625,128`、`dirs=1,762,925`、`links=141,323`（共 `13,529,376` 项），逻辑字节 `230,650,920,416 B`（`214.81 GiB`）；`FAIL=0`、`REFUSED=0`、`GONE=0`。
+
+### 10.3 容量收益（实测）
+
+| 盘符 | 清理前（第 9 节基线，已用/可用 GiB） | 清理后（已用/可用 GiB） | 变化 |
+| --- | --- | --- | --- |
+| E | 532.13 / 467.87 | 302 / 699 | 已用 `−230`，可用 `+231` |
+| C | 388.96 / 169.64 | 385 / 174 | 本轮未删除，属系统波动 |
+| D | 295.61 / 25.1 | 296 / 26 | 本轮未删除 |
+| H | 1.62 / 50.38 | 2 / 51 | 本轮未删除 |
+
+逻辑删除 `214.81 GiB` 与 E 盘实测可用 `+231 GiB` 的差额来自 hardlink 去重口径、回收站占用以及本轮之前小批次（P0/试跑/A-B）的删除；两者都不作为单一承诺值，只保留"逻辑量"和"盘符实测"两个口径。
+
+### 10.4 保留清单现状
+
+- `artifacts/`：清理完成时 `657 MiB`；**加入 WSL 归档后为 `1,208 MiB`**（`cleanup/` `1,041 MiB`，其中 `7Hb56J` 归档 `1,009 MiB` 见 11.6；`p2c-layered-candidates/` `94 MiB`；`p2c-layered-exploration/` `11 MiB`；18 个 `p2c-<identity>/` 目录 `55 MiB`）
+- `tmp/`：12 项（7 项用户资料、3 个 cleanup 扫描结果、`coding-agent-cost-authority/`、`p2c-layered-development/` `25 MiB`）
+- `.tmp/`、`.tmp-codex/`：已清空
+- 仓库：哨兵文件全部在位，HEAD `655f49e0`（= `private/main`）；执行结束时 `git status` 干净（本次回写后仅本文件有改动）
+
+### 10.5 验证结果
+
+- 安全演练：`drill-safe-delete-v6.ps1` `7/7` 通过，含"指向仓库根的 junction 只删链接、仓库完好"。
+- 执行全程：`FAIL=0`、`REFUSED=0`、`GONE=0`；每个目标删除后哨兵校验全部通过。
+- KEEP 路径链接健康度：`tmp/p2c-layered-development`、`tmp/coding-agent-cost-authority`、`artifacts/cleanup`、`artifacts/p2c-layered-candidates`、`artifacts/p2c-layered-exploration` 共 `273` 个链接、`0` 个指向已删除内容（唯一"无法解析"项本身在 P5 待删清单内，已随 P5 删除）。
+- 收尾：`git worktree prune --expire=now` 报告 `0` 条可清理登记；`git worktree list` 仅剩主工作树。
+- 本轮无源码改动，未重跑项目测试；仓库完整性以哨兵文件 + `git status` 干净 + HEAD 未变作为证据。
+
+## 11. 2026-09-09 WSL `/home/vrboyzero` 清理账目与四档分层（2026-09-09）
+
+### 11.1 为什么单列一节
+
+第 4.4 节的候选清单是 2026-08-13 的盘点；`/var/tmp` 与 E 盘候选已在 09-09 清理完毕，而 `/home/vrboyzero` 从未进入任何清理批次。本次复核发现三个必须记录的事实：① 约 `5.0 GiB` 的 WSL staging 从未入账；② r11 的 worktree 删除前置条件已因事故恢复而失效；③ `7Hb56J` 仍被计划文档直接引用。本节是 `/home/vrboyzero` 的唯一清理账目来源。
+
+### 11.2 实测账目（2026-09-09 20:30，合计 `24,870 MiB`）
+
+| 项 | 大小 | 文档原状态 | 复核结论 |
+| --- | ---: | --- | --- |
+| `projects/star-sanctuary` | `3,947 MiB` | B0 `review` | 旧 WSL clone，`HEAD=0564c14`、`dirty=1`、ahead `40`；用户 09-09 决定不再导出/推送，直接删除 |
+| `ss-p0a-matrix-7Hb56J` | `3,272 MiB` | C0 `hold` | 内含 7 个 Git 仓库，其中 4 个 dirty（`2310/2310/1188/48/14`）；被 `docs/计划中/SS达到9分以上竞品机制研究.md`（第 2338、2362 行）引用为 P0A formal 的 source 路径 |
+| `ss-p0a-matrix-r13-20260803` | `2,308 MiB` | C0 `hold/review` | 3 个仓库均 dirty（`36/44/38`）；文档标注"当前计划使用"，本次**不动** |
+| `ss-p0a-matrix-r11-20260803` | `1,336 MiB` | C0 `hold` | 1 个真实仓库（dirty `13`）+ 3 个 worktree；**主仓 `.git/worktrees/` 已不存在**，三者 `git status` 直接 fatal（断链） |
+| `ss-p0a-matrix-r12-20260803` | `1,156 MiB` | C0 `hold/review` | 3 个仓库均 dirty（`36/44/36`），diff 可导出 |
+| `star-sanctuary-p1-a1-r12-runtime` / `r11-runtime` | `946` / `946 MiB` | C0 `hold` | 无 `.git`，纯 runtime 副本；用户 09-09 确认不再复算 |
+| `.local`（含 `.local/share/pnpm`） | `741 MiB` | B0 `review` | 共享缓存，只能 `pnpm store prune`；本次**不动** |
+| `ss-p0a-matrix-r5/r6/r7/r8/r9/r10` | `2,459 MiB` | C0 `review` | 6 个 harness 仓库 dirty `12–13`；WSL-only formal fixture/state/gateway 日志未归档 |
+| `star-sanctuary-p1-a1-gateway-r1` | `636 MiB` | C0 `hold` | 无 `.git`；用户 09-09 确认不再需要 native Gateway 复算 |
+| `.dsh` / `.npm` / `.opencode` / `.cache` | `706 / 601 / 171 / 162 MiB` | 未记录 | 工具与用户数据，本次**不动** |
+| `ss-p0-web-*-clean`（6 个） | `1,988 MiB` | **未入账** | 每个内含 1 个仓库、`dirty=0`，`HEAD` 为 `947dd54e/c17d8061/...`，**均可在主仓对象库查到**；对应 E 盘同名 identity 已在 P1 删除 |
+| `ss-p0-required-mutation-canary-*-clean`（8 个） | `2,729 MiB` | **未入账** | 同上，`dirty=0`，`HEAD=00d2559/61735d4/...` 均在主仓对象库 |
+| `star-sanctuary-p0-web-1bdb48e-linux-snapshots-r1` | `371 MiB` | **未入账** | 4 个仓库、全部 clean |
+| `star-sanctuary-p1-a1-r10-linux-snapshots-r4` | `250 MiB` | C0 `hold` | 4 个 upstream source 仓库 clean（`a3714473/6bb82725/adbc881/b6c6282`）+ preparation JSON（SHA-256 `1259a83e…`） |
+| `star-sanctuary-p1-a1-r10-linux-snapshots` / `-r2` / `-r3` | 各 `26 MiB` | C0 `hold/review` | preparation SHA-256 `0ff2eb99…`/`0e582c8e…`/`b01af4b8…`，含 offline 失败日志 |
+| `p1-a1-code-intel-…-cohort-state-r2`（`49 MiB`）、`star-sanctuary-p0-native-cad8fe2-inputs`（`26 MiB`）、`p1-a1-code-intel-wsl-native-gateway-20260810-r3-state`（`1 MiB`） | `76 MiB` | **未入账** | 内含仓库均 clean |
+| `.star_sanctuary`（`2 MiB`）、`pnpm-lock.yaml`、`package.json`、`.dsh-doctor`（`5 MiB`） | `约 10 MiB` | 未记录 | 运行时/工具残留，**不动** |
+
+### 11.3 四档分层（用户 2026-09-09 授权口径）
+
+| 档 | 内容 | 逻辑大小 | 前置条件 | 授权状态 |
+| --- | --- | ---: | --- | --- |
+| 档 1 | r5–r10 六份 `harness-dab21fc-r*/node_modules`；6 个 `ss-p0-web-*-clean`；8 个 `ss-p0-required-mutation-canary-*-clean`；`p0-native-cad8fe2-inputs`；`p1-a1-…-cohort-state-r2` | 约 `8.4 GiB` | 均为可再生成依赖或 clean 检出，`HEAD` 可在主仓/上游复得 | **已授权，先执行** |
+| 档 2 | r5–r12 整目录 + `r10-linux-snapshots-r4` | 约 `5.1 GiB` | 先导出各仓库 dirty diff、归档 r4 preparation JSON 与 receipt | **已授权，导出后执行** |
+| 档 3 | `ss-p0a-matrix-7Hb56J` | `3.2 GiB` | 先修改 `SS达到9分以上竞品机制研究.md` 的 source 路径引用并归档 evidence | **已授权，改文档后执行** |
+| 档 4 | `p1-a1-r11-runtime`、`r12-runtime`、`gateway-r1`、`projects/star-sanctuary` | 约 `6.5 GiB` | 用户已确认不再复算 native runtime、旧 clone 不再导出/推送 | **已授权（其余三项不动）** |
+| 不动 | `ss-p0a-matrix-r13`、`.local/share/pnpm`、`.dsh`、`.npm`、`.opencode`、`.cache`、`.star_sanctuary` | — | 当前计划使用或属工具/用户数据 | 不处理 |
+
+### 11.4 三个硬前提
+
+1. **WSL 删除不会返还 D 盘**：必须 `fstrim -v /` + 两个发行版均 `Stopped` + `Optimize-VHD -Mode Full`，且压缩后按多点采样确认稳定值；当前 ext4 已用 `29 GB`、VHDX `49.84 GiB`，内部约 `20 GiB` 空闲尚未返还。
+2. **r11 三个 worktree 已断链**：主仓 `.git/worktrees/` 不存在，文档第 166 行"用 Git 支持的 worktree 流程处理元数据"已不适用；未提交内容改用主仓对象库重建 diff（`fd70990`、`dab21fcf`、`3bf9eb8` 等 commit 均在对象库中）。
+3. **`7Hb56J` 仍被计划文档引用**：删除前必须同步修改 `docs/计划中/SS达到9分以上竞品机制研究.md` 第 2338、2362 行，否则 formal 复算记录会指向不存在的路径。
+
+### 11.5 执行与验证口径
+
+- 每档使用**精确路径 manifest**，禁止对 `/home/vrboyzero/*` 或 `ss-p0a-matrix-*` 使用无界 glob（第 4.5 节要求）；
+- 每个目标先判断是否符号链接（`[ -L ]` → 只删链接），再 `rm -rf`；逐目标记录 `OK/FAIL/GONE` 到 receipt；
+- 删除后复核：主仓 `git status` 干净、E 盘仓库哨兵在位、`/home/vrboyzero` 剩余集合与预期一致；
+- 全部完成后执行一次 `fstrim` + 停机压缩，并以 D 盘可用空间逐字节变化作为唯一收益口径。
+
+### 11.6 执行结果（2026-09-09 20:31–21:18）
+
+| 档 | 目标数 | 结果 | 逻辑删除 | 回执 |
+| --- | ---: | --- | ---: | --- |
+| 档 1 | 22 | 全部 `OK` | `13,669 MiB` | `wsl-20260909/tier1-exec.log` |
+| 档 2 | 9 | 全部 `OK`（r5–r12 + r4 snapshot） | `4,048 MiB` | `wsl-20260909/tier2-exec.log` |
+| 档 3 | 1 | `OK`（`7Hb56J`） | `3,656 MiB` | `wsl-20260909/tier3-exec.log` |
+| 档 4 | 4 | 全部 `OK`（r11/r12 runtime、gateway-r1、`projects/star-sanctuary`） | `6,787 MiB` | `wsl-20260909/tier4-exec.log` |
+| 合计 | 36 | `FAIL=0`、`REFUSED=0`、`GONE=0` | `28,160 MiB`（约 `27.50 GiB`） | — |
+
+- **删除前导出/归档**：r5–r12 共 13 个仓库的 `diff.patch` / `status.txt` / `untracked.txt`（其中 10 个通过反向应用校验、1 个 clean、2 个断链 worktree 用主仓对象库按 `fd70990` 重建）；`7Hb56J` 的 7 个仓库同样导出，并整体打包 `archive/ss-p0a-matrix-7Hb56J.tar.gz`（`1,009 MiB`、`200,882` 条目、SHA-256 `0a99532f1def3638b5460d2c03e65fbee73f899ae34977453a4c665559bcee54`）；r4 的 preparation/receipt 归档 36 个文件。以上全部位于 `artifacts/cleanup/wsl-20260909/`。
+- **文档同步**：`docs/计划中/SS达到9分以上竞品机制研究.md` 第 2338、2362 行的 `7Hb56J` 引用已加"已于 2026-09-09 清理"标注并指向归档位置。
+- **容量实测**：`/home/vrboyzero` `24,870 → 5,143 MiB`（`-19.26 GiB`）；ext4 used `46 GB → 9.5 GB`；`ext4.vhdx` `53,514,076,160 → 14,571,012,096 bytes`（`49.84 → 13.57 GiB`，压缩耗时 `31s`，8 次采样稳定）；**D 盘可用 `25.10 → 61.37 GiB`（`+36.27 GiB`）**，重启 WSL 后为 `61.32 GiB`。
+- **剩余保留项**（`5,143 MiB`）：`ss-p0a-matrix-r13-20260803` `2,308 MiB`（当前计划使用）、`.local` `741`、`.dsh` `706`、`.npm` `601`、`star-sanctuary-p0-web-1bdb48e-linux-snapshots-r1` `371`、`.opencode` `171`、`.cache` `162`、r1–r3 snapshot 各 `26`、其余 `约 10 MiB`。
+- **未纳入本批**：`ss-p0a-matrix-r13`、`.local/share/pnpm`、`.dsh`/`.npm`/`.opencode`/`.cache`、`p1-a1-r10-linux-snapshots`(r1/r2/r3)、`star-sanctuary-p0-web-1bdb48e-linux-snapshots-r1`、以及 `p1-a1-code-intel-*-state-r1/r2/r3` 等小项（用户 09-09 明确"后三项先不动"）。
+
 ## 重要问题说明
 
-1. **C 盘远程桌面 trace 曾持续增长，主体当前已停但仍有活动句柄风险**：盘点期间从 `6.760 GiB / 549 files` 增至 `6.907 GiB / 553 files`；执行前复核又增至 `7,451,189,248 bytes / 556 files`（约 `6.940 GiB`）。最近 10 秒总字节稳定，但最新写入时间每隔约 10 秒变化，一个 `msrdc.exe` 仍在运行；因此原计数 Gate 已漂移，C2 整批继续 blocked。处理方案是只有在用户单独确认可停止该进程后，才停止精确 PID、重新冻结文件数/字节并观察不再变化，再把整个旧 trace 目录送入 C 盘回收站；任一检查失败即保留原目录，禁止边用边处理。
+1. **C 盘远程桌面 trace 曾持续增长，主体当前已停但仍有活动句柄风险**：盘点期间从 `6.760 GiB / 549 files` 增至 `6.907 GiB / 553 files`；执行前复核又增至 `7,451,189,248 bytes / 556 files`（约 `6.940 GiB`）。最近 10 秒总字节稳定，但最新写入时间每隔约 10 秒变化，一个 `msrdc.exe` 仍在运行；因此原计数 Gate 已漂移，C2 整批继续 blocked。处理方案是只有在用户单独确认可停止该进程后，才停止精确 PID、重新冻结文件数/字节并观察不再变化，再把整个旧 trace 目录送入 C 盘回收站；任一检查失败即保留原目录，禁止边用边处理。**2026-09-09 20:30 复核修正**：`RdClientAutoTrace` 实测已只剩 `8,192 bytes / 4 files`（约 `8 KB`），即旧 trace 主体已不在原位（**非本项目清理动作，原因未确认**）；但 `msrdc.exe` 仍有 `1` 个进程在运行，因此 C2 的"停机授权"结论仍成立，只是当前可回收量已接近 `0`。
 2. **D 盘增长主要是真实 WSL 文件，不是单纯 VHDX 空洞**：VHDX 与 Ubuntu 实际已用量相对 2026-08-16 都增长约 `24 GiB`。处理方案是先处理已核验的历史 staging，再执行 Linux 内 `fstrim` 和 WSL 完全停机后的 VHDX 压缩；只删除 Linux 文件不会立即等量返还 D 盘。
 3. **目录逻辑大小存在 hardlink 重复计算**：P2C staging/harness 之间可能共享文件块，多个目录数字相加只能表示审计上限。D1 的 51 个目录在同一次 `du` 中按 inode 去重为 `11,176,893,878 bytes`，启用 `--count-links` 后为 `15,437,204,055 bytes`，重复视图达 `4,260,310,177 bytes`；这也说明此前约 `11.773 GiB` 的分目录近似值不能当作实际释放承诺。处理方案是以去重值作为移动内容基线，清理后分别用 ext4 已用量、VHDX 大小和三盘可用空间验证真实收益。
 4. **Git worktree 不能当普通文件夹处理**：当前登记 `117` 个 worktree，分组为 P0 Web `42`、P0 Native `25`、P0 Required `25`、P0A `10`、P2C `6`、其他 `9`；旧 P2C 候选中仍有 6 份登记项。处理方案是先核对 clean/dirty、HEAD、artifact 替代和当前引用，再使用 Git 支持的 remove/prune 流程；禁止直接递归删除。
@@ -1005,7 +1132,7 @@ D1 冻结的 51 个路径按 manifest 逐条复核：**`35` 已移出 + `16` 仍
 9. **WSL 候选首次导出命令的分隔符被错误解释**：`find -printf '%f|%y\n'` 中的 `|` 跨 PowerShell/WSL 边界后被 `/bin/bash` 当成管道，命令报 `%yn: command not found`，得到的 `0` 项结果无效。该探针只读且 Ubuntu 随后恢复 Stopped；处理方案是移除 `-printf` 与特殊分隔符，改用直接 argv 的 `find ... -type d -print`。重跑后得到稳定 `59=8 KEEP+51 CANDIDATE`，不再复用失败结果。
 10. **启动 Ubuntu 只读核对时出现 systemd user session 警告**：WSL 输出 `Failed to start the systemd user session for 'vrboyzero'`，但直接 `find` 命令 exit code=`0`、59 个目录完整返回，且检查后发行版已再次终止。处理方案是清理批次只依赖直接文件系统命令和各自 exit code，不依赖 user systemd service；若正式移动命令出现非零退出、数量不足或发行版状态异常，立即停止并保留现场。
 11. **两个执行前探针因只检查第一层而出现欠计数**：首次检查 `E:\WSL-backups` 时只统计根目录直属文件，因两个大文件位于 `Ubuntu-22.04\20260816-r1` 而误报 `0`；首次检查 `.tmp-codex` 时也只识别到顶层 `wsl-wave0`，漏掉嵌套的 `external-reviews\codebase-memory-mcp-7d6cdb2`。两次均为只读探针，没有移动或删除。处理方案是执行 Gate 改用递归枚举：E1 已复核为 `2` 个文件、`48,808,878,080 bytes`，与 manifest 完全一致；E4 已复核为 `2` 个 Git 仓库且均为 clean，后续 receipt 必须记录递归结果。
-12. **E 盘回收站配额不足以一次容纳全部 E 批次，E1 当前也不能安全进入**：E 盘卷配置 `MaxCapacity=53,247 MiB`（约 `52 GiB`），执行前已占 `7,863,192,556 bytes`（约 `7.32 GiB`）；E1 单项为 `48,808,878,080 bytes`（`45.457 GiB`），两者合计已经超过配额，而 E1-E4 合计约 `72.672 GiB`。若强行继续，Windows 可能拒绝操作或淘汰较早的回收站内容，破坏“可恢复”前提。处理方案是禁止修改配额、禁止自动清空回收站，先执行仍能落入剩余额度的 E2-E4；E1 保持原位，待用户检查并人工清空 E 盘回收站后重新核对配额与路径，再作为独立批次执行。
+12. **E 盘回收站配额不足以一次容纳全部 E 批次，E1 当前也不能安全进入**：E 盘卷配置 `MaxCapacity=53,247 MiB`（约 `52 GiB`），执行前已占 `7,863,192,556 bytes`（约 `7.32 GiB`）；E1 单项为 `48,808,878,080 bytes`（`45.457 GiB`），两者合计已经超过配额，而 E1-E4 合计约 `72.672 GiB`。若强行继续，Windows 可能拒绝操作或淘汰较早的回收站内容，破坏“可恢复”前提。处理方案是禁止修改配额、禁止自动清空回收站，先执行仍能落入剩余额度的 E2-E4；E1 保持原位，待用户检查并人工清空 E 盘回收站后重新核对配额与路径，再作为独立批次执行。**2026-09-09 20:30 复核修正**：E1 已随本轮 P1 永久删除（`E:\WSL-backups` 现为空目录，`45.46 GiB` 已释放）；E 盘回收站物理占用实测 `1.33 GiB`（`68,065` 文件 / `10,032` 目录，含旧 E2 条目与本轮 967 个小文件），配额压力已不存在，但**清空仍需用户确认**。
 13. **E2 根目录 reparse Gate 被错误扩大到内部依赖链接，随后两种空 target 统计口径又产生欠计数**：E2 首次递归统计得到 `17,618` 个内部 reparse 后按“必须为 0”中止，原因是此前 `0 reparse` 合同只描述 39 个顶层目标，不代表 pnpm/fixture 内不能存在链接；该次中止发生在任何移动之前。分层复核确认其中 `16,877` 个为各候选内部 Junction，另外 `741` 个为 Windows 无法直接解析 target 的 WSL Linux symlink，细分为 `651` 个文件链接和 `90` 个目录链接。旧探针只把空 target 的目录计为 opaque，却把 651 个文件的空 target 字符串误解析为其父目录，因此曾欠计为 `90`；受控 dry-run 将空白 target 统一处理后按旧合同停止。`741/741` 个条目均已逐个通过 `fsutil` 确认为标签 `0xA000001D`，没有其他未知标签；所有可解析链接也均未指向主仓共享目录、当前 `0e35c8b` 或冻结 `4d3b4b2`。期间首次标签汇总还因 `Where-Object Exit-eq 0` 缺少参数空格而在查询完成后报错，已改用显式脚本块。处理方案是把合同修正为“39 个根路径不得为 reparse；内部 `16,877` 个 Junction 必须留在各自候选内；`741` 个空 target 必须全部匹配 Linux symlink 标签”，回收时只移动顶层目录本身，不跟随内部链接。
 14. **E2 在第 27 个普通目标 `tmp\p2c-df54f67` 处失败，自动回滚分支又遮蔽了原始异常**：同一个已通过 dry-run 的脚本成功将 6 个登记 worktree 移到唯一暂存名，并将前 26 个普通目标送入 E 盘回收站；处理含 `741` 个 Linux symlink 的 `df54f67` 时进入异常分支。异常分支错误使用 PowerShell 不支持的 `Select-Object -Reverse`，因此在任何回滚执行前再次报错，并遮蔽了 `DeleteDirectory` 的原始异常。现场核对显示 26 个普通目标已回收，7 个普通原路径仍存在；6 个 worktree 全部只停留在暂存路径，均为 clean、HEAD 与 Git 登记一致，尚未回收；KEEP、13 份 artifact 和 `tmp-codeintel-summary.json` 全部存在。首次尝试同时修复脚本并更新两个文档时又因补丁遗漏文件切换标记而整笔校验失败；首次独立回滚命令也因数字开头的 hashtable key 未加引号而在解析阶段失败；两者都没有执行文件或 worktree 操作。处理方案已将回滚循环改为显式倒序索引，并改用带引号的对象清单；独立脚本经语法检查和 dry-run 后，已用 `git worktree move` 将 6/6 worktree 恢复到原路径，6/6 clean、HEAD 未变、暂存登记归零。对失败目标的完整复算得到文件 `379,658/379,658`、子目录 `69,797/69,797`、字节 `5,330,726,526/5,330,726,526`、链接 `837/837`，合同完全一致，回收站同名条目为 `0`；最长路径为 `348` 字符。当前最可能的原因是旧式 Windows Shell 回收接口无法可靠处理超长路径与 `741` 个 WSL Linux symlink 的组合，但因原始异常已被遮蔽而不能进一步断言。该目标决策为 `defer`：本轮不在同一证据上重试，保持原位；只继续处理不含该特殊链接组合的独立目标。
 15. **E2 后半 6 个普通目标均返回回收成功，但验收发现只有 4 个明确恢复条目**：独立 dry-run 精确匹配 `141,233` 个文件、`24,390` 个子目录、`1,964,327,996 bytes`、`1,345` 个内部 Junction、`0` 个 opaque Linux symlink，最长路径仍达 `346` 字符。执行时 6 个目标逐一返回 `RECYCLED` 且原路径均不存在，但 E 盘回收站逻辑字节只增加 `655,869,440 bytes`，低于源目录逻辑值；Shell 回收站核对只找到 inputs 三项和 `f01f173` harness 共 4 个新 `$I/$R` 恢复条目，`tmp\p2c-e05ddc4` 与 `tmp\p2c-f01f173` 没有同名/同原位置记录。两者可能因长路径或内部 Junction 被 Shell 非预期直接清除，当前不能再把 `SendToRecycleBin` 的无异常返回等同于“可恢复”。期间一个只读同名搜索命令还因 `foreach ($root in$searchRoots)` 缺少必要空格而解析失败，没有修改现场；新建全量审计脚本后，又在运行前检查中发现双引号正则会把 `$R` 展开为变量，已在任何审计运行前改成单引号字面正则。处理方案是立即停止 E3、E4 和所有后续 Windows 回收调用，先对 E2 全部 32 个已移出路径逐一核对 Shell 原位置、`$I/$R` 元数据和删除时间；缺失条目如实认定为不可从回收站恢复，但对应 13 份正式 artifact 继续保留。后续 Windows 目录不再使用该 API，除非先形成能验证长路径行为的新方案。
@@ -1039,6 +1166,14 @@ D1 冻结的 51 个路径按 manifest 逐条复核：**`35` 已移出 + `16` 仍
 41. **【严重事故】清理执行中因跟随 Junction 误删仓库根文件与 `.git`（2026-09-09）**：执行 E 盘清理（manifest 批次 `E-TMP-SS`）时，`E:\project\star-sanctuary` 根目录全部文件与 `.git` 被删除，子目录（`packages`/`apps`/`scripts`/`docs`/`config`/`benchmarks`/`node_modules` 等）完好。直接原因：`tmp\install-script-upgrade-handoff-smoke\windows-install-root\current` 与 `...\backups\current-20260715-125852` 是指向 `E:\project\star-sanctuary` 的 **Junction**（2026-07 安装脚本 smoke 遗留）；删除器对每个目标先 `robocopy /MIR`（`/XJ` 跳过 junction、链接本身保留），再执行 `Remove-Item -Recurse -Force`，而 **Windows PowerShell 的递归删除会跟随 reparse point**，于是删到了链接目标（=仓库根）。发现后立即停止全部删除进程（robocopy/rm 计数归零），未再删除任何文件；`tmp` 仍有 1410 项、`.tmp` 131 项残留。
 42. **恢复过程与结果（净损失 0）**：① 从本地 harness 副本 `tmp/ss-dev-harness-win-4b5dd97`（clean @ `84e622db`，含完整 `.git`）恢复 `.git` 与 42 个被删的已跟踪根文件（用 `git diff --diff-filter=D` 精确枚举后 `git checkout HEAD --`）；② 从 `参考项目/env-local-backup/.env.local.bak-20260909-061229` 还原仓库根 `.env.local`；③ 远程命名对齐仓库规则（`private`=私有仓、`origin`=公开仓、`main` 跟踪 `private/main`）；④ 网络恢复后 `git fetch private` + `git reset --hard private/main` 找回当日 7 个提交，本地 `main` = `private/main` = `8696e291`；⑤ 定向测试 `provider-capability.test.ts` + `env.test.ts` 共 `23/23` 通过；保险快照 `E:\SS-recover-snapshot-20260909.tar`（`2.4 MB`）。当日改动（`.env.example` 19 项新增、发行模板定价、两份计划文档、`docs/开发使用说明.md`、readiness 修复）全部在位。
 43. **强制安全规则（已同步写入 `AGENTS.md`）**：批量删除前必须枚举 reparse point（`Get-ChildItem -Attributes ReparsePoint -Recurse`），**先单独删除链接本身**；禁止对可能含 reparse point 的树使用 `Remove-Item -Recurse`、`rd /s`、`del /s` 等跟随式递归删除；禁止删除区：仓库根已跟踪文件、`.git/`、`参考项目/`、`artifacts/cleanup/`、`H:\.star_sanctuary`；每批仍需 manifest + dry-run + 链接目标校验，命中 KEEP/仓库根即整批停止；恢复完成前不得再执行任何 E/WSL 批次。
+44. **manifest 混有 649 个"文件型"目标，目录删除器无法处理（已修正）**：重跑 P1 时出现 20 条 `ERROR: enumerate failed ... The directory name is invalid`，原因是候选集里除目录外还包含单文件目标（`tmp\vitest-full.json`、`.tmp-codex\*.png`、`tmp\run-p2c-candidate-matrix-*.ps1` 等共 `649` 个、合计 `15.5 MiB`）。处理方案是按既定口径分流：目录型走 `remove-tree-safe6.ps1` 永久删除，文件型走回收站（`remove-files-recycle.ps1`，先用 2 个探针文件验证回收成功、1 个不存在正确报 `GONE`）；修正后 P1/P5 共回收 `967` 个文件、`0` 失败。
+45. **执行器日志粒度不足曾导致"卡住"误判**：旧执行器每 10 个目标才写一行日志，暂停瞬间只能看到 `PROGRESS 25/50/75`，曾把正常的大目标误判为卡死（实测 `.tmp\p0-native-5e4e77b-harness` 正在删除、进程 CPU 仍在增长、目录 mtime 持续更新）。处理方案是改为逐目标记录（含 `files/dirs/links/bytes/elapsed`）并写 `artifacts/cleanup/_current-target.txt`，同时把 `Sort-Object` 换成确定性排序（`files` 升序 + 路径）。
+46. **删除吞吐实测：E 盘 HDD 是唯一瓶颈，换方案都不划算**：同规模目标（约 4 万项）对比——`safe6`（`File.Delete` + `-Parallel 4`）`132.5s`（303 项/秒）；`robocopy /MIR /XJ` + 收尾 `154.3s`（更慢）；单进程 Windows POSIX 语义删除（`SetFileInformationByHandle` + `FILE_DISPOSITION_FLAG_POSIX_SEMANTICS`）在 1 万小文件基准上仅 `127` 文件/秒，比 `File.Delete` 的 `3,997` 文件/秒慢 `31` 倍；并行度 8 也不如 4。结论是保留 safe6 + `-Parallel 4`，不再引入 robocopy 或 POSIX 删除路线。中途为此暂停执行约 25 分钟做 A/B，属于一次性成本。
+47. **`powershell -File` 的数组参数被当成单个字符串（零影响）**：用 `-Phases P1,P2,P3,P4,P5` 启动串行执行器时，`-File` 不做逗号解析，`$Phases` 变成单个字符串，参数 `ValidateSet` 直接拒绝，脚本"成功退出"但**没有执行任何删除**（总日志显示 `未找到 P1,P2,P3,P4,P5 END 行`；P1 日志行数、进程数、E 盘可用空间均未变化）。处理方案是去掉该参数、使用脚本默认的 `@('P1','P2','P3','P4','P5')` 数组；已核实零删除、零影响。
+48. **`GONE` 语义保证中断/恢复幂等**：执行器对已不存在的目标记 `GONE` 并跳过，因此暂停、崩溃或重复启动都不会重复删除或误删。本轮三次中断/恢复（用户暂停、A/B 测试、参数修正）均按此机制无缝续跑，最终 `GONE=0`、`FAIL=0`。
+49. **DANGEROUS 目标实测可安全删除，验证"不解析、不跟随"优于"解析后校验"**：`tmp\p2c-real-js-bug-fix-9787b4c-diagnosis-one-line` 内的 `node_modules` junction 指向已被删除的兄弟目录（悬空链接），旧删除器因"无法解析链接目标"而 `REFUSED`；safe6 不解析目标、只把链接当链接删，实测 `DELETED files=242 dirs=85 links=1`，无任何外部影响。同理，5 个扫描期超时的 `SUSPICIOUS` 目标（含 `E:\SS-cleanup-quarantine\20260904-wsl-p2c` 的 `841,300` 文件 / `19,172` 链接）在 P4 全部正常删除。
+50. **停机压缩会连带关闭 Agent 自身会话，必须放到 Windows 侧执行（v1 就绪判断还有一个 bug）**：`Optimize-VHD` 要求 VHDX 离线，而本机 DSH Agent 运行在 WSL 内，直接执行 `wsl --shutdown` 会中断当前会话（前两次调用均被截断、无结果落盘）。处理方案是改用 **Windows 计划任务**（`SS-VHDX-Finalize`，不依赖 WSL）执行"停机 → 就绪判断 → 压缩 → 采样 → 重启 WSL 与 `dsh web` → 写回执"。v1 首跑失败：就绪条件写成 `wslhost+wslservice+vmmemWSL 必须为 0`，但 **`wslservice.exe` 是常驻服务**，计数永远 ≥1，循环空转到 240s 超时后跳过压缩（该次 `exclusive-open` 其实从第 1 秒就为 `True`，属误判）。v2 改为硬门槛"`wslhost`/`vmmemWSL` 为 0 **且** VHDX 可独占打开"，并移除循环内的 `wsl -l -v` 调用；重跑 `ready=True` 后 `Optimize-VHD -Mode Full` 用时 `31s` 完成。
+51. **档 2 的归档边界需如实记录**：本批按用户授权"导出 diff 后清"，只导出了 r5–r12 各仓库的 Git `diff`/`status`/`untracked`（含两个断链 worktree 用主仓对象库重建的 diff），**未单独归档 WSL-only 的 formal/state/`gateway.stdout.log` 等运行期材料**；同时其"E 盘 artifact 替代物"（`artifacts/p0a-matrix-*` 等）已在 P1 按已批准的 manifest 删除。因此这些 WSL 运行期 evidence 不再存在，后续若要复算只能重跑。档 3 的 `7Hb56J` 因删除前置明确要求"完整 source/evidence 归档"，已额外整体打包 `1,009 MiB` 到 `artifacts/cleanup/wsl-20260909/archive/`（SHA-256 已记录），可作为此后同类删除的默认做法。
 
 ## 后续计划（2026-09-05）
 
@@ -1062,6 +1197,18 @@ D1 冻结的 51 个路径按 manifest 逐条复核：**`35` 已移出 + `16` 仍
 
 清理已全面暂停。下一步先由用户决定是否继续；若继续，必须先按「重要问题说明」第 43 条重做清理器：为每个目标增加 reparse point 枚举与链接目标校验，先单独删除链接本身，再处理目录其余部分，并用小目录 + 人造 junction 做受控演练通过后才允许触碰真实目标。为什么先做它：本次事故证明"跟随式递归删除"会越过目标边界，属方法缺陷，必须先在方法层修复而不是依赖事后恢复。当前还缺的关键闭环：① 清理脚本的 reparse point 安全改造与演练；② 是否把 `参考项目/` 加入 `.gitignore` 以消除 IDE 未提交噪声；③ 已恢复项的完整核对（当前 `git status` 仅 `参考项目/` 未跟踪、无已跟踪改动，本地与远端一致）。
 
+## 后续计划（2026-09-09 全量清理后）
+
+全量清理已按 P0→P6 顺序执行完毕并复测容量，`tmp/.tmp/artifacts/.tmp-codex` 与 E 盘隔离区的候选已全部处理，`FAIL=0/REFUSED=0/GONE=0`。下一步按优先级：
+
+1. **E 盘回收站清理策略**：回收站内仍有 E2 时代约 `7.4 GiB` 与本轮 `967` 个小文件（约 `19 MiB`）的条目；为什么先确认它：这些条目占配额，但清空即失去"可恢复"退路，需用户确认后再清空，禁止自动清空。
+2. **`artifacts/p2c-*`（18 个，约 `657 MiB`）与 `tmp/` 用户资料的长期归档决策**：为什么放在第二步：它们属于"必须保留"证据，收益小、风险高，只应在确认无引用后另立独立批次。
+3. **C2（C 盘远程桌面 trace）仍 blocked**：需要用户单独授权停机与冻结计数，本轮完全未触碰 C 盘。
+4. **WSL 侧本轮已完成**：`/home/vrboyzero` 四档清理 + `fstrim` + 第二次停机压缩已于 2026-09-09 21:18 收口，VHDX `49.84 → 13.57 GiB`、D 盘可用 `+36.27 GiB`（见第 11.6 节）；剩余保留项为 `r13`、`.local/.dsh/.npm/.opencode/.cache` 等（见 11.6）。如后续再需要压缩，仍须走"计划任务 + 停机"路线，不能直接在当前会话里 `wsl --shutdown`。
+5. **机制沉淀**：后续任何批量删除一律复用 `remove-tree-safe6.ps1` + `drill-safe-delete-v6.ps1` 演练 + 逐目标哨兵校验 + `GONE` 幂等恢复，不再使用跟随式递归删除。
+
+当前仍缺的关键闭环：E 盘回收站清空决策、`p2c-*` 保留目录的归档决策、C2 的独立授权；本轮清理本身已闭环（manifest → 演练 → 分阶段执行 → 容量复测）。
+
 ## 实施计划进度表
 
 | 阶段 | 状态 | 结果/下一步 |
@@ -1077,6 +1224,8 @@ D1 冻结的 51 个路径按 manifest 逐条复核：**`35` 已移出 + `16` 仍
 | 容量与开发环境回归验证 | 进行中 | Ubuntu/ext4、Git、Node、pnpm、Go、gopls 最小 smoke 已通过；仍需观察一次受控 WSL 测试的容量增量后关闭长期治理问题 |
 | `tmp/.tmp/artifacts` 四级保留分层 | 已完成分析，尚未清理 | 2026-08-20 基线为三目录合计 `120.71 GB`；C0/C1 继续保留，C2/C3 需逐项 manifest、hash、引用、进程和敏感扫描核对；本轮不删除 |
 | 2026-09-04 C/D/E 三盘复盘 | 已完成盘点，未清理 | `tmp/.tmp/artifacts=154.29 GiB` 同口径扫描错误=`0`，E 盘约 `205.2 GiB` 已确认路径可解释；当前必留、优先候选约 `49.52 GiB`、用户决策、共享缓存、非 SS 和约 `127.42 GiB` 深度核验池已分层，实际释放量留待获授权后的独立批次验证 |
-| 跨三盘优先候选清理 | 执行中：C1 完成、E2 部分完成、D1 已移动 35 个目录释放闭环 | C1 为 2/2 可恢复；E2 为 32 个普通目标已移出、7 个目标保留。D1 destination=`51/51`，source absent=`35/51`、residual=`16/51`、KEEP=`8/8`；`fstrim`、单次 VHDX 压缩、启动 smoke、最终停机和 8 次稳定采样均通过，D 盘稳定净增加 `9,693,036,544 bytes`（约 `9.03 GiB`）。16 个 residual 继续延期；E1/E3/E4 与 C2 留待独立安全批次 |
+| 跨三盘优先候选清理 | 已完成（C1、D1、E1–E4 全部落地；C2 现无实际收益） | C1 为 2/2 可恢复（同名目录后续重现，见第 11 节）；E2 为 32 个普通目标已移出、7 个目标保留，其后这些路径均随 09-09 全量清理一并删除。D1 destination=`51/51`，source absent=`35/51`、residual=`16/51`、KEEP=`8/8`；`fstrim`、单次 VHDX 压缩、启动 smoke、最终停机和 8 次稳定采样均通过，D 盘稳定净增加 `9,693,036,544 bytes`（约 `9.03 GiB`）。E1（`E:\WSL-backups` `45.46 GiB`）、E3（`artifacts\winget/_cache/single-exe/portable/start-sh-envdir-wsl-smoke`）与 E4（`.tmp-codex`）已在 09-09 全量清理中完成；C2 旧 trace 已只剩 `8 KB`，仅 `msrdc.exe` 停机授权待决 |
 | 2026-09-09 能力精进收尾后盘点 | 已完成盘点，未清理 | 只读采样：C `388.96/169.64`、D `295.61/25.1`、E `532.13/467.87`、H `1.62/50.38` GiB；E 盘确认是 HDD（全量扫描不可行）；定向实测 16 个路径，`tmp\p2c-layered-development=3.93 GiB`、`ss-c84e622d-1-f=3.93 GiB`、`artifacts=7.30 GiB`、`E:\SS-cleanup-quarantine=13.91 GiB`、`.tmp-codex=1.99 GiB`；WSL `/var/tmp=15.51 GiB`、VHDX `49.84 GiB`、D1 `35 absent + 16 residual`；形成 A/B/C 三层清单与约 `230-290 GiB` 逻辑上限，待用户在三个问题上授权 |
 | 2026-09-09 清理事故与恢复 | 已完成恢复，清理暂停 | `tmp\install-script-upgrade-handoff-smoke\...\current` 是指向仓库根的 Junction，`Remove-Item -Recurse` 跟随链接误删根文件与 `.git`；已从本地 harness（`84e622db`）恢复 `.git` + 42 个根文件、从 `参考项目/env-local-backup` 还原 `.env.local`、`fetch private` + `reset --hard private/main` 找回当日 7 个提交（本地=远端=`8696e291`）；定向测试 `23/23` 通过；净损失 `0`；新增强制安全规则（`AGENTS.md`）；清理保持暂停待用户决定 |
+| 2026-09-09 全量清理执行（P0–P6） | 已完成 | junction 安全删除器 `remove-tree-safe6.ps1` + 演练 `7/7` + 分阶段 P1–P5：目录目标 `1479` + 文件目标 `967`（回收站），删除 `11,625,128` 文件 / `1,762,925` 目录 / `141,323` 链接（`214.81 GiB` 逻辑），`FAIL=0/REFUSED=0/GONE=0`；E 盘可用 `467.87 → 699 GiB`（`+231`）；`git worktree prune` 0 条；保留 `artifacts/`（`657 MiB`）、`tmp/`（12 项）、`.tmp`/`.tmp-codex` 已清空；仓库哨兵与 `git status` 全部正常 |
+| 2026-09-09 WSL `/home/vrboyzero` 清理 + VHDX 压缩 | 已完成 | 档 1–档 4 共 `36` 个精确目标全部 `OK`（`FAIL=0/REFUSED=0/GONE=0`，逻辑 `28,160 MiB`）；删除前导出 r5–r12 与 `7Hb56J` 的 Git diff/untracked，`7Hb56J` 另整体归档 `1,009 MiB`（SHA-256 已记录）；`/home/vrboyzero` `24,870 → 5,143 MiB`、ext4 used `46 → 9.5 GB`；`Optimize-VHD -Mode Full` 用时 `31s`，VHDX `53,514,076,160 → 14,571,012,096 bytes`（`49.84 → 13.57 GiB`，8 次采样稳定），**D 盘可用 `25.10 → 61.37 GiB`（`+36.27 GiB`）**；收尾由 Windows 计划任务 `SS-VHDX-Finalize` 执行并自动重启 WSL/`dsh web` |

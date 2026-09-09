@@ -2335,7 +2335,7 @@ P0/P1 的粗略总工作量为 **24-38 人日**，不含 P2、模型调优、公
 
 1. **WSL implementation startup 与 formal Gate 复核**：
    - Linux native staging 的 source、harness 与 manifest identity 保持 r11 冻结值；隔离的 startup-only canary 通过并释放 `61341`。
-   - 三个 formal 路径运行前均为空，`61341-61343` 无监听；formal 使用 freeze 清单指定的 `/home/vrboyzero/ss-p0a-matrix-7Hb56J/source-implementation-v2`。
+   - 三个 formal 路径运行前均为空，`61341-61343` 无监听；formal 使用 freeze 清单指定的 `/home/vrboyzero/ss-p0a-matrix-7Hb56J/source-implementation-v2`。（该 WSL 路径已于 2026-09-09 按容量清理计划删除；删除前已导出 7 个仓库的 dirty diff/untracked 并整体归档，见 `docs/计划中/D盘容易增大问题与处理方法.md` 第 11 节与 `artifacts/cleanup/wsl-20260909/`。）
 
 2. **`formal/implementation/wsl/rules-a1`、`rules-a2` 与 `rules-a3` 正式 artifact 新建**：
    - 三份 selected 均绑定 attempt `1/2/3`、r11 identity 与 `wsl2-linux` 平台指纹，preflight 和 machine evaluator 全部通过。
@@ -2359,7 +2359,7 @@ P0/P1 的粗略总工作量为 **24-38 人日**，不含 P2、模型调优、公
 
 1. **WSL control startup 与 formal Gate 复核**：
    - Linux native control staging 保持 clean，source identity 精确为 `8c1b7749...181c810`；startup-only canary 通过并释放 `61351`。
-   - 三个 formal 路径运行前均为空，`61351-61353` 无监听；formal 使用 freeze 清单指定的 `/home/vrboyzero/ss-p0a-matrix-7Hb56J/source-control-v2`。
+   - 三个 formal 路径运行前均为空，`61351-61353` 无监听；formal 使用 freeze 清单指定的 `/home/vrboyzero/ss-p0a-matrix-7Hb56J/source-control-v2`。（该 WSL 路径已于 2026-09-09 按容量清理计划删除；删除前已导出 7 个仓库的 dirty diff/untracked 并整体归档，见 `docs/计划中/D盘容易增大问题与处理方法.md` 第 11 节与 `artifacts/cleanup/wsl-20260909/`。）
 
 2. **`formal/control/wsl/rules-a1`、`rules-a2` 与 `rules-a3` 正式 artifact 新建**：
    - 三份 selected 均绑定 attempt `1/2/3`、r11 identity 与 `wsl2-linux` 平台指纹，preflight 和 machine evaluator 全部通过。
