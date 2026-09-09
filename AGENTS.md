@@ -75,6 +75,18 @@ Persist local machine settings in `.env.local`, not `.env`. Do not commit secret
 
 WebChat security-sensitive settings are pairing-protected by default. If multiple settings suddenly show “read failed,” verify whether the current session has completed pairing before treating it as a UI regression. Also confirm auth combinations before enabling external APIs or public bind addresses; `BELLDANDY_AUTH_MODE=none` is not compatible with every outbound capability.
 
+## 文件删除安全（强制）
+
+本项目在 2026-09-09 发生过一次严重事故：批量清理时 `Remove-Item -Recurse` 跟随了指向仓库根的 Junction，删除了 `E:\project\star-sanctuary` 的根目录文件与 `.git`。以下为强制规则，任何删除操作都必须遵守：
+
+- **禁止**对可能包含 reparse point（Junction / symlink）的目录树使用跟随式递归删除：`Remove-Item -Recurse`、`rd /s`、`del /s`、`rm -rf` 均不安全。
+- 删除前必须**先枚举 reparse point**（`Get-ChildItem -LiteralPath <目标> -Recurse -Force -Attributes ReparsePoint`），并**先单独删除链接本身**（删链接不会删目标内容），再删除目录其余部分。
+- 批量清理必须先产出**精确 manifest + dry-run**：逐目标校验类型（普通目录/文件，根路径不得为 reparse point）与链接目标是否落在禁止删除区，命中即整批停止。
+- **禁止删除区**：仓库根任何已跟踪文件、`.git/`、`参考项目/`、`artifacts/cleanup/`、`H:\.star_sanctuary`、`E:\ss-toolchains`、`E:\.pnpm-store`。
+- 大批量删除优先"移入隔离区 → 校验 → 再删除"，不直接递归删除；每批执行前确认相关进程为零（node / Gateway / Docker / robocopy）。
+- 删除脚本必须逐目标记录 `OK/FAIL/GONE` 到日志，并保留可回滚证据。
+- 事故与恢复全过程见 `docs/计划中/D盘容易增大问题与处理方法.md`「重要问题说明」第 41-43 条。
+
 ## Planning Requirements
 When a task needs an implementation plan, architecture note, rollout plan, or phased proposal, do not stop at a step list. The written plan must explicitly cover:
 - risk level and the main failure modes,

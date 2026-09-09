@@ -1036,6 +1036,10 @@ D1 冻结的 51 个路径按 manifest 逐条复核：**`35` 已移出 + `16` 仍
 39. **并发后台任务过多造成宿主卡顿（用户反馈）**：盘点期间同时运行了 4 个后台扫描（含一个卡住的 `robocopy` 与一个 9p `du`），宿主明显变卡。处理方案是立即停止 2 个陈旧任务（`bash-3`、`bash-6`）并清理孤儿 `robocopy` 进程，之后并发上限固定为 3，且不再叠加同类全量扫描。
 40. **09-04 基线已漂移，本轮数字只用于决策**：E 盘已用 `469.54 -> 532.13 GiB`（`+62.59 GiB`）、VHDX `47,226,814,464 -> 53,514,076,160 bytes`（`+5.86 GiB`）、E 盘回收站从 E2 后的约 `11.6 GiB` 变为 `7.42 GiB`（用户可能已部分清空）。因此第 9 节的占用与收益均为决策用估算，**不能作为释放量承诺**；实际收益必须在清理后以三盘可用空间复测为准。
 
+41. **【严重事故】清理执行中因跟随 Junction 误删仓库根文件与 `.git`（2026-09-09）**：执行 E 盘清理（manifest 批次 `E-TMP-SS`）时，`E:\project\star-sanctuary` 根目录全部文件与 `.git` 被删除，子目录（`packages`/`apps`/`scripts`/`docs`/`config`/`benchmarks`/`node_modules` 等）完好。直接原因：`tmp\install-script-upgrade-handoff-smoke\windows-install-root\current` 与 `...\backups\current-20260715-125852` 是指向 `E:\project\star-sanctuary` 的 **Junction**（2026-07 安装脚本 smoke 遗留）；删除器对每个目标先 `robocopy /MIR`（`/XJ` 跳过 junction、链接本身保留），再执行 `Remove-Item -Recurse -Force`，而 **Windows PowerShell 的递归删除会跟随 reparse point**，于是删到了链接目标（=仓库根）。发现后立即停止全部删除进程（robocopy/rm 计数归零），未再删除任何文件；`tmp` 仍有 1410 项、`.tmp` 131 项残留。
+42. **恢复过程与结果（净损失 0）**：① 从本地 harness 副本 `tmp/ss-dev-harness-win-4b5dd97`（clean @ `84e622db`，含完整 `.git`）恢复 `.git` 与 42 个被删的已跟踪根文件（用 `git diff --diff-filter=D` 精确枚举后 `git checkout HEAD --`）；② 从 `参考项目/env-local-backup/.env.local.bak-20260909-061229` 还原仓库根 `.env.local`；③ 远程命名对齐仓库规则（`private`=私有仓、`origin`=公开仓、`main` 跟踪 `private/main`）；④ 网络恢复后 `git fetch private` + `git reset --hard private/main` 找回当日 7 个提交，本地 `main` = `private/main` = `8696e291`；⑤ 定向测试 `provider-capability.test.ts` + `env.test.ts` 共 `23/23` 通过；保险快照 `E:\SS-recover-snapshot-20260909.tar`（`2.4 MB`）。当日改动（`.env.example` 19 项新增、发行模板定价、两份计划文档、`docs/开发使用说明.md`、readiness 修复）全部在位。
+43. **强制安全规则（已同步写入 `AGENTS.md`）**：批量删除前必须枚举 reparse point（`Get-ChildItem -Attributes ReparsePoint -Recurse`），**先单独删除链接本身**；禁止对可能含 reparse point 的树使用 `Remove-Item -Recurse`、`rd /s`、`del /s` 等跟随式递归删除；禁止删除区：仓库根已跟踪文件、`.git/`、`参考项目/`、`artifacts/cleanup/`、`H:\.star_sanctuary`；每批仍需 manifest + dry-run + 链接目标校验，命中 KEEP/仓库根即整批停止；恢复完成前不得再执行任何 E/WSL 批次。
+
 ## 后续计划（2026-09-05）
 
 `E:\project\star-sanctuary\tmp`、`.tmp` 与 `artifacts` 的单次原生扫描已经完成；current/frozen P2C identity、正式 artifact、历史 P2C 候选和 worktree 登记也已分开。若后续准备实际处理，下一步应先为约 `49.52 GiB` 的优先候选生成精确只读 manifest/dry-run；为什么先做它：这批收益明确、与约 `127.42 GiB` 的深度核验池隔离，最容易在不触碰当前候选和唯一 evidence 的前提下复核。
@@ -1054,6 +1058,10 @@ D1 冻结的 51 个路径按 manifest 逐条复核：**`35` 已移出 + `16` 仍
 
 能力精进阶段已收口，用户明确本轮可以做大清理，但要求先只读盘点、由用户决定执行方式。第 9 节已完成盘点与三层清单；下一步先由用户在三个待决问题上给出选择（删除方式、证据保留粒度、`WSL-backups` 与 `.codex` 是否删除）；为什么先做它：这三项直接决定可释放量与执行边界，且涉及不可逆操作，必须先取得明确授权。授权后按"每批一份精确 manifest + dry-run + 执行前进程/引用复核"的顺序推进，优先处理收益明确且可再生成的 `tmp/.tmp/artifacts/.tmp-codex` 与 WSL `/var/tmp`，最后再评估 `WSL-backups`。当前还缺的关键闭环是：精确 manifest 与 dry-run、Git worktree 删除顺序与 prune 时机、WSL 删除后的 `fstrim` 与停机 VHDX 压缩复测。
 
+## 后续计划（2026-09-09 清理事故后）
+
+清理已全面暂停。下一步先由用户决定是否继续；若继续，必须先按「重要问题说明」第 43 条重做清理器：为每个目标增加 reparse point 枚举与链接目标校验，先单独删除链接本身，再处理目录其余部分，并用小目录 + 人造 junction 做受控演练通过后才允许触碰真实目标。为什么先做它：本次事故证明"跟随式递归删除"会越过目标边界，属方法缺陷，必须先在方法层修复而不是依赖事后恢复。当前还缺的关键闭环：① 清理脚本的 reparse point 安全改造与演练；② 是否把 `参考项目/` 加入 `.gitignore` 以消除 IDE 未提交噪声；③ 已恢复项的完整核对（当前 `git status` 仅 `参考项目/` 未跟踪、无已跟踪改动，本地与远端一致）。
+
 ## 实施计划进度表
 
 | 阶段 | 状态 | 结果/下一步 |
@@ -1071,3 +1079,4 @@ D1 冻结的 51 个路径按 manifest 逐条复核：**`35` 已移出 + `16` 仍
 | 2026-09-04 C/D/E 三盘复盘 | 已完成盘点，未清理 | `tmp/.tmp/artifacts=154.29 GiB` 同口径扫描错误=`0`，E 盘约 `205.2 GiB` 已确认路径可解释；当前必留、优先候选约 `49.52 GiB`、用户决策、共享缓存、非 SS 和约 `127.42 GiB` 深度核验池已分层，实际释放量留待获授权后的独立批次验证 |
 | 跨三盘优先候选清理 | 执行中：C1 完成、E2 部分完成、D1 已移动 35 个目录释放闭环 | C1 为 2/2 可恢复；E2 为 32 个普通目标已移出、7 个目标保留。D1 destination=`51/51`，source absent=`35/51`、residual=`16/51`、KEEP=`8/8`；`fstrim`、单次 VHDX 压缩、启动 smoke、最终停机和 8 次稳定采样均通过，D 盘稳定净增加 `9,693,036,544 bytes`（约 `9.03 GiB`）。16 个 residual 继续延期；E1/E3/E4 与 C2 留待独立安全批次 |
 | 2026-09-09 能力精进收尾后盘点 | 已完成盘点，未清理 | 只读采样：C `388.96/169.64`、D `295.61/25.1`、E `532.13/467.87`、H `1.62/50.38` GiB；E 盘确认是 HDD（全量扫描不可行）；定向实测 16 个路径，`tmp\p2c-layered-development=3.93 GiB`、`ss-c84e622d-1-f=3.93 GiB`、`artifacts=7.30 GiB`、`E:\SS-cleanup-quarantine=13.91 GiB`、`.tmp-codex=1.99 GiB`；WSL `/var/tmp=15.51 GiB`、VHDX `49.84 GiB`、D1 `35 absent + 16 residual`；形成 A/B/C 三层清单与约 `230-290 GiB` 逻辑上限，待用户在三个问题上授权 |
+| 2026-09-09 清理事故与恢复 | 已完成恢复，清理暂停 | `tmp\install-script-upgrade-handoff-smoke\...\current` 是指向仓库根的 Junction，`Remove-Item -Recurse` 跟随链接误删根文件与 `.git`；已从本地 harness（`84e622db`）恢复 `.git` + 42 个根文件、从 `参考项目/env-local-backup` 还原 `.env.local`、`fetch private` + `reset --hard private/main` 找回当日 7 个提交（本地=远端=`8696e291`）；定向测试 `23/23` 通过；净损失 `0`；新增强制安全规则（`AGENTS.md`）；清理保持暂停待用户决定 |
