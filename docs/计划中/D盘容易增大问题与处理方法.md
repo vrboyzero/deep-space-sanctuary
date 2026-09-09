@@ -1116,8 +1116,42 @@ P1–P5 合计：目录目标 `1479` 个 + 文件目标 `967` 个（回收站）
 - **删除前导出/归档**：r5–r12 共 13 个仓库的 `diff.patch` / `status.txt` / `untracked.txt`（其中 10 个通过反向应用校验、1 个 clean、2 个断链 worktree 用主仓对象库按 `fd70990` 重建）；`7Hb56J` 的 7 个仓库同样导出，并整体打包 `archive/ss-p0a-matrix-7Hb56J.tar.gz`（`1,009 MiB`、`200,882` 条目、SHA-256 `0a99532f1def3638b5460d2c03e65fbee73f899ae34977453a4c665559bcee54`）；r4 的 preparation/receipt 归档 36 个文件。以上全部位于 `artifacts/cleanup/wsl-20260909/`。
 - **文档同步**：`docs/计划中/SS达到9分以上竞品机制研究.md` 第 2338、2362 行的 `7Hb56J` 引用已加"已于 2026-09-09 清理"标注并指向归档位置。
 - **容量实测**：`/home/vrboyzero` `24,870 → 5,143 MiB`（`-19.26 GiB`）；ext4 used `46 GB → 9.5 GB`；`ext4.vhdx` `53,514,076,160 → 14,571,012,096 bytes`（`49.84 → 13.57 GiB`，压缩耗时 `31s`，8 次采样稳定）；**D 盘可用 `25.10 → 61.37 GiB`（`+36.27 GiB`）**，重启 WSL 后为 `61.32 GiB`。
-- **剩余保留项**（`5,143 MiB`）：`ss-p0a-matrix-r13-20260803` `2,308 MiB`（当前计划使用）、`.local` `741`、`.dsh` `706`、`.npm` `601`、`star-sanctuary-p0-web-1bdb48e-linux-snapshots-r1` `371`、`.opencode` `171`、`.cache` `162`、r1–r3 snapshot 各 `26`、其余 `约 10 MiB`。
+- **剩余保留项**（`5,143 MiB`，**已被 11.7 的补充清理覆盖，最终为 `3,219 MiB`**）：`ss-p0a-matrix-r13-20260803` `2,308 MiB`（当前计划使用）、`.local` `741`、`.dsh` `706`、`.npm` `601`、`star-sanctuary-p0-web-1bdb48e-linux-snapshots-r1` `371`、`.opencode` `171`、`.cache` `162`、r1–r3 snapshot 各 `26`、其余 `约 10 MiB`。
 - **未纳入本批**：`ss-p0a-matrix-r13`、`.local/share/pnpm`、`.dsh`/`.npm`/`.opencode`/`.cache`、`p1-a1-r10-linux-snapshots`(r1/r2/r3)、`star-sanctuary-p0-web-1bdb48e-linux-snapshots-r1`、以及 `p1-a1-code-intel-*-state-r1/r2/r3` 等小项（用户 09-09 明确"后三项先不动"）。
+
+### 11.7 补充清理：可再生缓存与历史实验快照（2026-09-09 22:16–22:20）
+
+用户当日 22:15 追加要求"让 WSL home 再干净点"，在四档之外新开两档，仍走"精确清单 → dry-run → 逐目标回执"：
+
+| 档 | 目标数 | 结果 | 逻辑删除 | 回执 |
+| --- | ---: | --- | ---: | --- |
+| 档 5 | 13 | 全部 `OK` | `2,436 MiB` | `wsl-20260909/tier5-exec.log` |
+| 档 6 | 4 | 全部 `OK` | `4 MiB` | `wsl-20260909/tier6-exec.log` |
+| 合计 | 17 | `FAIL=0`、`REFUSED=0`、`GONE=0` | `2,440 MiB` | — |
+
+- **档 5（全部可再生）**：`.local/share/pnpm/store/v10` `1,244 MiB`、`.npm/_npx` `360`、`.npm/_cacache` `241`、`.npm/_prebuilds` `2`、`.cache/{node-gyp,pnpm,node,gopls,goimports}` `165`、`star-sanctuary-p0-web-1bdb48e-linux-snapshots-r1/caches` `346`（同目录 `sources`/`preflights`/`receipts` 保留）、`star-sanctuary-p1-a1-r10-linux-snapshots` 与 `-r2`/`-r3` 各 `26`（4 个上游仓库 clone，可按 receipt 记录的 commit 重建：express `a3714473`、preact `6bb82725`、spf13-cobra `adbc881`、vscode-languageserver-node `b6c6282`）。
+- **档 6（历史实验现场）**：`p1-a1-code-intel-wsl-native-gateway-20260810-r2-state` / `-r3-state`、`p1-a1-code-intel-agent-uplift-r12-cohort-state-r1` / `-pairing-state-r1`，四者均为 `~/.star_sanctuary` 的 ext4 状态快照（`AGENTS.md`/`SOUL.md`/`IDENTITY.md`/`USER.md`/`TOOLS.md`、`.env`/`.env.local`、`memory.sqlite`、`deployment-backends.json`、`diagnostics/runtime-resilience.json`、`pairing.json`/`allowlist.json`），对应 `docs/archive/SS开发能力精进分析与计划-02.md` 第 1506–1534 行的 r2 失败 / r3 通过两轮 native Gateway smoke。删除前已扫描其 `.env`/`.env.local`：**未发现真实凭据**（敏感名变量中唯一长值为 `BELLDANNY_TOKEN_USAGE_UPLOAD_URL` 这一 URL，其余为 2–3 字符占位符或空值）；活的 `~/.star_sanctuary`（`2 MiB`）未受影响。
+- **容量实测**：`/home/vrboyzero` `5,143 → 3,219 MiB`；ext4 used `9.5 GB → 7.6 GB`；按用户选择**本轮不做停机压缩**，VHDX 仍为 `13.61 GiB`、D 盘可用 `61.32 GiB`（即这 `2.4 GB` 目前仍在 VHDX 内）。
+- **剩余保留项**（`3,219 MiB`）：`ss-p0a-matrix-r13-20260803` `2,308 MiB`（当前计划在用）、`.dsh` `708`（配置 `654` + 会话 `54`）、`.opencode/bin` `171`、`star-sanctuary-p0-web-1bdb48e-linux-snapshots-r1` `26`（已去 `caches`）、`.dsh-doctor` `5`、`.star_sanctuary` `2`、其余约 `5 MiB`。
+- **过程中的权限兜底**：`p0-web…/caches/spf13-cobra/gomodcache` 内为 Go module cache 只读文件，首轮 `rm` 报 `Permission denied`，脚本按既定兜底执行 `chmod -R u+w` 重试后成功（回执标记 `OK(dir,after-chmod)`），故 `tier5-exec.log` 中有一段权限报错噪音，属预期而非失败。
+
+### 11.8 同批完成的 C 盘与 E 盘零散清理（2026-09-09 21:30–22:10）
+
+WSL 收口后，用户手动清理 + 本机代为执行的 C 盘项目与实测结果（口径：`Get-PSDrive C` 可用空间）：
+
+| 项 | 清理前 | 清理后 | 动作 |
+| --- | ---: | ---: | --- |
+| `AppData\Local\npm-cache` | `11.58 GiB` | `0.00 GiB` | 用户执行 `npm cache clean --force` 后手动删除 `_npx` |
+| `AppData\Local\Docker` | `7.09 GiB` | `2.61 GiB` | `docker system prune -a --force`（回收 `3.707 GB`）+ `DockerCli -Shutdown` + `Optimize-VHD` 压缩 `docker_data.vhdx`（`6.97 → 2.48 GiB`，耗时 `1s`） |
+| `C:\Users\admin\.codex` | `9.69 GiB` | `3.85 GiB` | 用户删除 `sessions\2026\{05,06,07,08}`（`5.84 GiB`），保留 9 月会话与索引 |
+| `AppData\Local\Temp` | `4.61 GiB` | `0.83 GiB` | 用户清理 VS 安装器临时树 `cny1jl2q`/`m5uprlba` 等 |
+| `AppData\Local\pnpm` | `2.44 GiB` | `0.19 GiB` | `pnpm store prune`（28,874 文件 / 561 包） |
+| **C 盘可用** | **`169.64 GiB`** | **`190.81 GiB`** | **`+21.17 GiB`** |
+
+- **`.codex` 的边界**：`sessions` 按月份目录组织（`rollout-<ISO>-<uuid>.jsonl`），`thread_history_1.sqlite` `1.43 GiB` 与 `logs_2.sqlite` `0.71 GiB` 可重建但会清空 `codex resume` 历史列表，本轮保留；`plugins/`、`.sandbox-bin/`、`config.toml`、`history.jsonl`、`state_5.sqlite`、`skills/` 为运行必需，未动。
+- **`C:\Users\admin` 的 ACL 有意保持宽松**：该目录有显式 `Everyone: Allow FullControl` 且未阻断继承，故 `.codex`/`.dsh` 等全部子目录可被本机任意账户读写；用户说明这是为了让 Codex 能自动执行、避免每步都需人工确认。因此 `~/.codex/sandbox.*.log` 中的 `AUDIT: world-writable scan FAILED`（每轮列出约 400–560 个路径）属**预期现象**，不是故障；如后续要修，应在管理员 PowerShell 中先 `icacls /save` 备份再改。
+- **E 盘零散项**：删除 `artifacts/cleanup/reparse3-missing.jsonl`（`484 MiB`）——该文件是扫描器把 PowerShell `PathInfo` 对象整份序列化所致（`PSProvider` 单项 `2.1 MiB` × 251 行），无独有信息；`artifacts/cleanup` 由 `1,524 → 1,041 MiB`，manifest/dry-run/回执/归档全部保留。
+- **环境修正**：仓库 `.git/config` 与 WSL 全局 `~/.gitconfig` 的 `user.name`/`user.email` 已设为 `vrboyzero <4918822@qq.com>`（与历史提交一致；Windows 全局原本已配置）。
 
 ## 重要问题说明
 
@@ -1204,7 +1238,7 @@ P1–P5 合计：目录目标 `1479` 个 + 文件目标 `967` 个（回收站）
 1. **E 盘回收站清理策略**：回收站内仍有 E2 时代约 `7.4 GiB` 与本轮 `967` 个小文件（约 `19 MiB`）的条目；为什么先确认它：这些条目占配额，但清空即失去"可恢复"退路，需用户确认后再清空，禁止自动清空。
 2. **`artifacts/p2c-*`（18 个，约 `657 MiB`）与 `tmp/` 用户资料的长期归档决策**：为什么放在第二步：它们属于"必须保留"证据，收益小、风险高，只应在确认无引用后另立独立批次。
 3. **C2（C 盘远程桌面 trace）仍 blocked**：需要用户单独授权停机与冻结计数，本轮完全未触碰 C 盘。
-4. **WSL 侧本轮已完成**：`/home/vrboyzero` 四档清理 + `fstrim` + 第二次停机压缩已于 2026-09-09 21:18 收口，VHDX `49.84 → 13.57 GiB`、D 盘可用 `+36.27 GiB`（见第 11.6 节）；剩余保留项为 `r13`、`.local/.dsh/.npm/.opencode/.cache` 等（见 11.6）。如后续再需要压缩，仍须走"计划任务 + 停机"路线，不能直接在当前会话里 `wsl --shutdown`。
+4. **WSL 侧已完成（含 22:16–22:20 的补充清理）**：`/home/vrboyzero` 四档清理 + 档 5/档 6 补充清理 + `fstrim` + 第二次停机压缩已于 2026-09-09 21:18 收口，VHDX `49.84 → 13.57 GiB`、D 盘可用 `+36.27 GiB`（见第 11.6 节）；补充清理后 home 为 `3,219 MiB`，VHDX 仍 `13.61 GiB`（见 11.7）。剩余保留项为 `r13`、`.dsh`、`.opencode/bin`、`p0-web` 快照本体等。**如后续要把 11.7 释放的 `2.4 GB` 真正还给 D 盘，仍须走"计划任务 + 停机压缩"路线**（脚本 `tmp/p2c-layered-development/vhd-finalize-v2.ps1`），不能直接在当前会话里 `wsl --shutdown`；本轮用户已明确选择暂不压缩。
 5. **机制沉淀**：后续任何批量删除一律复用 `remove-tree-safe6.ps1` + `drill-safe-delete-v6.ps1` 演练 + 逐目标哨兵校验 + `GONE` 幂等恢复，不再使用跟随式递归删除。
 
 当前仍缺的关键闭环：E 盘回收站清空决策、`p2c-*` 保留目录的归档决策、C2 的独立授权；本轮清理本身已闭环（manifest → 演练 → 分阶段执行 → 容量复测）。
@@ -1229,3 +1263,4 @@ P1–P5 合计：目录目标 `1479` 个 + 文件目标 `967` 个（回收站）
 | 2026-09-09 清理事故与恢复 | 已完成恢复，清理暂停 | `tmp\install-script-upgrade-handoff-smoke\...\current` 是指向仓库根的 Junction，`Remove-Item -Recurse` 跟随链接误删根文件与 `.git`；已从本地 harness（`84e622db`）恢复 `.git` + 42 个根文件、从 `参考项目/env-local-backup` 还原 `.env.local`、`fetch private` + `reset --hard private/main` 找回当日 7 个提交（本地=远端=`8696e291`）；定向测试 `23/23` 通过；净损失 `0`；新增强制安全规则（`AGENTS.md`）；清理保持暂停待用户决定 |
 | 2026-09-09 全量清理执行（P0–P6） | 已完成 | junction 安全删除器 `remove-tree-safe6.ps1` + 演练 `7/7` + 分阶段 P1–P5：目录目标 `1479` + 文件目标 `967`（回收站），删除 `11,625,128` 文件 / `1,762,925` 目录 / `141,323` 链接（`214.81 GiB` 逻辑），`FAIL=0/REFUSED=0/GONE=0`；E 盘可用 `467.87 → 699 GiB`（`+231`）；`git worktree prune` 0 条；保留 `artifacts/`（`657 MiB`）、`tmp/`（12 项）、`.tmp`/`.tmp-codex` 已清空；仓库哨兵与 `git status` 全部正常 |
 | 2026-09-09 WSL `/home/vrboyzero` 清理 + VHDX 压缩 | 已完成 | 档 1–档 4 共 `36` 个精确目标全部 `OK`（`FAIL=0/REFUSED=0/GONE=0`，逻辑 `28,160 MiB`）；删除前导出 r5–r12 与 `7Hb56J` 的 Git diff/untracked，`7Hb56J` 另整体归档 `1,009 MiB`（SHA-256 已记录）；`/home/vrboyzero` `24,870 → 5,143 MiB`、ext4 used `46 → 9.5 GB`；`Optimize-VHD -Mode Full` 用时 `31s`，VHDX `53,514,076,160 → 14,571,012,096 bytes`（`49.84 → 13.57 GiB`，8 次采样稳定），**D 盘可用 `25.10 → 61.37 GiB`（`+36.27 GiB`）**；收尾由 Windows 计划任务 `SS-VHDX-Finalize` 执行并自动重启 WSL/`dsh web` |
+| 2026-09-09 WSL 补充清理（档 5/档 6） | 已完成 | 档 5 共 `13` 项可再生缓存与快照（pnpm store `1,244 MiB`、npm `_npx`/`_cacache` `601`、`.cache` `165`、`p0-web…/caches` `346`、r10 三份 snapshot `78`），档 6 共 `4` 项历史实验 state 快照（`4 MiB`）；合计 `17` 个目标 `OK`、逻辑 `2,440 MiB`、`FAIL=0/REFUSED=0/GONE=0`；`/home/vrboyzero` `5,143 → 3,219 MiB`、ext4 used `9.5 → 7.6 GB`；按用户选择本轮不做停机压缩（VHDX 仍 `13.61 GiB`，D 盘 `61.32 GiB`） |
