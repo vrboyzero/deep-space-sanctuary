@@ -852,6 +852,146 @@ D1 的 KEEP 集合精确为：`0e35c8b` staging/inputs/repaired cache、`4d3b4b2
 - 测试数量为 `0`：未运行会重新生成大体量材料的项目测试；执行了 1 次压缩后存储 smoke，exit=`0`。
 - Ubuntu 可挂载、根文件系统 `df` 正常、51/35/16/8 目录合同通过；最终两发行版均停止、WSL 宿主进程为 `0`，且 8 次连续容量采样无变化。
 
+## 9. 2026-09-09 只读盘点：能力精进收尾后的清理候选与建议
+
+> 背景：`SS开发能力精进分析与计划` 已按规则第 17 条收口（candidate-84e622d-1 冻结于 130/144，同身份补测 14/14 后全量 144 槽，基础设施七维 9.50，冷启动余量已修复）。用户明确本轮**可以做大清理**：能不留的都不留，但**先只做只读盘点，由用户决定手动删除或交由代理执行**。本节所有数据为 2026-09-09 08:00 前后的只读采样，**未执行任何删除、移动、压缩、`git worktree prune` 或 cache prune**。
+
+### 9.1 盘符现状与 2026-09-04 基线对比
+
+| 盘 | 介质 | 已用 | 可用 | 与 2026-09-04 对比 |
+| --- | --- | ---: | ---: | --- |
+| C（系统/缓存） | NVMe SSD（Disk 1） | `388.96 GiB` | `169.64 GiB` | 已用 `406.52 -> 388.96 GiB`（约 `-17.56 GiB`，C1 清理与缓存变动共同作用） |
+| D（WSL VHDX 所在） | NVMe SSD（Disk 1） | `295.61 GiB` | `25.1 GiB` | 压缩后曾回到 `33.28 GiB` 可用，本轮又减少约 `8.2 GiB` |
+| E（仓库 + tmp） | **HDD 机械盘（Disk 0，SATA）** | `532.13 GiB` | `467.87 GiB` | 已用 `469.54 -> 532.13 GiB`（约 `+62.59 GiB`），本轮最大增长点 |
+| H（状态目录） | NVMe SSD（Disk 1） | `1.62 GiB` | `50.38 GiB` | 状态目录本体仅 `427 MB`，不需要清理 |
+
+关键事实：**E 盘是 4TB 机械盘**。这是文档第 5 节"只读扫描耗时数小时"的根因，也决定了本轮盘点策略必须从"全量扫描"改为"定向测量 + 基线反推"。
+
+### 9.2 本轮（2026-09-05 ~ 2026-09-09）新增材料实测
+
+| 路径 | 实测大小 | 性质 |
+| --- | ---: | --- |
+| `E:\project\star-sanctuary\tmp\p2c-layered-development` | `4,221,693,647 bytes`（`3.93 GiB`） | 本轮正式/诊断会话账本与逐槽产物（**含正式证据**，建议只保留账本与报告 JSON） |
+| `E:\project\star-sanctuary\tmp\ss-c84e622d-1-f` | `4,218,386,195 bytes`（`3.93 GiB`） | 正式候选 fixture 根（可再生成） |
+| `E:\project\star-sanctuary\tmp\ss-e84e622db-2-f` | `862,595,738 bytes`（`0.80 GiB`） | 补测队列 fixture（可再生成） |
+| `E:\project\star-sanctuary\tmp\ss-e84e622db-3-f` | `52,051 bytes` | 补测队列 fixture（可再生成） |
+| `E:\project\star-sanctuary\tmp\ss-dev-harness-win-4b5dd97` | `662,324,595 bytes`（`0.62 GiB`） | 本轮 Windows harness checkout（可由 git 重建） |
+| `E:\project\star-sanctuary\artifacts\p2c-layered-candidates` | `98,443,300 bytes`（`0.09 GiB`） | 正式候选 130 槽报告与冻结账本（**建议保留**） |
+| `E:\project\star-sanctuary\artifacts\p2c-layered-exploration` | `11,434,263 bytes`（`0.01 GiB`） | 补测 14 槽报告（**建议保留**） |
+| `E:\project\star-sanctuary\tmp\env-local-backup` | `179,082 bytes` | 配置备份 |
+| `E:\project\star-sanctuary\tmp\coding-agent-cost-authority` | `23,446 bytes` | 成本权威账本 |
+| `E:\project\star-sanctuary\artifacts\cleanup` | `314,995 bytes` | 历史清理 manifest/receipt（**建议保留**） |
+
+### 9.3 WSL 侧现状（Ubuntu-22.04）
+
+| 指标 | 当前值 |
+| --- | ---: |
+| `/var/tmp` 顶层条目 | `164` 项，apparent 合计 `16,267,173 KB`（约 `15.51 GiB`） |
+| `/home/vrboyzero` | `23,164,536 KB`（约 `22.09 GiB`） |
+| ext4 `df` | used `46 GB`、avail `911 GB`（VHDX 动态盘上限 1007 GB） |
+| `ext4.vhdx` | `53,514,076,160 bytes`（`49.84 GiB`），相比 09-05 压缩后稳定值 `47,226,814,464 bytes` 增加 `6,287,261,696 bytes`（约 `+5.86 GiB`） |
+
+`/var/tmp` 分组（apparent，hardlink 重复计数，仅用于定位）：
+
+| 分组 | 项数 | 合计 |
+| --- | ---: | ---: |
+| `star-sanctuary-p2c*` | 40 | 约 `6.04 GiB` |
+| `star-sanctuary-p0*` | 21 | 约 `4.03 GiB` |
+| `star-sanctuary-coding-agent-v3` | 1 | 约 `2.18 GiB` |
+| `star-sanctuary-stage*` | 6 | 约 `1.43 GiB` |
+| `star-sanctuary-p0a*` | 3 | 约 `1.20 GiB` |
+| `star-sanctuary-p1*` | 2 | 约 `1.01 GiB` |
+| `star-sanctuary-uplift*` | 2 | 约 `0.73 GiB` |
+| `star-sanctuary-dev-4b5dd97` | 1 | 约 `0.64 GiB` |
+| `star-sanctuary-post*` | 2 | 约 `0.64 GiB` |
+| `star-sanctuary-layered-inputs*` | 81 | 约 `1.09 MB`（几乎全是小文件/链接） |
+| `star-sanctuary-layered-tools-4b5dd97` | 1 | `5 KB` |
+
+D1 冻结的 51 个路径按 manifest 逐条复核：**`35` 已移出 + `16` 仍存在**，与第 8.6 节记录一致；16 个残留当前仍在 `/var/tmp`（主要是 `*-inputs`、`*-inputs-rejected-*`、`candidate-df54f67`、`candidate-e05ddc4`、`candidate-f01f173`）。
+
+### 9.4 可清理清单
+
+#### A. 建议直接清理（可再生成，收益最大）
+
+| 项 | 当前大小 | 说明 |
+| --- | ---: | --- |
+| `E:\project\star-sanctuary\tmp`（除证据保留项） | **约 `150-165 GiB`（估算）** | 历史 P0/P0A/P1/P2C harness、fixture、staging 与矩阵工作副本；09-04 基线 `113.18 GiB`，之后增量约 `40 GiB`（含本轮新增约 `5.4 GiB`）。**本轮未做全量扫描**，数字由 09-04 基线 + E 盘已用增量 + 已识别项反推 |
+| `E:\project\star-sanctuary\.tmp` | **约 `34 GiB`（09-04 基线）** | 历史 harness/fixture，未重新全量扫描 |
+| `E:\SS-cleanup-quarantine` | `14,939,878,801 bytes`（`13.91 GiB`） | 09-04 从 WSL 隔离出的 51 个旧 P2C 顶层目录 |
+| `E:\project\star-sanctuary\.tmp-codex` | `2,135,463,881 bytes`（`1.99 GiB`） | external-reviews / wsl-wave0 历史材料 |
+| `E:\project\star-sanctuary\artifacts`（除 p2c-layered-* 与 cleanup） | `7,841,539,001 bytes` 总量中的约 `7.1 GiB` | winget / `_cache` / single-exe / portable 等可再生成构建输出 |
+| `E:\project\star-sanctuary\tmp\coding-agent-v3-validation` | `1,699,115,155 bytes`（`1.58 GiB`） | 可再生成验证输出 |
+| `E:\project\star-sanctuary\tmp\coding-agent-v3-sources` / `-caches` | `0.14 / 0.30 GiB` | 工具链源码与缓存（可重建） |
+| `E:\project\star-sanctuary\tmp\ss-c84e622d-1-f` / `ss-e84e622db-2-f` / `-3-f` | `3.93 / 0.80 / 0.00 GiB` | 本轮 fixture 根（可重新生成） |
+| `E:\project\star-sanctuary\tmp\ss-dev-harness-win-4b5dd97` | `0.62 GiB` | 本轮 Windows harness checkout（可由 git 重建） |
+| WSL `/var/tmp/star-sanctuary-*` | 约 `15.51 GiB` | 含 16 个 D1 残留；删除后需 `fstrim` + 停机压缩才能返还 D 盘 |
+| C 盘 `npm-cache` | `11.11 GiB`（09-04 采样） | 只能走 `npm cache clean --force` |
+| C 盘 pnpm store | `2.34 GiB`（09-04 采样） | 只能走 `pnpm store prune` |
+| Docker（当前 Desktop 已停止） | 约 `6.8 GiB` | 启动后 `docker system prune -a`；会删除 pinned OCI 镜像，需用户确认 |
+| C/E 回收站 | `3.79 / 7.42 GiB` | 清空前需确认无需还原 |
+
+#### B. 需要用户拍板
+
+| 项 | 当前大小 | 决策点 |
+| --- | ---: | --- |
+| `E:\WSL-backups` | `45.46 GiB` | 2026-08-16 的 WSL 回滚资产；放弃恢复点才可删 |
+| `C:\Users\admin\.codex` | `9.44 GiB`（09-04 采样） | 历史会话/数据库是否归档 |
+| `tmp\p2c-layered-development` | `3.93 GiB` | 建议只保留账本/绑定/expected-report-plan/报告 JSON（约 `0.2 GiB`），删除逐槽大 trace 与 fixture |
+| `E:\ss-toolchains` / `E:\.pnpm-store` / 根 `node_modules` | `0.27 / 2.63 / 0.55 GiB` | 依赖与工具链，留着省事、删了可重建 |
+
+#### C. 必须保留
+
+源码仓库本体与 `.git` 历史、`docs/`、配置模板、`.env.local`/`.env`、`H:\.star_sanctuary`（`427 MB` 运行时状态与记忆）、`artifacts\p2c-layered-*` 正式证据、`artifacts\cleanup\*.json` 清理 manifest 与 receipt。
+
+### 9.5 执行机制与风险
+
+1. **回收站装不下且不可靠**：E 盘回收站配额约 `52 GiB`，单项 `WSL-backups`（`45.46 GiB`）即接近上限；09-04 的 E2 已证明 Windows Shell 对超大目录/长路径/大量 Linux 符号链接会直接清除而非可恢复（`9` 个条目无法还原）。→ 对可再生成缓存建议"先落盘 manifest + 永久删除"或"先移入隔离区再删"，小项才走回收站。
+2. **Git worktree 不能直接删**：当前登记 `116` 个（`109` 个 prunable；`tmp/` `67`、`.tmp/` `41`、`/home/vrboyzero` `7`、`.belldandy` `1`）。删除目录后必须执行 `git worktree prune --expire=now`，删前先存 `git worktree list` 快照。
+3. **WSL 空间不会自动返还**：删除 `/var/tmp` 后需 `fstrim -v /` → 全部发行版停止 → `Optimize-VHD -Mode Full`（流程见第 6、8 节）。预期 D 盘实际返还约 `10-14 GiB`。
+4. **进程占用**：盘点时 node/Gateway 进程为 `0`、Docker Desktop 为停止状态，适合清理；执行前必须重新确认。
+5. **E 盘是机械盘**：删除大量小文件仍会比 SSD 慢，但远快于全量扫描；建议按顶层目录名批量处理，避免再次全量遍历。
+
+### 9.6 预期收益（逻辑上限）
+
+| 盘 | 可回收（估算） |
+| --- | ---: |
+| E | 约 `205 GiB`（tmp≈150 + .tmp≈34 + quarantine 13.9 + artifacts 7.1 + .tmp-codex 2.0 + 其他≈2）；若再删 `WSL-backups` 则约 `250 GiB` |
+| D | 约 `10-14 GiB`（WSL `15.51 GiB` 经 trim + 停机压缩后的实际返还） |
+| C | 约 `15-30 GiB`（npm 11 + pnpm 2.3 + Docker 6.8 + 回收站 3.8；含 `.codex` 则 +9.4） |
+| **合计** | **约 `230-290 GiB`**（逻辑上限，不等于实际释放量） |
+
+### 9.7 待用户决定
+
+1. **删除方式**：可再生成缓存走"先写 manifest + 永久删除"，小项走回收站，是否同意？
+2. **本轮证据保留粒度**：`tmp\p2c-layered-development` 只留账本/绑定/报告 JSON（约 `0.2 GiB`），还是整份 `3.93 GiB` 都留？
+3. **两个大件**：`E:\WSL-backups`（`45.46 GiB`）与 `C:\Users\admin\.codex`（`9.44 GiB`）是否删除？
+
+### 9.8 只读盘点实现结论：能力精进收尾后的清理候选盘点（2026-09-09）
+
+##### 已完成内容
+
+1. **盘符与介质基线**：
+   - 记录 C/D/E/H 已用与可用空间，并与第 8.1 节 09-04 基线逐项对比。
+   - 确认 E 盘为 HDD 机械盘（Disk 0 / SATA），C/D/H 为 NVMe SSD（Disk 1），据此把盘点策略从全量扫描改为定向测量。
+
+2. **本轮新增材料实测**：
+   - 用 `robocopy /L /BYTES` 定向测量 16 个路径，得到本轮 harness、fixture、证据与隔离区的精确字节数。
+   - 确认 `tmp\p2c-layered-development=3.93 GiB`、`ss-c84e622d-1-f=3.93 GiB`、`artifacts=7.30 GiB`、`E:\SS-cleanup-quarantine=13.91 GiB`。
+
+3. **WSL 侧复核**：
+   - `/var/tmp` 164 项、apparent `15.51 GiB`；`/home/vrboyzero` `22.09 GiB`；VHDX `49.84 GiB`（较 09-05 压缩后 +`5.86 GiB`）。
+   - 按冻结 manifest 逐条复核 D1 的 51 个路径：`35` 已移出 + `16` 仍存在。
+
+4. **分层建议**：
+   - 形成 A（建议直接清理）/ B（用户拍板）/ C（必须保留）三层清单、执行机制与风险、预期收益与三个待决问题。
+
+##### 验证结果
+
+- TypeScript 编译不适用：本轮只读盘点并修改 Markdown 文档。
+- 测试数量为 `0`：未运行会重新生成大体量材料的项目测试。
+- 所有采样均为只读命令（`Get-PSDrive`、`robocopy /L`、`du`、`git worktree list`、`df`）；未执行删除、移动、压缩、prune 或 cache 清理。
+- `tmp/.tmp` 未做全量扫描（E 盘为 HDD，全量遍历成本过高），其当前大小为基线反推的**估算值**，已在该节显式标注。
+
 ## 重要问题说明
 
 1. **C 盘远程桌面 trace 曾持续增长，主体当前已停但仍有活动句柄风险**：盘点期间从 `6.760 GiB / 549 files` 增至 `6.907 GiB / 553 files`；执行前复核又增至 `7,451,189,248 bytes / 556 files`（约 `6.940 GiB`）。最近 10 秒总字节稳定，但最新写入时间每隔约 10 秒变化，一个 `msrdc.exe` 仍在运行；因此原计数 Gate 已漂移，C2 整批继续 blocked。处理方案是只有在用户单独确认可停止该进程后，才停止精确 PID、重新冻结文件数/字节并观察不再变化，再把整个旧 trace 目录送入 C 盘回收站；任一检查失败即保留原目录，禁止边用边处理。
@@ -891,6 +1031,11 @@ D1 的 KEEP 集合精确为：`0e35c8b` staging/inputs/repaired cache、`4d3b4b2
 35. **压缩后启动 smoke 会让动态 VHDX 小幅回长**：正式压缩结束时 VHDX 为 `47,211,085,824 bytes`，启动 Ubuntu 完成只读检查并再次停机后的首次读数为 `47,244,640,256 bytes`，增加 `33,554,432 bytes`（`32 MiB`）；D 盘可用空间同步减少相同字节数。目录集合仍为 `35 absent + 16 residual + 8 KEEP`，因此不是候选恢复，而是文件系统启动时的正常块分配。处理方案是以再次停机后的稳定读数作为最终口径，不沿用 smoke 前瞬时的 `9.04 GiB` 收益。
 36. **首次停机复测后 VHDX 仍继续异步缩小**：约 10 秒后的第二次读数从 `47,244,640,256` 降至 `47,226,814,464 bytes`，D 盘可用空间同步增加 `17,825,792 bytes`（`17 MiB`），期间两个发行版均为 `Stopped` 且 WSL 宿主进程为 `0`。这表明文件关闭或稀疏块回收可能在命令返回后继续短暂结算，首次读数不能称为“最终稳定值”。处理方案是不重复执行 `Optimize-VHD`，只做多点只读采样；随后 35 秒内的 8 次读数全部一致，最终冻结 VHDX=`47,226,814,464 bytes`、D 盘可用=`33,285,779,456 bytes`，相对压缩前稳定净收益为 `9,693,036,544 bytes`（约 `9.03 GiB`）。
 
+37. **E 盘是机械盘，全量扫描不可行**：本轮确认 E 盘位于 Disk 0（HDD / SATA，4 TB），C/D/H 位于 Disk 1（NVMe SSD）。此前 `robocopy /L` 在 `tmp` 上运行约 25 分钟、CPU 仅消耗约 172 秒仍未完成，属于机械盘随机 I/O 瓶颈。处理方案是把盘点改为"定向测量 + 基线反推"：只对 16 个精确路径做 `robocopy /L`，`tmp/.tmp` 的当前大小用 09-04 基线加 E 盘已用增量反推，并在文档中显式标注为估算值。
+38. **首次盘点脚本因 `/NJH /NJS` 抑制摘要导致全部 `NOPARSE`**：第一版定向脚本使用了 `/NJH /NJS`，把包含 `Bytes :` 的汇总块一并抑制，14 个目标全部解析失败，得到零结果。该次运行只读且未修改任何文件。处理方案是移除 `/NJS`、保留汇总后重跑，得到 16/16 精确字节数；后续解析 `robocopy` 一律保留汇总块。
+39. **并发后台任务过多造成宿主卡顿（用户反馈）**：盘点期间同时运行了 4 个后台扫描（含一个卡住的 `robocopy` 与一个 9p `du`），宿主明显变卡。处理方案是立即停止 2 个陈旧任务（`bash-3`、`bash-6`）并清理孤儿 `robocopy` 进程，之后并发上限固定为 3，且不再叠加同类全量扫描。
+40. **09-04 基线已漂移，本轮数字只用于决策**：E 盘已用 `469.54 -> 532.13 GiB`（`+62.59 GiB`）、VHDX `47,226,814,464 -> 53,514,076,160 bytes`（`+5.86 GiB`）、E 盘回收站从 E2 后的约 `11.6 GiB` 变为 `7.42 GiB`（用户可能已部分清空）。因此第 9 节的占用与收益均为决策用估算，**不能作为释放量承诺**；实际收益必须在清理后以三盘可用空间复测为准。
+
 ## 后续计划（2026-09-05）
 
 `E:\project\star-sanctuary\tmp`、`.tmp` 与 `artifacts` 的单次原生扫描已经完成；current/frozen P2C identity、正式 artifact、历史 P2C 候选和 worktree 登记也已分开。若后续准备实际处理，下一步应先为约 `49.52 GiB` 的优先候选生成精确只读 manifest/dry-run；为什么先做它：这批收益明确、与约 `127.42 GiB` 的深度核验池隔离，最容易在不触碰当前候选和唯一 evidence 的前提下复核。
@@ -904,6 +1049,10 @@ D1 的 KEEP 集合精确为：`0e35c8b` staging/inputs/repaired cache、`4d3b4b2
 正式 `fstrim` 已完成且 35/16/8 集合回归通过。下一步先只读确认 Ubuntu-22.04、docker-desktop 等相关 WSL 发行版均为 Stopped，并确认系统提供 `Optimize-VHD`、精确 VHDX 路径与当前长度未漂移；为什么先做它：只有 VHDX 不再被任何 WSL 实例占用时才能安全压缩。Gate 通过后执行一次 `Optimize-VHD -Mode Full`，立即记录 VHDX 与 D 盘真实变化，再启动 Ubuntu 做最小文件系统 smoke；当前还缺的关键闭环就是停机压缩与压缩后可启动性验证。
 
 35 个已完成移动目录的释放链已经闭环：压缩后 Ubuntu 可正常挂载，`df` 正常，E 盘 destination=`51/51`，WSL source=`35 absent + 16 residual + 8 KEEP`；再次停机后完成 35 秒、8 次无变化采样，最终 D 盘稳定净增加 `9,693,036,544 bytes`（约 `9.03 GiB`）。下一步应先由用户检查本轮记录与实际容量，再另行决定 E1/E3/E4 的可恢复处理路线；为什么先做它：Windows Shell 在 E2 已出现 9 个不可恢复条目，不能把原路线直接复用于剩余大目录。当前仍缺的跨三盘总闭环是 E1/E3/E4 的安全处理、C2 活动 trace 的独立授权，以及延期 16 个 residual 的逐项核验；这些均不属于本轮 35 个目录释放范围。
+
+## 后续计划（2026-09-09）
+
+能力精进阶段已收口，用户明确本轮可以做大清理，但要求先只读盘点、由用户决定执行方式。第 9 节已完成盘点与三层清单；下一步先由用户在三个待决问题上给出选择（删除方式、证据保留粒度、`WSL-backups` 与 `.codex` 是否删除）；为什么先做它：这三项直接决定可释放量与执行边界，且涉及不可逆操作，必须先取得明确授权。授权后按"每批一份精确 manifest + dry-run + 执行前进程/引用复核"的顺序推进，优先处理收益明确且可再生成的 `tmp/.tmp/artifacts/.tmp-codex` 与 WSL `/var/tmp`，最后再评估 `WSL-backups`。当前还缺的关键闭环是：精确 manifest 与 dry-run、Git worktree 删除顺序与 prune 时机、WSL 删除后的 `fstrim` 与停机 VHDX 压缩复测。
 
 ## 实施计划进度表
 
@@ -921,3 +1070,4 @@ D1 的 KEEP 集合精确为：`0e35c8b` staging/inputs/repaired cache、`4d3b4b2
 | `tmp/.tmp/artifacts` 四级保留分层 | 已完成分析，尚未清理 | 2026-08-20 基线为三目录合计 `120.71 GB`；C0/C1 继续保留，C2/C3 需逐项 manifest、hash、引用、进程和敏感扫描核对；本轮不删除 |
 | 2026-09-04 C/D/E 三盘复盘 | 已完成盘点，未清理 | `tmp/.tmp/artifacts=154.29 GiB` 同口径扫描错误=`0`，E 盘约 `205.2 GiB` 已确认路径可解释；当前必留、优先候选约 `49.52 GiB`、用户决策、共享缓存、非 SS 和约 `127.42 GiB` 深度核验池已分层，实际释放量留待获授权后的独立批次验证 |
 | 跨三盘优先候选清理 | 执行中：C1 完成、E2 部分完成、D1 已移动 35 个目录释放闭环 | C1 为 2/2 可恢复；E2 为 32 个普通目标已移出、7 个目标保留。D1 destination=`51/51`，source absent=`35/51`、residual=`16/51`、KEEP=`8/8`；`fstrim`、单次 VHDX 压缩、启动 smoke、最终停机和 8 次稳定采样均通过，D 盘稳定净增加 `9,693,036,544 bytes`（约 `9.03 GiB`）。16 个 residual 继续延期；E1/E3/E4 与 C2 留待独立安全批次 |
+| 2026-09-09 能力精进收尾后盘点 | 已完成盘点，未清理 | 只读采样：C `388.96/169.64`、D `295.61/25.1`、E `532.13/467.87`、H `1.62/50.38` GiB；E 盘确认是 HDD（全量扫描不可行）；定向实测 16 个路径，`tmp\p2c-layered-development=3.93 GiB`、`ss-c84e622d-1-f=3.93 GiB`、`artifacts=7.30 GiB`、`E:\SS-cleanup-quarantine=13.91 GiB`、`.tmp-codex=1.99 GiB`；WSL `/var/tmp=15.51 GiB`、VHDX `49.84 GiB`、D1 `35 absent + 16 residual`；形成 A/B/C 三层清单与约 `230-290 GiB` 逻辑上限，待用户在三个问题上授权 |
