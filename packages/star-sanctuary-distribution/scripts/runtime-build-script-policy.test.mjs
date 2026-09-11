@@ -11,8 +11,8 @@ import {
 const workspaceRoot = fileURLToPath(new URL("../../../", import.meta.url));
 
 const workspacePolicy = {
-  onlyBuiltDependencies: ["better-sqlite3", "esbuild"],
-  ignoredBuiltDependencies: ["node-pty", "onnxruntime-node", "protobufjs"],
+  onlyBuiltDependencies: ["esbuild"],
+  ignoredBuiltDependencies: ["better-sqlite3", "node-pty", "onnxruntime-node", "protobufjs"],
 };
 
 describe("runtime build script policy", () => {
@@ -29,8 +29,8 @@ describe("runtime build script policy", () => {
       ...workspacePolicy,
     })).toEqual(expect.objectContaining({
       mode: "slim",
-      onlyBuiltDependencies: ["better-sqlite3", "esbuild"],
-      ignoredBuiltDependencies: ["node-pty", "onnxruntime-node", "protobufjs"],
+      onlyBuiltDependencies: ["esbuild"],
+      ignoredBuiltDependencies: ["better-sqlite3", "node-pty", "onnxruntime-node", "protobufjs"],
     }));
   });
 
@@ -60,18 +60,18 @@ describe("runtime build script policy", () => {
     const full = serializeRuntimeWorkspaceConfig("full");
 
     expect(slim).toContain("packages:\n  - packages/*\n  - apps/*");
-    expect(slim).toContain("onlyBuiltDependencies:\n  - better-sqlite3\n  - esbuild");
-    expect(slim).toContain("ignoredBuiltDependencies:\n  - node-pty\n  - onnxruntime-node\n  - protobufjs");
-    expect(full).toContain("onlyBuiltDependencies:\n  - better-sqlite3\n  - esbuild\n  - node-pty\n  - onnxruntime-node");
-    expect(full).toContain("ignoredBuiltDependencies:\n  - protobufjs");
+    expect(slim).toContain("onlyBuiltDependencies:\n  - esbuild");
+    expect(slim).toContain("ignoredBuiltDependencies:\n  - better-sqlite3\n  - node-pty\n  - onnxruntime-node\n  - protobufjs");
+    expect(full).toContain("onlyBuiltDependencies:\n  - esbuild\n  - node-pty\n  - onnxruntime-node");
+    expect(full).toContain("ignoredBuiltDependencies:\n  - better-sqlite3\n  - protobufjs");
   });
 
   it("reads the current development workspace policy through pnpm's structured config output", () => {
     expect(resolveRuntimeBuildScriptPolicy({ cwd: workspaceRoot, mode: "workspace" })).toEqual(
       expect.objectContaining({
         mode: "workspace",
-        onlyBuiltDependencies: ["better-sqlite3", "esbuild", "node-pty"],
-        ignoredBuiltDependencies: ["onnxruntime-node", "protobufjs"],
+        onlyBuiltDependencies: ["esbuild", "node-pty"],
+        ignoredBuiltDependencies: ["better-sqlite3", "onnxruntime-node", "protobufjs"],
       }),
     );
     expect(() => resolveRuntimeBuildScriptPolicy({ cwd: workspaceRoot, mode: "slim" })).toThrow(

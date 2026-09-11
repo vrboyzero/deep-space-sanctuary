@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@belldandy/protocol": "workspace:*",
-    "better-sqlite3": "^11.9.1",
+    "better-sqlite3": "^13.0.3",
     "chokidar": "^5.0.0",
     "openai": "^4.24.0",
     "sqlite-vec": "0.1.7-alpha.2"

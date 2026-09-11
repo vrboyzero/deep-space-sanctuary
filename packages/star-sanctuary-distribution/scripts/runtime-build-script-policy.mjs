@@ -5,10 +5,10 @@ export const RUNTIME_BUILD_SCRIPT_POLICY_SCHEMA_VERSION = "runtime-build-script-
 const BUILD_SCRIPT_DECISIONS = [
   {
     dependency: "better-sqlite3",
-    slim: "allow",
-    full: "allow",
-    workspace: "allow",
-    reason: "Every runtime requires the native SQLite memory backend.",
+    slim: "ignore",
+    full: "ignore",
+    workspace: "ignore",
+    reason: "v13+ ships N-API prebuilds for every supported target and needs no build step; its implicit node-gyp pass is a documented no-op that would only add a Python/MSVC requirement.",
   },
   {
     dependency: "esbuild",
