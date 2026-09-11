@@ -33,7 +33,7 @@ goto :after_helpers
 :print_capability_hints
 echo [HINT] Default startup does not require optional native features like node-pty, fastembed, protobufjs, or onnxruntime-node.
 echo [HINT] A plain "pnpm approve-builds" reminder is not a blocker for the default install/start path.
-echo [HINT] If the log mentions better-sqlite3, native bindings, ABI, or postinstall failures, switch to Node.js v22.12+ LTS and rerun install/build.
+echo [HINT] If the log mentions native bindings or postinstall failures, verify Node.js is v22.12+ and rerun install/build.
 echo [HINT] If the log mentions registry, tarball, ECONNRESET, ETIMEDOUT, or proxy access, fix network/registry access and rerun.
 goto :eof
 
@@ -51,7 +51,7 @@ if %errorlevel% neq 0 (
 )
 
 REM Check Node.js version compatibility using Node itself to avoid batch parsing issues.
-node -e "const v=parseInt(process.version.slice(1));if(v<22){console.log('[ERROR] Node.js version too old: '+process.version);console.log('[ERROR] Star Sanctuary requires Node.js v22 or higher.');console.log('[ERROR] Please download v22 LTS from https://nodejs.org/');process.exit(1)}if(v>=24){console.log('[WARNING] ============================================================');console.log('[WARNING] Node.js '+process.version+' is an unstable/preview version.');console.log('[WARNING] Native modules like better-sqlite3 may fail to install.');console.log('[WARNING] Strongly recommended: use Node.js v22 LTS instead.');console.log('[WARNING] ============================================================')}"
+node -e "const v=parseInt(process.version.slice(1));if(v<22){console.log('[ERROR] Node.js version too old: '+process.version);console.log('[ERROR] Star Sanctuary requires Node.js v22 or higher.');console.log('[ERROR] Please download v22 LTS from https://nodejs.org/');process.exit(1)}"
 if %errorlevel% neq 0 (
     pause
     exit /b 1

@@ -1267,9 +1267,11 @@ corepack pnpm build
 corepack pnpm rebuild
 ```
 
-### 安装依赖时 `better-sqlite3` 编译失败
+### 安装依赖时 `better-sqlite3` 安装失败
 
-优先确认 Node.js 版本。当前推荐 **Node.js 22 LTS**；Node 24+ 上原生模块更容易出问题。
+`better-sqlite3` 自 v13 起改用 N-API，预编译二进制随包发布：安装时**不需要本地编译**，也不再受 Node.js 大版本影响（Node 22 与 Node 24 加载的是同一份二进制）。
+
+若仍然失败，优先确认两点：Node.js 不低于 **v22.12.0**（`package.json` 的 `engines` 要求），以及网络 / registry 可正常访问。
 
 ### 端口被占用
 

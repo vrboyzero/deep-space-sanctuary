@@ -43,7 +43,7 @@ function Write-InstallHintBlock {
   if ($Message -match "corepack pnpm install failed" -or $Message -match "corepack pnpm build failed") {
     $hints += "Default install/start does not require optional native features like node-pty, fastembed, protobufjs, or onnxruntime-node."
     $hints += "A plain 'pnpm approve-builds' reminder is not a blocker for the default install/build path."
-    $hints += "If the log mentions better-sqlite3, native bindings, ABI, or postinstall failures, switch to Node.js v22.12+ LTS and rerun."
+    $hints += "If the log mentions native bindings or postinstall failures, verify Node.js is v22.12+ LTS and rerun."
     $hints += "If the log mentions registry, tarball, ECONNRESET, ETIMEDOUT, or proxy access, fix network/registry access and rerun."
   }
 

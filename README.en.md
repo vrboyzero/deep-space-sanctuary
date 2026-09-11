@@ -1092,9 +1092,11 @@ If it still fails, do a clean rebuild:
 corepack pnpm rebuild
 ```
 
-### `better-sqlite3` fails to build during install
+### `better-sqlite3` fails to install
 
-Check the Node.js version first. **Node.js 22 LTS** is currently recommended. Native modules are more likely to fail on Node 24+.
+Since v13, `better-sqlite3` uses N-API and ships prebuilt binaries inside the package, so no local compilation is needed and the same binary loads on both Node 22 and Node 24.
+
+If it still fails, check that Node.js is at least **v22.12.0** (the `engines` requirement) and that npm registry access works.
 
 ### Port already in use
 

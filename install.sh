@@ -40,7 +40,7 @@ fail() {
     *"corepack pnpm install failed."*|*"corepack pnpm build failed."*)
       printf '[install] HINT: Default install/start does not require optional native features like node-pty, fastembed, protobufjs, or onnxruntime-node.\n' >&2
       printf '[install] HINT: A plain "pnpm approve-builds" reminder is not a blocker for the default install/build path.\n' >&2
-      printf '[install] HINT: If the log mentions better-sqlite3, native bindings, ABI, or postinstall failures, switch to Node.js v22.12+ LTS and rerun.\n' >&2
+      printf '[install] HINT: If the log mentions native bindings or postinstall failures, verify Node.js is v22.12+ LTS and rerun.\n' >&2
       printf '[install] HINT: If the log mentions registry, tarball, ECONNRESET, ETIMEDOUT, or proxy access, fix network/registry access and rerun.\n' >&2
       ;;
   esac
