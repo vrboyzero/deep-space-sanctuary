@@ -1,23 +1,33 @@
 # 双 GitHub 仓库操作指南
 
-本项目采用“私有仓库内部开发 + 开源仓库对外发布”的双重远程仓库协作模式。
+本项目采用“内部开发仓库 + 开源仓库对外发布”的双重远程仓库协作模式。
 
 ## 1. 仓库预设
 
-- **开源仓库 (Public)**
+- **开源仓库（对外发布）**
   - 远程名称：`origin`
+  - 地址：`https://github.com/vrboyzero/star-sanctuary.git`
   - 主要用途：对外发布稳定版本、展示核心项目源码。
-- **私有仓库 (Private)**
+- **内部开发仓库（远程名沿用 `private`）**
   - 远程名称：`private`
-  - 主要用途：内部敏捷开发、日常各种细小提交的容灾备份、未公开特性的开发。
   - 地址：`https://github.com/vrboyzero/deep-space-sanctuary.git`
+  - 主要用途：内部敏捷开发、日常各种细小提交的容灾备份。
+
+> **可见性变更（2026-09-13 核实）**：`deep-space-sanctuary` 当前为 **public 仓库**，不再是私有仓库。核实方式：匿名读取 `https://raw.githubusercontent.com/vrboyzero/deep-space-sanctuary/main/package.json` 返回 HTTP 200（私有仓库会返回 404），且仓库页可见 `Public` 标记。
+>
+> 由此产生两条必须遵守的边界：
+>
+> 1. 远程名称 `private` 是**历史命名**，只表示“内部开发用途”，**不再代表可见性**；本文其余章节继续沿用该名称指代内部开发仓库。
+> 2. 既然内容公开可见，**不要把任何密钥、凭据、未公开资料推送到 `private`**，也不要假设“推到 private 就是未公开”。需要保密的内容只能留在本地或走私有存储，不能进任何远端。
+>
+> 该仓库此前被描述为“私有仓库、用于未公开特性开发”，该说法自本日起失效。
 
 ## 2. 初始环境配置
 
-系统已经自动为您执行了以下命令，将私有仓库地址添加到了本地 Git 配置中：
+系统已经自动为您执行了以下命令，将内部开发仓库地址添加到了本地 Git 配置中：
 
 ```bash
-# 添加私有仓库远程地址
+# 添加内部开发仓库远程地址（远程名沿用 private）
 git remote add private https://github.com/vrboyzero/deep-space-sanctuary.git
 
 # 查看当前所有远程仓库信息
@@ -251,6 +261,7 @@ Build & Test
 - 本地 `main`、`private/main`、`origin/main` 三方一致，均为 `4f8de7cf`，工作区干净。
 - 2026-09-13 已把 `6b8acf46..4f8de7cf`（39 个提交）推送到 `origin/main`，公开仓库**源码**已是最新。
 - 但公开 `main` 的 CI 未通过，发布链路整体处于红灯状态。本次推送**没有产生任何公开产物**：镜像未推送、GitHub Release 未创建（`Publish to Docker Hub`、`Create GitHub Release`、`Prepare Windows Packaging Assets` 均为 skipped）。
+- 2026-09-13 后续进展：`env-config-audit` 门禁已在内部开发仓库修复并通过真实 CI 验证（见下方「第 1 项实现结论」）；`Dependency audit gate` 已定性为真实漏洞，其中两项已修复（见「重要问题说明」第 2 条）。公开 `main` 仍停在 `4f8de7cf`，尚未同步这些修复。
 
 #### 重要问题说明
 
@@ -274,12 +285,22 @@ Build & Test
 
    - 处理方案：逐个判断归属——可纳入设置页管理的接入 `apps/web/public/app/features/settings.js`，可纳入白名单的登记到 `config-channel.ts`，确实只适合手工配置的才登记为 exempt。不要整批塞进豁免清单，否则该 audit 的约束意义失效。
    - 边界：`Publish to Docker Hub` 与 `Create GitHub Release` 都 `needs: build-and-test`，因此在该测试修好前打 tag 只会新增一条失败 run，不会生成 Release。
+   - **已解决（2026-09-13）**：修复内容见下方「第 1 项实现结论」。真实 CI 已转绿——`Quality Gates #166` 的 `Build and full test suite` 与 `Docker Build & Publish #326` 均为 success。
 
-2. **`Dependency audit report` 失败原因未定性**
+2. **`Dependency audit report` 失败：已定性为真实漏洞（`findings_present`）**
 
-   - 现象：`Quality Gates` 的 `Dependency audit report` 在 `Enforce dependency audit gate` 步骤失败（[run 34734018758](https://github.com/vrboyzero/star-sanctuary/actions/runs/34734018758)）。`scripts/evaluate-dependency-audit-gate.mjs` 只放行 `status === "zero_findings"`，因此既可能是扫描发现真实漏洞（`findings_present`），也可能是扫描本身失败（`scan_failed`）。
-   - 当前判断：**无法区分**。该 job 的日志与 `dependency-audit-report` artifact 均要求仓库 admin 权限，匿名访问分别返回 403 / 401。
-   - 处理方案：由仓库管理员打开上述 run 页面，查看日志与 artifact 后再定性；定性前不得把结论写成「无漏洞」，也不得默认它与本次推送无关（新 CVE 会随时间出现，`6b8acf46` 通过时并不代表现在仍通过）。
+   - 现象：`Quality Gates` 的 `Dependency audit report` 在 `Enforce dependency audit gate` 步骤失败（[run 34734018758](https://github.com/vrboyzero/star-sanctuary/actions/runs/34734018758)）。`scripts/evaluate-dependency-audit-gate.mjs` 只放行 `status === "zero_findings"`。
+   - **定性结论（2026-09-13）**：取得仓库权限后读取 `dependency-audit-report` artifact，`repository.gate.json` 记录 `status = findings_present`、`allowed = false`，summary 为 `affectedPackages = 4`、`vulnerabilityGroups = 9`；scanner 为 osv-scanner 2.3.8，工作正常。**是真实漏洞，不是扫描失败。**
+   - 漏洞清单与修复版本：
+
+     | 包 | 修复前 | 需升到 | 严重度 | 依赖来源 |
+     | --- | --- | --- | --- | --- |
+     | `hono` | 4.13.2 | 4.13.5 | 3 × medium | 传递依赖（走 `pnpm.overrides`）|
+     | `nodemailer` | 9.0.3 | 9.1.1 | 1 × high + 3 × medium | `packages/belldandy-core` 直接依赖 |
+     | `vitest` / `@vitest/mocker` | 3.2.7 | 4.1.11 | 1 × medium | 4 处 devDependency |
+
+   - 处理结果：`hono`（override → 4.13.5）与 `nodemailer`（直接依赖 → `^9.1.1`）已于 2026-09-13 修复，并用 OSV API 独立复核新版本无已知漏洞；`vitest` 需跨主版本（3.x → 4.x），按 HITL 规则单独立项，本次未处理。
+   - 设计观察：该 gate 要求 `zero_findings`，意味着 OSV 新收录任何一条相关 CVE 都会让 CI 变红，属于「持续追新」型门禁；是否引入宽限期或白名单机制是策略问题，另行讨论。
 
 3. **actions 的 Node.js 20 弃用已经实际生效**
 
@@ -294,6 +315,13 @@ Build & Test
    - 处理方案：下次发版把 `package.json` 与 tag 放在同一次改动、同一个提交里一起推进到 `0.5.5`（或更高）。
 
 5. **本节上文一处文档同步待办**：「建议执行顺序」第 4 条写的「再考虑为 GitHub Actions 增加 Dependabot 跟踪」已不成立——`.github/dependabot.yml` 已存在并已产生待合并 PR（`origin` 侧可见 `setup-node-7.0.0`、`login-action-4.6.0`、`setup-buildx-action-4.3.0`、`setup-qemu-action-4.3.0`）。
+
+6. **内部开发仓库的 CI 曾长时间排队、未分配 runner（2026-09-13 第二轮）**
+
+   - 现象：`c7ea97fe` 推送后，`Quality Gates` / `Docker Build & Publish` 两条 run 持续 `Queued` 约 35 分钟，job 的 `runner_name` 始终为 `None`，从未分配 runner。
+   - 已排除的原因：Git 凭证（推送成功，且两条 run 已按该 SHA 正常创建）、workflow 配置（两个 workflow 都没有 `environment:` 保护规则）、账单与配额（该仓库为公开仓库，Actions 不计量，run 页面也没有 spending limit 提示）、GitHub 全局故障（当时 status 页 `Actions` 为 operational）。
+   - 结论：属 GitHub 侧 runner 分配延迟，与仓库配置和代码无关。处置方式是改用 `workflow_dispatch` 手动触发新 run（`Quality Gates #166`、`Docker Build & Publish #326`），两条均正常执行完毕。
+   - 附带更正：最初「私有仓库 Actions 分钟数用尽」的猜测不成立——该仓库实际已公开（见第 1 节可见性变更），该判断已作废。
 
 #### 第 1 项实现结论：修复 env-config-audit 门禁并补齐设置窗口缺失变量（2026-09-13）
 
@@ -332,25 +360,56 @@ Build & Test
 - 50 个定向测试全部通过（含 1 个新增回归测试）：`env-config-audit.test.ts` 3/3、`settings.test.js` 30/30、`settings-runtime` + `app-lifecycle-wiring` + `bootstrap-startup` 14/14、`locale.test.js` 3/3
 - `node scripts/verify-webchat-modules.mjs` 通过（433 files verified）
 - 静态核对通过：14 个控件在 HTML / dom.js / load / save 四处齐备；index.html 引用的 i18n key 中英双份无缺失；settings 会回写的 372 个 key 全部在白名单内，且全部在 `.env.example` 有声明
+- **真实 CI 验证（2026-09-13，内部开发仓库 `c7ea97fe`）**：
+  - `Quality Gates #166` 的 `Build and full test suite` **success**（修复前为 failure），其余 5 个 job 亦全部 success；
+  - `Docker Build & Publish #326` **success**；
+  - 该批次唯一失败的 job 是 `Dependency audit report`，属待办第 2 项，与本次修复无关（修复前那批 run 同样是红的，失败步骤完全相同）。
+
+#### 第 2a 项实现结论：修复 hono / nodemailer 已知漏洞（2026-09-13）
+
+##### 已完成内容
+
+1. **`package.json` 修改**：
+   - `pnpm.overrides` 的 `hono@4.12.30` 由 `4.13.2` 提升到 `4.13.5`，覆盖 3 条 medium 级 advisory（query parser 缓存键差异、`parseBody()` 点号嵌套内存耗尽、`toSSG()` 越界写文件）。
+
+2. **`packages/belldandy-core/package.json` 修改**：
+   - 直接依赖 `nodemailer` 由 `^9.0.3` 提升到 `^9.1.1`，覆盖 4 条 advisory（含 1 条 high：地址解析 O(n²) 远程 DoS；以及 `resolveContent()` 绕过文件/URL 访问限制、两条收件人域校验绕过）。注意 `9.1.0` 仍受 `GHSA-8m3c-c648-2xjj` 影响，因此必须到 `9.1.1`。
+
+3. **`pnpm-lock.yaml` 重解析**：
+   - 在 Windows 侧执行 `corepack pnpm install`，lockfile 中 `hono@4.13.5`、`nodemailer@9.1.1` 生效，旧版本无残留。
+
+4. **`packages/star-sanctuary-distribution/src/dependency-remediation-contract.test.ts` 修改**：
+   - 该契约测试硬编码了受审计版本号，同步更新 4 处断言，并新增 2 条防回归负向断言（lockfile 不得再出现 `nodemailer@9.0.3:` 与 `hono@4.13.2:` 包条目）。漏改此文件会让 CI 直接变红。
+
+5. **效果**：
+   - 8 条 advisory 中的 7 条消除；`Dependency audit gate` 的失败项从 4 个包收敛到仅剩 `vitest` 一项。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`tsc -b` 全工作区 exit 0）
+- 18 个定向测试全部通过：`dependency-remediation-contract.test.ts` + `email-outbound-smtp-provider.test.ts`
+- OSV API 独立复核：`hono@4.13.5` 与 `nodemailer@9.1.1` 均返回「无已知漏洞」；对照组 `hono@4.13.2`（3 条）、`nodemailer@9.0.3`（4 条）、`vitest@3.2.7`（1 条）仍被判定为有漏洞，证明复核方法有效
+- 未验证部分：`Dependency audit gate` 是否整体转绿需等下一次 CI（`vitest` 未修，预期仍为 `findings_present`）
 
 #### 后续计划
 
 按「先解除硬门禁 → 再清理维护项 → 最后发版」的顺序推进。这样排序的理由是：前两步都是每次 push 或每个 tag 都会重复触发代价的环节，先修它们能让后续步骤不再重复踩同一处红灯。
 
-1. ~~**先修 `env-config-audit`**~~：已完成（见上方实现结论）；公开 `main` 需要下一次 push 才能验证转绿。
-2. **再定性 `Dependency audit gate`**：它与第 1 项同属发版前必须转绿的第二个门禁，需要 admin 权限，属于人工介入项。
+1. ~~**先修 `env-config-audit`**~~：已完成并通过真实 CI 验证（见上方实现结论）。
+2. **依赖安全整改**：`hono` / `nodemailer` 已完成（见第 2a 项实现结论）；剩余 `vitest` 3.2.7 → 4.1.11 属主版本升级，需单独立项评估（`^3.2.6` 不允许 4.x，需改 4 处 package.json 或加 override，并验证测试框架兼容性）。
 3. **然后升级 workflow 中的 actions 到 Node 24 版本**：按上文既有约定单开维护提交，不与业务修复混在一起。
 4. **最后 bump `package.json` 并打 tag 发版**：前三项完成后再做，避免产生失败的 Release run 和半成品公开版本。
 
-当前缺的关键闭环：公开 `main` 的 `Build & Test` 与 `Dependency audit gate` 全绿、actions 升级落地、`package.json` 与 tag 版本一致。四项齐备前不进入发版动作。
+当前缺的关键闭环：公开 `main` 同步修复后的提交并使 `Build & Test` 转绿、`vitest` 主版本升级落地使 `Dependency audit gate` 全绿、actions 升级完成、`package.json` 与 tag 版本一致。四项齐备前不进入发版动作。
 
 #### 待办与进度
 
 | 序号 | 内容 | 状态 | 验证方式 |
 | --- | --- | --- | --- |
-| 1 | 修复 `env-config-audit.test.ts`（15 个变量逐个归类） | **已完成（2026-09-13，本地验证通过，待公开 `main` CI 复核）** | 定向运行该测试；公开 `main` 的 `Build & Test` 转绿 |
-| 2 | 定性 `Dependency audit gate` 失败 | 待处理 | 以 admin 查看 run 日志与 artifact，确认 `findings_present` 或 `scan_failed` |
+| 1 | 修复 `env-config-audit.test.ts`（15 个变量逐个归类） | **已完成（2026-09-13，CI 已验证：`Quality Gates #166` / `Docker #326` 门禁转绿）** | 定向测试 3/3；真实 CI 的 `Build and full test suite` success |
+| 2a | 修复 `hono` / `nodemailer` 已知漏洞 | **已完成（2026-09-13，OSV 复核无漏洞、契约与 SMTP 测试 18/18）** | OSV API 复核新版本；`dependency-remediation-contract.test.ts` 通过 |
+| 2b | `vitest` / `@vitest/mocker` 3.2.7 → 4.1.11（主版本升级） | 待处理（HITL） | 4 处 devDependency 或 override 落地；`Build and full test suite` 仍 success；`Dependency audit gate` 转 `zero_findings` |
 | 3 | actions 升级到 Node 24（含 4 个被点名的 SHA） | 待处理 | 复验 `Build & Test`、`Publish to Docker Hub`、`Create GitHub Release` |
 | 4 | 版本推进 `0.5.4` → `0.5.5`，与 tag 同步 | 待处理 | `BELLDANDY_VERSION`、Release 标题、Docker tag 三者一致 |
 
-本次（2026-09-13）已完成：推送 `4f8de7cf` 到 `origin/main` 使三方分支一致；定位并记录上述失败与版本约束；完成第 1 项的修复与本地验证。第 2-4 项继续按 defer 处理，不夹带在本次推送中修复。
+本次（2026-09-13）已完成：推送 `4f8de7cf` 到 `origin/main` 使三方分支一致；定位并记录失败与版本约束；完成第 1 项修复并通过真实 CI 验证；完成第 2a 项依赖漏洞修复与独立复核；核对并更正第 1 节的仓库可见性描述。第 2b、3、4 项继续按 defer 处理。
