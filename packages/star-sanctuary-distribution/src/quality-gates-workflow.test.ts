@@ -178,11 +178,11 @@ test("Docker publishers share a full workspace test gate before image constructi
   const githubReleaseJob = readWorkflowJob(workflow, "release");
 
   expect(buildAndTestJob).toContain(
-    "uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa",
+    "uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413",
   );
   expect(buildAndTestJob).toContain("version: 10.23.0");
   expect(buildAndTestJob).toContain(
-    "uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+    "uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
   );
   expect(buildAndTestJob).toContain("node-version: 22");
 
@@ -388,7 +388,7 @@ test("tag release-light stays independent from Docker Hub publishing while Windo
   expect(descriptionStep).toContain("continue-on-error: true");
   expect(descriptionStep.indexOf("continue-on-error: true")).toBeLessThan(
     descriptionStep.indexOf(
-      "uses: peter-evans/dockerhub-description@432a30c9e07499fd01da9f8a49f0faf9e0ca5b77",
+      "uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa",
     ),
   );
   expect(releaseJob).toContain("needs: build-and-test");
