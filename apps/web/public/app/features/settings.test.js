@@ -2834,6 +2834,92 @@ describe("settings controller", () => {
     });
   });
 
+  it("loads and persists the env knobs newly exposed in the settings window", async () => {
+    const loadServerConfig = vi.fn().mockResolvedValue({
+      BELLDANDY_REASONING_CONTENT_POLICY: "must_preserve_full_reasoning",
+      BELLDANDY_PROMPT_FOCUS_MAX_SECTIONS: "5",
+      BELLDANDY_PROMPT_FOCUS_MAX_CHARS: "1200",
+      BELLDANDY_PROMPT_FOCUS_MAX_EXCERPT_CHARS: "300",
+      BELLDANDY_PROMPT_FOCUS_MIN_SCORE: "6",
+      BELLDANDY_MODEL_CACHE_ENABLED: "true",
+      BELLDANDY_MODEL_JSON_RELIABILITY: "medium",
+      BELLDANDY_BROWSER_ALLOW_INSECURE_HTTP: "true",
+      BELLDANDY_WEB_FETCH_ALLOW_INSECURE_HTTP: "true",
+      BELLDANDY_WEB_FETCH_ALLOW_PRIVATE_NETWORK: "true",
+      BELLDANDY_WORKFLOW_INLINE_ENABLED: "true",
+      BELLDANDY_WORKFLOW_LEGACY_FILE_MODE: "true",
+      BRAVE_API_KEY: "[REDACTED]",
+      SERPAPI_API_KEY: "[REDACTED]",
+    });
+    const sendReq = vi.fn(async (frame) => {
+      switch (frame.method) {
+        case "config.update":
+          return { ok: true, payload: {} };
+        case "channel.security.get":
+        case "channel.reply_chunking.get":
+          return { ok: true, payload: { path: "ok.json", content: '{\n  "version": 1,\n  "channels": {}\n}\n' } };
+        case "channel.security.pending.list":
+          return { ok: true, payload: { pending: [] } };
+        default:
+          return { ok: true, payload: {} };
+      }
+    });
+    const refs = {
+      ...createSettingsRefs(),
+      cfgReasoningContentPolicy: createInput(""),
+      cfgPromptFocusMaxSections: createInput(""),
+      cfgPromptFocusMaxChars: createInput(""),
+      cfgPromptFocusMaxExcerptChars: createInput(""),
+      cfgPromptFocusMinScore: createInput(""),
+      cfgModelCacheEnabled: createInput(""),
+      cfgModelJsonReliability: createInput(""),
+      cfgBrowserAllowInsecureHttp: createCheckbox(false),
+      cfgWebFetchAllowInsecureHttp: createCheckbox(false),
+      cfgWebFetchAllowPrivateNetwork: createCheckbox(false),
+      cfgWorkflowInlineEnabled: createCheckbox(false),
+      cfgWorkflowLegacyFileMode: createCheckbox(false),
+      cfgBraveApiKey: createInput(""),
+      cfgSerpApiKey: createInput(""),
+    };
+    const { controller } = createController({ refs, loadServerConfig, sendReq });
+
+    await controller.loadConfig();
+
+    expect(refs.cfgReasoningContentPolicy.value).toBe("must_preserve_full_reasoning");
+    expect(refs.cfgPromptFocusMaxSections.value).toBe("5");
+    expect(refs.cfgPromptFocusMaxChars.value).toBe("1200");
+    expect(refs.cfgPromptFocusMaxExcerptChars.value).toBe("300");
+    expect(refs.cfgPromptFocusMinScore.value).toBe("6");
+    expect(refs.cfgModelCacheEnabled.value).toBe("true");
+    expect(refs.cfgModelJsonReliability.value).toBe("medium");
+    expect(refs.cfgBrowserAllowInsecureHttp.checked).toBe(true);
+    expect(refs.cfgWebFetchAllowInsecureHttp.checked).toBe(true);
+    expect(refs.cfgWebFetchAllowPrivateNetwork.checked).toBe(true);
+    expect(refs.cfgWorkflowInlineEnabled.checked).toBe(true);
+    expect(refs.cfgWorkflowLegacyFileMode.checked).toBe(true);
+    expect(refs.cfgBraveApiKey.value).toBe("[REDACTED]");
+    expect(refs.cfgSerpApiKey.value).toBe("[REDACTED]");
+
+    // 模拟用户改写其中一部分字段；未改写的密钥保持 redacted 占位，不应回写。
+    refs.cfgPromptFocusMaxSections.value = "4";
+    refs.cfgModelCacheEnabled.value = "false";
+    refs.cfgWorkflowInlineEnabled.checked = true;
+    refs.cfgBraveApiKey.value = "brave-key-123";
+
+    await controller.saveConfig();
+
+    const updateCall = sendReq.mock.calls.find(([frame]) => frame.method === "config.update");
+    const updates = updateCall?.[0]?.params?.updates;
+    expect(updates).toMatchObject({
+      BELLDANDY_REASONING_CONTENT_POLICY: "must_preserve_full_reasoning",
+      BELLDANDY_PROMPT_FOCUS_MAX_SECTIONS: "4",
+      BELLDANDY_MODEL_CACHE_ENABLED: "false",
+      BELLDANDY_WORKFLOW_INLINE_ENABLED: "true",
+      BRAVE_API_KEY: "brave-key-123",
+    });
+    expect(updates).not.toHaveProperty("SERPAPI_API_KEY");
+  });
+
   it("loads Doctor detail cards only after the system tab is activated", async () => {
     const sendReq = vi.fn(async (frame) => {
       switch (frame.method) {

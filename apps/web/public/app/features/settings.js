@@ -69,6 +69,7 @@ export function createSettingsController({
     cfgOpenAiWireApi,
     cfgOpenAiThinking,
     cfgOpenAiReasoningEffort,
+    cfgReasoningContentPolicy,
     cfgResponsesSanitizeToolSchema,
     cfgOpenAiMaxRetries,
     cfgOpenAiRetryBackoffMs,
@@ -100,6 +101,7 @@ export function createSettingsController({
     cfgMcpEnabled,
     cfgBrowserAllowedDomains,
     cfgBrowserDeniedDomains,
+    cfgBrowserAllowInsecureHttp,
     cfgAgentBridgeEnabled,
     cfgToolGroups,
     cfgMaxInputTokens,
@@ -114,6 +116,10 @@ export function createSettingsController({
     cfgPrivilegedWorkspaceWriteChannels,
     cfgDangerousToolsEnabled,
     cfgToolsPolicyFile,
+    cfgWebFetchAllowInsecureHttp,
+    cfgWebFetchAllowPrivateNetwork,
+    cfgBraveApiKey,
+    cfgSerpApiKey,
     cfgSubAgentMaxConcurrent,
     cfgSubAgentMaxQueueSize,
     cfgSubAgentTimeoutMs,
@@ -127,6 +133,8 @@ export function createSettingsController({
     cfgWorkflowMaxTokens,
     cfgWorkflowMaxAgentCalls,
     cfgWorkflowMaxDepth,
+    cfgWorkflowInlineEnabled,
+    cfgWorkflowLegacyFileMode,
     cfgMemoryEnabled,
     refreshMemoryConfiguredSourcesBtn,
     previewMemoryInventoryBtn,
@@ -282,6 +290,10 @@ export function createSettingsController({
     cfgPromptFocusEnabled,
     cfgPromptFocusSemanticEnabled,
     cfgPromptFocusSemanticMinScore,
+    cfgPromptFocusMaxSections,
+    cfgPromptFocusMaxChars,
+    cfgPromptFocusMaxExcerptChars,
+    cfgPromptFocusMinScore,
     cfgMaxSystemPromptChars,
     cfgMaxHistory,
     pairingPendingList,
@@ -308,6 +320,8 @@ export function createSettingsController({
     cfgCompactionMaxPtlRetries,
     cfgCompactionContextWindowFraction,
     cfgModelContextWindow,
+    cfgModelCacheEnabled,
+    cfgModelJsonReliability,
     cfgCompressionReferenceStore,
     cfgPreflightCompressionEnabled,
     cfgPreflightCompressionMode,
@@ -835,6 +849,7 @@ export function createSettingsController({
     if (cfgOpenAiWireApi) cfgOpenAiWireApi.value = c["BELLDANDY_OPENAI_WIRE_API"] || "chat_completions";
     if (cfgOpenAiThinking) cfgOpenAiThinking.value = c["BELLDANDY_OPENAI_THINKING"] || "";
     if (cfgOpenAiReasoningEffort) cfgOpenAiReasoningEffort.value = c["BELLDANDY_OPENAI_REASONING_EFFORT"] || "";
+    if (cfgReasoningContentPolicy) cfgReasoningContentPolicy.value = c["BELLDANDY_REASONING_CONTENT_POLICY"] || "required_on_tool_call_turn";
     if (cfgResponsesSanitizeToolSchema) cfgResponsesSanitizeToolSchema.checked = c["BELLDANDY_RESPONSES_SANITIZE_TOOL_SCHEMA"] === "true";
     if (cfgOpenAiMaxRetries) cfgOpenAiMaxRetries.value = c["BELLDANDY_OPENAI_MAX_RETRIES"] || "";
     if (cfgOpenAiRetryBackoffMs) cfgOpenAiRetryBackoffMs.value = c["BELLDANDY_OPENAI_RETRY_BACKOFF_MS"] || "";
@@ -869,6 +884,7 @@ export function createSettingsController({
     if (cfgMcpEnabled) cfgMcpEnabled.checked = c["BELLDANDY_MCP_ENABLED"] === "true";
     if (cfgBrowserAllowedDomains) cfgBrowserAllowedDomains.value = c["BELLDANDY_BROWSER_ALLOWED_DOMAINS"] || "";
     if (cfgBrowserDeniedDomains) cfgBrowserDeniedDomains.value = c["BELLDANDY_BROWSER_DENIED_DOMAINS"] || "";
+    if (cfgBrowserAllowInsecureHttp) cfgBrowserAllowInsecureHttp.checked = c["BELLDANDY_BROWSER_ALLOW_INSECURE_HTTP"] === "true";
     if (cfgAgentBridgeEnabled) cfgAgentBridgeEnabled.checked = c["BELLDANDY_AGENT_BRIDGE_ENABLED"] === "true";
     if (cfgToolGroups) cfgToolGroups.value = c["BELLDANDY_TOOL_GROUPS"] || "";
     if (cfgMaxInputTokens) cfgMaxInputTokens.value = c["BELLDANDY_MAX_INPUT_TOKENS"] || "";
@@ -883,6 +899,10 @@ export function createSettingsController({
     if (cfgPrivilegedWorkspaceWriteChannels) cfgPrivilegedWorkspaceWriteChannels.value = c["BELLDANDY_PRIVILEGED_WORKSPACE_WRITE_CHANNELS"] || "";
     if (cfgDangerousToolsEnabled) cfgDangerousToolsEnabled.checked = c["BELLDANDY_DANGEROUS_TOOLS_ENABLED"] === "true";
     if (cfgToolsPolicyFile) cfgToolsPolicyFile.value = c["BELLDANDY_TOOLS_POLICY_FILE"] || "";
+    if (cfgWebFetchAllowInsecureHttp) cfgWebFetchAllowInsecureHttp.checked = c["BELLDANDY_WEB_FETCH_ALLOW_INSECURE_HTTP"] === "true";
+    if (cfgWebFetchAllowPrivateNetwork) cfgWebFetchAllowPrivateNetwork.checked = c["BELLDANDY_WEB_FETCH_ALLOW_PRIVATE_NETWORK"] === "true";
+    if (cfgBraveApiKey) cfgBraveApiKey.value = c["BRAVE_API_KEY"] || "";
+    if (cfgSerpApiKey) cfgSerpApiKey.value = c["SERPAPI_API_KEY"] || "";
     if (cfgSubAgentMaxConcurrent) cfgSubAgentMaxConcurrent.value = c["BELLDANDY_SUB_AGENT_MAX_CONCURRENT"] || "";
     if (cfgSubAgentMaxQueueSize) cfgSubAgentMaxQueueSize.value = c["BELLDANDY_SUB_AGENT_MAX_QUEUE_SIZE"] || "";
     if (cfgSubAgentTimeoutMs) cfgSubAgentTimeoutMs.value = c["BELLDANDY_SUB_AGENT_TIMEOUT_MS"] || "";
@@ -896,6 +916,8 @@ export function createSettingsController({
     if (cfgWorkflowMaxTokens) cfgWorkflowMaxTokens.value = c["BELLDANDY_WORKFLOW_MAX_TOKENS"] || "";
     if (cfgWorkflowMaxAgentCalls) cfgWorkflowMaxAgentCalls.value = c["BELLDANDY_WORKFLOW_MAX_AGENT_CALLS"] || "";
     if (cfgWorkflowMaxDepth) cfgWorkflowMaxDepth.value = c["BELLDANDY_WORKFLOW_MAX_DEPTH"] || "";
+    if (cfgWorkflowInlineEnabled) cfgWorkflowInlineEnabled.checked = c["BELLDANDY_WORKFLOW_INLINE_ENABLED"] === "true";
+    if (cfgWorkflowLegacyFileMode) cfgWorkflowLegacyFileMode.checked = c["BELLDANDY_WORKFLOW_LEGACY_FILE_MODE"] === "true";
     if (cfgMemoryEnabled) cfgMemoryEnabled.checked = c["BELLDANDY_MEMORY_ENABLED"] !== "false";
     if (cfgEmbeddingEnabled) cfgEmbeddingEnabled.checked = c["BELLDANDY_EMBEDDING_ENABLED"] === "true";
     if (cfgEmbeddingProvider) cfgEmbeddingProvider.value = c["BELLDANDY_EMBEDDING_PROVIDER"] || "openai";
@@ -1040,6 +1062,10 @@ export function createSettingsController({
     if (cfgPromptFocusEnabled) cfgPromptFocusEnabled.checked = c["BELLDANDY_PROMPT_FOCUS_ENABLED"] !== "false";
     if (cfgPromptFocusSemanticEnabled) cfgPromptFocusSemanticEnabled.checked = c["BELLDANDY_PROMPT_FOCUS_SEMANTIC_ENABLED"] !== "false";
     if (cfgPromptFocusSemanticMinScore) cfgPromptFocusSemanticMinScore.value = c["BELLDANDY_PROMPT_FOCUS_SEMANTIC_MIN_SCORE"] || "";
+    if (cfgPromptFocusMaxSections) cfgPromptFocusMaxSections.value = c["BELLDANDY_PROMPT_FOCUS_MAX_SECTIONS"] || "";
+    if (cfgPromptFocusMaxChars) cfgPromptFocusMaxChars.value = c["BELLDANDY_PROMPT_FOCUS_MAX_CHARS"] || "";
+    if (cfgPromptFocusMaxExcerptChars) cfgPromptFocusMaxExcerptChars.value = c["BELLDANDY_PROMPT_FOCUS_MAX_EXCERPT_CHARS"] || "";
+    if (cfgPromptFocusMinScore) cfgPromptFocusMinScore.value = c["BELLDANDY_PROMPT_FOCUS_MIN_SCORE"] || "";
     cfgMaxSystemPromptChars.value = c["BELLDANDY_MAX_SYSTEM_PROMPT_CHARS"] || "";
     cfgMaxHistory.value = c["BELLDANDY_MAX_HISTORY"] || "";
     loadConversationAllowedKinds(c["BELLDANDY_CONVERSATION_ALLOWED_KINDS"]);
@@ -1062,6 +1088,8 @@ export function createSettingsController({
     if (cfgCompactionMaxPtlRetries) cfgCompactionMaxPtlRetries.value = c["BELLDANDY_COMPACTION_MAX_PTL_RETRIES"] || "";
     if (cfgCompactionContextWindowFraction) cfgCompactionContextWindowFraction.value = c["BELLDANDY_COMPACTION_CONTEXT_WINDOW_FRACTION"] || "";
     if (cfgModelContextWindow) cfgModelContextWindow.value = c["BELLDANDY_MODEL_CONTEXT_WINDOW"] || "";
+    if (cfgModelCacheEnabled) cfgModelCacheEnabled.value = c["BELLDANDY_MODEL_CACHE_ENABLED"] || "";
+    if (cfgModelJsonReliability) cfgModelJsonReliability.value = c["BELLDANDY_MODEL_JSON_RELIABILITY"] || "";
     if (cfgCompressionReferenceStore) cfgCompressionReferenceStore.checked = c["BELLDANDY_COMPRESSION_REFERENCE_STORE"] !== "false";
     if (cfgPreflightCompressionEnabled) cfgPreflightCompressionEnabled.checked = c["BELLDANDY_PREFLIGHT_COMPRESSION_ENABLED"] !== "false";
     if (cfgPreflightCompressionMode) cfgPreflightCompressionMode.value = c["BELLDANDY_PREFLIGHT_COMPRESSION_MODE"] || "attachments";
@@ -2099,6 +2127,7 @@ export function createSettingsController({
     if (cfgOpenAiWireApi) updates["BELLDANDY_OPENAI_WIRE_API"] = cfgOpenAiWireApi.value.trim() || "chat_completions";
     if (cfgOpenAiThinking) updates["BELLDANDY_OPENAI_THINKING"] = cfgOpenAiThinking.value.trim();
     if (cfgOpenAiReasoningEffort) updates["BELLDANDY_OPENAI_REASONING_EFFORT"] = cfgOpenAiReasoningEffort.value.trim();
+    if (cfgReasoningContentPolicy) updates["BELLDANDY_REASONING_CONTENT_POLICY"] = cfgReasoningContentPolicy.value;
     if (cfgResponsesSanitizeToolSchema) updates["BELLDANDY_RESPONSES_SANITIZE_TOOL_SCHEMA"] = cfgResponsesSanitizeToolSchema.checked ? "true" : "false";
     if (cfgOpenAiMaxRetries) updates["BELLDANDY_OPENAI_MAX_RETRIES"] = cfgOpenAiMaxRetries.value.trim();
     if (cfgOpenAiRetryBackoffMs) updates["BELLDANDY_OPENAI_RETRY_BACKOFF_MS"] = cfgOpenAiRetryBackoffMs.value.trim();
@@ -2133,6 +2162,7 @@ export function createSettingsController({
     if (cfgMcpEnabled) updates["BELLDANDY_MCP_ENABLED"] = cfgMcpEnabled.checked ? "true" : "false";
     if (cfgBrowserAllowedDomains) updates["BELLDANDY_BROWSER_ALLOWED_DOMAINS"] = cfgBrowserAllowedDomains.value.trim();
     if (cfgBrowserDeniedDomains) updates["BELLDANDY_BROWSER_DENIED_DOMAINS"] = cfgBrowserDeniedDomains.value.trim();
+    if (cfgBrowserAllowInsecureHttp) updates["BELLDANDY_BROWSER_ALLOW_INSECURE_HTTP"] = cfgBrowserAllowInsecureHttp.checked ? "true" : "false";
     if (cfgAgentBridgeEnabled) updates["BELLDANDY_AGENT_BRIDGE_ENABLED"] = cfgAgentBridgeEnabled.checked ? "true" : "false";
     if (cfgToolGroups) updates["BELLDANDY_TOOL_GROUPS"] = cfgToolGroups.value.trim();
     if (cfgMaxInputTokens) updates["BELLDANDY_MAX_INPUT_TOKENS"] = cfgMaxInputTokens.value.trim();
@@ -2147,6 +2177,10 @@ export function createSettingsController({
     if (cfgPrivilegedWorkspaceWriteChannels) updates["BELLDANDY_PRIVILEGED_WORKSPACE_WRITE_CHANNELS"] = cfgPrivilegedWorkspaceWriteChannels.value.trim();
     if (cfgDangerousToolsEnabled) updates["BELLDANDY_DANGEROUS_TOOLS_ENABLED"] = cfgDangerousToolsEnabled.checked ? "true" : "false";
     if (cfgToolsPolicyFile) updates["BELLDANDY_TOOLS_POLICY_FILE"] = cfgToolsPolicyFile.value.trim();
+    if (cfgWebFetchAllowInsecureHttp) updates["BELLDANDY_WEB_FETCH_ALLOW_INSECURE_HTTP"] = cfgWebFetchAllowInsecureHttp.checked ? "true" : "false";
+    if (cfgWebFetchAllowPrivateNetwork) updates["BELLDANDY_WEB_FETCH_ALLOW_PRIVATE_NETWORK"] = cfgWebFetchAllowPrivateNetwork.checked ? "true" : "false";
+    assignSecretUpdate(updates, "BRAVE_API_KEY", cfgBraveApiKey);
+    assignSecretUpdate(updates, "SERPAPI_API_KEY", cfgSerpApiKey);
     if (cfgSubAgentMaxConcurrent) updates["BELLDANDY_SUB_AGENT_MAX_CONCURRENT"] = cfgSubAgentMaxConcurrent.value.trim();
     if (cfgSubAgentMaxQueueSize) updates["BELLDANDY_SUB_AGENT_MAX_QUEUE_SIZE"] = cfgSubAgentMaxQueueSize.value.trim();
     if (cfgSubAgentTimeoutMs) updates["BELLDANDY_SUB_AGENT_TIMEOUT_MS"] = cfgSubAgentTimeoutMs.value.trim();
@@ -2160,6 +2194,8 @@ export function createSettingsController({
     if (cfgWorkflowMaxTokens) updates["BELLDANDY_WORKFLOW_MAX_TOKENS"] = cfgWorkflowMaxTokens.value.trim();
     if (cfgWorkflowMaxAgentCalls) updates["BELLDANDY_WORKFLOW_MAX_AGENT_CALLS"] = cfgWorkflowMaxAgentCalls.value.trim();
     if (cfgWorkflowMaxDepth) updates["BELLDANDY_WORKFLOW_MAX_DEPTH"] = cfgWorkflowMaxDepth.value.trim();
+    if (cfgWorkflowInlineEnabled) updates["BELLDANDY_WORKFLOW_INLINE_ENABLED"] = cfgWorkflowInlineEnabled.checked ? "true" : "false";
+    if (cfgWorkflowLegacyFileMode) updates["BELLDANDY_WORKFLOW_LEGACY_FILE_MODE"] = cfgWorkflowLegacyFileMode.checked ? "true" : "false";
     if (cfgMemoryEnabled) updates["BELLDANDY_MEMORY_ENABLED"] = cfgMemoryEnabled.checked ? "true" : "false";
     if (cfgEmbeddingEnabled) updates["BELLDANDY_EMBEDDING_ENABLED"] = cfgEmbeddingEnabled.checked ? "true" : "false";
     if (cfgEmbeddingProvider) updates["BELLDANDY_EMBEDDING_PROVIDER"] = cfgEmbeddingProvider.value.trim() || "openai";
@@ -2303,6 +2339,10 @@ export function createSettingsController({
     if (cfgPromptFocusEnabled) updates["BELLDANDY_PROMPT_FOCUS_ENABLED"] = cfgPromptFocusEnabled.checked ? "true" : "false";
     if (cfgPromptFocusSemanticEnabled) updates["BELLDANDY_PROMPT_FOCUS_SEMANTIC_ENABLED"] = cfgPromptFocusSemanticEnabled.checked ? "true" : "false";
     if (cfgPromptFocusSemanticMinScore) updates["BELLDANDY_PROMPT_FOCUS_SEMANTIC_MIN_SCORE"] = cfgPromptFocusSemanticMinScore.value.trim();
+    if (cfgPromptFocusMaxSections) updates["BELLDANDY_PROMPT_FOCUS_MAX_SECTIONS"] = cfgPromptFocusMaxSections.value.trim();
+    if (cfgPromptFocusMaxChars) updates["BELLDANDY_PROMPT_FOCUS_MAX_CHARS"] = cfgPromptFocusMaxChars.value.trim();
+    if (cfgPromptFocusMaxExcerptChars) updates["BELLDANDY_PROMPT_FOCUS_MAX_EXCERPT_CHARS"] = cfgPromptFocusMaxExcerptChars.value.trim();
+    if (cfgPromptFocusMinScore) updates["BELLDANDY_PROMPT_FOCUS_MIN_SCORE"] = cfgPromptFocusMinScore.value.trim();
     updates["BELLDANDY_MAX_SYSTEM_PROMPT_CHARS"] = cfgMaxSystemPromptChars.value.trim();
     updates["BELLDANDY_MAX_HISTORY"] = cfgMaxHistory.value.trim();
     updates["BELLDANDY_CONVERSATION_ALLOWED_KINDS"] = serializeConversationAllowedKinds();
@@ -2325,6 +2365,8 @@ export function createSettingsController({
     if (cfgCompactionMaxPtlRetries) updates["BELLDANDY_COMPACTION_MAX_PTL_RETRIES"] = cfgCompactionMaxPtlRetries.value.trim();
     if (cfgCompactionContextWindowFraction) updates["BELLDANDY_COMPACTION_CONTEXT_WINDOW_FRACTION"] = cfgCompactionContextWindowFraction.value.trim();
     if (cfgModelContextWindow) updates["BELLDANDY_MODEL_CONTEXT_WINDOW"] = cfgModelContextWindow.value.trim();
+    if (cfgModelCacheEnabled) updates["BELLDANDY_MODEL_CACHE_ENABLED"] = cfgModelCacheEnabled.value;
+    if (cfgModelJsonReliability) updates["BELLDANDY_MODEL_JSON_RELIABILITY"] = cfgModelJsonReliability.value;
     if (cfgCompressionReferenceStore) updates["BELLDANDY_COMPRESSION_REFERENCE_STORE"] = cfgCompressionReferenceStore.checked ? "true" : "false";
     if (cfgPreflightCompressionEnabled) updates["BELLDANDY_PREFLIGHT_COMPRESSION_ENABLED"] = cfgPreflightCompressionEnabled.checked ? "true" : "false";
     if (cfgPreflightCompressionMode) updates["BELLDANDY_PREFLIGHT_COMPRESSION_MODE"] = cfgPreflightCompressionMode.value.trim() || "attachments";

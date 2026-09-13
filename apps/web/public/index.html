@@ -843,6 +843,15 @@
             <div class="form-help" data-i18n="settings.openAiReasoningEffortHelp">OpenAI-compatible 推理强度透传值，会写入 `reasoning_effort`。</div>
           </div>
           <div class="form-group">
+            <label class="form-label" for="cfgReasoningContentPolicy" data-i18n="settings.reasoningContentPolicyLabel">Reasoning Content Policy</label>
+            <select id="cfgReasoningContentPolicy" class="input">
+              <option value="required_on_tool_call_turn" data-i18n="settings.reasoningContentPolicyRequiredOnToolCall">仅在工具调用轮回传（默认）</option>
+              <option value="allowed_but_strip_elsewhere" data-i18n="settings.reasoningContentPolicyStripElsewhere">其他场景剥离</option>
+              <option value="must_preserve_full_reasoning" data-i18n="settings.reasoningContentPolicyPreserveFull">全量保留（旧行为）</option>
+            </select>
+            <div class="form-help" data-i18n="settings.reasoningContentPolicyHelp">控制思考模型 `reasoning_content` 的回传范围。默认只在需要占位的工具调用轮回传，其余场景剥离以节省上下文；上游要求完整思考链时改为全量保留。</div>
+          </div>
+          <div class="form-group">
             <label class="form-label" for="cfgResponsesSanitizeToolSchema">
               <input id="cfgResponsesSanitizeToolSchema" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.responsesSanitizeToolSchemaLabel">清洗 Responses Tool Schema</span>
@@ -964,6 +973,26 @@
             <label class="form-label" data-i18n="settings.promptFocusSemanticMinScoreLabel">Prompt Focus Semantic Min Score</label>
             <input id="cfgPromptFocusSemanticMinScore" class="input" placeholder="0.30" />
             <div class="form-help" data-i18n="settings.promptFocusSemanticMinScoreHelp">语义召回的最低相似度阈值。值越高越保守；无 embedding 时此项不会生效。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="settings.promptFocusMaxSectionsLabel">Prompt Focus 最大片段数</label>
+            <input id="cfgPromptFocusMaxSections" class="input" inputmode="numeric" data-i18n-placeholder="settings.promptFocusMaxSectionsPlaceholder" placeholder="3" />
+            <div class="form-help" data-i18n="settings.promptFocusMaxSectionsHelp">单次 prelude 最多注入的片段数。留空使用默认值 3，低于 1 时按 1 处理。需要重启生效</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="settings.promptFocusMaxCharsLabel">Prompt Focus 总字符上限</label>
+            <input id="cfgPromptFocusMaxChars" class="input" inputmode="numeric" data-i18n-placeholder="settings.promptFocusMaxCharsPlaceholder" placeholder="900" />
+            <div class="form-help" data-i18n="settings.promptFocusMaxCharsHelp">prompt focus prelude 的总字符预算。留空使用默认值 900，低于 160 时按 160 处理。需要重启生效</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="settings.promptFocusMaxExcerptCharsLabel">Prompt Focus 单片段字符上限</label>
+            <input id="cfgPromptFocusMaxExcerptChars" class="input" inputmode="numeric" data-i18n-placeholder="settings.promptFocusMaxExcerptCharsPlaceholder" placeholder="220" />
+            <div class="form-help" data-i18n="settings.promptFocusMaxExcerptCharsHelp">单个片段的最大字符数。留空使用默认值 220，低于 80 时按 80 处理。需要重启生效</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="settings.promptFocusMinScoreLabel">Prompt Focus 最低命中分数</label>
+            <input id="cfgPromptFocusMinScore" class="input" inputmode="numeric" data-i18n-placeholder="settings.promptFocusMinScorePlaceholder" placeholder="4" />
+            <div class="form-help" data-i18n="settings.promptFocusMinScoreHelp">lexical 片段入选的最低分数。留空使用默认值 4，低于 1 时按 1 处理；调高会更保守。需要重启生效</div>
           </div>
           <div class="form-group">
             <label class="form-label" data-i18n="settings.maxSystemPromptCharsLabel">Max System Prompt Chars</label>
@@ -1107,6 +1136,25 @@
             <label class="form-label" for="cfgModelContextWindow" data-i18n="settings.modelContextWindowLabel">Model Context Window</label>
             <input id="cfgModelContextWindow" class="input" inputmode="numeric" data-i18n-placeholder="settings.modelContextWindowPlaceholder" placeholder="128000" />
             <div class="form-help" data-i18n="settings.modelContextWindowHelp">显式声明当前主模型的上下文窗口大小，供 compaction 阈值推导与预算保护策略参考。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgModelCacheEnabled" data-i18n="settings.modelCacheEnabledLabel">Model Cache Support</label>
+            <select id="cfgModelCacheEnabled" class="input">
+              <option value="" data-i18n="settings.modelCapabilityUndeclared">未声明（unknown）</option>
+              <option value="true" data-i18n="settings.modelCacheEnabledSupported">支持（true）</option>
+              <option value="false" data-i18n="settings.modelCacheEnabledUnsupported">不支持（false）</option>
+            </select>
+            <div class="form-help" data-i18n="settings.modelCacheEnabledHelp">声明主模型是否支持 prompt cache。声明支持时会保持稳定前缀并启用 cache-aligned compaction；未声明按 unknown 处理。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgModelJsonReliability" data-i18n="settings.modelJsonReliabilityLabel">Model JSON Reliability</label>
+            <select id="cfgModelJsonReliability" class="input">
+              <option value="" data-i18n="settings.modelCapabilityUndeclared">未声明（unknown）</option>
+              <option value="high" data-i18n="settings.modelJsonReliabilityHigh">high</option>
+              <option value="medium" data-i18n="settings.modelJsonReliabilityMedium">medium</option>
+              <option value="low" data-i18n="settings.modelJsonReliabilityLow">low</option>
+            </select>
+            <div class="form-help" data-i18n="settings.modelJsonReliabilityHelp">声明主模型输出 JSON 的可靠性：low 会启用工具调用全量修复，medium 只做去重修复，high 或未声明不做额外修复。</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgCompressionReferenceStore">
@@ -1956,6 +2004,13 @@
             <input id="cfgBrowserDeniedDomains" class="input" data-i18n-placeholder="settings.browserDeniedDomainsPlaceholder" placeholder="mail.google.com,drive.google.com" />
             <div class="form-help" data-i18n="settings.browserDeniedDomainsHelp">逗号分隔黑名单，优先级高于白名单，适合明确封禁高风险站点。</div>
           </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgBrowserAllowInsecureHttp">
+              <input id="cfgBrowserAllowInsecureHttp" type="checkbox" class="form-checkbox" />
+              <span data-i18n="settings.browserAllowInsecureHttpLabel">允许浏览器工具访问 http://</span>
+            </label>
+            <div class="form-help" data-i18n="settings.browserAllowInsecureHttpHelp">默认只允许 `https://` 目标。仅在明确需要访问内网 http 服务时开启，开启会降低浏览器自动化的传输安全边界。</div>
+          </div>
 
           <hr class="theme-divider">
 
@@ -1970,6 +2025,37 @@
             <label class="form-label" for="cfgToolsPolicyFile">Tools Policy File</label>
             <input id="cfgToolsPolicyFile" class="input" placeholder="~/.star_sanctuary/tools-policy.json" />
             <div class="form-help">工具策略 JSON 路径。可用于平衡档/开放档等预定义策略。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgWebFetchAllowInsecureHttp">
+              <input id="cfgWebFetchAllowInsecureHttp" type="checkbox" class="form-checkbox" />
+              <span data-i18n="settings.webFetchAllowInsecureHttpLabel">允许 web_fetch 访问 http://</span>
+            </label>
+            <div class="form-help" data-i18n="settings.webFetchAllowInsecureHttpHelp">默认仅允许 `https://` 抓取。开启后 `web_fetch` 可访问纯 http 地址，请仅在可信网络内使用。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgWebFetchAllowPrivateNetwork">
+              <input id="cfgWebFetchAllowPrivateNetwork" type="checkbox" class="form-checkbox" />
+              <span data-i18n="settings.webFetchAllowPrivateNetworkLabel">允许 web_fetch 访问私网地址</span>
+            </label>
+            <div class="form-help" data-i18n="settings.webFetchAllowPrivateNetworkHelp">默认阻止私网 / 回环目标以缓解 SSRF。仅在需要抓取内网服务时开启，并配合域名白名单使用。</div>
+          </div>
+
+          <div class="settings-subsection-header settings-subsection-header--spaced">
+            <div>
+              <div class="settings-subsection-title" data-i18n="settings.webSearchSectionTitle">Web Search</div>
+              <div class="form-help" data-i18n="settings.webSearchSectionHelp">联网搜索 Provider 凭据。配置任一 Key 后 `web_search` 工具即可用，Brave 优先于 SerpAPI。</div>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="settings.braveApiKeyLabel">Brave Search API Key</label>
+            <input id="cfgBraveApiKey" class="input" type="password" data-i18n-placeholder="settings.braveApiKeyPlaceholder" placeholder="留空则不启用 Brave 搜索" />
+            <div class="form-help" data-i18n="settings.braveApiKeyHelp">Brave Search API Key。留空时回退到 SerpAPI；两者都未配置时 `web_search` 会提示未配置。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="settings.serpApiKeyLabel">SerpAPI Key</label>
+            <input id="cfgSerpApiKey" class="input" type="password" data-i18n-placeholder="settings.serpApiKeyPlaceholder" placeholder="留空则不启用 SerpAPI 搜索" />
+            <div class="form-help" data-i18n="settings.serpApiKeyHelp">SerpAPI Key，作为 Brave 不可用时的搜索回退。</div>
           </div>
 
           <div class="settings-subsection-header settings-subsection-header--spaced">
@@ -2049,6 +2135,20 @@
             <label class="form-label" for="cfgWorkflowMaxDepth" data-i18n="settings.workflowMaxDepthLabel">Workflow Max Depth</label>
             <input id="cfgWorkflowMaxDepth" class="input" inputmode="numeric" data-i18n-placeholder="settings.workflowMaxDepthPlaceholder" placeholder="2" />
             <div class="form-help" data-i18n="settings.workflowMaxDepthHelp">动态工作流 orchestrator 允许的最大嵌套深度。</div>
+          </div>
+          <div class="form-group settings-priority-toggle">
+            <label class="form-label" for="cfgWorkflowInlineEnabled">
+              <input id="cfgWorkflowInlineEnabled" type="checkbox" class="form-checkbox" />
+              <span class="settings-priority-toggle-title" data-i18n="settings.workflowInlineEnabledLabel">允许内联脚本工作流</span>
+            </label>
+            <div class="form-help" data-i18n="settings.workflowInlineEnabledHelp">默认关闭：内联脚本会被启动策略拒绝。开启后仍会先经过内联脚本安全检查。需要重启生效</div>
+          </div>
+          <div class="form-group settings-priority-toggle">
+            <label class="form-label" for="cfgWorkflowLegacyFileMode">
+              <input id="cfgWorkflowLegacyFileMode" type="checkbox" class="form-checkbox" />
+              <span class="settings-priority-toggle-title" data-i18n="settings.workflowLegacyFileModeLabel">允许旧版文件工作流模式</span>
+            </label>
+            <div class="form-help" data-i18n="settings.workflowLegacyFileModeHelp">默认关闭：工作流文件必须与批准 manifest 中的 sha256 一致。开启后允许未批准的旧版文件路径执行，除迁移期外不建议。需要重启生效</div>
           </div>
 
           <hr class="theme-divider">
