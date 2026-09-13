@@ -124,25 +124,54 @@ export function normalizeCommandSandboxRequirement(value: unknown): CommandSandb
   return value === "required" ? value : undefined;
 }
 
-export function resolveOciCommandSandboxConfig(input: {
+/**
+ * 配置不合格的具体原因。`not_configured` 表示三个变量全空（属正常默认态），
+ * 其余三项分别对应三条取值约束里的某一条，便于 Doctor 与运行期提示直接指出该改哪一项。
+ */
+export type OciCommandSandboxConfigIssue =
+  | "not_configured"
+  | "backend_value_invalid"
+  | "runtime_unsupported"
+  | "image_digest_missing";
+
+export type OciCommandSandboxConfigResolution =
+  | { ok: true; config: OciCommandSandboxConfig }
+  | { ok: false; issue: OciCommandSandboxConfigIssue };
+
+/**
+ * 与 `resolveOciCommandSandboxConfig` 判定完全一致，但保留失败原因，
+ * 供只做诊断/提示的调用方使用；放行与拒绝的判定仍以本函数结果为准。
+ */
+export function evaluateOciCommandSandboxConfig(input: {
   readEnv?: (name: string) => string | undefined;
-}): OciCommandSandboxConfig | undefined {
+}): OciCommandSandboxConfigResolution {
   const readEnv = input.readEnv ?? ((name: string) => process.env[name]);
-  if (normalizeOptionalString(readEnv("BELLDANDY_COMMAND_SANDBOX_BACKEND")) !== "oci") {
-    return undefined;
+  const backend = normalizeOptionalString(readEnv("BELLDANDY_COMMAND_SANDBOX_BACKEND"));
+  if (!backend) {
+    return { ok: false, issue: "not_configured" };
+  }
+  if (backend !== "oci") {
+    return { ok: false, issue: "backend_value_invalid" };
   }
 
   const runtime = normalizeOptionalString(readEnv("BELLDANDY_COMMAND_SANDBOX_OCI_RUNTIME")) ?? "docker";
   if (runtime !== "docker" && runtime !== "podman") {
-    return undefined;
+    return { ok: false, issue: "runtime_unsupported" };
   }
 
   const image = normalizeOptionalString(readEnv("BELLDANDY_COMMAND_SANDBOX_OCI_IMAGE"));
   if (!image || !OCI_IMAGE_PATTERN.test(image)) {
-    return undefined;
+    return { ok: false, issue: "image_digest_missing" };
   }
 
-  return { backend: "oci", runtime, image };
+  return { ok: true, config: { backend: "oci", runtime, image } };
+}
+
+export function resolveOciCommandSandboxConfig(input: {
+  readEnv?: (name: string) => string | undefined;
+}): OciCommandSandboxConfig | undefined {
+  const resolution = evaluateOciCommandSandboxConfig(input);
+  return resolution.ok ? resolution.config : undefined;
 }
 
 export function buildSandboxRuntimeEnvironment(): NodeJS.ProcessEnv {

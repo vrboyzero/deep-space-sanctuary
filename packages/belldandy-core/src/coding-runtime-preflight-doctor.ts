@@ -4,11 +4,12 @@ import path from "node:path";
 import {
   TypeScriptLanguageServiceProvider,
   buildGoCodeIntelDoctorReport,
+  evaluateOciCommandSandboxConfig,
   probeLocalOciImage,
   probeOciCommandSandboxRuntime,
-  resolveOciCommandSandboxConfig,
   type GoCodeIntelDoctorReport,
   type OciCommandSandboxConfig,
+  type OciCommandSandboxConfigIssue,
   type OciRuntimeProbeResult,
 } from "@belldandy/skills";
 
@@ -162,21 +163,51 @@ function inactive(id: CodingRuntimePreflightItemId, name: string): CodingRuntime
   };
 }
 
+// 无论哪一条取值约束不满足，用户最终都要走「拉镜像 → 取 digest → 填进变量」这条路，
+// 因此统一给出取 digest 的命令；`<image>:<tag>` 为占位符，不回显用户已配置的取值。
+const OCI_SANDBOX_IMAGE_DIGEST_COMMANDS = [
+  "docker pull <image>:<tag>",
+  'docker image inspect <image>:<tag> --format "{{index .RepoDigests 0}}"',
+  "bdd doctor --json",
+];
+
+// CLI 文本输出与 WebChat 徽标都只显示 action，因此取 digest 的关键命令必须写进 action 本身，
+// 不能只在 commands 里给（commands 供 --json / 自动化消费）。
+const OCI_SANDBOX_PIN_IMAGE_HINT =
+  'docker pull <image>:<tag> + docker image inspect <image>:<tag> --format "{{index .RepoDigests 0}}"';
+
+function ociSandboxConfigurationAction(issue: OciCommandSandboxConfigIssue): string {
+  switch (issue) {
+    case "backend_value_invalid":
+      return 'BELLDANDY_COMMAND_SANDBOX_BACKEND must be exactly "oci"; any other value leaves the coding-run command sandbox unavailable.';
+    case "runtime_unsupported":
+      return 'BELLDANDY_COMMAND_SANDBOX_OCI_RUNTIME accepts only "docker" or "podman"; omit the variable to keep the docker default.';
+    case "image_digest_missing":
+      return `BELLDANDY_COMMAND_SANDBOX_OCI_IMAGE must be pinned as <image>@sha256:<64 hex>; a mutable tag is rejected. Get the value with ${OCI_SANDBOX_PIN_IMAGE_HINT}.`;
+    case "not_configured":
+    default:
+      return `Configure a digest-pinned OCI sandbox backend before starting coding tasks: set BELLDANDY_COMMAND_SANDBOX_BACKEND=oci and pin the image with ${OCI_SANDBOX_PIN_IMAGE_HINT}.`;
+  }
+}
+
 async function buildSandboxItems(input: {
   environment: Record<string, string | undefined>;
   probeRuntime: (config: OciCommandSandboxConfig) => Promise<OciRuntimeProbeResult>;
   probeImage: (config: OciCommandSandboxConfig) => Promise<OciRuntimeProbeResult>;
 }): Promise<CodingRuntimePreflightDoctorItem[]> {
   const readEnv = (name: string) => input.environment[name];
-  const config = resolveOciCommandSandboxConfig({ readEnv });
+  // 用带原因的解析：配置不合格时直接指出是三条取值约束里的哪一条，
+  // 而不是笼统的 invalid_configuration（放行/拒绝判定与本函数完全一致）。
+  const resolution = evaluateOciCommandSandboxConfig({ readEnv });
+  const config = resolution.ok ? resolution.config : undefined;
   if (!config) {
-    const configured = normalize(input.environment.BELLDANDY_COMMAND_SANDBOX_BACKEND) !== undefined;
-    const reasonCode = configured ? "invalid_configuration" : "not_configured";
-    const status = configured ? "incompatible" as const : "unavailable" as const;
+    const issue: OciCommandSandboxConfigIssue = resolution.ok ? "not_configured" : resolution.issue;
+    const reasonCode = issue === "not_configured" ? "not_configured" : issue;
+    const status = issue === "not_configured" ? "unavailable" as const : "incompatible" as const;
     return [
       item("oci_configuration", "OCI Sandbox Configuration", status, reasonCode, true, true, {
-        action: "Configure a digest-pinned OCI sandbox backend before starting coding tasks.",
-        commands: ["bdd doctor --json"],
+        action: ociSandboxConfigurationAction(issue),
+        commands: OCI_SANDBOX_IMAGE_DIGEST_COMMANDS,
       }),
       dependencyUnknown("oci_runtime", "OCI Runtime", "configuration_unavailable"),
       dependencyUnknown("oci_local_image", "OCI Local Image", "configuration_unavailable"),
@@ -474,11 +505,6 @@ function isSupportedProcessTreePlatform(platform: NodeJS.Platform): boolean {
 
 function isEnabled(value: string | undefined): boolean {
   return value?.trim().toLowerCase() === "true";
-}
-
-function normalize(value: string | undefined): string | undefined {
-  const normalized = value?.trim();
-  return normalized || undefined;
 }
 
 function sanitizeVersion(value: string): string {

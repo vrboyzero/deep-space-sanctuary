@@ -6,6 +6,8 @@ import {
   buildOciSandboxInvocation,
   createOciSandboxEnvironmentFile,
   evaluateCommandSandboxAdmission,
+  evaluateOciCommandSandboxConfig,
+  resolveOciCommandSandboxConfig,
   resolveOciSandboxContainerUser,
   type OciSandboxLeaseBinding,
   type OciCommandSandboxConfig,
@@ -75,6 +77,57 @@ describe("evaluateCommandSandboxAdmission", () => {
       allowed: false,
       metadata: { commandSandboxReason: "invalid_configuration" },
     });
+  });
+});
+
+describe("evaluateOciCommandSandboxConfig", () => {
+  const pinnedImage = "node@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+  it("names the exact constraint that rejected the configuration", () => {
+    // 三个变量全空属正常默认态，必须与「配错了」区分开。
+    expect(evaluateOciCommandSandboxConfig({ readEnv: () => undefined }))
+      .toEqual({ ok: false, issue: "not_configured" });
+    expect(evaluateOciCommandSandboxConfig({ readEnv: (name) => ({
+      BELLDANDY_COMMAND_SANDBOX_BACKEND: "   ",
+    } as Record<string, string | undefined>)[name] }))
+      .toEqual({ ok: false, issue: "not_configured" });
+
+    expect(evaluateOciCommandSandboxConfig({ readEnv: (name) => ({
+      BELLDANDY_COMMAND_SANDBOX_BACKEND: "docker",
+    } as Record<string, string | undefined>)[name] }))
+      .toEqual({ ok: false, issue: "backend_value_invalid" });
+
+    expect(evaluateOciCommandSandboxConfig({ readEnv: (name) => ({
+      BELLDANDY_COMMAND_SANDBOX_BACKEND: "oci",
+      BELLDANDY_COMMAND_SANDBOX_OCI_RUNTIME: "containerd",
+    } as Record<string, string | undefined>)[name] }))
+      .toEqual({ ok: false, issue: "runtime_unsupported" });
+
+    // 可变 tag 与缺值都归到 digest 这一条约束上。
+    for (const image of [undefined, "node:22-bullseye", "node@sha256:abc"]) {
+      expect(evaluateOciCommandSandboxConfig({ readEnv: (name) => ({
+        BELLDANDY_COMMAND_SANDBOX_BACKEND: "oci",
+        BELLDANDY_COMMAND_SANDBOX_OCI_IMAGE: image,
+      } as Record<string, string | undefined>)[name] }))
+        .toEqual({ ok: false, issue: "image_digest_missing" });
+    }
+  });
+
+  it("resolves the runtime default and stays consistent with the config resolver", () => {
+    const readEnv = (name: string) => ({
+      BELLDANDY_COMMAND_SANDBOX_BACKEND: "oci",
+      BELLDANDY_COMMAND_SANDBOX_OCI_IMAGE: pinnedImage,
+    } as Record<string, string | undefined>)[name];
+
+    expect(evaluateOciCommandSandboxConfig({ readEnv }))
+      .toEqual({ ok: true, config: { backend: "oci", runtime: "docker", image: pinnedImage } });
+    // 旧接口必须是新接口的投影：成功给 config、失败给 undefined。
+    expect(resolveOciCommandSandboxConfig({ readEnv }))
+      .toEqual({ backend: "oci", runtime: "docker", image: pinnedImage });
+    expect(resolveOciCommandSandboxConfig({ readEnv: () => undefined })).toBeUndefined();
+    expect(resolveOciCommandSandboxConfig({ readEnv: (name) => ({
+      BELLDANDY_COMMAND_SANDBOX_BACKEND: "docker",
+    } as Record<string, string | undefined>)[name] })).toBeUndefined();
   });
 });
 

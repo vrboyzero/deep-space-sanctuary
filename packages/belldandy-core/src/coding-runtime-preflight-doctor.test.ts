@@ -169,7 +169,16 @@ describe("buildCodingRuntimePreflightDoctorReport", () => {
         required: true,
         blocking: true,
         setup: expect.objectContaining({
-          action: "Configure a digest-pinned OCI sandbox backend before starting coding tasks.",
+          // action 必须自带取 digest 的命令：CLI 文本输出与 WebChat 徽标都只显示 action。
+          action: expect.stringContaining(
+            "Configure a digest-pinned OCI sandbox backend before starting coding tasks:",
+          ),
+          // commands 供 --json / 自动化消费，与 action 里的命令必须一致。
+          commands: [
+            "docker pull <image>:<tag>",
+            'docker image inspect <image>:<tag> --format "{{index .RepoDigests 0}}"',
+            "bdd doctor --json",
+          ],
         }),
       }),
       expect.objectContaining({ id: "oci_runtime", status: "unknown", blocking: false }),
@@ -180,6 +189,78 @@ describe("buildCodingRuntimePreflightDoctorReport", () => {
     // 未配置沙箱时不应触发任何运行时/镜像探测。
     expect(probeRuntime).not.toHaveBeenCalled();
     expect(probeImage).not.toHaveBeenCalled();
+  });
+
+  it("reports which sandbox constraint failed instead of a generic invalid configuration", async () => {
+    const cases = [
+      {
+        environment: { BELLDANDY_COMMAND_SANDBOX_BACKEND: "docker" },
+        reasonCode: "backend_value_invalid",
+        actionHint: "BELLDANDY_COMMAND_SANDBOX_BACKEND must be exactly",
+      },
+      {
+        environment: {
+          BELLDANDY_COMMAND_SANDBOX_BACKEND: "oci",
+          BELLDANDY_COMMAND_SANDBOX_OCI_RUNTIME: "containerd",
+        },
+        reasonCode: "runtime_unsupported",
+        actionHint: "accepts only",
+      },
+      {
+        environment: {
+          BELLDANDY_COMMAND_SANDBOX_BACKEND: "oci",
+          BELLDANDY_COMMAND_SANDBOX_OCI_IMAGE: "node:22-bullseye",
+        },
+        reasonCode: "image_digest_missing",
+        actionHint: "must be pinned as <image>@sha256:<64 hex>",
+        expectActionCommands: ['docker image inspect <image>:<tag> --format "{{index .RepoDigests 0}}"'],
+      },
+    ];
+
+    for (const testCase of cases) {
+      const stateDir = await createStateDir();
+      const probeRuntime = vi.fn();
+      const probeImage = vi.fn();
+
+      const report = await buildCodingRuntimePreflightDoctorReport({
+        stateDir,
+        environment: {
+          BELLDANDY_TOOLS_ENABLED: "true",
+          BELLDANDY_CODE_INTEL_GO_ENABLED: "false",
+          ...testCase.environment,
+        },
+        optionalCapabilities: optionalCapabilities("ready"),
+        goCodeIntel: goDoctor(false),
+        probeRuntime,
+        probeImage,
+        probeProcessTreeCleanup: async () => ({ available: true }),
+        probeTypeScriptToolchain: () => ({ available: true, version: "5.7.3" }),
+      });
+
+      const configurationItem = report.items.find((entry) => entry.id === "oci_configuration");
+      expect(configurationItem).toMatchObject({
+        status: "incompatible",
+        reasonCode: testCase.reasonCode,
+        blocking: true,
+        setup: expect.objectContaining({
+          commands: [
+            "docker pull <image>:<tag>",
+            'docker image inspect <image>:<tag> --format "{{index .RepoDigests 0}}"',
+            "bdd doctor --json",
+          ],
+        }),
+      });
+      expect(configurationItem?.setup?.action).toContain(testCase.actionHint);
+      for (const command of testCase.expectActionCommands ?? []) {
+        expect(configurationItem?.setup?.action).toContain(command);
+      }
+      // 提示里不得回显用户已配置的取值。
+      expect(JSON.stringify(report)).not.toContain("node:22-bullseye");
+      // 三项判定与旧口径一致：仍然是 1 条阻塞、仍然不触发探测。
+      expect(report.summary.blockingCount).toBe(1);
+      expect(probeRuntime).not.toHaveBeenCalled();
+      expect(probeImage).not.toHaveBeenCalled();
+    }
   });
 
   it("fails closed when the enabled Go toolchain is unavailable", async () => {

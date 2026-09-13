@@ -120,12 +120,15 @@ export {
 } from "./command-plan.js";
 export {
   evaluateCommandSandboxAdmission,
+  evaluateOciCommandSandboxConfig,
   probeOciCommandSandboxRuntime,
   resolveOciCommandSandboxConfig,
 } from "./command-sandbox.js";
 export type {
   CommandSandboxAdmission,
   OciCommandSandboxConfig,
+  OciCommandSandboxConfigIssue,
+  OciCommandSandboxConfigResolution,
   OciRuntimeProbeResult,
 } from "./command-sandbox.js";
 export {

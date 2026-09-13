@@ -412,7 +412,9 @@ test("system.doctor names the blocking coding runtime prerequisite and its setup
               name: "OCI Sandbox Configuration",
               status: "unavailable",
               reasonCode: "not_configured",
-              action: "Configure a digest-pinned OCI sandbox backend before starting coding tasks.",
+              action: expect.stringContaining(
+                "Configure a digest-pinned OCI sandbox backend before starting coding tasks:",
+              ),
             },
           ],
         },
