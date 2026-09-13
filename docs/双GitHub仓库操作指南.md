@@ -398,6 +398,7 @@ Build & Test
     - 现象：用户在 WebChat 设置 → 系统 看到 `Coding Runtime Preflight: 1 coding runtime prerequisite(s) block a fully capable startup.`，但界面上无法知道被阻塞的是哪一项、该怎么处理。
     - 原因：`server-methods/system-doctor.ts` 只往该 check 写 `message: summary.headline`（第 1361 行附近），阻塞项明细（`items[].reasonCode` / `setup.action`）只存在于 payload 的 `codingRuntimePreflight` 与 CLI `bdd doctor` 输出里；前端 `settings.js` 的徽标只渲染 `${name}: ${message}`，因此信息在传递链路上被截断。这是**产品侧可观测性缺口**，与第 10 条的打包缺陷无关。
     - 处理方案（2026-09-13，用户确认 B + C1 + C3）：保留 fail-closed 语义不变（不把「未配置沙箱」降级为 warn），只补齐「能自助定位」与「口径有测试锁定」两件事，见「第 6 项实现结论」。
+    - 配置方法（含「本地镜像 64 位 digest 怎么取」的完整步骤）、6 条问题定性（2 条体验缺陷 / 2 条刻意不变量 / 1 条安全姿态 / 1 条工具可达性）与 5 个调整方案，另见 `docs/沙箱配置方法与沙箱问题说明.md`。
     - 附带结论：诊断该问题时顺带确认了「工具打开 + 未配置 OCI 沙箱」这一档在此前**没有测试覆盖**（`coding-runtime-preflight-doctor.test.ts` 原有 4 个用例全是「已配置 oci」或「Go 不可用」），所以它的判定口径一直只存在于代码里，容易被误改。
 
 #### 第 1 项实现结论：修复 env-config-audit 门禁并补齐设置窗口缺失变量（2026-09-13）

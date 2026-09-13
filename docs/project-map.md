@@ -183,6 +183,7 @@ star-sanctuary/
 - `docs/Star Sanctuary使用手册.md`: 当前版用户手册，聚焦 Agent / 工具 / Agent Teams 的使用与配置说明
 - `docs/开发使用说明.md`: 开发侧使用说明，覆盖三条入口（WebChat / CLI TUI / 无头与桥接）、CLI 命令总览、TUI 标签与键位、`bdd agent run` 参数与退出码、MCP / NDJSON 集成、WebChat→CLI 迁移对照清单、配置与环境变量要点及排障
 - `docs/指挥模式与动态工作流使用说明.md`: 指挥模式与动态工作流（DW）的使用说明、脚本编写、API 参考
+- `docs/沙箱配置方法与沙箱问题说明.md`: 编码运行 OCI 命令沙箱（`BELLDANDY_COMMAND_SANDBOX_*`）的配置方法（含本地镜像 digest 的获取）、失败对照表、问题定性与调整方案
 
 ### Gateway / CLI
 - `packages/belldandy-core/src/bin/bdd.ts`: CLI 进程入口
