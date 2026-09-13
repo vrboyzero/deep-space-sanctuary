@@ -500,6 +500,8 @@ Build & Test
 
    - 现象 1：`Docker Build & Publish` 的 `Build & Test` 两次以 `cancelled` 结束，耗时恰好 30 分 09 秒，而步骤列表显示所有步骤（含 `Build multi-platform images`）都是 success。根因是 `timeout-minutes: 30` 偏紧：冷缓存下该 job 实测约 30 分钟（全量测试 633s + 单平台镜像构建 179s + amd64/arm64 多平台校验构建 905s）。由于发布链路的 `Publish to Docker Hub` 与 `Create GitHub Release` 都 `needs` 该 job，超时会直接阻断发版，因此已放宽到 60 分钟。
    - 现象 2：`scripts/run-coding-agent-ci.test.mjs` 中两个真实拉起子进程的用例 per-test 超时为 20s，本地实测仅 1.4s / 2.2s，但在共享 CI runner 负载高时超时（`Test timed out in 20000ms`），造成同一份代码时红时绿。已放宽到 60s。
-   - 处理：两项均已修复并提交（见提交 `ci(workflows): Docker Build & Test 超时由 30 提升到 60 分钟` 与 `test(coding-ci): 放宽两个真实子进程用例的超时`），修复后公开库 `Quality Gates` 与 `Docker Build & Test` 均转 success。
+   - 现象 3：`packages/belldandy-core/src/tui/runtime.integration.test.ts` 的「shows the same run events as a Headless subscriber without starting another run」以 `Test timed out in 30000ms` 失败（同一份代码在公开库同一提交为 success）。该文件全部用例都会就地拉起真实 Gateway，本地实测 117~851ms；且文件内 `waitFor` 自带 3s 上限（超时抛 `"timeout"` 而非整体超时），说明是共享 runner 上某个 await 的调度停滞。已把该文件 5 处超时统一放宽（15s → 60s ×4、30s → 90s ×1）。
+   - 处理：三项均已修复并提交（`ci(workflows): Docker Build & Test 超时由 30 提升到 60 分钟`、`test(coding-ci): 放宽两个真实子进程用例的超时`、`test(tui): 放宽 Gateway 集成测试的超时`）。
+   - 修复后终态核验（2026-09-13，commit `5c21c753`）：公开库 `Quality Gates #10` 与 `Docker Build & Publish #128`、私有库 `Quality Gates #172` 与 `Docker Build & Publish #332` **四条 run 全部 success**，其中 Quality Gates 各 7/7 job 全绿（含 `Dependency audit report`）。
 
 本次（2026-09-13）已完成：推送 `4f8de7cf` 到 `origin/main` 使三方分支一致；定位并记录失败与版本约束；完成第 1 项修复并通过真实 CI 验证；完成第 2a 项依赖漏洞修复与独立复核；完成第 2b 项 vitest 主版本升级与全部兼容性修复；完成第 3 项 actions 迁移；完成第 4 项版本推进；核对并更正第 1 节的仓库可见性描述。
