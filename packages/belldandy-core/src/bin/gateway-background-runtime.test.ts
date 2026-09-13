@@ -13,7 +13,10 @@ const browserMocks = vi.hoisted(() => {
   };
   return {
     relay,
-    RelayServer: vi.fn(() => relay),
+    // Vitest 4 起，被 `new` 调用的 mock 实现必须是 function/class（不能用箭头函数）。
+    RelayServer: vi.fn(function relayServerConstructorMock() {
+      return relay;
+    }),
     resolveRelayCredential: vi.fn(async () => ({ token: "relay-token", source: "generated" })),
   };
 });

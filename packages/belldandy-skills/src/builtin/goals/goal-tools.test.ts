@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { goalInitTool } from "./goal-init.js";
 import { goalGetTool } from "./goal-get.js";
 import { goalListTool } from "./goal-list.js";
@@ -2140,6 +2140,12 @@ const goalContext: ToolContext = {
 };
 
 describe("goal tools", () => {
+  // Vitest 4 起 vi.fn(baseMock) 会复用同一 mock 实例的状态，调用次数会跨用例累积；
+  // 每个用例开始前清空调用记录（保留实现），保证调用次数断言的独立性。
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("goal_init should create a goal", async () => {
     const result = await goalInitTool.execute({ title: "Alpha Goal", objective: "Build it" }, baseContext);
     expect(result.success).toBe(true);

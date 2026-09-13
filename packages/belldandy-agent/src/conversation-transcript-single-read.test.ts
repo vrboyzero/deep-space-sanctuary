@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ConversationStore } from "./conversation.js";
 import { sessionTranscriptReadStreamFs } from "./session-transcript.js";
@@ -20,6 +20,12 @@ function createTranscriptStore(label: string): {
 }
 
 describe("ConversationStore transcript single-read projections", () => {
+    // Vitest 4 起 vi.spyOn 会复用同一 mock 实例，调用次数会跨用例累积；
+    // 每个用例结束后恢复原始实现，保证「只读一次」断言彼此独立。
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
     it("reuses one transcript snapshot for export and restore projection", async () => {
         const { store, conversationId, tempDir } = createTranscriptStore("export");
         try {

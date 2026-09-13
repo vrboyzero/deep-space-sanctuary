@@ -17,7 +17,10 @@ const mockOpenAI = {
 
 vi.mock("openai", () => {
     return {
-        default: vi.fn(() => mockOpenAI),
+        // Vitest 4 起，被 `new` 调用的 mock 实现必须是 function/class（不能用箭头函数）。
+        default: vi.fn(function openAIConstructorMock() {
+            return mockOpenAI;
+        }),
         toFile: vi.fn(async (buf, name) => ({ name, type: "audio/mock" })),
     };
 });

@@ -13,11 +13,14 @@ const imageUnderstandMocks = vi.hoisted(() => ({
 
 vi.mock("./camera-native-desktop-stdio-client.js", () => ({
   readNativeDesktopHelperConfigFromEnv: helperMocks.readNativeDesktopHelperConfigFromEnv,
-  NativeDesktopStdioHelperClient: vi.fn().mockImplementation(() => ({
-    listCaptureTargets: helperMocks.listCaptureTargets,
-    captureScreen: helperMocks.captureScreen,
-    close: helperMocks.close,
-  })),
+  // Vitest 4 起，被 `new` 调用的 mock 实现必须是 function/class（不能用箭头函数）。
+  NativeDesktopStdioHelperClient: vi.fn(function nativeDesktopHelperClientMock() {
+    return {
+      listCaptureTargets: helperMocks.listCaptureTargets,
+      captureScreen: helperMocks.captureScreen,
+      close: helperMocks.close,
+    };
+  }),
 }));
 
 vi.mock("./captured-image-understand.js", () => ({

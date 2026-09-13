@@ -12,11 +12,13 @@ import type { ToolContext } from "../../types.js";
 
 const { imageGenerateMock, openAIMock } = vi.hoisted(() => ({
   imageGenerateMock: vi.fn(),
-  openAIMock: vi.fn(() => ({
-    images: {
-      generate: imageGenerateMock,
-    },
-  })),
+  openAIMock: vi.fn(function openAIConstructorMock() {
+    return {
+      images: {
+        generate: imageGenerateMock,
+      },
+    };
+  }),
 }));
 
 vi.mock("openai", () => ({

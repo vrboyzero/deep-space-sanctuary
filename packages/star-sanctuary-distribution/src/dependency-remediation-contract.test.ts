@@ -111,7 +111,7 @@ test("dependency contract keeps the SMTP provider on the audited Nodemailer 9 li
   expect(lockfile).not.toContain("nodemailer@6.10.1:");
 });
 
-test("dependency contract keeps all Vitest consumers on the audited 3.2 line", () => {
+test("dependency contract keeps all Vitest consumers on the audited 4.1 line", () => {
   const rootPackage = readJson("package.json");
   for (const relativePath of [
     "package.json",
@@ -120,13 +120,14 @@ test("dependency contract keeps all Vitest consumers on the audited 3.2 line", (
     "packages/belldandy-skills/package.json",
   ]) {
     const packageJson = readJson(relativePath);
-    expect(packageJson.devDependencies?.vitest, relativePath).toBe("^3.2.6");
+    expect(packageJson.devDependencies?.vitest, relativePath).toBe("^4.1.11");
   }
   expect(rootPackage.devDependencies?.vite).toBe("^6.4.3");
   expect(rootPackage.pnpm?.overrides?.vite).toBe("6.4.3");
 
   const lockfile = fs.readFileSync(path.join(workspaceRoot, "pnpm-lock.yaml"), "utf-8");
-  expect(lockfile).toContain("vitest@3.2.7");
+  expect(lockfile).toContain("vitest@4.1.11");
+  expect(lockfile).not.toContain("vitest@3.2.7");
   expect(lockfile).not.toContain("vitest@2.1.9");
   expect(lockfile).toContain("vite@6.4.3");
   expect(lockfile).not.toContain("vite@5.4.21");

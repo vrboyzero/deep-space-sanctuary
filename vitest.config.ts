@@ -28,12 +28,22 @@ export default defineConfig({
   test: {
     exclude: [
       ...configDefaults.exclude,
+      // Vitest 4 把默认 exclude 简化为仅 `**/node_modules/**` 与 `**/.git/**`。
+      // 这里补回 v3 时代默认排除的构建产物与工具配置，避免把 dist/ 下
+      // 编译后的测试副本再跑一遍（当前约 571 个重复文件）。
+      "**/dist/**",
+      "**/cypress/**",
+      "**/.{idea,git,cache,output,temp}/**",
+      "**/{karma,rollup,webpack,vite,jest,ava,babel,nyc,cypress,tsup,build,eslint,prettier}.config.*",
       "**/.belldandy/**",
       "**/artifacts/**",
       "GW/**",
       "**/openclaw/**",
       "Star_Weaver_Engine/**",
       "**/UI-TARS-desktop-main/**",
+      // `参考项目/` 是本地参考镜像（已 gitignore、无跟踪文件），内含 7000+ 个
+      // 无关测试文件，不排除会让本地全量发现阶段耗时暴涨。
+      "参考项目/**",
       "Void/**",
       // Root-level temp/reference mirrors can contain tens of thousands of files
       // and make targeted discovery time out on Windows before test execution starts.
@@ -48,7 +58,7 @@ export default defineConfig({
     pool: "forks",
     // 全量套件包含 SQLite、Gateway 子进程和大文本用例；高核心机器 fork 过多会饿死 worker RPC。
     maxWorkers: Math.min(2, availableTestWorkers),
-    minWorkers: 1,
+    // Vitest 4 移除了 minWorkers，非 watch 模式下由 Vitest 自行决定。
     deps: {
       interopDefault: true,
     },

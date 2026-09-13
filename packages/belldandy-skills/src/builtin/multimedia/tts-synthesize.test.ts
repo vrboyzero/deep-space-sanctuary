@@ -12,19 +12,24 @@ const { edgeTtsPromiseMock, openAISpeechCreateMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("openai", () => ({
-  default: vi.fn(() => ({
-    audio: {
-      speech: {
-        create: openAISpeechCreateMock,
+  // Vitest 4 起，被 `new` 调用的 mock 实现必须是 function/class（不能用箭头函数）。
+  default: vi.fn(function openAIConstructorMock() {
+    return {
+      audio: {
+        speech: {
+          create: openAISpeechCreateMock,
+        },
       },
-    },
-  })),
+    };
+  }),
 }));
 
 vi.mock("node-edge-tts", () => ({
-  EdgeTTS: vi.fn().mockImplementation(() => ({
-    ttsPromise: edgeTtsPromiseMock,
-  })),
+  EdgeTTS: vi.fn(function edgeTtsConstructorMock() {
+    return {
+      ttsPromise: edgeTtsPromiseMock,
+    };
+  }),
 }));
 
 function createDashScopeAssetPolicy(

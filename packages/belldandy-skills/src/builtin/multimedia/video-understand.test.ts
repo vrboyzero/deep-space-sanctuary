@@ -10,13 +10,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { chatCreateMock, openAIMock } = vi.hoisted(() => ({
   chatCreateMock: vi.fn(),
-  openAIMock: vi.fn(() => ({
-    chat: {
-      completions: {
-        create: chatCreateMock,
+  // Vitest 4 起，被 `new` 调用的 mock 实现必须是 function/class（不能用箭头函数）。
+  openAIMock: vi.fn(function openAIConstructorMock() {
+    return {
+      chat: {
+        completions: {
+          create: chatCreateMock,
+        },
       },
-    },
-  })),
+    };
+  }),
 }));
 
 const { understandVideoFileByFrameSamplingMock } = vi.hoisted(() => ({
