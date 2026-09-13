@@ -1,6 +1,6 @@
 {
   "schemaVersion": "coding-agent-ci-compatibility/v1",
-  "testedPackageVersion": "0.5.4",
+  "testedPackageVersion": "0.5.5",
   "nodeEngine": ">=22.12.0",
   "packageManager": "pnpm@10.23.0",
   "supportedOperatingSystems": [

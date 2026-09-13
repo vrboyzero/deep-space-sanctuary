@@ -2,6 +2,50 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.5] - 2026-09-13
+
+聚焦编码能力平台化（coding workflow / verification DAG / Code Intel Go uplift）、运行时可观测性与安全交付门禁收敛；修复 CI 门禁与依赖安全问题，并把 GitHub Actions 全量迁移到 Node 24 运行时。
+
+### Coding & Agent Runtime
+
+- 落地编码工作流平台与 P1 闭环，补齐 Headless 自动化与编辑闭环，完善跨文件修改与写后验证
+- 新增 verification DAG 合同与 P1-B / P1-C 验证链路；Code Intel 补齐 Go canary readiness 与 uplift 合同
+- Agent 支持加载 cwd 项目规则；目标输出修复轮次、写后验证路径边界与变更补丁纠正均改为有界策略，避免无限重试
+
+### WebChat
+
+- 新增自然语音对话模式
+- 设置页新增 Web Search 小节，并补齐 14 个此前只能手改 `.env.local` 的环境变量：模型能力声明（cache / JSON 可靠性）、Reasoning Content Policy、Prompt Focus 四项预算、浏览器与 `web_fetch` 的 http / 私网策略、工作流内联与旧版文件模式、Brave / SerpAPI 凭据
+- 新增有界的前端性能观测与查询运行时阶段耗时聚合
+
+### Observability & Channels
+
+- 新增运行时资源诊断（内存、事件循环延迟、运行队列水位）与 Gateway 启动阶段 IPC 上报
+- Channels 新增有界 ingress 调度器；Plugins 新增 hook 运行时诊断；token 用量上报增加边界限制
+
+### Security & Delivery Gates
+
+- 依赖安全：修复 `hono`（override → 4.13.5）与 `nodemailer`（→ 9.1.1）已披露漏洞；此前已修复 `fast-uri`、`qs` 等传递依赖
+- `env-config-audit` 门禁修复：`.env.example` 中 15 个未登记变量逐个归类——14 个纳入设置页与 `config.update` 白名单，`BELLDANDY_RELAY_TOKEN` 明确为 manual-only（凭据由 `resolveRelayCredential` 托管，不写入 WebChat 配置）
+- GitHub Actions 全量迁移到 Node 24 运行时：`actions/checkout` v7、`actions/setup-node` v7、`actions/upload-artifact` v7、`docker/*` v4–v7、`pnpm/action-setup` v6、`softprops/action-gh-release` v3、`peter-evans/dockerhub-description` v5（仍全部按 commit SHA 固定）
+- 清理事故后补强删除安全固定规则：禁止跟随 reparse point 的递归删除、批量删除须先出 manifest 与 dry-run、明确禁止删除区
+
+### Distribution & Runtime
+
+- `better-sqlite3` 升级到 v13（N-API）：预编译二进制随包发布，安装不再需要本地编译，也不受 Node 大版本影响
+- `runtime.env.local` 模板合并 37 项调优默认值并对齐 `deepseek-v4.1-flash` 定价；`.env.example` 补齐 19 个运行期变量
+- 修正 Node 版本相关文案（Node 24 为 LTS，不再是「预览版」）
+
+### Docs
+
+- 新增开发使用说明（CLI / TUI / headless / bridge）与 WebChat→CLI 迁移清单
+- 双 GitHub 仓库操作指南补充仓库可见性变更、发布链路门禁与当前阻塞跟踪
+
+### Validation
+
+- GitHub Actions：`Quality Gates`（Build and full test suite、Distribution contract、WebChat 123-file contract、Coding CI contract、B00 build benchmark）与 `Docker Build & Publish`
+- 本地：`corepack pnpm build`、`corepack pnpm test`、`corepack pnpm verify:webchat`
+
 ## [0.5.4] - 2026-05-23
 
 聚焦收敛 `v0.5.4` 发布中断时暴露的 Windows 分发包恢复问题与删除安全风险，恢复 `release-light`、`Portable Full`、`Single-Exe Full` 的完整发布验证链路。
