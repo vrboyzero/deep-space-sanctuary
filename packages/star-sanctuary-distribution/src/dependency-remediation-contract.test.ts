@@ -103,10 +103,11 @@ test("dependency contract keeps Readability on the fixed 0.6 line", () => {
 
 test("dependency contract keeps the SMTP provider on the audited Nodemailer 9 line", () => {
   const corePackage = readJson("packages/belldandy-core/package.json");
-  expect(corePackage.dependencies?.nodemailer).toBe("^9.0.3");
+  expect(corePackage.dependencies?.nodemailer).toBe("^9.1.1");
 
   const lockfile = fs.readFileSync(path.join(workspaceRoot, "pnpm-lock.yaml"), "utf-8");
-  expect(lockfile).toContain("nodemailer@9.0.3:");
+  expect(lockfile).toContain("nodemailer@9.1.1:");
+  expect(lockfile).not.toContain("nodemailer@9.0.3:");
   expect(lockfile).not.toContain("nodemailer@6.10.1:");
 });
 
@@ -198,7 +199,7 @@ test("dependency contract pins patched transitive security floors", () => {
   expect(overrides["body-parser@2.2.2"]).toBe("2.3.0");
   expect(overrides["fast-uri@3.1.3"]).toBe("3.1.6");
   expect(overrides["qs@6.15.3"]).toBe("6.16.0");
-  expect(overrides["hono@4.12.30"]).toBe("4.13.2");
+  expect(overrides["hono@4.12.30"]).toBe("4.13.5");
   expect(overrides["ip-address@10.2.0"]).toBe("10.5.0");
 
   const lockfile = fs.readFileSync(path.join(workspaceRoot, "pnpm-lock.yaml"), "utf-8");
@@ -206,7 +207,7 @@ test("dependency contract pins patched transitive security floors", () => {
     "'@hono/node-server@1.19.17'",
     "body-parser@2.3.0:",
     "fast-uri@3.1.6:",
-    "hono@4.13.2:",
+    "hono@4.13.5:",
     "ip-address@10.5.0:",
   ]) {
     expect(lockfile).toContain(fixedVersion);
@@ -217,6 +218,7 @@ test("dependency contract pins patched transitive security floors", () => {
     /^  fast-uri@3\.1\.3:$/m,
     /^  fast-uri@3\.1\.5:$/m,
     /^  hono@4\.12\.30:$/m,
+    /^  hono@4\.13\.2:$/m,
     /^  ip-address@10\.2\.0:$/m,
   ]) {
     expect(lockfile).not.toMatch(vulnerableSnapshot);
