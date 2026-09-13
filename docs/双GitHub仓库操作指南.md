@@ -457,18 +457,21 @@ Build & Test
 
 - `tsc -b --force` 无错误；`BELLDANDY_VERSION`、`package.json`、`compatibility.json` 三处一致
 - 全量测试 6823 通过（含 `verify-coding-ci-contract` 对版本一致性的校验）
-- 未验证部分：tag 触发的 Docker Hub 推送与 GitHub Release 创建结果需在推送后核对
+- **发版产物核对（2026-09-13，tag `v0.5.5` 指向 `f1ae32e6`）**：
+  - `Build & Test` success（发版链路的门禁）
+  - `Publish to Docker Hub` success：Docker Hub 上 `vrboyzero/star-sanctuary:0.5.5` 已存在，含 `linux/amd64` 与 `linux/arm64` 两个架构
+  - GitHub Release `Star Sanctuary v0.5.5` 已发布（非 draft），正文取自 `CHANGELOG.md` 的 `[0.5.5]` 段，4 个 release-light 附件齐全（zip 5,829,407 / tar.gz 4,272,428 / manifest.json 676,300 / sha256 304 字节）
+  - `Prepare Windows Packaging Assets` 按设计 skipped（未设置 `ENABLE_WINDOWS_PACKAGING`）
 
 #### 后续计划
 
-四项待办（第 1、2a、2b、3、4 项）均已完成并通过本地验证。剩余动作：
+第 1、2a、2b、3、4 项全部完成，`v0.5.5` 已正式发布并通过产物核对。剩余事项：
 
-1. 提交本轮改动并推送 `private/main`，观察内部开发仓库 CI（重点：`Build and full test suite` 与 `Dependency audit report` 是否转为 success）。
-2. 把修复同步到 `origin/main`，使公开 `main` 转绿。
-3. 推送 `v0.5.5` tag 到 `origin`，核对发布链路产物：`Build & Test`、镜像 `X.Y.Z` tag、Release 的 4 个 release-light 附件。
-4. Windows portable / winget / single-exe 继续按既有约定不进入 GitHub Release 附件。
+1. Windows portable / winget / single-exe 继续按既有约定不进入 GitHub Release 附件（官网手动发布）。
+2. `softprops/action-gh-release` 的发布路径在 GitHub API 5xx 时会产生「空 draft + 重复 Release」（见「重要问题说明」第 7 条）。如需进一步加固，可在发布 job 中先清理同 tag 的 draft，再执行创建；本次未改动 workflow，只记录了人工恢复流程。
+3. 后续发版沿用第 4 项实现结论中的版本一致性检查清单。
 
-当前缺的关键闭环：CI 对 vitest 4 与新 actions 的实测结果、以及 tag 后 Docker Hub 与 Release 的实际产物核对。
+当前缺的关键闭环：无阻塞项；下次发版前建议先确认 GitHub API 状态正常，避免再次触发 draft 残留。
 
 #### 待办与进度
 
@@ -477,7 +480,26 @@ Build & Test
 | 1 | 修复 `env-config-audit.test.ts`（15 个变量逐个归类） | **已完成（2026-09-13，CI 已验证：`Quality Gates #166` / `Docker #326` 门禁转绿）** | 定向测试 3/3；真实 CI 的 `Build and full test suite` success |
 | 2a | 修复 `hono` / `nodemailer` 已知漏洞 | **已完成（2026-09-13，OSV 复核无漏洞、契约与 SMTP 测试 18/18）** | OSV API 复核新版本；`dependency-remediation-contract.test.ts` 通过 |
 | 2b | `vitest` / `@vitest/mocker` 3.2.7 → 4.1.11（主版本升级） | **已完成（2026-09-13，全量 6823 用例通过、lockfile 全量 OSV 扫描零命中）** | `tsc -b --force` 无错误；全量测试 0 失败；CI `Dependency audit report` 转 success |
-| 3 | actions 升级到 Node 24 | **已完成（2026-09-13，11 个 action 逐个核对 `using: node24` 与输入兼容性）** | 复验 CI 中 `Build & Test`、`Publish to Docker Hub`、`Create GitHub Release` 不再出现 Node 20 弃用告警 |
-| 4 | 版本推进 `0.5.4` → `0.5.5`，与 tag 同步 | **已完成（2026-09-13，`package.json` / `version.generated.ts` / `compatibility.json` / `CHANGELOG.md` 同步，tag 待推）** | `BELLDANDY_VERSION`、Release 标题、Docker tag 三者一致 |
+| 3 | actions 升级到 Node 24 | **已完成（2026-09-13，11 个 action 逐个核对 `using: node24` 与输入兼容性）** | CI 中 `Build & Test`、`Publish to Docker Hub`、`Create GitHub Release` 均已实跑，无 Node 20 弃用告警 |
+| 4 | 版本推进 `0.5.4` → `0.5.5`，与 tag 同步 | **已完成（2026-09-13，tag `v0.5.5` 已推送并发布；Docker 双架构镜像与 Release 4 附件已核对）** | `BELLDANDY_VERSION`、Release 标题、Docker tag 三者一致 |
+
+#### 本次新增的重要问题说明（2026-09-13 第三轮）
+
+7. **GitHub Release 创建过程遇到平台侧 500，并产生空 draft 残留**
+
+   - 现象：tag `v0.5.5` 推送后，`Create GitHub Release` 的 `Create Release` 步骤连续三轮失败。日志显示 `⚠️ GitHub release failed with status: 502 / 500`，重试 3 次后以 `❌ Too many retries.` 结束。
+   - 根因：**GitHub 服务端在 `POST /repos/{owner}/{repo}/releases` 上返回 5xx，但请求实际已生效**——每次都创建出一个 `draft=true`、`assets=0` 的 Release。随后 action 按 tag 查询时，由于 draft 不会被 `GET /releases/tags/{tag}` 返回（该接口只返回已发布 Release），且同 tag 存在多条记录时也返回 404，于是报 `⚠️ Unexpected error fetching GitHub release for tag refs/tags/v0.5.5: HttpError`。属于平台侧故障叠加 action 重试语义导致的状态污染，不是仓库配置问题（job 权限为 `contents: write`，tag 与附件均正常）。
+   - 恢复流程（本次实际使用，可复用）：
+     1. 列出同 tag 的全部 Release 并删除 draft：`gh api "/repos/vrboyzero/star-sanctuary/releases?per_page=20" --jq '.[] | select(.tag_name=="v0.5.5") | .id'`，逐个 `gh api -X DELETE .../releases/<id>`（5xx 时重试）。
+     2. 重新创建：`gh release create v0.5.5 --title "Star Sanctuary v0.5.5" --notes-file <CHANGELOG 0.5.5 段> <4 个附件>`；若 POST 仍 500，按第 1 步确认是否又生成了 draft，用 `PATCH /releases/<id> -d '{"draft":false}'` 将其发布（本次 PATCH 第 5 次才返回 200）。
+     3. 上传附件：`gh release upload v0.5.5 --clobber <4 个附件>`。
+     4. 核对：`gh release view v0.5.5 --json isDraft,assets`，确认 `draft=false` 且 4 个附件齐全。
+   - 注意：**不要盲目重跑发布 job**。draft 未清理时重跑只会继续失败并可能再生成一条 draft；再次遇到时先执行第 1 步。
+
+8. **Docker `Build & Test` 30 分钟超时与一个负载敏感的偶发用例**
+
+   - 现象 1：`Docker Build & Publish` 的 `Build & Test` 两次以 `cancelled` 结束，耗时恰好 30 分 09 秒，而步骤列表显示所有步骤（含 `Build multi-platform images`）都是 success。根因是 `timeout-minutes: 30` 偏紧：冷缓存下该 job 实测约 30 分钟（全量测试 633s + 单平台镜像构建 179s + amd64/arm64 多平台校验构建 905s）。由于发布链路的 `Publish to Docker Hub` 与 `Create GitHub Release` 都 `needs` 该 job，超时会直接阻断发版，因此已放宽到 60 分钟。
+   - 现象 2：`scripts/run-coding-agent-ci.test.mjs` 中两个真实拉起子进程的用例 per-test 超时为 20s，本地实测仅 1.4s / 2.2s，但在共享 CI runner 负载高时超时（`Test timed out in 20000ms`），造成同一份代码时红时绿。已放宽到 60s。
+   - 处理：两项均已修复并提交（见提交 `ci(workflows): Docker Build & Test 超时由 30 提升到 60 分钟` 与 `test(coding-ci): 放宽两个真实子进程用例的超时`），修复后公开库 `Quality Gates` 与 `Docker Build & Test` 均转 success。
 
 本次（2026-09-13）已完成：推送 `4f8de7cf` 到 `origin/main` 使三方分支一致；定位并记录失败与版本约束；完成第 1 项修复并通过真实 CI 验证；完成第 2a 项依赖漏洞修复与独立复核；完成第 2b 项 vitest 主版本升级与全部兼容性修复；完成第 3 项 actions 迁移；完成第 4 项版本推进；核对并更正第 1 节的仓库可见性描述。
