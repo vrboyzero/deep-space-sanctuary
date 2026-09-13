@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.6] - 2026-09-13
+
+修复 `v0.5.5` 的 release-light 发布产物无法安装、也无法启动的问题（发布产物缺陷修复版）。
+
+### Fixed
+
+- **`patches/` 未随包发布**：`package.json` 的 `pnpm.patchedDependencies` 指向 `patches/fastembed@2.1.0.patch`，但 release-light 打包计划没有包含该目录，解压后执行 `pnpm install` 会直接以 `ENOENT ... patches/fastembed@2.1.0.patch` 失败；安装器路径（`install.ps1` / `install.sh` 中的 `corepack pnpm install`）同样受影响。该缺陷由 `fix(deps): patch fastembed for tar 7` 引入，`v0.5.5` 是首个受影响的发布版本。
+- **随包启动脚本与 dist-only 载荷不匹配**：`start.bat` / `start.sh` 走的是源码模式（`pnpm build` + `pnpm bdd start`），依赖 `packages/*/src`、`tsconfig*` 与 `scripts/`，而 release-light 按设计只包含编译后的 `dist`，因此解压后直接运行启动脚本必然失败。现在两个脚本会先探测形态：存在 TypeScript 源码时保持源码模式；否则回退到 `node packages/belldandy-core/dist/bin/bdd.js start`，不再触发依赖缺失文件的构建钩子。
+- `README-release-light.md` 同步说明 dist-only 载荷的启动方式，以及源码模式命令（`pnpm build` / `pnpm bdd`）在该载荷中不可用。
+
+### Validation
+
+- `pnpm build:release-light -- --version=0.5.6` 与 `pnpm verify:release-light -- --version=0.5.6`
+- 新增发布产物断言：`pnpm.patchedDependencies` 指向的补丁文件必须存在于包内；随包启动脚本必须包含 dist 入口（已用移除补丁的负向用例确认能拦截）
+- 端到端验证：解压产物 → `corepack pnpm install` 成功 → dist 模式启动后 Gateway 正常监听并服务 WebChat 静态资源
+
 ## [0.5.5] - 2026-09-13
 
 聚焦编码能力平台化（coding workflow / verification DAG / Code Intel Go uplift）、运行时可观测性与安全交付门禁收敛；修复 CI 门禁与依赖安全问题，并把 GitHub Actions 全量迁移到 Node 24 运行时。
