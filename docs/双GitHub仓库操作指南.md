@@ -256,6 +256,23 @@ Build & Test
 
 ### 当前阻塞与后续计划（2026-09-13）
 
+#### 本轮问题与修复速查表
+
+本次从「CI 门禁全面红灯」推进到「`v0.5.5` 正式发布」共处理 9 类问题。逐条详述见下方「重要问题说明」与各「实现结论」。
+
+| # | 问题 / 现象 | 根因 | 修复 / 处置 | 验证 |
+| --- | --- | --- | --- | --- |
+| 1 | 发版门禁红灯：`env-config-audit` 失败 | `.env.example` 有 15 个变量既未白名单托管、也未显式豁免 | 14 个接入设置页 + `config.update` 白名单；`BELLDANDY_RELAY_TOKEN` 显式登记 manual-only | 定向测试 3/3；CI `Quality Gates #166` / `#10` 转绿 |
+| 2a | `Dependency audit gate` 持续红灯 | 读 artifact 定性为 `findings_present`（真实漏洞，非扫描失败）：`hono` 3 条、`nodemailer` 4 条 | `hono` override → 4.13.5；`nodemailer` → `^9.1.1`；同步依赖契约测试 | OSV API 复核新版本零命中；该 job 转 success |
+| 2b | 同上（最后一条 advisory 来自 vitest）| `vitest@3.2.7` 受 GHSA-82fw-gwwq-j7x9 影响，修复需跨主版本 | `vitest` → 4.1.11；配置迁移（删 `minWorkers`、补回 `**/dist/**` 等默认排除、排除 `参考项目/**`）；`tsconfig` 补 `DOM.Iterable`；8 个测试适配 v4 语义 | 本地全量 1021 文件 / 6823 用例 0 失败；gate 转 `zero_findings` |
+| 3 | CI 反复提示 Node 20 弃用 | 11 个 action 仍声明 `node20` 运行时 | 全量升级到 `node24` 版本（保持 commit SHA 固定，逐个核对 `using` 与输入兼容性） | CI 实跑不再出现弃用告警 |
+| 4 | 版本号冲突：`v0.5.4` 已被占用 | tag 与 `package.json` 必须同源推进 | `package.json` / `version.generated.ts` / `compatibility.json` / `CHANGELOG.md` 四处一致；tag 只在公开库推 | Release 标题、正文、Docker tag 三者核对一致 |
+| 5 | 文档陈旧：写着「待评估 Dependabot」 | 文档未跟进 `.github/dependabot.yml` 已启用的事实 | 本次核对并记录待办 | 已在第 6 节更正 |
+| 6 | CI 排队 35 分钟未分配 runner | GitHub 侧 runner 分配延迟（已排除凭证 / 配额 / workflow 配置 / 全局故障） | 用 `workflow_dispatch` 手动触发新 run | 两条新 run 正常执行完毕 |
+| 7 | Release 创建失败，并留下空 draft | 平台 5xx 但请求实际已生效；draft 不会被 `GET /releases/tags/{tag}` 返回，action 重试后卡死 | 清理 draft → 重建 → `PATCH draft=false` → 上传附件（详见下方恢复流程） | `draft=false` 且 4 个 release-light 附件齐全 |
+| 8 | Docker 门禁 30 分钟被杀 + 3 处偶发测试超时 | 冷缓存实测正好 30 分钟；共享 runner 上子进程/await 出现调度停滞 | job 超时 30 → 60 分钟；放宽 `run-coding-agent-ci`（×2）与 `tui/runtime.integration`（×5）的测试超时 | 公开库与内部库共四条 run 全部 success |
+| 9 | 排查时读不到日志 / artifact | 匿名 REST 配额仅 60/h；job 日志与 artifact 需要认证（与 git 凭证无关） | 安装 gh CLI 并 device flow 登录 | 配额提升至 5000/h，可读日志、artifact 与 Release 状态 |
+
 #### 现状
 
 - 本地 `main`、`private/main`、`origin/main` 三方一致，均为 `4f8de7cf`，工作区干净。
@@ -322,6 +339,32 @@ Build & Test
    - 已排除的原因：Git 凭证（推送成功，且两条 run 已按该 SHA 正常创建）、workflow 配置（两个 workflow 都没有 `environment:` 保护规则）、账单与配额（该仓库为公开仓库，Actions 不计量，run 页面也没有 spending limit 提示）、GitHub 全局故障（当时 status 页 `Actions` 为 operational）。
    - 结论：属 GitHub 侧 runner 分配延迟，与仓库配置和代码无关。处置方式是改用 `workflow_dispatch` 手动触发新 run（`Quality Gates #166`、`Docker Build & Publish #326`），两条均正常执行完毕。
    - 附带更正：最初「私有仓库 Actions 分钟数用尽」的猜测不成立——该仓库实际已公开（见第 1 节可见性变更），该判断已作废。
+
+7. **GitHub Release 创建遇到平台侧 5xx，并产生空 draft 残留**
+
+   - 现象：tag `v0.5.5` 推送后，`Create GitHub Release` 的 `Create Release` 步骤连续三轮失败。日志显示 `⚠️ GitHub release failed with status: 502 / 500`，重试 3 次后以 `❌ Too many retries.` 结束。
+   - 根因：**GitHub 服务端在 `POST /repos/{owner}/{repo}/releases` 上返回 5xx，但请求实际已生效**——每次都创建出一个 `draft=true`、`assets=0` 的 Release。随后 action 按 tag 查询时，由于 draft 不会被 `GET /releases/tags/{tag}` 返回（该接口只返回已发布 Release），且同 tag 存在多条记录时也返回 404，于是报 `⚠️ Unexpected error fetching GitHub release for tag refs/tags/v0.5.5: HttpError`。属于平台侧故障叠加 action 重试语义导致的状态污染，不是仓库配置问题（job 权限为 `contents: write`，tag 与附件均正常）。
+   - 恢复流程（本次实际使用，可复用）：
+     1. 列出同 tag 的全部 Release 并删除 draft：`gh api "/repos/vrboyzero/star-sanctuary/releases?per_page=20" --jq '.[] | select(.tag_name=="v0.5.5") | .id'`，逐个 `gh api -X DELETE .../releases/<id>`（5xx 时重试）。
+     2. 重新创建：`gh release create v0.5.5 --title "Star Sanctuary v0.5.5" --notes-file <CHANGELOG 0.5.5 段> <4 个附件>`；若 POST 仍 500，按第 1 步确认是否又生成了 draft，用 `PATCH /releases/<id> -d '{"draft":false}'` 将其发布（本次 PATCH 第 5 次才返回 200）。
+     3. 上传附件：`gh release upload v0.5.5 --clobber <4 个附件>`。
+     4. 核对：`gh release view v0.5.5 --json isDraft,assets`，确认 `draft=false` 且 4 个附件齐全。
+   - 注意：**不要盲目重跑发布 job**。draft 未清理时重跑只会继续失败并可能再生成一条 draft；再次遇到时先执行第 1 步。
+
+8. **Docker `Build & Test` 30 分钟超时，以及三处负载敏感的偶发测试超时**
+
+   - 现象 1：`Docker Build & Publish` 的 `Build & Test` 两次以 `cancelled` 结束，耗时恰好 30 分 09 秒，而步骤列表显示所有步骤（含 `Build multi-platform images`）都是 success。根因是 `timeout-minutes: 30` 偏紧：冷缓存下该 job 实测约 30 分钟（全量测试 633s + 单平台镜像构建 179s + amd64/arm64 多平台校验构建 905s）。由于发布链路的 `Publish to Docker Hub` 与 `Create GitHub Release` 都 `needs` 该 job，超时会直接阻断发版，因此已放宽到 60 分钟。
+   - 现象 2：`scripts/run-coding-agent-ci.test.mjs` 中两个真实拉起子进程的用例 per-test 超时为 20s，本地实测仅 1.4s / 2.2s，但在共享 CI runner 负载高时超时（`Test timed out in 20000ms`），造成同一份代码时红时绿。已放宽到 60s。
+   - 现象 3：`packages/belldandy-core/src/tui/runtime.integration.test.ts` 的「shows the same run events as a Headless subscriber without starting another run」以 `Test timed out in 30000ms` 失败（同一份代码在公开库同一提交为 success）。该文件全部用例都会就地拉起真实 Gateway，本地实测 117~851ms；且文件内 `waitFor` 自带 3s 上限（超时抛 `"timeout"` 而非整体超时），说明是共享 runner 上某个 await 的调度停滞。已把该文件 5 处超时统一放宽（15s → 60s ×4、30s → 90s ×1）。
+   - 处理：三项均已修复并提交（`ci(workflows): Docker Build & Test 超时由 30 提升到 60 分钟`、`test(coding-ci): 放宽两个真实子进程用例的超时`、`test(tui): 放宽 Gateway 集成测试的超时`）。
+   - 修复后终态核验（2026-09-13，commit `5c21c753`）：公开库 `Quality Gates #10` 与 `Docker Build & Publish #128`、私有库 `Quality Gates #172` 与 `Docker Build & Publish #332` **四条 run 全部成功**，其中 Quality Gates 各 7/7 job 全绿（含 `Dependency audit report`）。
+
+9. **排查 CI 时踩到的取数权限问题（工具经验）**
+
+   - 现象：用 `curl` 直接读 GitHub 时会遇到三类限制——REST API 匿名请求**按源 IP 限 60 次/小时**（轮询 CI 几分钟就能耗尽）；**job 日志**要求 admin 权限（匿名 `403 Must have admin rights`，`gh api .../logs` 返回空）；**artifact 下载**要求认证（匿名 `401 Requires authentication`）；Dependabot 告警页匿名也会 404。
+   - 根因：这与 git 凭证无关。`git push/fetch` 走 git 传输并使用 credential helper（本机为 Windows GCM），所以推送一直是好的；而普通 HTTP 请求不会继承该凭证，在 GitHub 看来就是匿名访客。
+   - 处置：安装 gh CLI（官方 release 包 + 校验 checksum，装到 `~/.local/bin`）并 `gh auth login` 走 device flow。授权后 REST 配额由 60/h 提升到 5000/h，可直接读 job 日志、下载 artifact、查询 Release 状态。本次正是靠它才定位到「Release 创建 500 但实际建成 draft」与「依赖审计 gate 的真实 findings」。
+   - 注意：WSL 无 keyring，gh 会把 token 明文存于 `~/.config/gh/hosts.yml`；不需要时用 `gh auth logout` 或到 GitHub → Settings → Applications 撤销授权。`gh auth login` 未改动原有 GCM 配置（`credential.https://github.com.helper` 仍指向 GCM）。
 
 #### 第 1 项实现结论：修复 env-config-audit 门禁并补齐设置窗口缺失变量（2026-09-13）
 
@@ -482,26 +525,5 @@ Build & Test
 | 2b | `vitest` / `@vitest/mocker` 3.2.7 → 4.1.11（主版本升级） | **已完成（2026-09-13，全量 6823 用例通过、lockfile 全量 OSV 扫描零命中）** | `tsc -b --force` 无错误；全量测试 0 失败；CI `Dependency audit report` 转 success |
 | 3 | actions 升级到 Node 24 | **已完成（2026-09-13，11 个 action 逐个核对 `using: node24` 与输入兼容性）** | CI 中 `Build & Test`、`Publish to Docker Hub`、`Create GitHub Release` 均已实跑，无 Node 20 弃用告警 |
 | 4 | 版本推进 `0.5.4` → `0.5.5`，与 tag 同步 | **已完成（2026-09-13，tag `v0.5.5` 已推送并发布；Docker 双架构镜像与 Release 4 附件已核对）** | `BELLDANDY_VERSION`、Release 标题、Docker tag 三者一致 |
-
-#### 本次新增的重要问题说明（2026-09-13 第三轮）
-
-7. **GitHub Release 创建过程遇到平台侧 500，并产生空 draft 残留**
-
-   - 现象：tag `v0.5.5` 推送后，`Create GitHub Release` 的 `Create Release` 步骤连续三轮失败。日志显示 `⚠️ GitHub release failed with status: 502 / 500`，重试 3 次后以 `❌ Too many retries.` 结束。
-   - 根因：**GitHub 服务端在 `POST /repos/{owner}/{repo}/releases` 上返回 5xx，但请求实际已生效**——每次都创建出一个 `draft=true`、`assets=0` 的 Release。随后 action 按 tag 查询时，由于 draft 不会被 `GET /releases/tags/{tag}` 返回（该接口只返回已发布 Release），且同 tag 存在多条记录时也返回 404，于是报 `⚠️ Unexpected error fetching GitHub release for tag refs/tags/v0.5.5: HttpError`。属于平台侧故障叠加 action 重试语义导致的状态污染，不是仓库配置问题（job 权限为 `contents: write`，tag 与附件均正常）。
-   - 恢复流程（本次实际使用，可复用）：
-     1. 列出同 tag 的全部 Release 并删除 draft：`gh api "/repos/vrboyzero/star-sanctuary/releases?per_page=20" --jq '.[] | select(.tag_name=="v0.5.5") | .id'`，逐个 `gh api -X DELETE .../releases/<id>`（5xx 时重试）。
-     2. 重新创建：`gh release create v0.5.5 --title "Star Sanctuary v0.5.5" --notes-file <CHANGELOG 0.5.5 段> <4 个附件>`；若 POST 仍 500，按第 1 步确认是否又生成了 draft，用 `PATCH /releases/<id> -d '{"draft":false}'` 将其发布（本次 PATCH 第 5 次才返回 200）。
-     3. 上传附件：`gh release upload v0.5.5 --clobber <4 个附件>`。
-     4. 核对：`gh release view v0.5.5 --json isDraft,assets`，确认 `draft=false` 且 4 个附件齐全。
-   - 注意：**不要盲目重跑发布 job**。draft 未清理时重跑只会继续失败并可能再生成一条 draft；再次遇到时先执行第 1 步。
-
-8. **Docker `Build & Test` 30 分钟超时与一个负载敏感的偶发用例**
-
-   - 现象 1：`Docker Build & Publish` 的 `Build & Test` 两次以 `cancelled` 结束，耗时恰好 30 分 09 秒，而步骤列表显示所有步骤（含 `Build multi-platform images`）都是 success。根因是 `timeout-minutes: 30` 偏紧：冷缓存下该 job 实测约 30 分钟（全量测试 633s + 单平台镜像构建 179s + amd64/arm64 多平台校验构建 905s）。由于发布链路的 `Publish to Docker Hub` 与 `Create GitHub Release` 都 `needs` 该 job，超时会直接阻断发版，因此已放宽到 60 分钟。
-   - 现象 2：`scripts/run-coding-agent-ci.test.mjs` 中两个真实拉起子进程的用例 per-test 超时为 20s，本地实测仅 1.4s / 2.2s，但在共享 CI runner 负载高时超时（`Test timed out in 20000ms`），造成同一份代码时红时绿。已放宽到 60s。
-   - 现象 3：`packages/belldandy-core/src/tui/runtime.integration.test.ts` 的「shows the same run events as a Headless subscriber without starting another run」以 `Test timed out in 30000ms` 失败（同一份代码在公开库同一提交为 success）。该文件全部用例都会就地拉起真实 Gateway，本地实测 117~851ms；且文件内 `waitFor` 自带 3s 上限（超时抛 `"timeout"` 而非整体超时），说明是共享 runner 上某个 await 的调度停滞。已把该文件 5 处超时统一放宽（15s → 60s ×4、30s → 90s ×1）。
-   - 处理：三项均已修复并提交（`ci(workflows): Docker Build & Test 超时由 30 提升到 60 分钟`、`test(coding-ci): 放宽两个真实子进程用例的超时`、`test(tui): 放宽 Gateway 集成测试的超时`）。
-   - 修复后终态核验（2026-09-13，commit `5c21c753`）：公开库 `Quality Gates #10` 与 `Docker Build & Publish #128`、私有库 `Quality Gates #172` 与 `Docker Build & Publish #332` **四条 run 全部 success**，其中 Quality Gates 各 7/7 job 全绿（含 `Dependency audit report`）。
 
 本次（2026-09-13）已完成：推送 `4f8de7cf` 到 `origin/main` 使三方分支一致；定位并记录失败与版本约束；完成第 1 项修复并通过真实 CI 验证；完成第 2a 项依赖漏洞修复与独立复核；完成第 2b 项 vitest 主版本升级与全部兼容性修复；完成第 3 项 actions 迁移；完成第 4 项版本推进；核对并更正第 1 节的仓库可见性描述。
