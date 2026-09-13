@@ -391,16 +391,84 @@ Build & Test
 - OSV API 独立复核：`hono@4.13.5` 与 `nodemailer@9.1.1` 均返回「无已知漏洞」；对照组 `hono@4.13.2`（3 条）、`nodemailer@9.0.3`（4 条）、`vitest@3.2.7`（1 条）仍被判定为有漏洞，证明复核方法有效
 - 未验证部分：`Dependency audit gate` 是否整体转绿需等下一次 CI（`vitest` 未修，预期仍为 `findings_present`）
 
+#### 第 2b 项实现结论：Vitest 3.2.7 → 4.1.11 主版本升级（2026-09-13）
+
+##### 已完成内容
+
+1. **4 处 devDependency 升级**：root、`packages/belldandy-memory`、`packages/belldandy-mcp`、`packages/belldandy-skills` 的 `vitest` 由 `^3.2.6` 提升到 `^4.1.11`；`@vitest/mocker` 随 vitest 4 自带锁定到 4.1.11，无需单独声明。
+
+2. **`vitest.config.ts` 迁移**：
+   - 移除 Vitest 4 已删除的 `minWorkers` 选项（保留 `maxWorkers`）。
+   - **补回被 Vitest 4 简化掉的默认排除项**：v4 的默认 exclude 只剩 `**/node_modules/**` 与 `**/.git/**`，导致 `packages/*/dist/**` 下 571 个编译后的测试副本会被重复执行（CI 在 `build` 后跑 `test`，同样受影响）。现已显式补回 `**/dist/**`、`**/cypress/**`、`.**/{idea,git,cache,output,temp}/**` 与工具配置文件模式。
+   - 追加排除 `参考项目/**`：该目录是本地参考镜像（已 gitignore、无跟踪文件），含 7000+ 个无关测试文件，会让本地发现阶段耗时暴涨。排除后本地发现文件数由 7779 收敛到 1023。
+
+3. **`tsconfig.base.json` 修复**：`lib` 补上 `DOM.Iterable`。`Headers.entries()` 的类型声明位于 `lib.dom.iterable.d.ts`，只写 `DOM` 时 `model-request-transport.ts`、`belldandy-mcp/client.ts`、`feishu-http-transport.ts`、`discord-rest-transport.ts` 会出现 `TS2339 / TS2352` 全量编译错误（增量 `tsc -b` 会掩盖该问题）。
+
+4. **Vitest 4 语义变化导致的测试适配**（均为测试侧修复，产品代码未改）：
+   - **构造函数 mock**：v4 起 `vi.fn(() => ({...}))` 不能再被 `new` 调用（会打印 "did not use 'function' or 'class'" 并返回错误对象）。6 个文件的构造函数 mock 改为 `function` 实现：`multimedia/image`、`image-understand`、`video-understand`、`tts-synthesize`、`stt-transcribe`、`screen`，以及 `gateway-background-runtime`。
+   - **spy/mock 状态复用**：v4 的 `vi.spyOn` 与 `vi.fn(baseMock)` 会复用同一 mock 实例，调用次数跨用例累积，导致「只读一次」「不应被调用」类断言误报。`conversation-transcript-single-read.test.ts` 增补 `afterEach(vi.restoreAllMocks)`，`goal-tools.test.ts` 增补 `beforeEach(vi.clearAllMocks)`。
+   - **契约测试同步**：`dependency-remediation-contract.test.ts` 的 vitest 版本断言更新到 4.1 线。
+
+5. **`examples/ci/compatibility.json`**：`testedPackageVersion` 随版本推进更新为 `0.5.5`。
+
+6. **效果**：
+   - 8 条依赖 advisory 全部消除，`Dependency audit gate` 具备转为 `zero_findings` 的条件。
+   - 本地全量测试与 CI 覆盖面一致（不再重复执行 `dist/` 副本与参考镜像）。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`tsc -b --force` 全工作区强制全量重编译，无输出）
+- **本地全量测试 1021 个文件通过 / 2 跳过（1023），6823 个用例通过 / 8 跳过（6831），0 失败**，耗时 795s
+- 全量 lockfile 的 OSV API 批量扫描（542 个包）**零漏洞命中**
+- 未验证部分：CI 上的 `Dependency audit gate` 是否实际转绿需等下一次 run
+
+#### 第 3 项实现结论：GitHub Actions 迁移到 Node 24 运行时（2026-09-13）
+
+##### 已完成内容
+
+1. **`.github/workflows/docker.yml` 与 `quality-gates.yml` 全量升级**（保持按 commit SHA 固定的既有约定）：
+   `actions/checkout` v4.3.1→v7.0.1、`actions/setup-node` v4.4.0→v7.0.0、`actions/upload-artifact` v4.6.2→v7.0.1、`docker/login-action` v3.7.0→v4.6.0、`docker/setup-buildx-action` v3.12.0→v4.3.0、`docker/setup-qemu-action` v3.7.0→v4.3.0、`docker/metadata-action` v5.10.0→v6.2.0、`docker/build-push-action` v5.4.0→v7.3.0、`pnpm/action-setup` v4→v6.1.0、`softprops/action-gh-release` v1→v3.0.3、`peter-evans/dockerhub-description` v4.0.2→v5.0.0。
+   - `google/osv-scanner-action` 保持原固定 commit：其 `runs.using` 为 `docker`，不受 Node 20 弃用影响。
+
+2. **升级前逐项校验**：读取每个新版本 tag 的 `action.yml`，确认 `using: node24`，并核对 workflow 中实际使用的全部输入参数（`persist-credentials`、`node-version`+`cache`、`images`/`tags`、`context`/`file`/`push`/`load`/`tags`/`platforms`、`version`、`files`、`repository` 等）在新版仍存在。annotated tag 已用 `^{}` 解引用取得真正的 commit SHA，避免 pin 到 tag 对象。
+
+3. **契约测试同步**：`quality-gates-workflow.test.ts` 中硬编码的 3 个受审计 SHA（`pnpm/action-setup`、`actions/setup-node`、`peter-evans/dockerhub-description`）更新为新版本。
+
+4. **效果**：workflow 不再产生 Node 20 弃用 annotation，`FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` 之类的临时开关不再需要。
+
+##### 验证结果
+
+- 两个 workflow 通过 YAML 解析校验；所有 `uses:` 均为 40 位 commit SHA
+- `quality-gates-workflow.test.ts` 等 workflow 契约测试通过（属全量 1023 文件的一部分）
+- 未验证部分：新版 action 的实际运行需下一次 CI（尤其是 tag 触发的发布链路）
+
+#### 第 4 项实现结论：版本推进到 0.5.5 并打 tag（2026-09-13）
+
+##### 已完成内容
+
+1. **`package.json`**：`version` 由 `0.5.4` 提升到 `0.5.5`。
+2. **`packages/belldandy-core/src/version.generated.ts`**：由 `scripts/generate-version.mjs` 重新生成，`BELLDANDY_VERSION = "0.5.5"`（CLI `--version`、`/health`、WebSocket hello 均取此值）。
+3. **`examples/ci/compatibility.json`**：`testedPackageVersion` 同步为 `0.5.5`（`pnpm verify:coding-ci` 会校验二者一致）。
+4. **`CHANGELOG.md`**：新增 `## [0.5.5] - 2026-09-13` 段，按 Coding & Agent Runtime / WebChat / Observability & Channels / Security & Delivery Gates / Distribution & Runtime / Docs / Validation 分组；`docker.yml` 的 `Extract changelog section` 会读取该段作为 GitHub Release 正文，缺失时会退化为「No changelog entry found」。
+5. **打 tag**：`v0.5.5` 推送到 `origin`（公开仓库）后触发 `Build & Test` → `Publish to Docker Hub` 与 `Create GitHub Release`。
+   - 注意：**只在公开仓库打 tag**。两个仓库共用同一个 Docker Hub 镜像名，若同时向内部仓库推 tag 会导致同一版本发布两次、镜像 tag 相互覆盖。
+
+##### 验证结果
+
+- `tsc -b --force` 无错误；`BELLDANDY_VERSION`、`package.json`、`compatibility.json` 三处一致
+- 全量测试 6823 通过（含 `verify-coding-ci-contract` 对版本一致性的校验）
+- 未验证部分：tag 触发的 Docker Hub 推送与 GitHub Release 创建结果需在推送后核对
+
 #### 后续计划
 
-按「先解除硬门禁 → 再清理维护项 → 最后发版」的顺序推进。这样排序的理由是：前两步都是每次 push 或每个 tag 都会重复触发代价的环节，先修它们能让后续步骤不再重复踩同一处红灯。
+四项待办（第 1、2a、2b、3、4 项）均已完成并通过本地验证。剩余动作：
 
-1. ~~**先修 `env-config-audit`**~~：已完成并通过真实 CI 验证（见上方实现结论）。
-2. **依赖安全整改**：`hono` / `nodemailer` 已完成（见第 2a 项实现结论）；剩余 `vitest` 3.2.7 → 4.1.11 属主版本升级，需单独立项评估（`^3.2.6` 不允许 4.x，需改 4 处 package.json 或加 override，并验证测试框架兼容性）。
-3. **然后升级 workflow 中的 actions 到 Node 24 版本**：按上文既有约定单开维护提交，不与业务修复混在一起。
-4. **最后 bump `package.json` 并打 tag 发版**：前三项完成后再做，避免产生失败的 Release run 和半成品公开版本。
+1. 提交本轮改动并推送 `private/main`，观察内部开发仓库 CI（重点：`Build and full test suite` 与 `Dependency audit report` 是否转为 success）。
+2. 把修复同步到 `origin/main`，使公开 `main` 转绿。
+3. 推送 `v0.5.5` tag 到 `origin`，核对发布链路产物：`Build & Test`、镜像 `X.Y.Z` tag、Release 的 4 个 release-light 附件。
+4. Windows portable / winget / single-exe 继续按既有约定不进入 GitHub Release 附件。
 
-当前缺的关键闭环：公开 `main` 同步修复后的提交并使 `Build & Test` 转绿、`vitest` 主版本升级落地使 `Dependency audit gate` 全绿、actions 升级完成、`package.json` 与 tag 版本一致。四项齐备前不进入发版动作。
+当前缺的关键闭环：CI 对 vitest 4 与新 actions 的实测结果、以及 tag 后 Docker Hub 与 Release 的实际产物核对。
 
 #### 待办与进度
 
@@ -408,8 +476,8 @@ Build & Test
 | --- | --- | --- | --- |
 | 1 | 修复 `env-config-audit.test.ts`（15 个变量逐个归类） | **已完成（2026-09-13，CI 已验证：`Quality Gates #166` / `Docker #326` 门禁转绿）** | 定向测试 3/3；真实 CI 的 `Build and full test suite` success |
 | 2a | 修复 `hono` / `nodemailer` 已知漏洞 | **已完成（2026-09-13，OSV 复核无漏洞、契约与 SMTP 测试 18/18）** | OSV API 复核新版本；`dependency-remediation-contract.test.ts` 通过 |
-| 2b | `vitest` / `@vitest/mocker` 3.2.7 → 4.1.11（主版本升级） | 待处理（HITL） | 4 处 devDependency 或 override 落地；`Build and full test suite` 仍 success；`Dependency audit gate` 转 `zero_findings` |
-| 3 | actions 升级到 Node 24（含 4 个被点名的 SHA） | 待处理 | 复验 `Build & Test`、`Publish to Docker Hub`、`Create GitHub Release` |
-| 4 | 版本推进 `0.5.4` → `0.5.5`，与 tag 同步 | 待处理 | `BELLDANDY_VERSION`、Release 标题、Docker tag 三者一致 |
+| 2b | `vitest` / `@vitest/mocker` 3.2.7 → 4.1.11（主版本升级） | **已完成（2026-09-13，全量 6823 用例通过、lockfile 全量 OSV 扫描零命中）** | `tsc -b --force` 无错误；全量测试 0 失败；CI `Dependency audit report` 转 success |
+| 3 | actions 升级到 Node 24 | **已完成（2026-09-13，11 个 action 逐个核对 `using: node24` 与输入兼容性）** | 复验 CI 中 `Build & Test`、`Publish to Docker Hub`、`Create GitHub Release` 不再出现 Node 20 弃用告警 |
+| 4 | 版本推进 `0.5.4` → `0.5.5`，与 tag 同步 | **已完成（2026-09-13，`package.json` / `version.generated.ts` / `compatibility.json` / `CHANGELOG.md` 同步，tag 待推）** | `BELLDANDY_VERSION`、Release 标题、Docker tag 三者一致 |
 
-本次（2026-09-13）已完成：推送 `4f8de7cf` 到 `origin/main` 使三方分支一致；定位并记录失败与版本约束；完成第 1 项修复并通过真实 CI 验证；完成第 2a 项依赖漏洞修复与独立复核；核对并更正第 1 节的仓库可见性描述。第 2b、3、4 项继续按 defer 处理。
+本次（2026-09-13）已完成：推送 `4f8de7cf` 到 `origin/main` 使三方分支一致；定位并记录失败与版本约束；完成第 1 项修复并通过真实 CI 验证；完成第 2a 项依赖漏洞修复与独立复核；完成第 2b 项 vitest 主版本升级与全部兼容性修复；完成第 3 项 actions 迁移；完成第 4 项版本推进；核对并更正第 1 节的仓库可见性描述。
