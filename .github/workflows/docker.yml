@@ -22,7 +22,10 @@ jobs:
   build-and-test:
     name: Build & Test
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 冷缓存下实测约 30 分钟（全量测试 ~11min + 单平台镜像构建 ~3min +
+    # amd64/arm64 多平台校验构建 ~15min），30 分钟会正好在收尾阶段被超时杀掉，
+    # 而 tag 发布链路的另外两个 job 都 needs 本 job，因此放宽到 60 分钟留出余量。
+    timeout-minutes: 60
     permissions:
       contents: read
 
