@@ -35,6 +35,9 @@ afterEach(async () => {
 });
 
 describe("Coding TUI runtime integration", () => {
+  // 本文件全部用例都会就地拉起真实 Gateway + TUI/Headless 订阅者。本地每个用例
+  // 只需 0.1~0.9s，但在共享 CI runner 上出现过 30s 仍无进展的调度停滞
+  // （waitFor 自身 3s 上限未触发，说明卡在某个 await 上），因此统一放宽超时。
   it("starts and subscribes to one real Gateway Conversation without duplicating controls", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-tui-runtime-"));
     temporaryDirectories.push(stateDir);
@@ -98,7 +101,7 @@ describe("Coding TUI runtime integration", () => {
       await gateway.close();
       await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     }
-  }, 15_000);
+  }, 60_000);
 
   it("steers the same real Gateway Conversation at its next model boundary", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-tui-steer-"));
@@ -178,7 +181,7 @@ describe("Coding TUI runtime integration", () => {
       await gateway.close().catch(() => {});
       await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     }
-  }, 15_000);
+  }, 60_000);
 
   it("cancels only its bound active Gateway Conversation run", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-tui-cancel-"));
@@ -249,7 +252,7 @@ describe("Coding TUI runtime integration", () => {
       await gateway.close();
       await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     }
-  }, 15_000);
+  }, 60_000);
 
   it("resumes its active subscription from the last confirmed cursor after a forced Gateway disconnect", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-tui-reconnect-"));
@@ -332,7 +335,7 @@ describe("Coding TUI runtime integration", () => {
       await gateway.close().catch(() => {});
       await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     }
-  }, 15_000);
+  }, 60_000);
 
   it("shows the same run events as a Headless subscriber without starting another run", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-tui-headless-"));
@@ -473,7 +476,7 @@ describe("Coding TUI runtime integration", () => {
       await gateway.close().catch(() => {});
       await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     }
-  }, 30_000);
+  }, 90_000);
 });
 
 async function startTcpProxy(targetPort: number, port = 0): Promise<{
