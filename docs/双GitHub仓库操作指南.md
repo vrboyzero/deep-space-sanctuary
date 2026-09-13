@@ -260,7 +260,7 @@ Build & Test
 
 #### 本轮问题与修复速查表
 
-本轮共处理 11 类问题，逐条详述见下方「重要问题说明」与各「实现结论」。
+本轮共处理 12 类问题，逐条详述见下方「重要问题说明」与各「实现结论」。
 
 | # | 问题 / 现象 | 根因 | 修复 / 处置 | 验证 |
 | --- | --- | --- | --- | --- |
@@ -276,6 +276,7 @@ Build & Test
 | 9 | 排查时读不到日志 / artifact | 匿名 REST 配额仅 60/h；job 日志与 artifact 需要认证（与 git 凭证无关） | 安装 gh CLI 并 device flow 登录 | 配额提升至 5000/h，可读日志、artifact 与 Release 状态 |
 | 10 | 用户下载 `v0.5.5` 的 release-light 压缩包后**装不上、也起不来** | ① 打包计划漏掉 `patches/`，而 `pnpm.patchedDependencies` 指向该目录内的补丁，`pnpm install` 直接 `ENOENT`；② 随包 `start.bat` / `start.sh` 按源码模式运行（`pnpm build` + `pnpm bdd start`），而载荷按设计只有 `dist` | 打包计划补 `patches → patches`；两个启动脚本改为先探测形态，dist-only 载荷直接跑 `dist/bin/bdd.js start`；verifier 增加「补丁文件必须在包内」与「启动脚本必须含 dist 入口」两条断言 | 解压 → `corepack pnpm install` 成功 → 启动打印 `Belldandy Version: v0.5.6`；负向用例（抽掉 `patches/`）确认能被 verifier 拦下 |
 | 11 | 纯文档提交 `8b05e46a` 的 `Quality Gates` 也变红 | runner 磁盘耗尽（日志 3 处 `ENOSPC`），e2e 用例就地拉起的 Gateway 写不进 `pairing.json`，导致 `pairing code not found or expired` | 定性为环境问题，本轮不加固（同代码的下一个提交 `6f12dfa4` 五个 run 全绿） | 日志中的 `no space left on device` 与失败断言的因果关系；`6f12dfa4` 全绿交叉验证 |
+| 12 | 设置页「系统检查」只显示 `Coding Runtime Preflight: 1 coding runtime prerequisite(s) block...`，看不出是哪一条、怎么配 | 该 check 只下发 `summary.headline`，阻塞项明细与修复建议留在 payload 与 CLI doctor 里，界面拿不到 | 后端在失败时补下发 `details.blockingItems`（id/name/status/reasonCode/action）；前端把明细渲染进同一枚徽标（新增 `.doctor-summary-detail`） | 新增后端用例锁定下发内容 + 前端用例锁定渲染 + 真实 Chrome 打开设置页核对（见「第 6 项实现结论」） |
 
 #### 现状
 
@@ -391,6 +392,13 @@ Build & Test
     - 定性依据：该 run 的 job 日志中先出现 3 处 `[agent] Agent run failed Error: no space left on device`。该用例会就地拉起真实 Gateway 并依赖其把 pairing code 落盘；磁盘写满后 `pairing.json` 未写入，于是后续断言拿到的 pairing code 数量不足。**根因是 runner 磁盘耗尽，不是代码缺陷**——同一份代码在紧随其后的 `6f12dfa4` 上，公开库（`Quality Gates`、`Docker Build & Publish` ×2）与内部库（`Quality Gates`、`Docker Build & Publish`）共 5 个 run 全部 success。
     - 处理：本轮仅定性并记录，未做加固。这是继「重要问题说明」第 8 条三处超时之后的又一类负载/环境敏感偶发失败，排查时不要按业务 bug 处理。
     - 可选加固（未执行）：在该 job 跑全量测试前先清理 runner 上的 pnpm store / 构建产物，或把全量测试拆成两个 job 分摊磁盘占用。
+
+12. **设置页「系统检查」的红叉不可行动：只有一句 headline，看不出是哪条前置条件、也不给修复建议**
+
+    - 现象：用户在 WebChat 设置 → 系统 看到 `Coding Runtime Preflight: 1 coding runtime prerequisite(s) block a fully capable startup.`，但界面上无法知道被阻塞的是哪一项、该怎么处理。
+    - 原因：`server-methods/system-doctor.ts` 只往该 check 写 `message: summary.headline`（第 1361 行附近），阻塞项明细（`items[].reasonCode` / `setup.action`）只存在于 payload 的 `codingRuntimePreflight` 与 CLI `bdd doctor` 输出里；前端 `settings.js` 的徽标只渲染 `${name}: ${message}`，因此信息在传递链路上被截断。这是**产品侧可观测性缺口**，与第 10 条的打包缺陷无关。
+    - 处理方案（2026-09-13，用户确认 B + C1 + C3）：保留 fail-closed 语义不变（不把「未配置沙箱」降级为 warn），只补齐「能自助定位」与「口径有测试锁定」两件事，见「第 6 项实现结论」。
+    - 附带结论：诊断该问题时顺带确认了「工具打开 + 未配置 OCI 沙箱」这一档在此前**没有测试覆盖**（`coding-runtime-preflight-doctor.test.ts` 原有 4 个用例全是「已配置 oci」或「Go 不可用」），所以它的判定口径一直只存在于代码里，容易被误改。
 
 #### 第 1 项实现结论：修复 env-config-audit 门禁并补齐设置窗口缺失变量（2026-09-13）
 
@@ -580,9 +588,49 @@ Build & Test
 - Docker Hub 上 `vrboyzero/star-sanctuary:0.5.6` 的 manifest 为 OCI index，含 `linux/amd64` 与 `linux/arm64`（另有 buildx 附加的 attestation manifest，属正常）。
 - `main` 分支推送触发的 run 也全绿：公开库 `Quality Gates` success、`Docker Build & Publish` success（无 tag，发布类 job 按设计 skipped）；内部库 `Quality Gates` success、`Docker Build & Publish` success。
 
+#### 第 6 项实现结论：让系统检查的阻塞项可自助定位（C1 + C3，2026-09-13）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/server-methods/system-doctor.ts` 修改**：
+   - `coding_runtime_preflight` 这一条 check 在存在阻塞项时补下发 `details.blockingItems`，每项含 `id` / `name` / `status` / `reasonCode` / `action`（取自 `item.setup.action`）。
+   - 只下发阻塞项，不下发完整条目列表（完整列表仍在 `payload.codingRuntimePreflight` 与 CLI `bdd doctor` 里），既够界面自助定位，又不扩大 payload 与信息面；`reasonCode` 不带路径/镜像等配置值，沿用该模块原有的「不暴露配置」约定。
+
+2. **`apps/web/public/app/features/settings.js` 修改**：
+   - `renderDoctorPayload()` 渲染徽标时，若 check 带 `details.blockingItems`，在同一枚徽标内追加一个 `.doctor-summary-detail` 节点，内容为 `名称 (reasonCode)：action`，多项以「；」连接。
+   - 徽标正文保持原样（`名称: headline`），明细作为第二行，不改变既有徽标语义与数量。
+
+3. **`apps/web/public/styles.css` 修改**：
+   - 新增 `#doctorStatus .doctor-summary-detail` 规则（`display: block` + 上边距 + 常规字重 + `opacity: .85`），让明细换行并弱化，复用该容器已有的 `white-space: normal` / `word-break` 规则。
+
+4. **`packages/belldandy-core/src/coding-runtime-preflight-doctor.test.ts` 修改（C3）**：
+   - 新增用例「blocks the coding runtime when tools are enabled without a configured sandbox」，锁定「`BELLDANDY_TOOLS_ENABLED=true` + 三个沙箱变量全部缺省」这一官方默认形态：`blockingCount=1`、`oci_configuration` 为 `unavailable/not_configured/blocking`、`oci_runtime` 与 `oci_local_image` 为 `unknown` 且不阻塞、`activeCount=7 / requiredCount=7 / availableCount=4`，且未配置时**不触发**任何运行时/镜像探测（`probeRuntime` / `probeImage` 均未被调用）。
+
+5. **`packages/belldandy-core/src/server.doctor.test.ts` 修改**：
+   - 新增用例「system.doctor names the blocking coding runtime prerequisite and its setup hint」：在真实 Gateway 上以 `BELLDANDY_TOOLS_ENABLED=true`、三个沙箱变量清空启动，断言该 check 为 `fail` 且带出 `details.blockingItems`（`oci_configuration` / `not_configured` / 对应 action）。前端用例用的是手工 payload，只有这条才能防住「后端不再下发明细」的回归。
+
+6. **`apps/web/public/app/features/settings.test.js` 修改**：
+   - 新增 2 个用例：失败徽标必须渲染出 `doctor-summary-detail` 且包含阻塞项名称、`reasonCode` 与修复动作；`details.blockingItems` 为空（pass 态）时徽标不得出现任何明细子节点。
+
+7. **效果**：
+   - 设置页的失败徽标现在能直接读出「哪一条前置条件在阻塞 + 怎么配」，不必再去跑 CLI doctor。
+   - fail-closed 的安全语义未改变：该 check 仍然是 `fail` / `blocking`（即用户确认的「B：不改配置、不降级」）。
+   - 该判定口径从此有测试锁定，后续无论是后端漏下发还是前端漏渲染都会在 CI 被拦下。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`tsc -b` 全工作区 exit 0）
+- 后端 49 个定向测试通过：`coding-runtime-preflight-doctor.test.ts` 5/5（含 1 个新增）、`server.doctor.test.ts` 44/44（含 1 个新增）
+- 前端 32 个定向测试通过：`settings.test.js` 32/32（含 2 个新增）
+- `node scripts/verify-webchat-modules.mjs` 通过（433 files verified）
+- **真实浏览器核对（headless Chrome + 本地 Gateway，`BELLDANDY_WEB_ROOT` 指向工作区 `apps/web/public`）**：设置 → 系统 → 展开系统检查后，该徽标渲染为
+  `Coding Runtime Preflight: 1 coding runtime prerequisite(s) block a fully capable startup.` +
+  第二行 `OCI Sandbox Configuration (not_configured)：Configure a digest-pinned OCI sandbox backend before starting coding tasks.`，计算样式为 `display: block` / `opacity: 0.85`；页面 `console` 无 error、无 pageerror
+- 未验证部分：界面语言切换（中/英）下明细文案来自 Gateway 下发的英文 action，未做本地化；如需中文提示，需要额外的 i18n 映射（本轮未做）
+
 #### 后续计划
 
-第 1、2a、2b、3、4、5 项全部完成，`v0.5.6` 已作为发布产物缺陷修复版发出。剩余事项：
+第 1、2a、2b、3、4、5、6 项完成，`v0.5.6` 已作为发布产物缺陷修复版发出。剩余事项：
 
 1. Windows portable / winget / single-exe 继续按既有约定不进入 GitHub Release 附件（官网手动发布）。
 2. `softprops/action-gh-release` 的发布路径在 GitHub API 5xx 时会产生「空 draft + 重复 Release」（见「重要问题说明」第 7 条）。如需进一步加固，可在发布 job 中先清理同 tag 的 draft，再执行创建；本次未改动 workflow，只记录了人工恢复流程。
@@ -590,6 +638,8 @@ Build & Test
 4. `v0.5.5` 的 Release 附件已知对最终用户不可用且已被 `v0.5.6` 取代，如需保留历史，建议在 `v0.5.5` Release 页面加一句指向 `v0.5.6` 的说明（尚未执行，非阻塞）。
 5. `Dependency audit gate` 要求 `zero_findings`，属「持续追新」型门禁：OSV 新收录任何一条相关 advisory 都会让 CI 变红。是否引入宽限期或白名单是策略问题，仍待决策（本轮未处理）。
 6. 全量测试 job 已出现两类环境敏感偶发失败：调度停滞导致的超时（第 8 条，已放宽超时）与 runner 磁盘耗尽 `ENOSPC`（第 11 条，未加固）。若再次在无关提交上出现红灯，先按这两类排查，再考虑是否清理 runner 磁盘或拆分测试 job。
+7. 第 6 项只解决了「看得见」，明细文案仍为 Gateway 下发的英文 action。若要中英一致，需要在 i18n 里给 `coding_runtime_preflight` 的 `reasonCode` 建映射（本轮未做）。
+8. 第 6 项的产品改动要到达 release-light 用户，需要下一次发版（当前发布产物为 `v0.5.6`）；本轮未 bump 版本、未打 tag。
 
 当前缺的关键闭环：无阻塞项。发版链路的绿灯与产物可用性之间此前没有交叉验证，本轮已用 verifier 断言 + 端到端实测补齐；后续每次发版仍应保留该端到端步骤。
 
@@ -604,5 +654,6 @@ Build & Test
 | 4 | 版本推进 `0.5.4` → `0.5.5`，与 tag 同步 | **已完成（2026-09-13，tag `v0.5.5` 已推送并发布；Docker 双架构镜像与 Release 4 附件已核对）** | `BELLDANDY_VERSION`、Release 标题、Docker tag 三者一致 |
 | 5 | 修复 release-light 载荷（缺 `patches/` + 启动脚本形态不匹配）并重新发布 | **已完成（2026-09-13，`e04f1f7f` + `6f12dfa4` 已推双库，tag `v0.5.6` 已推 `origin`；解压后安装与启动端到端实测通过）** | `pnpm verify:release-light` 通过 + 负向用例可拦截漏补丁 + 解压后启动打印 `Belldandy Version: v0.5.6` |
 | 6 | 全量测试 job 的 `ENOSPC`（runner 磁盘耗尽）偶发失败 | **未处理（2026-09-13 已定性为环境问题，见「重要问题说明」第 11 条）** | 日志 3 处 `no space left on device`；同代码下一提交四项 run 全绿 |
+| 7 | 设置页系统检查的阻塞项可自助定位（C1）+ 锁定「工具开、沙箱未配」口径（C3） | **已完成（2026-09-13，后端 49 + 前端 32 定向测试通过，真实 Chrome 已核对徽标明细；未 bump 版本）** | `server.doctor.test.ts` 断言下发明细；`settings.test.js` 断言渲染；headless Chrome 打开设置页读到 `OCI Sandbox Configuration (not_configured)：…` |
 
-本次（2026-09-13）已完成：推送 `4f8de7cf` 到 `origin/main` 使三方分支一致；定位并记录失败与版本约束；完成第 1 项修复并通过真实 CI 验证；完成第 2a 项依赖漏洞修复与独立复核；完成第 2b 项 vitest 主版本升级与全部兼容性修复；完成第 3 项 actions 迁移；完成第 4 项版本推进；核对并更正第 1 节的仓库可见性描述；根据用户实测反馈定位并修复第 5 项 release-light 产物缺陷，随 `0.5.6` 重新发布，并对 Release 附件做了下载级复核。
+本次（2026-09-13）已完成：推送 `4f8de7cf` 到 `origin/main` 使三方分支一致；定位并记录失败与版本约束；完成第 1 项修复并通过真实 CI 验证；完成第 2a 项依赖漏洞修复与独立复核；完成第 2b 项 vitest 主版本升级与全部兼容性修复；完成第 3 项 actions 迁移；完成第 4 项版本推进；核对并更正第 1 节的仓库可见性描述；根据用户实测反馈定位并修复第 5 项 release-light 产物缺陷，随 `0.5.6` 重新发布，并对 Release 附件做了下载级复核；应第 6 项（系统检查红叉不可行动）完成前后端明细下发与渲染、并补上默认配置下的口径测试。
