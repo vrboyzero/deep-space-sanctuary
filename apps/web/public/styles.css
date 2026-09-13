@@ -3503,6 +3503,14 @@ body.control-panel-hidden .main-content {
   overflow-wrap: anywhere;
 }
 
+/* 徽标内的阻塞项明细：单独成行、弱化字重，避免与徽标标题混读。 */
+#doctorStatus .doctor-summary-detail {
+  display: block;
+  margin-top: 4px;
+  font-weight: 400;
+  opacity: 0.85;
+}
+
 #doctorStatus .doctor-observability-card {
   flex: 1 1 100%;
 }

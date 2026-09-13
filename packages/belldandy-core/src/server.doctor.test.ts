@@ -359,6 +359,75 @@ test("system.doctor exposes tool behavior observability summary", async () => {
   }
 });
 
+test("system.doctor names the blocking coding runtime prerequisite and its setup hint", async () => {
+  // 工具打开但未配置 OCI 沙箱（.env.example 的默认形态）时，headline 只说「有 1 条阻塞」，
+  // 界面无法据此定位。这里锁定该 check 必须带出阻塞项与其处置建议。
+  await withEnv({
+    BELLDANDY_TOOLS_ENABLED: "true",
+    BELLDANDY_CODE_INTEL_GO_ENABLED: undefined,
+    BELLDANDY_COMMAND_SANDBOX_BACKEND: undefined,
+    BELLDANDY_COMMAND_SANDBOX_OCI_RUNTIME: undefined,
+    BELLDANDY_COMMAND_SANDBOX_OCI_IMAGE: undefined,
+  }, async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-preflight-doctor-"));
+    const toolsConfigManager = new ToolsConfigManager(stateDir);
+    await toolsConfigManager.load();
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+      toolsConfigManager,
+      toolExecutor: new ToolExecutor({
+        tools: [createContractedTestTool("run_command")],
+        workspaceRoot: process.cwd(),
+      }),
+    });
+
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+    const frames: any[] = [];
+    const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+    ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+    try {
+      await pairWebSocketClient(ws, frames, stateDir);
+
+      ws.send(JSON.stringify({
+        type: "req",
+        id: "system-doctor-coding-preflight",
+        method: "system.doctor",
+        params: {},
+      }));
+      await waitFor(() => frames.some((f) => f.type === "res" && f.id === "system-doctor-coding-preflight" && f.ok === true));
+
+      const response = frames.find((f) => f.type === "res" && f.id === "system-doctor-coding-preflight");
+      const preflightCheck = response.payload?.checks.find((check: any) => check.id === "coding_runtime_preflight");
+      expect(preflightCheck).toMatchObject({
+        status: "fail",
+        message: "1 coding runtime prerequisite(s) block a fully capable startup.",
+        details: {
+          blockingItems: [
+            {
+              id: "oci_configuration",
+              name: "OCI Sandbox Configuration",
+              status: "unavailable",
+              reasonCode: "not_configured",
+              action: "Configure a digest-pinned OCI sandbox backend before starting coding tasks.",
+            },
+          ],
+        },
+      });
+      // 未配置沙箱不应连带暴露未探测的运行时/镜像条目为阻塞项。
+      expect(preflightCheck.details.blockingItems).toHaveLength(1);
+    } finally {
+      ws.close();
+      await closeP;
+      await server.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+});
+
 test("system.doctor exposes inactive Go CodeIntel capability independently", async () => {
   await withEnv({
     BELLDANDY_CODE_INTEL_GO_ENABLED: "false",

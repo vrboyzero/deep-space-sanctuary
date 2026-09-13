@@ -1355,11 +1355,27 @@ export async function handleSystemDoctorMethod(
       : "pass",
     message: codeIntelGo.summary.headline,
   });
+  // 只带出阻塞项的定位信息：headline 只说「有几条」，界面无法据此判断是哪一条、该怎么配。
+  // 完整条目列表仍以 payload.codingRuntimePreflight 与 CLI `bdd doctor` 为准，这里不重复下发。
+  const codingRuntimeBlockingItems = codingRuntimePreflight.items.filter((item) => item.blocking);
   checks.push({
     id: "coding_runtime_preflight",
     name: "Coding Runtime Preflight",
     status: codingRuntimePreflight.summary.startupReady ? "pass" : "fail",
     message: codingRuntimePreflight.summary.headline,
+    ...(codingRuntimeBlockingItems.length > 0
+      ? {
+        details: {
+          blockingItems: codingRuntimeBlockingItems.map((item) => ({
+            id: item.id,
+            name: item.name,
+            status: item.status,
+            reasonCode: item.reasonCode,
+            ...(item.setup?.action ? { action: item.setup.action } : {}),
+          })),
+        },
+      }
+      : {}),
   });
   // ── 动态工作流 WorkflowRuntime 观测 ──
   if (ctx.workflowRuntime) {

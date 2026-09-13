@@ -3138,4 +3138,83 @@ describe("settings controller", () => {
     expect(doctorToggleBtn.children[0]?.textContent).toBe("Check Failed");
     expect(doctorToggleBtn.children[0]?.getAttribute("data-i18n")).toBe("settings.doctorCheckFailed");
   });
+
+  it("shows which prerequisite blocks a failing Coding Runtime Preflight badge", async () => {
+    const sendReq = vi.fn(async (frame) => {
+      if (frame.method !== "system.doctor") return { ok: true, payload: {} };
+      return {
+        ok: true,
+        payload: {
+          surface: frame.params?.surface,
+          checks: [
+            { name: "Node.js Environment", status: "pass", message: "vtest" },
+            {
+              name: "Coding Runtime Preflight",
+              status: "fail",
+              message: "1 coding runtime prerequisite(s) block a fully capable startup.",
+              details: {
+                blockingItems: [
+                  {
+                    id: "oci_configuration",
+                    name: "OCI Sandbox Configuration",
+                    status: "unavailable",
+                    reasonCode: "not_configured",
+                    action: "Configure a digest-pinned OCI sandbox backend before starting coding tasks.",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      };
+    });
+    const { controller, refs } = createController({ sendReq });
+
+    await controller.toggle(true);
+    await Promise.resolve();
+
+    const preflightBadge = refs.doctorStatusEl.children.find(
+      (child) => child.className.includes("fail")
+        && String(child.textContent).includes("Coding Runtime Preflight"),
+    );
+    expect(preflightBadge).toBeTruthy();
+    // 汇总文案本身不含条目信息，明细必须落在徽标内的独立节点里。
+    expect(preflightBadge.textContent)
+      .toBe("Coding Runtime Preflight: 1 coding runtime prerequisite(s) block a fully capable startup.");
+    const detail = preflightBadge.children.find((child) => child.className === "doctor-summary-detail");
+    expect(detail).toBeTruthy();
+    expect(detail.textContent).toContain("OCI Sandbox Configuration");
+    expect(detail.textContent).toContain("not_configured");
+    expect(detail.textContent).toContain("digest-pinned OCI sandbox backend");
+  });
+
+  it("keeps passing Doctor badges free of prerequisite detail nodes", async () => {
+    const sendReq = vi.fn(async (frame) => {
+      if (frame.method !== "system.doctor") return { ok: true, payload: {} };
+      return {
+        ok: true,
+        payload: {
+          surface: frame.params?.surface,
+          checks: [
+            {
+              name: "Coding Runtime Preflight",
+              status: "pass",
+              message: "Active coding runtime prerequisites are ready; degraded optional paths remain explicit.",
+              details: { blockingItems: [] },
+            },
+          ],
+        },
+      };
+    });
+    const { controller, refs } = createController({ sendReq });
+
+    await controller.toggle(true);
+    await Promise.resolve();
+
+    const badge = refs.doctorStatusEl.children.find(
+      (child) => String(child.textContent).includes("Coding Runtime Preflight"),
+    );
+    expect(badge).toBeTruthy();
+    expect(badge.children).toHaveLength(0);
+  });
 });

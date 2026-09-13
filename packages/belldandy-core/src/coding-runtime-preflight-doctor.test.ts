@@ -126,6 +126,62 @@ describe("buildCodingRuntimePreflightDoctorReport", () => {
     expect(serialized).not.toContain("C:\\private");
   });
 
+  it("blocks the coding runtime when tools are enabled without a configured sandbox", async () => {
+    const stateDir = await createStateDir();
+    const probeRuntime = vi.fn();
+    const probeImage = vi.fn();
+
+    // 官方默认配置：只开工具、三个沙箱变量保持注释（见 .env.example）。
+    // 该组合下编码运行的命令执行按 fail-closed 处理，因此预检必须明确报出一条阻塞项，
+    // 供 Doctor 与设置页定位；这里锁定该口径，防止被误改成可降级的 warn。
+    const report = await buildCodingRuntimePreflightDoctorReport({
+      stateDir,
+      environment: {
+        BELLDANDY_TOOLS_ENABLED: "true",
+        BELLDANDY_CODE_INTEL_GO_ENABLED: "false",
+      },
+      optionalCapabilities: optionalCapabilities("ready"),
+      goCodeIntel: goDoctor(false),
+      probeRuntime,
+      probeImage,
+      probeProcessTreeCleanup: async () => ({ available: true }),
+      probeTypeScriptToolchain: () => ({ available: true, version: "5.7.3" }),
+    });
+
+    expect(report.summary).toMatchObject({
+      startupReady: false,
+      activeCount: 7,
+      requiredCount: 7,
+      availableCount: 4,
+      blockingCount: 1,
+      headline: "1 coding runtime prerequisite(s) block a fully capable startup.",
+    });
+    expect(report.languages).toEqual({
+      enabled: ["typescript/javascript"],
+      available: ["typescript/javascript"],
+      unavailable: [],
+    });
+    expect(report.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "oci_configuration",
+        status: "unavailable",
+        reasonCode: "not_configured",
+        required: true,
+        blocking: true,
+        setup: expect.objectContaining({
+          action: "Configure a digest-pinned OCI sandbox backend before starting coding tasks.",
+        }),
+      }),
+      expect.objectContaining({ id: "oci_runtime", status: "unknown", blocking: false }),
+      expect.objectContaining({ id: "oci_local_image", status: "unknown", blocking: false }),
+      expect.objectContaining({ id: "native_pty", status: "available", blocking: false }),
+      expect.objectContaining({ id: "typescript_javascript", status: "available", blocking: false }),
+    ]));
+    // 未配置沙箱时不应触发任何运行时/镜像探测。
+    expect(probeRuntime).not.toHaveBeenCalled();
+    expect(probeImage).not.toHaveBeenCalled();
+  });
+
   it("fails closed when the enabled Go toolchain is unavailable", async () => {
     const stateDir = await createStateDir();
 

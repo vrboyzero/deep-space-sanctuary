@@ -1956,6 +1956,25 @@ export function createSettingsController({
       const badge = document.createElement("span");
       badge.className = `badge doctor-summary-badge ${check.status}`;
       badge.textContent = `${check.name}: ${check.message || check.status}`;
+      // 失败项可能只给出一句汇总（例如 Coding Runtime Preflight 的「1 条前置条件阻塞」），
+      // 这里把 Gateway 下发的阻塞项明细与处置建议附在同一枚徽标里，避免只能靠 CLI 定位。
+      const blockingItems = Array.isArray(check.details?.blockingItems) ? check.details.blockingItems : [];
+      if (blockingItems.length > 0) {
+        const detail = document.createElement("span");
+        detail.className = "doctor-summary-detail";
+        detail.textContent = blockingItems
+          .map((item) => {
+            const label = item?.name || item?.id || "";
+            const reason = item?.reasonCode || item?.status || "";
+            const suffix = reason ? ` (${reason})` : "";
+            return `${label}${suffix}${item?.action ? `：${item.action}` : ""}`;
+          })
+          .filter(Boolean)
+          .join("；");
+        if (detail.textContent) {
+          badge.appendChild(detail);
+        }
+      }
       doctorStatusEl.appendChild(badge);
     });
 
