@@ -783,7 +783,9 @@ describe("coding agent CI runner", () => {
     } finally {
       await server.close();
     }
-  }, 20_000);
+    // 该用例会真实拉起 Headless CLI + Gateway 子进程；本地约 1.4s，但共享 CI
+    // runner 负载高时可慢一个数量级，20s 会偶发超时。
+  }, 60_000);
 
   it("injects one exact cancellation after run.started and leaves no tool or workspace side effect", async () => {
     const workspace = await createGitFixture();
@@ -880,7 +882,9 @@ describe("coding agent CI runner", () => {
     } finally {
       await server.close();
     }
-  }, 20_000);
+    // 该用例会真实拉起编码运行时子进程并注入取消；本地约 2.2s，但共享 CI
+    // runner 负载高时可慢一个数量级，20s 会偶发超时（曾导致 CI 失败）。
+  }, 60_000);
 });
 
 function event(seq, type, binding, payload) {
