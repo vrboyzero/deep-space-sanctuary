@@ -93,6 +93,19 @@ NEED_BUILD=0
 [ ! -d "packages/belldandy-memory/dist" ] && NEED_BUILD=1
 [ ! -d "packages/belldandy-protocol/dist" ] && NEED_BUILD=1
 
+# 先判定运行时形态：
+# - 源码检出：存在 TypeScript 源码，必要时构建并用 `pnpm bdd` 启动；
+# - 纯 dist 载荷（例如 release-light 压缩包）：源码 / tsconfig / 开发脚本按设计缺失，
+#   直接运行已构建的 Gateway，避免触发依赖这些文件的构建钩子。
+SOURCE_MODE=1
+[ ! -f "packages/belldandy-core/src/bin/bdd.ts" ] && SOURCE_MODE=0
+[ ! -f "packages/belldandy-core/dist/bin/bdd.js" ] && SOURCE_MODE=1
+
+if [ "$SOURCE_MODE" -eq 0 ]; then
+    echo "[INFO] Dist-only payload detected; skipping TypeScript build."
+    NEED_BUILD=0
+fi
+
 if [ "$NEED_BUILD" -eq 1 ]; then
     echo "[INFO] Building project (compiling TypeScript...)"
     if ! corepack pnpm build; then
@@ -121,7 +134,11 @@ while true; do
     echo ""
 
     set +e
-    corepack pnpm bdd start
+    if [ "$SOURCE_MODE" -eq 1 ]; then
+        corepack pnpm bdd start
+    else
+        node "packages/belldandy-core/dist/bin/bdd.js" start
+    fi
     EXIT_CODE=$?
     set -e
 

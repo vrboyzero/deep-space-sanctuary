@@ -86,6 +86,47 @@ function collectStagedPackageArtifactFailures() {
   return failures;
 }
 
+/**
+ * dist-only 载荷必须自带安装/启动所需输入：
+ * - `pnpm.patchedDependencies` 指向的补丁文件（否则 `pnpm install` 直接 ENOENT）；
+ * - 随包启动脚本要能在没有 TypeScript 源码时回退到已构建的 dist 入口。
+ * 这两条正是 v0.5.5 发布产物暴露出的缺陷，用断言固化，避免再次回归。
+ */
+function collectInstallInputFailures() {
+  const failures = [];
+  const stagedPackageJsonPath = path.join(packageRoot, "package.json");
+  if (!fs.existsSync(stagedPackageJsonPath)) {
+    return ["release-light -> missing package.json"];
+  }
+  const stagedPackageJson = JSON.parse(fs.readFileSync(stagedPackageJsonPath, "utf-8"));
+  const patchedDependencies = stagedPackageJson.pnpm?.patchedDependencies ?? {};
+  for (const [dependency, patchRelativePath] of Object.entries(patchedDependencies)) {
+    if (typeof patchRelativePath !== "string" || patchRelativePath.trim() === "") continue;
+    if (!fs.existsSync(path.join(packageRoot, patchRelativePath))) {
+      failures.push(
+        `release-light -> pnpm.patchedDependencies entry "${dependency}" points at a missing patch file: ${patchRelativePath}`,
+      );
+    }
+  }
+
+  const distEntryNeedles = [
+    "packages/belldandy-core/dist/bin/bdd.js",
+    "packages\\belldandy-core\\dist\\bin\\bdd.js",
+  ];
+  for (const launcher of ["start.bat", "start.sh"]) {
+    const launcherPath = path.join(packageRoot, launcher);
+    if (!fs.existsSync(launcherPath)) continue;
+    const content = fs.readFileSync(launcherPath, "utf-8");
+    if (!distEntryNeedles.some((needle) => content.includes(needle))) {
+      failures.push(
+        `release-light -> ${launcher} cannot start the dist-only payload (no fallback to packages/belldandy-core/dist/bin/bdd.js)`,
+      );
+    }
+  }
+
+  return failures;
+}
+
 async function main() {
   for (const requiredPath of [packageRoot, zipPath, tarGzPath, manifestPath, sha256Path]) {
     assertExists(requiredPath);
@@ -98,6 +139,13 @@ async function main() {
   if (packageArtifactFailures.length > 0) {
     throw new Error(
       `release-light package artifacts are incomplete:\n- ${packageArtifactFailures.join("\n- ")}`,
+    );
+  }
+
+  const installInputFailures = collectInstallInputFailures();
+  if (installInputFailures.length > 0) {
+    throw new Error(
+      `release-light install inputs are incomplete:\n- ${installInputFailures.join("\n- ")}`,
     );
   }
 

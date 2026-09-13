@@ -91,6 +91,38 @@ test("release-light asset keeps default env templates complete", async () => {
   expect(artifactEnvLocal).toBe(sourceEnvLocal);
 }, 120_000);
 
+test("release-light verifier rejects a payload missing pnpm patched dependencies", async () => {
+  const stagedRoot = path.join(releaseRoot, `v${version}`, `star-sanctuary-dist-v${version}`);
+  const stagedPackageJson = JSON.parse(
+    await fsp.readFile(path.join(stagedRoot, "package.json"), "utf-8"),
+  ) as { pnpm?: { patchedDependencies?: Record<string, string> } };
+  const patchRelativePaths = Object.values(stagedPackageJson.pnpm?.patchedDependencies ?? {});
+  expect(patchRelativePaths.length).toBeGreaterThan(0);
+
+  const removed: Array<{ absolutePath: string; content: Buffer }> = [];
+  for (const relativePath of patchRelativePaths) {
+    const absolutePath = path.join(stagedRoot, relativePath);
+    removed.push({ absolutePath, content: await fsp.readFile(absolutePath) });
+    await fsp.rm(absolutePath);
+  }
+
+  try {
+    const result = spawnSync(process.execPath, ["scripts/verify-release-light-assets.mjs"], {
+      cwd: workspaceRoot,
+      env: releaseLightEnvironment(),
+      encoding: "utf-8",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("release-light install inputs are incomplete");
+  } finally {
+    for (const entry of removed) {
+      await fsp.mkdir(path.dirname(entry.absolutePath), { recursive: true });
+      await fsp.writeFile(entry.absolutePath, entry.content);
+    }
+  }
+}, 120_000);
+
 test("release-light verifier rejects staged file content identity drift", async () => {
   const stagedReadmePath = path.join(
     releaseRoot,

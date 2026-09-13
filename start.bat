@@ -100,6 +100,19 @@ if "%NEED_INSTALL%"=="1" (
     )
 )
 
+REM Decide the runtime shape first.
+REM - Source checkout: TypeScript sources exist, so build (if needed) and run via `pnpm bdd`.
+REM - Dist-only payload (e.g. the release-light archive): sources/tsconfig/dev scripts are
+REM   intentionally absent, so run the built Gateway directly instead of invoking build hooks.
+set "SOURCE_MODE=1"
+if not exist "packages\belldandy-core\src\bin\bdd.ts" set "SOURCE_MODE=0"
+if not exist "packages\belldandy-core\dist\bin\bdd.js" set "SOURCE_MODE=1"
+
+if "%SOURCE_MODE%"=="0" (
+    echo [INFO] Dist-only payload detected; skipping TypeScript build.
+    goto :skip_build
+)
+
 REM Check whether workspace packages are already built.
 if not exist "packages\belldandy-core\dist" goto :do_build
 if not exist "packages\belldandy-agent\dist" goto :do_build
@@ -135,7 +148,11 @@ echo [Star Sanctuary Launcher] Starting Gateway...
 echo [Star Sanctuary Launcher] WebChat: http://localhost:28889
 echo.
 
-call corepack pnpm bdd start
+if "%SOURCE_MODE%"=="1" (
+    call corepack pnpm bdd start
+) else (
+    call node "packages\belldandy-core\dist\bin\bdd.js" start
+)
 
 if %errorlevel% equ 100 (
     echo.

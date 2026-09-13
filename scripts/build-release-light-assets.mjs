@@ -56,6 +56,9 @@ const ROOT_FILE_PATHS = [
 ];
 
 const DIRECTORY_COPY_PLAN = [
+  // package.json 的 pnpm.patchedDependencies 指向 patches/ 下的补丁文件；
+  // 缺了它 `pnpm install` 会直接以 ENOENT 失败，导致整个载荷无法安装。
+  { source: "patches", destination: "patches" },
   { source: "apps/web/public", destination: "apps/web/public" },
   { source: "packages/belldandy-agent/src/templates", destination: "packages/belldandy-agent/src/templates" },
   { source: "packages/star-sanctuary-distribution/src/templates", destination: "packages/star-sanctuary-distribution/src/templates" },
@@ -160,12 +163,21 @@ function writeReleaseReadme() {
     "- Web static assets",
     "- templates and bundled skills",
     "- install/start scripts and environment example",
+    "- patches/ (required by pnpm.patchedDependencies during install)",
     "",
     "Not included:",
     "- Node runtime",
     "- node_modules",
     "- portable runtime payload",
     "- single-exe payload",
+    "- TypeScript sources, tsconfig and dev scripts (this is a dist-only payload)",
+    "",
+    "How to start from this archive:",
+    "- Windows: run start.bat   (auto-detects dist mode and launches the built Gateway)",
+    "- Linux/macOS: run ./start.sh",
+    "- Both scripts install dependencies with pnpm first; no TypeScript build is required.",
+    "- Source-mode commands such as `pnpm build` / `pnpm bdd` are NOT available here;",
+    "  use a source checkout for those.",
     "",
     "This asset is the default command-installer input.",
   ].join("\n");
