@@ -252,13 +252,15 @@ Build & Test
 - `peter-evans/dockerhub-description` 的 README 描述同步需要额外的 Docker Hub `Delete` 权限。现有 token 仅用于镜像 push 时，不扩大权限；描述同步标记为非阻塞警告，不能使 image push 或 tag release 失败。
 - 默认不设置 `ENABLE_WINDOWS_PACKAGING`。Windows portable、winget 和 single-exe 继续延后，不会作为当前 GitHub Release 的附件或 Gate。
 
-发 tag 后分别核对：`Build & Test`、`Build and push Docker image`、Release 的 4 个 release-light 附件，以及 Docker Hub 上的 `X.Y.Z` tag。不创建 tag 时不会创建 GitHub Release。2026-09-13 起 `origin/main` 已恢复接收公开推送（经用户明确要求），但发版门禁尚未通过，见下节。
+发 tag 后分别核对：`Build & Test`、`Build and push Docker image`、Release 的 4 个 release-light 附件，以及 Docker Hub 上的 `X.Y.Z` tag。不创建 tag 时不会创建 GitHub Release。2026-09-13 起 `origin/main` 已恢复接收公开推送（经用户明确要求）；当轮发版门禁的红灯问题已全部修复，`v0.5.6` 已正常发布，过程见下节。
 
-### 当前阻塞与后续计划（2026-09-13）
+### 本轮发布问题与结论（2026-09-13）
+
+本轮从「CI 门禁全面红灯」推进到「`v0.5.6` 正式发布」，期间无外部阻塞项。进度状态只以本节末尾的「待办与进度」表为准。
 
 #### 本轮问题与修复速查表
 
-本次从「CI 门禁全面红灯」推进到「`v0.5.5` 正式发布」共处理 9 类问题。逐条详述见下方「重要问题说明」与各「实现结论」。
+本轮共处理 11 类问题，逐条详述见下方「重要问题说明」与各「实现结论」。
 
 | # | 问题 / 现象 | 根因 | 修复 / 处置 | 验证 |
 | --- | --- | --- | --- | --- |
@@ -272,13 +274,16 @@ Build & Test
 | 7 | Release 创建失败，并留下空 draft | 平台 5xx 但请求实际已生效；draft 不会被 `GET /releases/tags/{tag}` 返回，action 重试后卡死 | 清理 draft → 重建 → `PATCH draft=false` → 上传附件（详见下方恢复流程） | `draft=false` 且 4 个 release-light 附件齐全 |
 | 8 | Docker 门禁 30 分钟被杀 + 3 处偶发测试超时 | 冷缓存实测正好 30 分钟；共享 runner 上子进程/await 出现调度停滞 | job 超时 30 → 60 分钟；放宽 `run-coding-agent-ci`（×2）与 `tui/runtime.integration`（×5）的测试超时 | 公开库与内部库共四条 run 全部 success |
 | 9 | 排查时读不到日志 / artifact | 匿名 REST 配额仅 60/h；job 日志与 artifact 需要认证（与 git 凭证无关） | 安装 gh CLI 并 device flow 登录 | 配额提升至 5000/h，可读日志、artifact 与 Release 状态 |
+| 10 | 用户下载 `v0.5.5` 的 release-light 压缩包后**装不上、也起不来** | ① 打包计划漏掉 `patches/`，而 `pnpm.patchedDependencies` 指向该目录内的补丁，`pnpm install` 直接 `ENOENT`；② 随包 `start.bat` / `start.sh` 按源码模式运行（`pnpm build` + `pnpm bdd start`），而载荷按设计只有 `dist` | 打包计划补 `patches → patches`；两个启动脚本改为先探测形态，dist-only 载荷直接跑 `dist/bin/bdd.js start`；verifier 增加「补丁文件必须在包内」与「启动脚本必须含 dist 入口」两条断言 | 解压 → `corepack pnpm install` 成功 → 启动打印 `Belldandy Version: v0.5.6`；负向用例（抽掉 `patches/`）确认能被 verifier 拦下 |
+| 11 | 纯文档提交 `8b05e46a` 的 `Quality Gates` 也变红 | runner 磁盘耗尽（日志 3 处 `ENOSPC`），e2e 用例就地拉起的 Gateway 写不进 `pairing.json`，导致 `pairing code not found or expired` | 定性为环境问题，本轮不加固（同代码的下一个提交 `6f12dfa4` 五个 run 全绿） | 日志中的 `no space left on device` 与失败断言的因果关系；`6f12dfa4` 全绿交叉验证 |
 
 #### 现状
 
-- 本地 `main`、`private/main`、`origin/main` 三方一致，均为 `4f8de7cf`，工作区干净。
-- 2026-09-13 已把 `6b8acf46..4f8de7cf`（39 个提交）推送到 `origin/main`，公开仓库**源码**已是最新。
-- 但公开 `main` 的 CI 未通过，发布链路整体处于红灯状态。本次推送**没有产生任何公开产物**：镜像未推送、GitHub Release 未创建（`Publish to Docker Hub`、`Create GitHub Release`、`Prepare Windows Packaging Assets` 均为 skipped）。
-- 2026-09-13 后续进展：`env-config-audit` 门禁已在内部开发仓库修复并通过真实 CI 验证（见下方「第 1 项实现结论」）；`Dependency audit gate` 已定性为真实漏洞，其中两项已修复（见「重要问题说明」第 2 条）。公开 `main` 仍停在 `4f8de7cf`，尚未同步这些修复。
+- 本地 `main`、`private/main`、`origin/main` 三方一致，均为 `6f12dfa4`，工作区干净。
+- 本轮先推送 `6b8acf46..4f8de7cf`（39 个提交）到 `origin/main`，公开仓库源码恢复最新；当时公开 `main` 的 CI 为红灯，**没有产生任何公开产物**（镜像未推送、GitHub Release 未创建）。
+- 修复完第 1、2a、2b、3 项门禁问题后，`v0.5.5` 于 2026-09-13 正式发布并完成产物核对（见「第 4 项实现结论」）。
+- 随后由用户实测 `v0.5.5` 的 release-light 压缩包，确认**该产物对最终用户不可用**：既装不上（缺 `patches/`）、也起不来（启动脚本形态不匹配），详见「重要问题说明」第 10 条。该缺陷只影响发布产物本身，不影响源码仓库。
+- 修复随 `v0.5.6` 重新发布，`v0.5.5` 的 Release 附件已被取代；当前公开库与内部库的发版门禁全绿（见「第 5 项实现结论」的验证结果）。
 
 #### 重要问题说明
 
@@ -365,6 +370,27 @@ Build & Test
    - 根因：这与 git 凭证无关。`git push/fetch` 走 git 传输并使用 credential helper（本机为 Windows GCM），所以推送一直是好的；而普通 HTTP 请求不会继承该凭证，在 GitHub 看来就是匿名访客。
    - 处置：安装 gh CLI（官方 release 包 + 校验 checksum，装到 `~/.local/bin`）并 `gh auth login` 走 device flow。授权后 REST 配额由 60/h 提升到 5000/h，可直接读 job 日志、下载 artifact、查询 Release 状态。本次正是靠它才定位到「Release 创建 500 但实际建成 draft」与「依赖审计 gate 的真实 findings」。
    - 注意：WSL 无 keyring，gh 会把 token 明文存于 `~/.config/gh/hosts.yml`；不需要时用 `gh auth logout` 或到 GitHub → Settings → Applications 撤销授权。`gh auth login` 未改动原有 GCM 配置（`credential.https://github.com.helper` 仍指向 GCM）。
+
+10. **release-light 发布产物缺失 `patches/`，且随包启动脚本按源码模式运行（`v0.5.5` 产物对最终用户不可用）**
+
+    - 现象：用户从 GitHub Releases 下载 `star-sanctuary-dist-v0.5.5.zip` 并解压到 `H:\star-sanctuary-dist-v0.5.5` 后，出现两个互相独立的失败：
+      1. `pnpm install` 报 `ENOENT ... patches\fastembed@2.1.0.patch`；
+      2. `start.bat` 报 `Cannot find module 'H:\star-sanctuary-dist-v0.5.5\scripts\build-web-assets.mjs'`。
+    - 根因 1（载荷漏文件）：root `package.json` 的 `pnpm.patchedDependencies` 声明了 `fastembed@2.1.0 → patches/fastembed@2.1.0.patch`，但 `scripts/build-release-light-assets.mjs` 的 `DIRECTORY_COPY_PLAN` 从未包含 `patches/`。该声明由 `312960c9`（`fix(deps): patch fastembed for tar 7`）引入，而 `v0.5.4` 的 `patchedDependencies` 为 `null`，因此 **`v0.5.5` 是首个受影响版本**。`install.ps1`（第 1149/1155 行）与 `install.sh`（第 1007/1010 行）走同一载荷并执行 `corepack pnpm install`，同样会失败。
+    - 根因 2（启动脚本形态不匹配）：`start.bat` / `start.sh` 是按「源码检出」写的——先 `pnpm build`，再用 `pnpm bdd start` 启动；而 release-light 按设计只包含编译后的 `dist`，`packages/*/src`、`tsconfig*`、`scripts/` 都不在包内，于是构建钩子引用 `scripts/build-web-assets.mjs` 时直接崩掉。
+    - 两者叠加的结果是：**压缩包能下载、能解压，但装不上也起不来**，而发布链路自身（`Build & Test` / Docker / Release 创建）全绿，所以 CI 无法发现该问题——这是本轮最值得记住的一条：发布链路绿灯不等于产物可用。
+    - 处理方案：
+      1. `DIRECTORY_COPY_PLAN` 增加 `patches → patches`，并让 `README-release-light.md` 明确列出「包含 `patches/`」与「不包含 `tsconfig*` / `src/`」，同时补一段「How to start from this archive」。
+      2. `start.bat` / `start.sh` 增加形态探测：`packages/belldandy-core/src/bin/bdd.ts` 缺失且 `packages/belldandy-core/dist/bin/bdd.js` 存在 → 判定为 dist-only 载荷，跳过构建并直接运行 `node packages/belldandy-core/dist/bin/bdd.js start`；源码检出的分支保持原样（仍为 `corepack pnpm bdd start`）。
+      3. `scripts/verify-release-light-assets.mjs` 增加 `collectInstallInputFailures()`：逐一确认 `pnpm.patchedDependencies` 的每个补丁路径在载荷中存在，且 `start.bat` / `start.sh` 含 dist 入口回退；并补一条负向回归测试（从清单动态读取补丁路径，避免下次新增补丁时再次漏接）。
+    - 边界：改动只针对「打包计划 + 随包启动脚本 + 打包校验」，不触碰运行时与产品逻辑；`v0.5.6` 是发布产物缺陷修复版，功能与 `v0.5.5` 一致。
+
+11. **纯文档提交 `8b05e46a` 的 `Quality Gates` 失败：runner 磁盘耗尽（ENOSPC），非代码问题**
+
+    - 现象：内部库 `8b05e46a`（`docs: 整理本轮发布过程的问题清单并补总览速查表`，只改 Markdown）的 `Quality Gates` 中 `Build and full test suite` 与 `Coding CI contract (windows-latest)` 两个 job 失败，失败断言为 `packages/belldandy-core/src/cli/commands/agent/bdd.e2e.test.ts:97` 的 `AssertionError: pairing code not found or expired`、`expected 3 to be 6`。
+    - 定性依据：该 run 的 job 日志中先出现 3 处 `[agent] Agent run failed Error: no space left on device`。该用例会就地拉起真实 Gateway 并依赖其把 pairing code 落盘；磁盘写满后 `pairing.json` 未写入，于是后续断言拿到的 pairing code 数量不足。**根因是 runner 磁盘耗尽，不是代码缺陷**——同一份代码在紧随其后的 `6f12dfa4` 上，公开库（`Quality Gates`、`Docker Build & Publish` ×2）与内部库（`Quality Gates`、`Docker Build & Publish`）共 5 个 run 全部 success。
+    - 处理：本轮仅定性并记录，未做加固。这是继「重要问题说明」第 8 条三处超时之后的又一类负载/环境敏感偶发失败，排查时不要按业务 bug 处理。
+    - 可选加固（未执行）：在该 job 跑全量测试前先清理 runner 上的 pnpm store / 构建产物，或把全量测试拆成两个 job 分摊磁盘占用。
 
 #### 第 1 项实现结论：修复 env-config-audit 门禁并补齐设置窗口缺失变量（2026-09-13）
 
@@ -506,15 +532,66 @@ Build & Test
   - GitHub Release `Star Sanctuary v0.5.5` 已发布（非 draft），正文取自 `CHANGELOG.md` 的 `[0.5.5]` 段，4 个 release-light 附件齐全（zip 5,829,407 / tar.gz 4,272,428 / manifest.json 676,300 / sha256 304 字节）
   - `Prepare Windows Packaging Assets` 按设计 skipped（未设置 `ENABLE_WINDOWS_PACKAGING`）
 
+#### 第 5 项实现结论：修复 release-light 载荷并重新发布 0.5.6（2026-09-13）
+
+##### 已完成内容
+
+1. **`scripts/build-release-light-assets.mjs` 修改**：
+   - `DIRECTORY_COPY_PLAN` 新增 `{ source: "patches", destination: "patches" }`，使 `pnpm.patchedDependencies` 指向的补丁文件进入载荷。
+   - `writeReleaseReadme()` 的 Included 列表补 `patches/`，Not included 列表明确写出 `tsconfig*` 与 `src/`，并新增「How to start from this archive」段落说明 dist-only 形态的启动方式与限制。
+
+2. **`start.bat` 修改**：
+   - 在构建判定之前先探测运行时形态：`packages\belldandy-core\src\bin\bdd.ts` 缺失且 `packages\belldandy-core\dist\bin\bdd.js` 存在 → `SOURCE_MODE=0`，打印 `[INFO] Dist-only payload detected; skipping TypeScript build.` 并 `goto :skip_build`。
+   - 主循环按形态分派：源码模式 `call corepack pnpm bdd start`，dist-only 模式 `call node "packages\belldandy-core\dist\bin\bdd.js" start`。
+
+3. **`start.sh` 修改**：
+   - 同样的 `SOURCE_MODE` 探测；dist-only 时把 `NEED_BUILD` 置 0，主循环改跑 `node "packages/belldandy-core/dist/bin/bdd.js" start`。
+   - 与 `start.bat` 保持同一判定条件，避免两个平台出现形态判断分歧。
+
+4. **`scripts/verify-release-light-assets.mjs` 修改**：
+   - 新增 `collectInstallInputFailures()`，在 `collectStagedPackageArtifactFailures()` 之后执行：校验载荷内 `package.json` 的每个 `pnpm.patchedDependencies` 路径确实存在，并校验 `start.bat` / `start.sh` 含 dist 入口回退。
+   - 把该缺陷从「CI 看不见」变成「打包阶段直接失败」。
+
+5. **`packages/star-sanctuary-distribution/src/release-light-assets.test.ts` 修改**：
+   - 新增回归用例「release-light verifier rejects a payload missing pnpm patched dependencies」，补丁路径从清单动态读取。
+
+6. **版本与文档**：
+   - `package.json` → `0.5.6`；`version.generated.ts` 由 `scripts/generate-version.mjs` 重新生成（`BELLDANDY_VERSION = "0.5.6"`）；`examples/ci/compatibility.json` → `0.5.6`；`CHANGELOG.md` 新增 `## [0.5.6] - 2026-09-13` 段。
+   - 推送：`e04f1f7f`（打包与启动修复）+ `6f12dfa4`（版本推进）同时推到 `private/main` 与 `origin/main`；tag `v0.5.6` **只在 `origin` 推送**（两库共用同一 Docker Hub 镜像名，双推会互相覆盖）。
+
+7. **效果**：
+   - 解压后的 release-light 压缩包可以正常 `pnpm install` 并直接启动，不再需要用户手工补文件或手写 `node dist/bin/bdd.js`。
+   - 「漏文件」与「启动脚本形态不匹配」两类缺陷在打包校验阶段即可拦截，不依赖用户报障。
+
+##### 验证结果
+
+- TypeScript 编译无错误（`tsc -b` exit 0）
+- 定向测试 24/24 通过：`release-light-assets.test.ts` + `dependency-remediation-contract.test.ts`（含 1 个新增负向回归用例）
+- `pnpm build:release-light -- --version=0.5.6` 产出 3003 个文件 / 18.47 MiB，内含 `patches/fastembed@2.1.0.patch`；`BELLDANDY_VERSION` 实测为 `"0.5.6"`
+- `pnpm verify:release-light -- --version=0.5.6` 通过；负向验证（抽掉 `patches/`）按预期报 `release-light install inputs are incomplete: - release-light -> pnpm.patchedDependencies entry "fastembed@2.1.0" points at a missing patch file: patches/fastembed@2.1.0.patch`
+- 端到端（`E:\tmp\ss-e2e-final\star-sanctuary-dist-v0.5.6`，即 0.5.6 压缩包解压结果）：`corepack pnpm install` 成功（`Done in 2m 56.4s`）；`start.bat` 在 dist-only 形态下打印 `[INFO] Dist-only payload detected; skipping TypeScript build.` 并直接启动，`Belldandy Gateway running: http://127.0.0.1:28898`、`Belldandy Version: v0.5.6`
+- `start.sh` 分支核验（用命令 shim 观测实际执行行，避免真实启动副作用）：dist-only 载荷执行 `node packages/belldandy-core/dist/bin/bdd.js start`；真实源码检出仍执行 `corepack pnpm bdd start`（源码模式未回归）
+
+##### 发版产物核对（2026-09-13，tag `v0.5.6` 指向 `6f12dfa4`）
+
+- `Docker Build & Publish`（tag 触发）success：`Build & Test` success、`Publish to Docker Hub` success、`Create GitHub Release` success、`Prepare Windows Packaging Assets` 按设计 skipped。本次 **Release 一次创建成功**，未再出现「重要问题说明」第 7 条的空 draft 与 5xx 重试。
+- GitHub Release `Star Sanctuary v0.5.6` 已发布（`draft=false`、`prerelease=false`），4 个附件齐全：zip 5,987,340 / tar.gz 4,521,162 / manifest.json 676,267 / sha256 304 字节。
+- **对已发布附件做了独立复核**（不只核对大小）：下载 Release 上的 zip，`sha256` 与附件 `.sha256` 中记录值一致（`0ac76b9b…c4ecc7`）；包内确认存在 `patches/fastembed@2.1.0.patch`（621 字节），`start.sh` 含 `SOURCE_MODE` 探测与 `node …dist/bin/bdd.js start` 分支，`README-release-light.md` 为含 `patches/` 说明的新版本。
+- Docker Hub 上 `vrboyzero/star-sanctuary:0.5.6` 的 manifest 为 OCI index，含 `linux/amd64` 与 `linux/arm64`（另有 buildx 附加的 attestation manifest，属正常）。
+- `main` 分支推送触发的 run 也全绿：公开库 `Quality Gates` success、`Docker Build & Publish` success（无 tag，发布类 job 按设计 skipped）；内部库 `Quality Gates` success、`Docker Build & Publish` success。
+
 #### 后续计划
 
-第 1、2a、2b、3、4 项全部完成，`v0.5.5` 已正式发布并通过产物核对。剩余事项：
+第 1、2a、2b、3、4、5 项全部完成，`v0.5.6` 已作为发布产物缺陷修复版发出。剩余事项：
 
 1. Windows portable / winget / single-exe 继续按既有约定不进入 GitHub Release 附件（官网手动发布）。
 2. `softprops/action-gh-release` 的发布路径在 GitHub API 5xx 时会产生「空 draft + 重复 Release」（见「重要问题说明」第 7 条）。如需进一步加固，可在发布 job 中先清理同 tag 的 draft，再执行创建；本次未改动 workflow，只记录了人工恢复流程。
-3. 后续发版沿用第 4 项实现结论中的版本一致性检查清单。
+3. 后续发版沿用第 4 项实现结论中的版本一致性检查清单，并在其基础上追加一条**产物可用性**检查：`pnpm verify:release-light` 通过只代表结构与输入完整，正式发版前仍建议至少做一次「解压 → `pnpm install` → 启动 → 看到版本号」的端到端确认（本次缺陷正是发布链路全绿、产物不可用）。
+4. `v0.5.5` 的 Release 附件已知对最终用户不可用且已被 `v0.5.6` 取代，如需保留历史，建议在 `v0.5.5` Release 页面加一句指向 `v0.5.6` 的说明（尚未执行，非阻塞）。
+5. `Dependency audit gate` 要求 `zero_findings`，属「持续追新」型门禁：OSV 新收录任何一条相关 advisory 都会让 CI 变红。是否引入宽限期或白名单是策略问题，仍待决策（本轮未处理）。
+6. 全量测试 job 已出现两类环境敏感偶发失败：调度停滞导致的超时（第 8 条，已放宽超时）与 runner 磁盘耗尽 `ENOSPC`（第 11 条，未加固）。若再次在无关提交上出现红灯，先按这两类排查，再考虑是否清理 runner 磁盘或拆分测试 job。
 
-当前缺的关键闭环：无阻塞项；下次发版前建议先确认 GitHub API 状态正常，避免再次触发 draft 残留。
+当前缺的关键闭环：无阻塞项。发版链路的绿灯与产物可用性之间此前没有交叉验证，本轮已用 verifier 断言 + 端到端实测补齐；后续每次发版仍应保留该端到端步骤。
 
 #### 待办与进度
 
@@ -525,5 +602,7 @@ Build & Test
 | 2b | `vitest` / `@vitest/mocker` 3.2.7 → 4.1.11（主版本升级） | **已完成（2026-09-13，全量 6823 用例通过、lockfile 全量 OSV 扫描零命中）** | `tsc -b --force` 无错误；全量测试 0 失败；CI `Dependency audit report` 转 success |
 | 3 | actions 升级到 Node 24 | **已完成（2026-09-13，11 个 action 逐个核对 `using: node24` 与输入兼容性）** | CI 中 `Build & Test`、`Publish to Docker Hub`、`Create GitHub Release` 均已实跑，无 Node 20 弃用告警 |
 | 4 | 版本推进 `0.5.4` → `0.5.5`，与 tag 同步 | **已完成（2026-09-13，tag `v0.5.5` 已推送并发布；Docker 双架构镜像与 Release 4 附件已核对）** | `BELLDANDY_VERSION`、Release 标题、Docker tag 三者一致 |
+| 5 | 修复 release-light 载荷（缺 `patches/` + 启动脚本形态不匹配）并重新发布 | **已完成（2026-09-13，`e04f1f7f` + `6f12dfa4` 已推双库，tag `v0.5.6` 已推 `origin`；解压后安装与启动端到端实测通过）** | `pnpm verify:release-light` 通过 + 负向用例可拦截漏补丁 + 解压后启动打印 `Belldandy Version: v0.5.6` |
+| 6 | 全量测试 job 的 `ENOSPC`（runner 磁盘耗尽）偶发失败 | **未处理（2026-09-13 已定性为环境问题，见「重要问题说明」第 11 条）** | 日志 3 处 `no space left on device`；同代码下一提交四项 run 全绿 |
 
-本次（2026-09-13）已完成：推送 `4f8de7cf` 到 `origin/main` 使三方分支一致；定位并记录失败与版本约束；完成第 1 项修复并通过真实 CI 验证；完成第 2a 项依赖漏洞修复与独立复核；完成第 2b 项 vitest 主版本升级与全部兼容性修复；完成第 3 项 actions 迁移；完成第 4 项版本推进；核对并更正第 1 节的仓库可见性描述。
+本次（2026-09-13）已完成：推送 `4f8de7cf` 到 `origin/main` 使三方分支一致；定位并记录失败与版本约束；完成第 1 项修复并通过真实 CI 验证；完成第 2a 项依赖漏洞修复与独立复核；完成第 2b 项 vitest 主版本升级与全部兼容性修复；完成第 3 项 actions 迁移；完成第 4 项版本推进；核对并更正第 1 节的仓库可见性描述；根据用户实测反馈定位并修复第 5 项 release-light 产物缺陷，随 `0.5.6` 重新发布，并对 Release 附件做了下载级复核。
