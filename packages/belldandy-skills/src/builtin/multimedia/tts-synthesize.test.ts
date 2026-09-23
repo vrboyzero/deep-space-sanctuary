@@ -51,9 +51,10 @@ function createDashScopeAssetPolicy(
 
 function createDashScopeRestPolicy(
   fetchImpl: (input: string | URL | Request, init?: RequestInit) => Promise<Response>,
+  allowedHosts = ["dashscope.aliyuncs.com"],
 ): OutboundRequestPolicy {
   return new OutboundRequestPolicy({
-    allowedHosts: ["dashscope.aliyuncs.com"],
+    allowedHosts,
     maxRedirects: 0,
     dnsLookup: async () => [{ address: "93.184.216.34", family: 4 }],
     requestAdapter: async ({ url, init }) => await fetchImpl(url, {
@@ -92,6 +93,7 @@ describe("tts-synthesize", () => {
     delete process.env.BELLDANDY_TTS_PROVIDER;
     delete process.env.BELLDANDY_TTS_VOICE;
     delete process.env.BELLDANDY_TTS_MAX_OUTPUT_BYTES;
+    delete process.env.BELLDANDY_TTS_DASHSCOPE_BASE_URL;
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
@@ -221,6 +223,146 @@ describe("tts-synthesize", () => {
     expect(typeof firstRequestBody).toBe("string");
     const parsedBody = JSON.parse(firstRequestBody as string);
     expect(parsedBody.input.voice).toBe("Cherry");
+  });
+
+  it("routes Qwen-Audio-TTS models to the SpeechSynthesizer endpoint with the family default voice", async () => {
+    process.env.BELLDANDY_TTS_MODEL = "qwen-audio-3.1-tts-flash";
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({
+        output: { audio: { url: "https://example.invalid/audio.mp3" } },
+      }))
+      .mockResolvedValueOnce(new Response(Uint8Array.from({ length: 256 }, (_, index) => index % 255), {
+        headers: { "Content-Type": "audio/mpeg" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await synthesizeSpeech({
+      text: "你好，世界",
+      stateDir: tempDir,
+      provider: "dashscope",
+      dashScopeRestOutboundRequestPolicy: createDashScopeRestPolicy(fetchMock),
+      dashScopeAssetOutboundRequestPolicy: createDashScopeAssetPolicy(fetchMock),
+    });
+
+    expect(result).not.toBeNull();
+    expect(String(fetchMock.mock.calls[0]?.[0]))
+      .toBe("https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer");
+    const requestBody = fetchMock.mock.calls[0]?.[1]?.body;
+    expect(typeof requestBody).toBe("string");
+    expect(JSON.parse(requestBody as string)).toEqual({
+      model: "qwen-audio-3.1-tts-flash",
+      input: { text: "你好，世界", voice: "longanhuan_v3.1", format: "mp3" },
+    });
+  });
+
+  it("keeps Qwen-TTS models on the multimodal-generation endpoint and Cherry default", async () => {
+    process.env.BELLDANDY_TTS_MODEL = "qwen3-tts-plus";
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({
+        output: { audio: { url: "https://example.invalid/audio.mp3" } },
+      }))
+      .mockResolvedValueOnce(new Response(Uint8Array.from({ length: 256 }, (_, index) => index % 255), {
+        headers: { "Content-Type": "audio/mpeg" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await synthesizeSpeech({
+      text: "你好，世界",
+      stateDir: tempDir,
+      provider: "dashscope",
+      dashScopeRestOutboundRequestPolicy: createDashScopeRestPolicy(fetchMock),
+      dashScopeAssetOutboundRequestPolicy: createDashScopeAssetPolicy(fetchMock),
+    });
+
+    expect(result).not.toBeNull();
+    expect(String(fetchMock.mock.calls[0]?.[0]))
+      .toBe("https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation");
+    const requestBody = fetchMock.mock.calls[0]?.[1]?.body;
+    expect(JSON.parse(requestBody as string)).toEqual({
+      model: "qwen3-tts-plus",
+      input: { text: "你好，世界", voice: "Cherry" },
+      parameters: { format: "mp3" },
+    });
+  });
+
+  it("honors BELLDANDY_TTS_DASHSCOPE_BASE_URL for the workspace-specific domain", async () => {
+    process.env.BELLDANDY_TTS_DASHSCOPE_BASE_URL = "https://ws-123.cn-beijing.maas.aliyuncs.com/";
+    process.env.BELLDANDY_TTS_MODEL = "qwen-audio-3.1-tts-flash";
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({
+        output: { audio: { url: "https://example.invalid/audio.mp3" } },
+      }))
+      .mockResolvedValueOnce(new Response(Uint8Array.from({ length: 256 }, (_, index) => index % 255), {
+        headers: { "Content-Type": "audio/mpeg" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await synthesizeSpeech({
+      text: "专属域名",
+      stateDir: tempDir,
+      provider: "dashscope",
+      dashScopeRestOutboundRequestPolicy: createDashScopeRestPolicy(fetchMock, ["ws-123.cn-beijing.maas.aliyuncs.com"]),
+      dashScopeAssetOutboundRequestPolicy: createDashScopeAssetPolicy(fetchMock),
+    });
+
+    expect(result).not.toBeNull();
+    expect(String(fetchMock.mock.calls[0]?.[0]))
+      .toBe("https://ws-123.cn-beijing.maas.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer");
+  });
+
+  it("fails closed when BELLDANDY_TTS_DASHSCOPE_BASE_URL is not an absolute HTTP(S) URL", async () => {
+    process.env.BELLDANDY_TTS_DASHSCOPE_BASE_URL = "ws-123.cn-beijing.maas.aliyuncs.com";
+    const submitRequest = vi.fn();
+    const assetRequest = vi.fn();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = await synthesizeSpeech({
+      text: "非法 Base URL",
+      stateDir: tempDir,
+      provider: "dashscope",
+      dashScopeRestOutboundRequestPolicy: { request: submitRequest },
+      dashScopeAssetOutboundRequestPolicy: { request: assetRequest },
+    });
+
+    expect(result).toBeNull();
+    expect(submitRequest).not.toHaveBeenCalled();
+    expect(assetRequest).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledWith(
+      "[TTS-Auto] synthesizeSpeech failed:",
+      "BELLDANDY_TTS_DASHSCOPE_BASE_URL must be an absolute HTTP(S) URL.",
+    );
+  });
+
+  it("upgrades a plain-http DashScope asset URL to https before the pinned asset fetch", async () => {
+    const assetBytes = Uint8Array.from({ length: 256 }, (_, index) => index % 255);
+    const submitRequest = vi.fn(async () => ({
+      response: Response.json({
+        output: { audio: { url: "http://dashscope-result-bj.oss-cn-beijing.aliyuncs.com/audio.mp3" } },
+      }),
+      url: new URL("https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"),
+      addresses: [{ address: "93.184.216.34", family: 4 as const }],
+      redirectCount: 0,
+    }));
+    const assetRequest = vi.fn(async () => ({
+      response: new Response(assetBytes, { headers: { "Content-Type": "audio/mpeg" } }),
+      url: new URL("https://dashscope-result-bj.oss-cn-beijing.aliyuncs.com/audio.mp3"),
+      addresses: [{ address: "93.184.216.34", family: 4 as const }],
+      redirectCount: 0,
+    }));
+
+    const result = await synthesizeSpeech({
+      text: "明文音频 URL",
+      stateDir: tempDir,
+      provider: "dashscope",
+      dashScopeRestOutboundRequestPolicy: { request: submitRequest },
+      dashScopeAssetOutboundRequestPolicy: { request: assetRequest },
+    });
+
+    expect(result).not.toBeNull();
+    expect(assetRequest).toHaveBeenCalledWith(expect.objectContaining({
+      url: "https://dashscope-result-bj.oss-cn-beijing.aliyuncs.com/audio.mp3",
+    }));
+    await expect(fs.readFile(path.join(tempDir, result!.webPath))).resolves.toEqual(Buffer.from(assetBytes));
   });
 
   it("routes DashScope result audio through the independent pinned asset policy", async () => {

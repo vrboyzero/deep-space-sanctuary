@@ -25,6 +25,15 @@ import {
 
 const DEFAULT_TTS_MAX_OUTPUT_BYTES = 20 * 1024 * 1024;
 const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
+const DEFAULT_DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com";
+// DashScope 各语音合成模型系列的端点不可混用：Qwen-Audio-TTS/CosyVoice 走专用端点，
+// Qwen-TTS（qwen3-tts-*）走 multimodal-generation；混用会直接返回 400 InvalidParameter "url error"。
+const DASHSCOPE_AUDIO_TTS_PATH = "/api/v1/services/audio/tts/SpeechSynthesizer";
+const DASHSCOPE_QWEN_TTS_PATH = "/api/v1/services/aigc/multimodal-generation/generation";
+const DASHSCOPE_AUDIO_FORMAT = "mp3";
+// 音色同样不可跨模型系列混用：qwen-audio-* 不接受 Qwen-TTS 的 Cherry 等音色。
+const DASHSCOPE_QWEN_TTS_DEFAULT_VOICE = "Cherry";
+const DASHSCOPE_QWEN_AUDIO_DEFAULT_VOICE = "longanhuan_v3.1";
 const DASHSCOPE_REST_MAX_REDIRECTS = 0;
 const DASHSCOPE_REST_IDLE_TIMEOUT_MS = 15_000;
 const DASHSCOPE_REST_MAX_RESPONSE_BYTES = 1024 * 1024;
@@ -77,7 +86,7 @@ export async function synthesizeSpeech(opts: SynthesizeOptions): Promise<Synthes
     } else if (provider === "openai") {
       voice = "alloy";
     } else if (provider === "dashscope") {
-      voice = "Cherry";
+      voice = resolveDashScopeDefaultVoice(model);
     } else {
       voice = "zh-CN-XiaoxiaoNeural";
     }
@@ -194,9 +203,9 @@ async function synthesizeDashScope(
   const apiKey = process.env.DASHSCOPE_API_KEY;
   if (!apiKey) throw new Error("DASHSCOPE_API_KEY required for DashScope provider.");
 
-  const endpoint = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
+  const { endpoint, host, body } = buildDashScopeSubmit({ model, text, voice });
   const restPolicy = restOutboundRequestPolicy ?? new OutboundRequestPolicy({
-    allowedHosts: ["dashscope.aliyuncs.com"],
+    allowedHosts: [host],
     maxRedirects: DASHSCOPE_REST_MAX_REDIRECTS,
   });
   const assetPolicy = assetOutboundRequestPolicy ?? new OutboundRequestPolicy({
@@ -219,11 +228,7 @@ async function synthesizeDashScope(
           "Accept": "application/json",
           "Accept-Encoding": "identity",
         },
-        body: JSON.stringify({
-          model,
-          input: { text, voice },
-          parameters: { format: "mp3" },
-        }),
+        body,
         signal: abortSignal,
         maxRedirects: DASHSCOPE_REST_MAX_REDIRECTS,
         idleTimeoutMs: DASHSCOPE_REST_IDLE_TIMEOUT_MS,
@@ -235,7 +240,7 @@ async function synthesizeDashScope(
           DASHSCOPE_REST_MAX_RESPONSE_BYTES,
           abortSignal,
         );
-        throw new Error(`DashScope API failed (${response.status}): ${errText}`);
+        throw new Error(`DashScope API failed (${response.status}) at ${endpoint}: ${errText}`);
       }
 
       const data = JSON.parse(await readBoundedDashScopeResponseText(
@@ -252,7 +257,7 @@ async function synthesizeDashScope(
       }
 
       const { response: audioRes } = await assetPolicy.request({
-        url: audioUrl,
+        url: resolveDashScopeAssetUrl(audioUrl),
         signal: abortSignal,
         maxRedirects: DASHSCOPE_ASSET_MAX_REDIRECTS,
         idleTimeoutMs: DASHSCOPE_ASSET_IDLE_TIMEOUT_MS,
@@ -411,6 +416,78 @@ function readOptionalEnv(...keys: string[]): string | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * Qwen-Audio-TTS / CosyVoice 与 Qwen-TTS 是两个端点不可混用的模型系列：
+ * 前者只能提交到非实时语音合成专用端点，后者只能提交到 multimodal-generation。
+ */
+function isDashScopeAudioTtsModel(model: string): boolean {
+  const normalized = model.trim().toLowerCase();
+  return normalized.startsWith("qwen-audio-") || normalized.startsWith("cosyvoice-");
+}
+
+function resolveDashScopeDefaultVoice(model: string): string {
+  return model.trim().toLowerCase().startsWith("qwen-audio-")
+    ? DASHSCOPE_QWEN_AUDIO_DEFAULT_VOICE
+    : DASHSCOPE_QWEN_TTS_DEFAULT_VOICE;
+}
+
+/**
+ * DashScope 原生 API 的 Base URL；默认官方共享域名，可显式指向业务空间专属域名
+ * （例如 https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com）。
+ */
+function resolveDashScopeBaseUrl(): string {
+  const configured = process.env.BELLDANDY_TTS_DASHSCOPE_BASE_URL?.trim();
+  const baseUrl = (configured || DEFAULT_DASHSCOPE_BASE_URL).replace(/\/+$/, "");
+  try {
+    const parsed = new URL(baseUrl);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      throw new Error("unsupported scheme");
+    }
+  } catch {
+    throw new Error("BELLDANDY_TTS_DASHSCOPE_BASE_URL must be an absolute HTTP(S) URL.");
+  }
+  return baseUrl;
+}
+
+function buildDashScopeSubmit(input: { model: string; text: string; voice: string }): {
+  endpoint: string;
+  host: string;
+  body: string;
+} {
+  const baseUrl = resolveDashScopeBaseUrl();
+  const audioTts = isDashScopeAudioTtsModel(input.model);
+  const endpoint = `${baseUrl}${audioTts ? DASHSCOPE_AUDIO_TTS_PATH : DASHSCOPE_QWEN_TTS_PATH}`;
+  // Qwen-Audio-TTS/CosyVoice 把 format 放在 input 内；Qwen-TTS 沿用 parameters.format 旧协议。
+  const body = audioTts
+    ? {
+      model: input.model,
+      input: { text: input.text, voice: input.voice, format: DASHSCOPE_AUDIO_FORMAT },
+    }
+    : {
+      model: input.model,
+      input: { text: input.text, voice: input.voice },
+      parameters: { format: DASHSCOPE_AUDIO_FORMAT },
+    };
+  return { endpoint, host: new URL(endpoint).hostname, body: JSON.stringify(body) };
+}
+
+/**
+ * DashScope 返回的签名音频 URL 目前以 http:// 明文给出，而 pinned outbound policy 默认拒绝明文 HTTP。
+ * 实测同一签名 URL 走 https 同样可用，因此这里统一升级为 https，而不是放开明文出站。
+ */
+function resolveDashScopeAssetUrl(audioUrl: string): string {
+  try {
+    const parsed = new URL(audioUrl);
+    if (parsed.protocol !== "http:") {
+      return audioUrl;
+    }
+    parsed.protocol = "https:";
+    return parsed.toString();
+  } catch {
+    return audioUrl;
+  }
 }
 
 function resolveTtsModel(provider: string, explicitModel?: string): string {
